@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import {
   Background,
   Controls,
@@ -56,9 +57,11 @@ const nodeTypes = { step: StepNode };
  * The graph. Everything it changes goes back into the document through `workflow-draft`, which is
  * where those rules are tested — this component only wires the canvas to them.
  *
- * `onNodesChange` is what makes the nodes draggable *and* what saves where they were dropped. Its
- * absence was the whole reason the layout could not be arranged: not that it was forgotten on
- * reload, but that nothing could be moved in the first place.
+ * React Flow keeps its **own** copy of the nodes, and that is not duplication: it stores what it
+ * measured of each one, and a node it has not measured stays `visibility: hidden`. Rebuilding the
+ * array from the document on every render threw that measurement away, which is why nothing was
+ * visible. So the canvas owns the nodes, the document owns the steps, and each tells the other
+ * only what it is authoritative about.
  */
 export function WorkflowCanvas({
   steps,
@@ -73,7 +76,24 @@ export function WorkflowCanvas({
   onChange: (steps: WorkflowStepView[]) => void;
   onSelect: (stepId: string) => void;
 }) {
-  const nodes = toNodes(steps, templates, operations) as Node<StepNodeData>[];
+  const fromDocument = useMemo(
+    () => toNodes(steps, templates, operations) as Node<StepNodeData>[],
+    [steps, templates, operations],
+  );
+  const [nodes, setNodes] = useState<Node<StepNodeData>[]>(fromDocument);
+
+  // The document decides which nodes exist and what they say; the canvas keeps where each one is
+  // and what it measured. A node that is still here keeps both.
+  useEffect(() => {
+    setNodes((current) => {
+      const seen = new Map(current.map((node) => [node.id, node]));
+      return fromDocument.map((node) => {
+        const previous = seen.get(node.id);
+        return previous ? { ...previous, data: node.data } : node;
+      });
+    });
+  }, [fromDocument]);
+
   const edges: Edge[] = toEdges(steps);
 
   return (
@@ -84,10 +104,18 @@ export function WorkflowCanvas({
       fitView
       deleteKeyCode={["Backspace", "Delete"]}
       onNodesChange={(changes) => {
-        const moved = applyNodeChanges(changes, nodes)
-          .filter((node) => node.position)
-          .map((node) => ({ id: node.id, position: node.position }));
-        onChange(applyPositions(steps, moved));
+        const next = applyNodeChanges(changes, nodes);
+        setNodes(next);
+        // Written to the document when the drag ends, not on every frame: a step per mouse move
+        // would mark the flow dirty sixty times a second and save a position nobody chose yet.
+        if (changes.some((change) => change.type === "position" && !change.dragging)) {
+          onChange(
+            applyPositions(
+              steps,
+              next.map((node) => ({ id: node.id, position: node.position })),
+            ),
+          );
+        }
       }}
       onConnect={(connection: Connection) => onChange(connectStep(steps, connection.source, connection.target))}
       onEdgesDelete={(deleted) =>
