@@ -90,13 +90,38 @@ export function evaluateResponse(input: EvaluateInput): Evaluation {
     { label: "Content-Type", pass: contentTypeMatches, detail: actual.contentType || "Sin Content-Type" },
   ];
 
+  // The envelope check, **only when a schema was declared**, because otherwise `Schema OpenAPI`
+  // above already is this check and says so in its own detail.
+  //
+  // It used to have no assertion at all while still counting towards the verdict, and the two
+  // together produced the one thing this product exists to abolish: a red case whose every listed
+  // assertion is green. `/health` is the endpoint that shows it — the contract declares a schema,
+  // the response satisfies it, and the response is not the project's list envelope, so the case
+  // failed and named no reason. Whoever met that had no move except to read the engine.
+  if (schemaValid !== null && !notImplemented) {
+    assertions.push({
+      label: `Envelope ${input.expectedShape}`,
+      pass: envelopeMatches,
+      detail: envelopeMatches
+        ? `La respuesta tiene la forma ${input.expectedShape}`
+        : `La respuesta cumple el schema del contrato pero no la forma ${input.expectedShape} que este proyecto espera. Si la forma correcta es otra, la regla está en la sección envelope.`,
+    });
+  }
+
   // No published budget means no assertion at all. The RFP sets no target for the writes, and a
   // green tick over a threshold nobody published is exactly what this replaced.
   const latency = notImplemented ? null : latencyAssertion(input.budget, input.latencySamples);
   if (latency) assertions.push(latency);
 
   return {
-    ok: statusMatches && envelopeMatches && contentTypeMatches && schemaPass && (latency?.pass ?? true),
+    // **Exactly "every assertion passed".** Not a parallel expression that happens to agree with
+    // the list most of the time: an invariant, so a red case always carries its reason and cannot
+    // stop doing so by somebody adding a term here and forgetting the assertion.
+    //
+    // The verdict is unchanged by writing it this way — with a declared schema the envelope is now
+    // in the list, and without one `schemaPass` already *is* `envelopeMatches` — so this is
+    // visibility, not leniency.
+    ok: assertions.every((assertion) => assertion.pass),
     assertions,
     notImplemented,
   };

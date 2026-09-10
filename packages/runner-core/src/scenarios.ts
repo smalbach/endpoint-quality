@@ -183,7 +183,20 @@ function functionalScenarios(operation: ResolvedOperation, config: ProjectConfig
     const missing = Object.fromEntries(names.map((name) => [name, config.missingIdValue]));
     return [
       { id: "found", name: config.text.getFoundName, description: config.text.getFoundDescription, expectedStatus: 200, parameters: present, flow: "request" },
-      { id: "not-found", name: config.text.getNotFoundName, description: config.text.getNotFoundDescription, expectedStatus: 404, parameters: missing, flow: "request" },
+      // **Only when there is an identifier to make missing, and only when 404 is declared.**
+      //
+      // Without the first condition a parameterless GET — `/health` is the one every contract
+      // has — got a `not-found` case whose request is byte for byte the `found` one, because
+      // there is no placeholder to substitute. One of the two then has to be wrong: the same URL
+      // cannot answer 200 and 404. It was a guaranteed red row on every project, reporting a
+      // fault in an endpoint that was behaving perfectly, which is precisely the false red this
+      // product exists not to produce.
+      //
+      // The second condition is the rule the list scenarios already followed: asserting a status
+      // the contract never promised tests the document, not the API.
+      ...(names.length && operation.statuses.includes(404)
+        ? [{ id: "not-found", name: config.text.getNotFoundName, description: config.text.getNotFoundDescription, expectedStatus: 404, parameters: missing, flow: "request" } as TestScenario]
+        : []),
       ...extra,
     ];
   }

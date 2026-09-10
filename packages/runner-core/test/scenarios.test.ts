@@ -127,3 +127,33 @@ test("un caso duplicado por id se descarta quedándose con el primero", () => {
   const notFound = scenariosFor(byId("getPost"), blog).find((scenario) => scenario.id === "not-found");
   assert.equal(notFound?.description, "Checks the 404 and the Problem Details format.");
 });
+
+/**
+ * A GET with no identifier in its path gets no `not-found` case.
+ *
+ * Every contract has a `/health`, and it used to come back with a `not-found` case whose request
+ * was byte for byte the `found` one: there is no placeholder to substitute, so both asked the same
+ * URL and expected 200 and 404 of it. One had to be red on every run of every project — a fault
+ * reported against an endpoint that was answering correctly, which is the exact failure this
+ * product exists to remove from somebody's suite.
+ */
+test("un GET sin identificador en la ruta no genera un caso not-found", () => {
+  const health: Operation = { id: "healthCheck", method: "GET", path: "/health", summary: "Health", tag: "Health", statuses: [200, 503], parameters: [] };
+  const [resolved] = resolveOperations([health], blog);
+  assert.deepEqual(scenariosFor(resolved, blog).map((scenario) => scenario.id), ["found"]);
+});
+
+test("un GET con identificador pero sin 404 declarado tampoco lo genera", () => {
+  // The rule the list scenarios already followed. Asserting a status the contract never promised
+  // is a test of the document, not of the API.
+  const singleton: Operation = { id: "getSettings", method: "GET", path: "/tenants/{tenant}/settings", summary: "Settings", tag: "Admin", statuses: [200], parameters: ["tenant"] };
+  const [resolved] = resolveOperations([singleton], blog);
+  assert.deepEqual(scenariosFor(resolved, blog).map((scenario) => scenario.id), ["found"]);
+});
+
+test("y con las dos cosas sí lo genera, con el identificador inexistente del proyecto", () => {
+  const [resolved] = resolveOperations([operations[1]], blog);
+  const notFound = scenariosFor(resolved, blog).find((scenario) => scenario.id === "not-found");
+  assert.ok(notFound, "getPost declara 404 y tiene {slug}: el caso debe existir");
+  assert.equal(notFound.parameters?.slug, "does-not-exist");
+});

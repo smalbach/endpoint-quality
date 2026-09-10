@@ -234,10 +234,15 @@ export function* planFlow(context: FlowContext): Generator<StepRequest, void, St
       parameters: target,
       expectedStatus: scenario.flow === "delete-read" ? scenario.expectedStatus : 204,
     });
-    if (scenario.flow === "delete-read" || !deleted.ok) return;
+    if (!deleted.ok) return;
 
-    // What the resource *is* after the delete, which is a different question from whether the
-    // DELETE answered 204.
+    // **Both flows read back.** `delete-read` used to stop at the 204, which made its own name a
+    // promise it did not keep — and left the case asserting the exact thing the flow exists to
+    // distrust. A soft delete whose read path forgot the flag answers a perfectly correct 204 and
+    // keeps serving the row; only this GET sees it.
+    //
+    // A verdict-level parity check could not catch that: against a target that really does delete,
+    // the two-step and the three-step versions are both green. It took a target that misbehaves.
     yield next({
       purpose: "verify",
       label: "Consultar el recurso eliminado",
@@ -247,6 +252,9 @@ export function* planFlow(context: FlowContext): Generator<StepRequest, void, St
       parameters: target,
       expectedStatus: 404,
     });
+    // `deleted-read` goes one further. The two are not duplicates: this one asks what the resource
+    // *is* afterwards, the second DELETE below asks whether the endpoint admits the row is gone.
+    if (scenario.flow === "delete-read") return;
     if (remove) {
       // A second DELETE must also be 404: an endpoint that answers 204 over a row that no longer
       // exists is reporting success for work it did not do.

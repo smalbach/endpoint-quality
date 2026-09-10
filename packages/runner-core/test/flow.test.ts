@@ -143,14 +143,18 @@ describe("replace-read", () => {
 });
 
 describe("delete-read y deleted-read", () => {
-  test("delete-read crea y borra, y ahí termina", () => {
+  test("delete-read crea, borra y relee: el 204 no es la comprobación", () => {
+    // It used to stop at the DELETE, which made the name of the case a promise it did not keep —
+    // and left it asserting precisely the thing the flow exists to distrust. A soft delete whose
+    // read path forgot the flag answers a perfectly correct 204 and goes on serving the row; only
+    // the read-back sees it.
     const steps = walk(find("deleteThing"), caseOf("deleteThing", "delete-read"), createsThenEmpty);
-    assert.deepEqual(steps.map((step) => `${step.purpose}:${step.method}`), ["prepare:POST", "act:DELETE"]);
+    assert.deepEqual(steps.map((step) => `${step.purpose}:${step.method}:${step.expectedStatus}`), ["prepare:POST:201", "act:DELETE:204", "verify:GET:404"]);
   });
 
-  test("deleted-read comprueba además qué es el recurso después", () => {
-    // A 204 says the DELETE was accepted, not that the row is gone. A soft delete that hides
-    // nothing and a cache that keeps serving it both pass the first step.
+  test("deleted-read va un paso más allá: el segundo DELETE", () => {
+    // Not a duplicate of the one above. That one asks what the resource *is* afterwards; this one
+    // asks whether the endpoint admits the row is gone.
     const steps = walk(find("deleteThing"), caseOf("deleteThing", "deleted-read"));
     assert.deepEqual(steps.map((step) => `${step.purpose}:${step.method}:${step.expectedStatus}`), [
       "prepare:POST:201",
