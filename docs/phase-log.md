@@ -49,7 +49,7 @@ revisión a ojo no ve y por el que la fase existe.
 
 ---
 
-## P1 — Cimientos de la API · cerrada con una salvedad
+## P1 — Cimientos de la API · cerrada
 
 **Alcance**: `apps/api` con NestJS 11 + CQRS + TypeORM y migraciones versionadas; los módulos
 `auth` e `iam` completos; Docker Compose con Postgres.
@@ -62,25 +62,22 @@ revisión a ojo no ve y por el que la fase existe.
     apps/api $ pnpm build
     tsc -p tsconfig.json && tsc-alias -p tsconfig.json   # sin errores
 
-Reparto: 30 unitarias de dominio y criptografía, 17 de sesión sobre HTTP, 22 de RBAC.
+Reparto: 30 unitarias de dominio y criptografía, 17 de sesión sobre HTTP, 22 de RBAC, más
+10 contra Postgres real (abajo).
 
-**La salvedad, y es real.** Los **11 tests de `test/db/`** — migraciones aplicadas y revertidas
-desde vacío, unicidad de correo y de slug, claves foráneas, borrado en cascada y los índices que
-sostienen cada comprobación de autorización — **no se han ejecutado**. Necesitan un Postgres
-vivo y el demonio de Docker está parado en esta máquina. Se saltan imprimiendo el motivo, no en
-silencio:
+**La base de datos, contra Postgres real.** Los 10 tests de `test/db/` quedaron pendientes en
+primera instancia porque el demonio de Docker estaba parado. Se ejecutaron después contra el
+PostgreSQL 17 local, en una base aislada (`endpoint_quality_test`), sin tocar las del backend
+Digital Catalog:
+
+    EQ_TEST_DATABASE_URL=postgres://smalbach@127.0.0.1:5432/endpoint_quality_test pnpm --filter @eq/api test:db
+    ℹ tests 10   ℹ pass 10   ℹ fail 0
+
+Cubren migraciones aplicadas **y revertidas** desde vacío, unicidad de correo y de slug, claves
+foráneas, borrado en cascada y los índices que sostienen cada comprobación de autorización.
+Cuando no hay base alcanzable se saltan imprimiendo el motivo, nunca en silencio:
 
     ﹣ migraciones # sin EQ_TEST_DATABASE_URL: levanta Postgres y reexporta la variable
-
-Para correrlos:
-
-```bash
-docker compose -f docker/compose.yml up -d postgres
-EQ_TEST_DATABASE_URL=postgres://eq:eq@localhost:5432/endpoint_quality_test pnpm --filter @eq/api test:db
-```
-
-Hasta que eso pase en verde, el criterio "suite de integración con Testcontainers en verde" del
-plan está **escrito pero no demostrado**, y P2 no debería empezar sin ejecutarlo.
 
 **Decisiones que conviene conocer**
 
