@@ -10,9 +10,12 @@ import { ProjectsModule } from "@/modules/projects/projects.module";
 import { SpecsModule } from "@/modules/specs/specs.module";
 import { EnvironmentsModule } from "@/modules/environments/environments.module";
 import { RUN_QUEUE, RUN_REPOSITORY } from "./domain/ports";
+import { PROGRESS_RELAY } from "./domain/progress";
 import { TypeOrmRunRepository } from "./infrastructure/persistence/typeorm-run.repository";
 import { InMemoryRunQueue } from "./infrastructure/queue/in-memory-queue";
 import { RedisRunQueue } from "./infrastructure/queue/redis-queue";
+import { InProcessRelay } from "./infrastructure/progress/in-process-relay";
+import { RedisProgressRelay } from "./infrastructure/progress/redis-relay";
 import { CaseExecutor } from "./infrastructure/case-executor";
 import { RunOrchestrator } from "./infrastructure/run-orchestrator";
 import { RunCaseProjector, RunFinishedProjector, RunProgressStream, RunStartedProjector } from "./infrastructure/run-progress.stream";
@@ -40,6 +43,18 @@ export const RUN_QUEUE_PROVIDER = {
   useFactory: (env: Env) => (env.QUEUE_DRIVER === "redis" ? new RedisRunQueue(env.REDIS_URL ?? "redis://localhost:6379") : new InMemoryRunQueue()),
 };
 
+/**
+ * Live progress crosses instances only when there is more than one, which is exactly what
+ * `QUEUE_DRIVER=redis` says. The same switch, because the two facts are the same fact: a run is
+ * executed by whichever instance took the job, and watched from whichever one the browser
+ * reached.
+ */
+export const PROGRESS_RELAY_PROVIDER = {
+  provide: PROGRESS_RELAY,
+  inject: [ENV],
+  useFactory: (env: Env) => (env.QUEUE_DRIVER === "redis" ? new RedisProgressRelay(env.REDIS_URL ?? "redis://localhost:6379") : new InProcessRelay()),
+};
+
 @Module({
   imports: [
     CqrsModule,
@@ -54,6 +69,7 @@ export const RUN_QUEUE_PROVIDER = {
   providers: [
     { provide: RUN_REPOSITORY, useClass: TypeOrmRunRepository },
     RUN_QUEUE_PROVIDER,
+    PROGRESS_RELAY_PROVIDER,
     CaseExecutor,
     RunOrchestrator,
     RunProgressStream,

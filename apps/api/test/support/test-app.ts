@@ -50,6 +50,8 @@ import { EnvironmentsController } from "@/modules/environments/presentation/envi
 import { ENVIRONMENT_COMMAND_HANDLERS, ENVIRONMENT_QUERY_HANDLERS } from "@/modules/environments/environments.module";
 import { CONFIG_REPOSITORY } from "@/modules/config/domain/ports";
 import { RUN_QUEUE, RUN_REPOSITORY } from "@/modules/runs/domain/ports";
+import { PROGRESS_RELAY } from "@/modules/runs/domain/progress";
+import { InProcessRelay } from "@/modules/runs/infrastructure/progress/in-process-relay";
 import { RunsController } from "@/modules/runs/presentation/runs.controller";
 import { RUN_COMMAND_HANDLERS, RUN_PROJECTORS, RUN_QUERY_HANDLERS } from "@/modules/runs/runs.module";
 import { CaseExecutor } from "@/modules/runs/infrastructure/case-executor";
@@ -192,6 +194,9 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: SAFE_FETCH, useValue: http },
       { provide: RUN_REPOSITORY, useValue: repositories.runs },
       { provide: RUN_QUEUE, useValue: queue },
+      // El relé de un solo proceso, que es el que corre la suite: no hace nada, y no hacer nada
+      // es lo correcto cuando el sujeto en memoria ya alcanza a todos los seguidores que hay.
+      { provide: PROGRESS_RELAY, useClass: InProcessRelay },
       CaseExecutor,
       RunOrchestrator,
       RunProgressStream,

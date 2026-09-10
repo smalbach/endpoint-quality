@@ -76,10 +76,12 @@ QUEUE_DRIVER=redis docker compose -f docker/compose.yml --profile redis up -d
 ```
 
 Con `memory`, una corrida vive en el proceso que la lanzó. Con `redis` sobrevive a un reinicio y
-varias avanzan a la vez. **El stream SSE de progreso sigue siendo por proceso**: con varias
-instancias detrás de un balanceador, un cliente conectado a la instancia B no ve el progreso de una
-corrida que ejecuta la A, y cae al sondeo. Hace falta un relé por pub/sub para arreglarlo; está
-anotado como deuda en `docs/phase-log.md`.
+varias avanzan a la vez. El mismo interruptor enciende el **relé de progreso**: con varias
+instancias detrás de un balanceador, la corrida la ejecuta la que cogió el trabajo y la mira quien
+haya caído en otra, así que los eventos se retransmiten por pub/sub. Es pub/sub y no un stream a
+propósito: el progreso no vale nada tarde, y el registro duradero es la base de datos —quien se
+pierda un evento tiene la verdad en el siguiente sondeo. Con `memory` el relé no hace nada, que es
+lo correcto cuando solo hay un proceso.
 
 ## Desde una pipeline
 
