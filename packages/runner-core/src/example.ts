@@ -19,10 +19,12 @@
  *   configuration, and without it there is no conflict case, as before.
  * - **Randomise.** A body that changes between runs makes two runs incomparable and a failure
  *   irreproducible. Everything here is a pure function of the schema.
- * - **Guess past the document.** A `string` with no `example`, `default`, `enum` or `format` gets
- *   a placeholder. If the API wanted a real EAN, the 422 that comes back is the truth about a
- *   contract that did not say so, and the fix is either the contract or the `bodies` section.
+ * - **Guess past the document.** A `string` with no `example`, `default`, `enum`, `format` or
+ *   `pattern` gets a placeholder. If the API wanted a real EAN, the 422 that comes back is the
+ *   truth about a contract that did not say so, and the fix is either the contract or the
+ *   `bodies` section.
  */
+import { exampleFromPattern } from "./pattern.ts";
 
 /** Deep enough for a nested resource inside a nested collection, and short enough that a
  * recursive schema — a category with children, a comment with replies — stops instead of
@@ -151,16 +153,49 @@ function stringExample(rule: Schema): string {
     byte: "ZWplbXBsbw==",
     password: "ejemplo-de-contraseña",
   };
-  if (byFormat[format]) return byFormat[format];
+  const formatted = byFormat[format];
 
   const base = "ejemplo";
   const minimum = typeof rule.minLength === "number" ? rule.minLength : 0;
   const maximum = typeof rule.maxLength === "number" ? rule.maxLength : Number.POSITIVE_INFINITY;
+
+  /**
+   * A `pattern` is the contract stating, in full, what it will accept — so a placeholder that
+   * ignores it is this tool writing the 422 itself. It outranks the format table, and only when
+   * the format's own value already satisfies it does that value win: `2024-01-01` says more than
+   * a string assembled character by character.
+   *
+   * The generated value is checked against the real `RegExp` before it is used. `exampleFromPattern`
+   * covers a subset and can be wrong; what it cannot do is slip a wrong value through.
+   */
+  const pattern = typeof rule.pattern === "string" ? rule.pattern : "";
+  const regex = pattern ? safeRegExp(pattern) : undefined;
+  if (regex) {
+    if (formatted && regex.test(formatted) && formatted.length >= minimum && formatted.length <= maximum) return formatted;
+    const generated = exampleFromPattern(pattern, minimum);
+    if (generated !== undefined && generated.length >= minimum && generated.length <= maximum && regex.test(generated)) return generated;
+    // Neither the format nor the pattern could be honoured. The placeholder below is returned
+    // anyway, on purpose: a 422 naming this field is the truth about a contract this cannot
+    // satisfy, and it points at the `bodies` section, which can.
+  }
+
+  if (formatted) return formatted;
+
   // Padded up to `minLength` and cut down to `maxLength`, in that order: a field declaring both
   // gets a value inside the range instead of one that fails the very constraint the contract
   // published.
   const padded = base.length >= minimum ? base : base.padEnd(minimum, "-");
   return padded.length <= maximum ? padded : padded.slice(0, Math.max(0, maximum));
+}
+
+/** A `pattern` arrives from somebody else's document, and `new RegExp` throws on syntax this
+ * engine's own regular-expression flavour does not accept. */
+function safeRegExp(pattern: string): RegExp | undefined {
+  try {
+    return new RegExp(pattern);
+  } catch {
+    return undefined;
+  }
 }
 
 function numberExample(rule: Schema, integer: boolean): number {
