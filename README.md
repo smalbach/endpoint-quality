@@ -118,6 +118,18 @@ node examples/sample-api/server.mjs                       # :9000
 EQ_API=http://localhost:3001 EQ_TARGET=http://localhost:9000 node tools/seed-demo.mjs
 ```
 
+## Su propio contrato
+
+La API publica el suyo en `/openapi.json`, **con los errores que responde**, no solo el camino
+feliz: 45 operaciones y 220 respuestas declaradas, todas las de error como RFC 9457. No es
+cortesía — la matriz se genera desde los estados que una operación declara, así que un contrato con
+solo el 200 no produce ni matriz de autorización, ni caso de no-encontrado, ni de cuerpo inválido.
+
+Lo que permite la prueba más barata de si esto generaliza: importar la propia API como un proyecto
+más. Sin configurar nada, salen **182 casos** y 165 de las 220 respuestas quedan cubiertas. Los
+huecos se nombran solos: no hay generador de casos para el 429, provocar un rate limit a propósito
+es una decisión y no un caso automático.
+
 ## Estructura
 
     apps/api          NestJS 11 + @nestjs/cqrs — comandos, consultas, saga de ejecución

@@ -557,3 +557,119 @@ Dos cosas, y ninguna era del arnés:
 - `tools/parity-cut/legacy/` es la segunda mitad del oráculo y se borra en P7 con el repo original.
 - El defecto D-29 del dashboard acoplado queda documentado aquí y **no se arregla allí**: ese repo
   se retira en P7 y tocarlo invalidaría el oráculo de esta misma fase.
+
+---
+
+## P7 — Empaquetado · cerrada
+
+**Alcance**: `docker compose up` de un comando que levanta todo y trae un proyecto de ejemplo que
+corre solo; corridas desde CI con token y código de salida; README de despliegue; OpenAPI propia.
+
+### Un comando, y algo que verificar
+
+`scripts/demo.sh` levanta Postgres, aplica el esquema, arranca la API y la interfaz, añade una API
+de muestra, crea la cuenta, importa el contrato **desde el `/openapi.json` vivo de la muestra**,
+escribe la configuración del proyecto y lanza la matriz una vez. Verificado desde cero —
+`down -v`, borrando `docker/.env`— y en el navegador contra los contenedores: login a través de
+nginx, sesión que sobrevive a una recarga, la matriz con su línea de cobertura, el historial y la
+vista de evidencia nombrando el paso que falla.
+
+Termina en **13 verdes y 2 rojos**, y los rojos son un fallo puesto a propósito en la muestra: el
+borrado es blando y la lectura por id se olvidó del flag, así que `DELETE /widgets/{id}` responde
+el `204` que su contrato declara y sigue sirviendo la fila. Una suite de códigos de estado lo da
+por bueno. Es deliberadamente un fallo corriente y deliberadamente *aislado* —el flag se respeta en
+todas partes menos en esa lectura— para que la limpieza siga liberando el nombre, la matriz se
+pueda repetir y salgan dos filas rojas en vez de una cascada que nadie lee.
+
+**El compose de la demo es un fichero aparte y no un perfil** porque cambia `ALLOW_PRIVATE_TARGETS`
+en el servicio `api`: el destino es un contenedor de al lado con nombre DNS privado, así que la
+demo no funciona sin abrirlo, y un despliegue de verdad no debe heredarlo por descuido.
+
+### Tres cosas que no funcionaban y nadie había ejecutado
+
+1. **La imagen de la API nunca arrancó.** Moría con `Cannot find module '@eq/spec-import'`: el
+   Dockerfile copiaba uno de los tres manifiestos del workspace, así que pnpm no enlazaba nada, y
+   la etapa de runtime copiaba `node_modules` sin los `packages/*` a los que apuntan los enlaces.
+   No lo veía nadie porque nadie la había construido.
+2. **No había migraciones en la imagen.** `pnpm migration:run` pasa las fuentes TypeScript por el
+   CLI de TypeORM, que está bien en un portátil y es imposible en una imagen sin fuentes ni
+   compilador: habría arrancado contra un esquema vacío. Ahora es `apps/api/dist/migrate.js`, con
+   su servicio, su código de salida y un *advisory lock* de Postgres para el caso de dos
+   contenedores de init a la vez. **No `migrationsRun` al arrancar**: eso ata «el esquema cambió» a
+   «un proceso arrancó», cada réplica lo intenta, la API atiende con el DDL a medias, y una
+   migración fallida parece un *crash loop*.
+3. **Tres de las cuatro pestañas de proyecto te echaban del proyecto.** Eran rutas relativas, y
+   react-router las resuelve contra **la ruta en la que se renderiza el enlace**, no contra la URL
+   de la barra de direcciones; este layout está montado en `/`, así que `runs` era `/runs`, no
+   casaba con nada y caía en el comodín que redirige a la lista de proyectos. Sobrevivió dos fases
+   porque todas las pantallas se alcanzaban por los botones que navegan con ruta completa. Lo
+   encontró hacer clic en una pestaña.
+
+### Desde una pipeline
+
+`tools/eq-run.mjs`: token dentro, matriz fuera, y un código de salida que distingue las tres cosas
+que le pueden pasar a un trabajo — **0** pasó, **1** hay rojos (y los imprime con la aserción que
+falló), **2** no se pudo ejecutar. Los saltados no rompen la build salvo `--fail-on-skip`.
+
+Sin dependencias a propósito: una herramienta que necesita `npm install` para decirte si tu API
+está sana le ha metido una cadena de suministro a tu pipeline. Viaja dentro de la imagen de la API,
+así que el camino que ve alguien el primer día es el mismo que usa su pipeline.
+
+Hizo falta **`GET /auth/context`**: un token de servicio no tenía forma de descubrir su propia
+organización. `/auth/me` es sobre una persona y lo rechaza, correctamente, y toda ruta de proyecto
+necesita un id de organización. Una credencial que funciona y no se puede usar.
+
+### La API publica ahora lo que responde cuando algo va mal
+
+El documento que generaba Nest describía el camino feliz: una respuesta por operación, la que
+devuelve el handler. El 401 de un token que falta, el 404 de un proyecto ajeno, el 422 de un cuerpo
+inválido — nada declarado. **Un producto que verifica contratos publicando medio contrato** es el
+chiste contándose solo, y tiene una consecuencia concreta: la matriz se genera desde `statuses`, así
+que con solo un 200 no hay matriz de autorización, ni caso de no-encontrado, ni de cuerpo inválido.
+
+Los errores se declaran desde la forma de la ruta y no decorador a decorador, porque 45 operaciones
+de `@ApiResponse` son 45 sitios donde el documento se separa del guard que de verdad decide. Eso
+compra uniformidad y cuesta una forma de estar equivocado, así que la afirmación se comprueba donde
+se puede: **cada GET documentado se llama sin token**, y la respuesta tiene que ser 401 exactamente
+cuando el documento dice que la ruta necesita uno.
+
+De 45 respuestas declaradas se pasó a **220**.
+
+### Y entonces se le apuntó a sí misma
+
+La prueba más barata de si algo de esto generaliza: importar `http://…/openapi.json` de la propia
+API como un proyecto más.
+
+    45 operaciones · 220 respuestas declaradas · 182 casos · 165 respuestas con caso
+
+    200 23/23   201 7/7    401 41/41   403 35/35   404 35/35   422 19/19
+    204  5/14   202 0/1    429  0/45
+
+Sin una línea de configuración. Los huecos que se nombra a sí misma son honestos y quedan
+anotados: **no hay generador de casos para 429** —provocar un rate limit a propósito es una
+decisión, no un caso automático—, los nueve 204 sin caso son operaciones sin colección de la que
+colgar un flujo de borrado, y el 202 es el arranque asíncrono de una corrida.
+
+**Suites**: runner-core 80 · spec-import 35 · api 170 · api contra Postgres 17 · web 32.
+
+### Lo que P7 deja abierto, a propósito
+
+- **Imágenes publicadas**: los Dockerfiles construyen y las imágenes funcionan, pero publicarlas
+  necesita un registro y credenciales de quien despliega. No es una decisión que se tome desde
+  aquí.
+- **La retirada del oráculo**: el plan decía retirar `scripts/gen_dashboard_endpoints.py` y los dos
+  `test/legacy/` en P7, «junto con el repo original». El repo original **sigue vivo**, y mientras
+  siga vivo borrar los snapshots solo quita la capacidad de repetir el corte de paridad sin ganar
+  nada. Además `gen_dashboard_endpoints.py` vive en otro repositorio y su `make dashboard-check`
+  depende de él: retirarlo es una decisión sobre el build de otro proyecto. Queda como el último
+  paso, cuando se decida jubilar el dashboard acoplado.
+- La deuda anterior sigue en pie: el stream SSE es por proceso —varias instancias necesitan un relé
+  por pub/sub—, no hay política de retención de `run_steps`, las cabeceras de auth del origen del
+  contrato no persisten, los tipos de la API en el front están a mano, y no hay editores visuales
+  de configuración ni gestión de miembros.
+- **Los cuerpos de petición no se derivan del contrato.** Un proyecto nuevo apuntado a un contrato
+  que declara su `requestBody` sigue necesitando una sección `bodies` escrita a mano para que las
+  escrituras no salgan todas en 422. La demostración lo enseña —esa configuración está en
+  `examples/sample-api/config.json` y es media demostración— pero derivar un ejemplo del JSON
+  Schema declarado es lo que separa «funciona configurándolo» de «funciona apuntándolo». Es el
+  siguiente trabajo con más valor por línea.
