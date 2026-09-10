@@ -13,6 +13,9 @@ export type Environment = {
   /** Where the live OpenAPI document is served, when it is not `${baseUrl}/openapi.json`. */
   specUrl: string | null;
   variables: Record<string, string>;
+  /** Switched off in the editor: stored, and never substituted. Disjoint from `variables` by the
+   * command that writes them, because a name that is both would have to mean one of the two. */
+  disabledVariables: Record<string, string>;
   /**
    * Whether non-idempotent operations may run here.
    *

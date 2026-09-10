@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { Inject } from "@nestjs/common";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 
+import { VARIABLE_NAME } from "@eq/runner-core";
+
 import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
@@ -14,6 +16,7 @@ export type EnvironmentInput = {
   baseUrl?: string;
   specUrl?: string | null;
   variables?: Record<string, string>;
+  disabledVariables?: Record<string, string>;
   writesAllowed?: boolean;
   authEnforced?: boolean;
 };
@@ -78,14 +81,36 @@ function normalizeBaseUrl(value: string): string {
   return url.toString().replace(/\/+$/, "");
 }
 
-function normalizeVariables(value: Record<string, string>): Record<string, string> {
+function normalizeVariables(value: Record<string, string>, field = "variables"): Record<string, string> {
   const entries = Object.entries(value);
-  const invalid = entries.find(([key, item]) => !/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(key) || typeof item !== "string");
+  const invalid = entries.find(([key, item]) => !VARIABLE_NAME.test(key.trim()) || typeof item !== "string");
   if (invalid)
     throw new InvalidInputError("Las variables del entorno no son válidas", [
-      { field: `variables.${invalid[0]}`, detail: "Use un nombre válido y un valor de texto" },
+      { field: `${field}.${invalid[0]}`, detail: "Use un nombre válido y un valor de texto" },
     ]);
   return Object.fromEntries(entries.map(([key, item]) => [key.trim(), item]));
+}
+
+/**
+ * The two maps together, and disjoint.
+ *
+ * A switched-off variable is parked next to the map instead of flagged inside it, so that
+ * `variables` stays exactly what a run substitutes and nothing downstream has to filter. The one
+ * rule that buys is this: a name is in one map or in the other. Both would have to mean one of
+ * the two, and whichever the code happened to pick would be a coin flip nobody could see.
+ */
+function normalizeBoth(
+  variables: Record<string, string>,
+  disabled: Record<string, string>,
+): { variables: Record<string, string>; disabledVariables: Record<string, string> } {
+  const active = normalizeVariables(variables);
+  const parked = normalizeVariables(disabled, "disabledVariables");
+  const both = Object.keys(parked).find((name) => name in active);
+  if (both)
+    throw new InvalidInputError("Una variable está activa y apagada a la vez", [
+      { field: `disabledVariables.${both}`, detail: "Ya hay una variable activa con ese nombre" },
+    ]);
+  return { variables: active, disabledVariables: parked };
 }
 
 @CommandHandler(CreateEnvironmentCommand)
@@ -109,7 +134,7 @@ export class CreateEnvironmentHandler implements ICommandHandler<CreateEnvironme
       name,
       baseUrl: normalizeBaseUrl(command.input.baseUrl ?? ""),
       specUrl: command.input.specUrl ?? null,
-      variables: normalizeVariables(command.input.variables ?? {}),
+      ...normalizeBoth(command.input.variables ?? {}, command.input.disabledVariables ?? {}),
       // Both default to off. A run that writes to a target, and a matrix of 401 cases against a
       // backend that grants everything, are each a decision — not something inherited by
       // creating an environment.
@@ -146,8 +171,12 @@ export class UpdateEnvironmentHandler implements ICommandHandler<UpdateEnvironme
       name: name || environment.name,
       baseUrl: command.input.baseUrl ? normalizeBaseUrl(command.input.baseUrl) : environment.baseUrl,
       specUrl: command.input.specUrl === undefined ? environment.specUrl : command.input.specUrl,
-      variables:
-        command.input.variables === undefined ? environment.variables : normalizeVariables(command.input.variables),
+      // Both or neither: they are one editor, and patching only half of a pair that has to stay
+      // disjoint is how a name ends up in both.
+      ...normalizeBoth(
+        command.input.variables ?? environment.variables,
+        command.input.disabledVariables ?? environment.disabledVariables,
+      ),
       writesAllowed: command.input.writesAllowed ?? environment.writesAllowed,
       authEnforced: command.input.authEnforced ?? environment.authEnforced,
     });

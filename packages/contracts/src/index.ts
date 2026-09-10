@@ -107,6 +107,14 @@ export type EnvironmentSummaryOf<T> = {
   specUrl: string | null;
   /** Plain, project-owned values available as `{{name}}` in paths, parameters and JSON bodies. */
   variables: Record<string, string>;
+  /**
+   * The ones that are switched off: kept, and not substituted.
+   *
+   * They are a second map rather than a flag inside the first so that `variables` keeps meaning
+   * what it means everywhere else — what a run substitutes — and no consumer has to remember to
+   * filter. A name is in one map or the other, never in both.
+   */
+  disabledVariables: Record<string, string>;
   writesAllowed: boolean;
   authEnforced: boolean;
   credentials: CredentialSummaryOf<T>[];

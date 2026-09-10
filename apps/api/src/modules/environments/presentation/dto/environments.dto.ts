@@ -23,6 +23,7 @@ export class CreateEnvironmentDto {
   @IsString() @MinLength(1) @MaxLength(2000) baseUrl: string;
   @IsOptional() @IsString() @MaxLength(2000) specUrl?: string | null;
   @IsOptional() @IsObject() variables?: Record<string, string>;
+  @IsOptional() @IsObject() disabledVariables?: Record<string, string>;
   @IsOptional() @IsBoolean() writesAllowed?: boolean;
   @IsOptional() @IsBoolean() authEnforced?: boolean;
 }
@@ -34,6 +35,7 @@ export class UpdateEnvironmentDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(2000) baseUrl?: string;
   @IsOptional() @IsString() @MaxLength(2000) specUrl?: string | null;
   @IsOptional() @IsObject() variables?: Record<string, string>;
+  @IsOptional() @IsObject() disabledVariables?: Record<string, string>;
   @IsOptional() @IsBoolean() writesAllowed?: boolean;
   @IsOptional() @IsBoolean() authEnforced?: boolean;
 }

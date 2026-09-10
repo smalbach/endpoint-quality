@@ -553,6 +553,44 @@ describe("credenciales del destino", () => {
     assert.equal(listed.writesAllowed, true);
   });
 
+  test("una variable apagada se guarda, y no es una variable", async () => {
+    const created = await api()
+      .post(`${base}/environments`)
+      .set(as(owner))
+      .send({ name: "apagadas", baseUrl: "https://a.example.com", variables: { userId: "42" } });
+    assert.equal(created.status, 201);
+    const environmentId = created.body.environmentId;
+
+    assert.equal(
+      (
+        await api()
+          .patch(`${base}/environments/${environmentId}`)
+          .set(as(owner))
+          .send({ variables: { userId: "42" }, disabledVariables: { legacyId: "7" } })
+      ).status,
+      204,
+    );
+
+    const listed = (await api().get(`${base}/environments`).set(as(owner))).body.find(
+      (entry: { id: string }) => entry.id === environmentId,
+    );
+    // Lo que importa de las dos columnas: `variables` es exactamente lo que una corrida sustituye,
+    // sin que nadie tenga que filtrarlo, y el valor apagado sigue ahí para volver a encenderlo.
+    assert.deepEqual(listed.variables, { userId: "42" });
+    assert.deepEqual(listed.disabledVariables, { legacyId: "7" });
+
+    // Y no puede estar en las dos: cualquiera de los dos significados sería una moneda al aire.
+    const both = await api()
+      .patch(`${base}/environments/${environmentId}`)
+      .set(as(owner))
+      .send({ variables: { userId: "42" }, disabledVariables: { userId: "viejo" } });
+    assert.equal(both.status, 422);
+    assert.deepEqual(
+      both.body.errors.map((error: { field: string }) => error.field),
+      ["disabledVariables.userId"],
+    );
+  });
+
   test("una URL base que no es http(s) se rechaza al escribirla", async () => {
     const response = await api()
       .post(`${base}/environments`)

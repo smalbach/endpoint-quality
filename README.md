@@ -140,10 +140,17 @@ Lo que un contrato nunca dice, y sí pone el proyecto:
 ### Entornos y flujos reutilizables
 
 Cada entorno mantiene variables de texto al estilo Postman. Se pueden usar como `{{variable}}` en
-parámetros, rutas y cuerpos JSON. La interfaz de **Entornos** permite editarlas como filas o como
-JSON; los secretos siguen separados en credenciales cifradas y nunca se mezclan con las variables
-visibles. Una petición a la que le falta una variable **no sale a la red**: el paso queda bloqueado
-diciendo cuál falta, en vez de pedir `/users/{{userId}}`.
+parámetros, rutas y cuerpos JSON. La pestaña **Entornos** los lista a la izquierda y edita el
+seleccionado a la derecha: una tabla con una casilla por fila —una variable **apagada conserva su
+valor y no se sustituye**, que es lo que evita borrarla para dejar de usarla— y una vista de texto
+(`nombre:valor` por línea, `//` delante para las apagadas, o un objeto JSON pegado tal cual) para
+las veinte que alguien trae de otro sitio. Nada se guarda hasta pulsar «Guardar».
+
+Las apagadas se almacenan en su propia columna, no como una bandera dentro del mapa: así
+`variables` sigue siendo exactamente lo que una corrida sustituye y nadie tiene que filtrarlo antes
+de usarlo. Los secretos siguen separados en credenciales cifradas y nunca se mezclan con las
+variables visibles. Una petición a la que le falta una variable **no sale a la red**: el paso queda
+bloqueado diciendo cuál falta, en vez de pedir `/users/{{userId}}`.
 
 La pestaña **Flujos** añade dos cosas que un proyecto posee, cada una en su propia tabla:
 

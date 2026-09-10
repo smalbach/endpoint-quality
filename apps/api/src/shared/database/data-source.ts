@@ -13,6 +13,7 @@ import { Runs1700000003000 } from "./migrations/1700000003000-Runs";
 import { Retention1700000005000 } from "./migrations/1700000005000-Retention";
 import { RequestSchemas1700000004000 } from "./migrations/1700000004000-RequestSchemas";
 import { WorkflowsAndTemplates1700000006000 } from "./migrations/1700000006000-WorkflowsAndTemplates";
+import { DisabledEnvironmentVariables1700000007000 } from "./migrations/1700000007000-DisabledEnvironmentVariables";
 
 // Ordered. TypeORM runs them by the timestamp in the class name, and the second one adds a
 // foreign key into a table the first creates.
@@ -24,6 +25,7 @@ export const MIGRATIONS = [
   RequestSchemas1700000004000,
   Retention1700000005000,
   WorkflowsAndTemplates1700000006000,
+  DisabledEnvironmentVariables1700000007000,
 ];
 
 export function buildDataSourceOptions(databaseUrl: string) {
