@@ -115,11 +115,21 @@ export class AuthController {
   private cookieOptions() {
     return {
       httpOnly: true,
-      // Strict rather than Lax: this cookie is only ever sent to `/auth/refresh` by our own
-      // front end, never as part of a navigation, so there is nothing to relax it for.
+      // Strict rather than Lax: this cookie is only ever sent by our own front end, never as
+      // part of a navigation, so there is nothing to relax it for.
       sameSite: "strict" as const,
       secure: this.env.NODE_ENV === "production",
-      path: "/auth",
+      // `/` and not `/auth`.
+      //
+      // The narrow path looked tidier and was wrong: the API is normally served under a prefix —
+      // `/api` through nginx in the compose file, the same through Vite in development — so the
+      // browser sees `/api/auth/refresh`, which `path=/auth` does not match. The cookie was
+      // never sent, refresh always failed, and the session died on every page reload. It failed
+      // silently, because the app simply showed the login screen.
+      //
+      // What the narrow path bought was small: httpOnly and SameSite=Strict are what actually
+      // protect this cookie, and neither depends on the path.
+      path: "/",
       ...(this.env.COOKIE_DOMAIN ? { domain: this.env.COOKIE_DOMAIN } : {}),
     };
   }

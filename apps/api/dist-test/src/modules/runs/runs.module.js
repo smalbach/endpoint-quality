@@ -15,6 +15,8 @@ const cqrs_1 = require("@nestjs/cqrs");
 const typeorm_1 = require("@nestjs/typeorm");
 const entities_1 = require("../../shared/database/entities");
 const env_1 = require("../../shared/config/env");
+const auth_module_1 = require("../auth/auth.module");
+const iam_module_1 = require("../iam/iam.module");
 const projects_module_1 = require("../projects/projects.module");
 const specs_module_1 = require("../specs/specs.module");
 const environments_module_1 = require("../environments/environments.module");
@@ -65,6 +67,8 @@ exports.RunsModule = RunsModule = __decorate([
     (0, common_1.Module)({
         imports: [
             cqrs_1.CqrsModule,
+            auth_module_1.AuthModule,
+            iam_module_1.IamModule,
             typeorm_1.TypeOrmModule.forFeature([entities_1.RunEntity, entities_1.RunCaseEntity, entities_1.RunStepEntity]),
             (0, common_1.forwardRef)(() => projects_module_1.ProjectsModule),
             (0, common_1.forwardRef)(() => specs_module_1.SpecsModule),

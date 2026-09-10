@@ -13,6 +13,8 @@ const typeorm_1 = require("@nestjs/typeorm");
 const entities_1 = require("../../shared/database/entities");
 const secret_cipher_1 = require("../../shared/crypto/secret-cipher");
 const secret_cipher_provider_1 = require("../../shared/crypto/secret-cipher.provider");
+const auth_module_1 = require("../auth/auth.module");
+const iam_module_1 = require("../iam/iam.module");
 const projects_module_1 = require("../projects/projects.module");
 const specs_module_1 = require("../specs/specs.module");
 const ports_1 = require("./domain/ports");
@@ -50,6 +52,8 @@ exports.EnvironmentsModule = EnvironmentsModule = __decorate([
     (0, common_1.Module)({
         imports: [
             cqrs_1.CqrsModule,
+            auth_module_1.AuthModule,
+            iam_module_1.IamModule,
             typeorm_1.TypeOrmModule.forFeature([entities_1.EnvironmentEntity, entities_1.EnvironmentCredentialEntity, entities_1.ProjectConfigEntity]),
             (0, common_1.forwardRef)(() => projects_module_1.ProjectsModule),
             (0, common_1.forwardRef)(() => specs_module_1.SpecsModule),

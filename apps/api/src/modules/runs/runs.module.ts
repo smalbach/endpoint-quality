@@ -4,6 +4,8 @@ import { TypeOrmModule } from "@nestjs/typeorm";
 
 import { RunCaseEntity, RunEntity, RunStepEntity } from "@/shared/database/entities";
 import { ENV, type Env } from "@/shared/config/env";
+import { AuthModule } from "@/modules/auth/auth.module";
+import { IamModule } from "@/modules/iam/iam.module";
 import { ProjectsModule } from "@/modules/projects/projects.module";
 import { SpecsModule } from "@/modules/specs/specs.module";
 import { EnvironmentsModule } from "@/modules/environments/environments.module";
@@ -39,6 +41,8 @@ export const RUN_QUEUE_PROVIDER = {
 @Module({
   imports: [
     CqrsModule,
+    AuthModule,
+    IamModule,
     TypeOrmModule.forFeature([RunEntity, RunCaseEntity, RunStepEntity]),
     forwardRef(() => ProjectsModule),
     forwardRef(() => SpecsModule),

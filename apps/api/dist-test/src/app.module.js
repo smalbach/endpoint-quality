@@ -12,8 +12,8 @@ const core_1 = require("@nestjs/core");
 const cqrs_1 = require("@nestjs/cqrs");
 const throttler_1 = require("@nestjs/throttler");
 const config_module_1 = require("./shared/config/config.module");
+const shared_module_1 = require("./shared/shared.module");
 const database_module_1 = require("./shared/database/database.module");
-const clock_port_1 = require("./shared/clock/clock.port");
 const problem_details_filter_1 = require("./shared/errors/problem-details.filter");
 const auth_module_1 = require("./modules/auth/auth.module");
 const iam_module_1 = require("./modules/iam/iam.module");
@@ -37,6 +37,7 @@ exports.AppModule = AppModule = __decorate([
     (0, common_1.Module)({
         imports: [
             config_module_1.ConfigModule,
+            shared_module_1.SharedModule,
             database_module_1.DatabaseModule,
             cqrs_1.CqrsModule.forRoot(),
             throttler_1.ThrottlerModule.forRoot([{ name: "default", ttl: 60_000, limit: 120 }]),
@@ -49,7 +50,6 @@ exports.AppModule = AppModule = __decorate([
         ],
         controllers: [health_controller_1.HealthController],
         providers: [
-            { provide: clock_port_1.CLOCK, useClass: clock_port_1.SystemClock },
             { provide: core_1.APP_FILTER, useClass: problem_details_filter_1.ProblemDetailsFilter },
             { provide: core_1.APP_GUARD, useClass: throttler_1.ThrottlerGuard },
             { provide: core_1.APP_GUARD, useClass: auth_guard_1.AuthGuard },

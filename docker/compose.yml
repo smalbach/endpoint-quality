@@ -59,5 +59,12 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
     ports: ["3001:3001"]
 
+  web:
+    build:
+      context: ..
+      dockerfile: docker/web.Dockerfile
+    depends_on: [api]
+    ports: ["8080:8080"]
+
 volumes:
   postgres-data:

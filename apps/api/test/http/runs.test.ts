@@ -23,6 +23,11 @@ async function signUp(email: string): Promise<Actor> {
   const password = "una-contraseña-larga";
   const registered = await api().post("/auth/register").send({ email, password, name: email.split("@")[0] });
   const session = await api().post("/auth/login").send({ email, password });
+  // Asserted rather than trusted. When login fails the token is `undefined`, every later request
+  // goes out as `Bearer undefined`, and the suite reports a 401 on whatever line happens to be
+  // next — which describes the symptom and hides the cause.
+  assert.equal(session.status, 200, `no se pudo iniciar sesión como ${email}: ${JSON.stringify(session.body)}`);
+  assert.ok(session.body.accessToken, `el login de ${email} no devolvió token`);
   return { userId: registered.body.userId, organizationId: registered.body.organizationId, token: session.body.accessToken };
 }
 const as = (actor: Actor) => ({ Authorization: `Bearer ${actor.token}` });
@@ -36,9 +41,13 @@ async function projectAgainst(faults: StubFaults, environment: Partial<{ writesA
   const target = new StubTarget(faults);
   await target.start();
 
+  // Every step is asserted. A helper that quietly produces an undefined project id turns every
+  // later failure into a 404 with no explanation, which is how a five-minute bug becomes an hour.
   const project = await api().post(`/orgs/${owner.organizationId}/projects`).set(as(owner)).send({ name: `p-${Math.random().toString(36).slice(2, 8)}` });
+  assert.equal(project.status, 201, `no se pudo crear el proyecto: ${JSON.stringify(project.body)}`);
   const projectBase = `/orgs/${owner.organizationId}/projects/${project.body.projectId}`;
-  await api().post(`${projectBase}/spec-versions`).set(as(owner)).send({ source: { kind: "inline", raw: STUB_SPEC_YAML } });
+  const imported = await api().post(`${projectBase}/spec-versions`).set(as(owner)).send({ source: { kind: "inline", raw: STUB_SPEC_YAML } });
+  assert.equal(imported.status, 201, `no se pudo importar el contrato: ${JSON.stringify(imported.body)}`);
   await api().put(`${projectBase}/config/bodies`).set(as(owner)).send({ bodyTemplates: { createThing: { body: { name: "creado", size: 7 } } } });
   await api().put(`${projectBase}/config/parameters`).set(as(owner)).send({
     parameterSamples: {},
@@ -57,6 +66,7 @@ async function projectAgainst(faults: StubFaults, environment: Partial<{ writesA
     authEnforced: environment.authEnforced ?? false,
   });
 
+  assert.equal(created.status, 201, `no se pudo crear el entorno: ${JSON.stringify(created.body)}`);
   return { target, projectBase, environmentId: created.body.environmentId as string };
 }
 

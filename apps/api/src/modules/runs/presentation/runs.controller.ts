@@ -11,12 +11,13 @@
  */
 import { Body, Controller, Get, HttpCode, Param, Post, Query, Sse, UseGuards } from "@nestjs/common";
 import { CommandBus, QueryBus } from "@nestjs/cqrs";
-import { Observable, filter, map, merge, startWith, takeWhile } from "rxjs";
+import { SkipThrottle } from "@nestjs/throttler";
+import { Observable, concat, from, map, takeWhile } from "rxjs";
 
 import { CurrentUser, OrgRoleGuard, RequireRole, type Principal } from "@/modules/auth/infrastructure/guards/auth.guard";
 import { StartRunCommand } from "../application/commands/start-run";
 import { CancelRunCommand } from "../application/commands/cancel-run";
-import { GetRunCaseQuery, GetRunQuery, ListRunsQuery } from "../application/queries/get-run";
+import { GetRunCaseQuery, GetRunQuery, ListRunsQuery, type RunView } from "../application/queries/get-run";
 import { RunProgressStream } from "../infrastructure/run-progress.stream";
 import { StartRunDto } from "./dto/runs.dto";
 
@@ -88,17 +89,26 @@ export class RunsController {
    * same shape, which is deliberate.
    */
   @Sse(":runId/stream")
+  // A long-lived connection is not a request rate, and counting it as one creates a trap: when
+  // the stream is refused the client falls back to polling, the polling spends the same budget,
+  // and the stream can never reconnect. One follower holds one connection; the real limit on
+  // this route is the number of open sockets, which is a different control.
+  @SkipThrottle()
   @RequireRole("viewer")
   stream(
     @Param("organizationId") organizationId: string,
     @Param("projectId") projectId: string,
     @Param("runId") runId: string,
   ): Observable<{ data: unknown; type: string }> {
-    const snapshot = this.queryBus.execute(new GetRunQuery(organizationId, projectId, runId));
-    return merge(this.progress.forRun(runId)).pipe(
-      startWith({ type: "snapshot", payload: snapshot }),
+    // `from` and not `startWith`: the query returns a promise, and putting it straight into the
+    // stream sends the *promise* — which serialises as `{}` and reaches the client as a snapshot
+    // with zero totals while the case rows say otherwise. It has to be resolved first.
+    const snapshot = from(this.queryBus.execute<GetRunQuery, RunView>(new GetRunQuery(organizationId, projectId, runId))).pipe(
+      map((run) => ({ type: "snapshot", payload: { totals: run.totals } })),
+    );
+
+    return concat(snapshot, this.progress.forRun(runId)).pipe(
       map((event) => ({ type: event.type, data: event.payload })),
-      filter((event) => Boolean(event.data)),
       // `true` is emitted with the terminal event and then the stream ends, so the last thing a
       // follower receives is the finished run and not a silent disconnection.
       takeWhile((event) => event.type !== "finished", true),

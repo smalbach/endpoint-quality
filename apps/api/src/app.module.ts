@@ -4,8 +4,8 @@ import { CqrsModule } from "@nestjs/cqrs";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 
 import { ConfigModule } from "./shared/config/config.module";
+import { SharedModule } from "./shared/shared.module";
 import { DatabaseModule } from "./shared/database/database.module";
-import { CLOCK, SystemClock } from "./shared/clock/clock.port";
 import { ProblemDetailsFilter } from "./shared/errors/problem-details.filter";
 import { AuthModule } from "./modules/auth/auth.module";
 import { IamModule } from "./modules/iam/iam.module";
@@ -26,6 +26,7 @@ import { HealthController } from "./shared/health.controller";
 @Module({
   imports: [
     ConfigModule,
+    SharedModule,
     DatabaseModule,
     CqrsModule.forRoot(),
     ThrottlerModule.forRoot([{ name: "default", ttl: 60_000, limit: 120 }]),
@@ -38,7 +39,6 @@ import { HealthController } from "./shared/health.controller";
   ],
   controllers: [HealthController],
   providers: [
-    { provide: CLOCK, useClass: SystemClock },
     { provide: APP_FILTER, useClass: ProblemDetailsFilter },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: AuthGuard },

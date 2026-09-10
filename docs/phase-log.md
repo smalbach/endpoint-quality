@@ -352,3 +352,86 @@ lo dice RFC 9110, no una convención de proyecto**, así que la regla vive ahora
 - La suite usa `--test-force-exit`: `fetch` mantiene sockets en el dispatcher global de undici y
   Node no expone forma pública de drenarlo. Sin el flag el proceso se queda colgado al salir con
   todas las aserciones ya en verde, que parece un timeout y es una fuga.
+
+---
+
+## P5 — El front · cerrada
+
+**Alcance**: `apps/web`, una SPA de Vite + React 19 + Tailwind 4 con login, lista de proyectos,
+la matriz reconectada, entornos, configuración, historial y corrida en vivo por SSE. Se abandona
+vinext y el Worker de Cloudflare.
+
+**Evidencia**
+
+    packages/runner-core   73 pass   0 fail
+    packages/spec-import   35 pass   0 fail
+    apps/api              159 pass   0 fail
+    apps/api (postgres)    17 pass   0 fail
+    apps/web               28 pass   0 fail
+
+**El criterio de aceptación, comprobado contra el artefacto.** `src/lib/bundle.test.ts` construye
+la aplicación y busca en el JS emitido las constantes que hacían monotemática a la versión
+acoplada: el EAN de las fixtures, `ean_sap`, las coordenadas de Bogotá, `Cundinamarca`,
+`RFP §6`, `catalog:admin`, la URL base del backend, y las descripciones de los casos generados.
+Ninguna aparece. Leer el código y concluir que se ve limpio no habría sido una comprobación: en
+la versión acoplada esas constantes estaban repartidas por cinco módulos y cada una parecía
+incidental donde estaba.
+
+**Ese test encontró una fuga a la primera**: había dejado `http://127.0.0.1:8100` —la URL del
+backend de Digital Catalog— como *placeholder* del formulario de entornos.
+
+**Cuatro fallos que solo aparecieron al ejecutar de verdad**
+
+Ninguno lo veía la suite, y los cuatro son del tipo que un despliegue encuentra el primer día.
+
+1. **`CLOCK` no era global.** Estaba registrado en `AppModule`, que no lo es, así que ningún
+   handler de un módulo hijo lo resolvía y el proceso no arrancaba. El harness de test registra
+   todos los proveedores en un módulo plano, así que no podía verlo: lo primero que lo vio fue
+   arrancar el binario.
+2. **`OrgRoleGuard` no resolvía sus dependencias** en `environments` y `runs`: `@UseGuards()`
+   instancia el guard en el módulo del controlador, y esos no importaban `IamModule`.
+3. **La cookie de refresh tenía `path=/auth`.** Detrás de un prefijo —`/api` con nginx, el mismo
+   con Vite— el navegador ve `/api/auth/refresh`, que no casa. La cookie no se enviaba nunca, la
+   renovación siempre fallaba, y **la sesión moría en cada recarga de la página**, en silencio:
+   la aplicación simplemente mostraba el login. Es `path=/`; lo que protege esa cookie es
+   `httpOnly` y `SameSite=Strict`, y ninguno de los dos depende de la ruta.
+4. **El primer evento SSE enviaba una promesa**, que Nest serializa como `{}`. Un cliente que se
+   conectaba a mitad de una corrida veía los totales a cero mientras las filas decían otra cosa.
+
+Y una decisión que salió de usarlo: **el stream SSE queda fuera del throttler**. Una conexión
+larga no es una tasa de peticiones, y contarla como tal crea una trampa — cuando el stream se
+rechaza el cliente cae a *polling*, el *polling* gasta el mismo presupuesto, y el stream ya no
+puede reconectar.
+
+**Verificado en un navegador, contra la API viva y Postgres real**: registro, sesión que sobrevive
+a un recargado, lista de proyectos con el contrato v1.8.0, la matriz con sus **46 operaciones y
+311 casos**, el selector de entorno marcando **179 casos que no se ejecutarán** en uno de solo
+lectura, una corrida lanzada desde la interfaz avanzando **en vivo**, y el detalle de un caso con
+sus cuatro aserciones — incluida `1 muestra: 2 ms (una medición no es un p95)`.
+
+**Decisiones que conviene conocer**
+
+- **El access token vive en memoria, nunca en `localStorage`.** Es la razón de que el refresh sea
+  una cookie httpOnly: un XSS en esta página puede llamar a la API mientras la pestaña esté
+  abierta, y no puede llevarse una credencial de treinta días.
+- **Un 401 dispara una sola renovación, compartida por todas las peticiones en vuelo.** Sin eso,
+  una página que lanza seis consultas al cargar manda seis renovaciones, cinco de las cuales
+  presentan un token que la primera ya rotó — y el servidor, correctamente, lo lee como robo y
+  cierra la sesión. Hay un test para exactamente ese caso.
+- **El SSE se lee con `fetch` y un parser propio, no con `EventSource`.** `EventSource` no puede
+  enviar cabeceras, y las alternativas eran el token en la URL —donde acaba en todos los logs— o
+  el access token como cookie, que reabre CSRF en todas las rutas.
+- **Los editores de configuración son áreas de JSON validadas por el servidor, no formularios.**
+  Es una parada consciente: un formulario por sección es una semana, las formas todavía se
+  mueven, y la API ya responde con la ruta exacta del campo que está mal.
+
+**Deuda que P5 deja anotada**
+
+- Un test intermitente: dos veces en la suite completa un `signUp` no devolvió token y el fallo
+  apareció como un 401 en la línea siguiente. **No se ha encontrado la causa**; se añadieron
+  aserciones en los helpers para que la nombren si vuelve, y tres pasadas seguidas van limpias.
+  Ambas apariciones fueron con la API y Vite corriendo a la vez en la misma máquina.
+- Los tipos de la API están escritos a mano en `apps/web/src/lib/types.ts`. `packages/contracts`
+  es donde se encuentran cuando haya un segundo consumidor; con un cliente, la indirección no se
+  paga sola.
+- Sin editores visuales de configuración, sin gestión de miembros en la interfaz y sin `/settings/org`.

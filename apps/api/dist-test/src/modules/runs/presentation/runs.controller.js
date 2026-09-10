@@ -26,6 +26,7 @@ exports.RunsController = void 0;
  */
 const common_1 = require("@nestjs/common");
 const cqrs_1 = require("@nestjs/cqrs");
+const throttler_1 = require("@nestjs/throttler");
 const rxjs_1 = require("rxjs");
 const auth_guard_1 = require("../../auth/infrastructure/guards/auth.guard");
 const start_run_1 = require("../application/commands/start-run");
@@ -70,8 +71,11 @@ let RunsController = class RunsController {
      * same shape, which is deliberate.
      */
     stream(organizationId, projectId, runId) {
-        const snapshot = this.queryBus.execute(new get_run_1.GetRunQuery(organizationId, projectId, runId));
-        return (0, rxjs_1.merge)(this.progress.forRun(runId)).pipe((0, rxjs_1.startWith)({ type: "snapshot", payload: snapshot }), (0, rxjs_1.map)((event) => ({ type: event.type, data: event.payload })), (0, rxjs_1.filter)((event) => Boolean(event.data)), 
+        // `from` and not `startWith`: the query returns a promise, and putting it straight into the
+        // stream sends the *promise* — which serialises as `{}` and reaches the client as a snapshot
+        // with zero totals while the case rows say otherwise. It has to be resolved first.
+        const snapshot = (0, rxjs_1.from)(this.queryBus.execute(new get_run_1.GetRunQuery(organizationId, projectId, runId))).pipe((0, rxjs_1.map)((run) => ({ type: "snapshot", payload: { totals: run.totals } })));
+        return (0, rxjs_1.concat)(snapshot, this.progress.forRun(runId)).pipe((0, rxjs_1.map)((event) => ({ type: event.type, data: event.payload })), 
         // `true` is emitted with the terminal event and then the stream ends, so the last thing a
         // follower receives is the finished run and not a silent disconnection.
         (0, rxjs_1.takeWhile)((event) => event.type !== "finished", true));
@@ -133,7 +137,13 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], RunsController.prototype, "cancel", null);
 __decorate([
-    (0, common_1.Sse)(":runId/stream"),
+    (0, common_1.Sse)(":runId/stream")
+    // A long-lived connection is not a request rate, and counting it as one creates a trap: when
+    // the stream is refused the client falls back to polling, the polling spends the same budget,
+    // and the stream can never reconnect. One follower holds one connection; the real limit on
+    // this route is the number of open sockets, which is a different control.
+    ,
+    (0, throttler_1.SkipThrottle)(),
     (0, auth_guard_1.RequireRole)("viewer"),
     __param(0, (0, common_1.Param)("organizationId")),
     __param(1, (0, common_1.Param)("projectId")),

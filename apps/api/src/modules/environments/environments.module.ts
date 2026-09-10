@@ -5,6 +5,8 @@ import { TypeOrmModule } from "@nestjs/typeorm";
 import { EnvironmentCredentialEntity, EnvironmentEntity, ProjectConfigEntity } from "@/shared/database/entities";
 import { SECRET_CIPHER } from "@/shared/crypto/secret-cipher";
 import { SecretCipherProvider } from "@/shared/crypto/secret-cipher.provider";
+import { AuthModule } from "@/modules/auth/auth.module";
+import { IamModule } from "@/modules/iam/iam.module";
 import { ProjectsModule } from "@/modules/projects/projects.module";
 import { SpecsModule } from "@/modules/specs/specs.module";
 import { ENVIRONMENT_REPOSITORY } from "./domain/ports";
@@ -40,6 +42,8 @@ export const ENVIRONMENT_ADAPTERS = [
 @Module({
   imports: [
     CqrsModule,
+    AuthModule,
+    IamModule,
     TypeOrmModule.forFeature([EnvironmentEntity, EnvironmentCredentialEntity, ProjectConfigEntity]),
     forwardRef(() => ProjectsModule),
     forwardRef(() => SpecsModule),

@@ -22,6 +22,11 @@ async function signUp(email, organizationName) {
     const password = "una-contraseña-larga";
     const registered = await api().post("/auth/register").send({ email, password, name: email.split("@")[0], organizationName });
     const session = await api().post("/auth/login").send({ email, password });
+    // Asserted rather than trusted. When login fails the token is `undefined`, every later request
+    // goes out as `Bearer undefined`, and the suite reports a 401 on whatever line happens to be
+    // next — which describes the symptom and hides the cause.
+    strict_1.default.equal(session.status, 200, `no se pudo iniciar sesión como ${email}: ${JSON.stringify(session.body)}`);
+    strict_1.default.ok(session.body.accessToken, `el login de ${email} no devolvió token`);
     return { userId: registered.body.userId, organizationId: registered.body.organizationId, accessToken: session.body.accessToken, email };
 }
 /** Puts an existing account into somebody else's organization at a given role, without going
