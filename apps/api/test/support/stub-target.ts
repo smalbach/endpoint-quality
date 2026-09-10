@@ -47,6 +47,21 @@ const SPEC = {
       post: {
         operationId: "createThing",
         tags: ["Things"],
+        // Declared, because a POST that takes a body and does not say so is a contract with a
+        // hole in it — and because it is what lets a project with no `bodies` section send
+        // anything at all. `id` is `readOnly`: the server makes it, and it must not be sent.
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["name", "size"],
+                properties: { id: { type: "string", readOnly: true }, name: { type: "string" }, size: { type: "integer", minimum: 2 } },
+              },
+            },
+          },
+        },
         responses: {
           "201": { content: { "application/json": { schema: { $ref: "#/components/schemas/ThingEnvelope" } } } },
           "401": {},

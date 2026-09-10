@@ -19,6 +19,7 @@ import request from "supertest";
 import { SwaggerModule, DocumentBuilder, type OpenAPIObject } from "@nestjs/swagger";
 
 import { describeErrors, PUBLIC_PATHS } from "@/shared/openapi/describe-errors";
+import { describeBodies } from "@/shared/openapi/describe-bodies";
 import { createTestApp, type TestContext } from "../support/test-app";
 
 let context: TestContext;
@@ -26,7 +27,7 @@ let document: OpenAPIObject;
 
 before(async () => {
   context = await createTestApp();
-  document = describeErrors(SwaggerModule.createDocument(context.app, new DocumentBuilder().setTitle("Endpoint Quality API").setVersion("0.1.0").addBearerAuth().build()));
+  document = describeBodies(describeErrors(SwaggerModule.createDocument(context.app, new DocumentBuilder().setTitle("Endpoint Quality API").setVersion("0.1.0").addBearerAuth().build())));
 });
 after(async () => {
   await context?.close();
@@ -99,6 +100,41 @@ describe("el contrato que publica esta API", () => {
     // Each one has to be: `/health` is what a load balancer polls, and the other three are how a
     // session begins — `refresh` in particular runs when there is no access token to present.
     assert.deepEqual([...PUBLIC_PATHS].sort(), ["/auth/login", "/auth/refresh", "/auth/register", "/health"]);
+  });
+
+  test("ningún cuerpo de petición se publica vacío", async () => {
+    // Nest genera `{"type":"object","properties":{}}` para cada DTO, porque las clases llevan
+    // decoradores de class-validator y ningún `@ApiProperty`. Eso decía que cada escritura acepta
+    // "un objeto" y nada más: el mismo fallo que declarar solo el camino feliz, un nivel más
+    // abajo. Pointing this product at its own contract produced 22 write cases with no payload.
+    //
+    // Esta prueba es lo que hace que la lista de DTOs de `describe-bodies.ts` no se pueda olvidar:
+    // un DTO nuevo que no esté en ella publica `{}` y rompe aquí.
+    const empty: string[] = [];
+    for (const { method, path, responses: _ignored } of operations()) {
+      const operation = ((document.paths?.[path] as Record<string, unknown>)[method] as { requestBody?: unknown }).requestBody as
+        | { content?: Record<string, { schema?: { $ref?: string } }> }
+        | undefined;
+      const schema = operation?.content?.["application/json"]?.schema;
+      if (!schema) continue;
+      const resolved = schema.$ref ? (document.components?.schemas?.[schema.$ref.split("/").pop()!] as { properties?: object } | undefined) : (schema as { properties?: object });
+      if (!resolved || Object.keys(resolved.properties ?? {}).length === 0) empty.push(`${method.toUpperCase()} ${path}`);
+    }
+    assert.deepEqual(empty, [], "estas operaciones declaran un cuerpo y no dicen qué lleva dentro");
+  });
+
+  test("el cuerpo publicado dice lo mismo que la validación exige", async () => {
+    // Derivado de `class-validator`, no escrito a mano, que es lo que impide que el documento y la
+    // regla se separen. Un `@MinLength(12)` y un `@ApiProperty({ minLength: 8 })` compilan los dos.
+    const register = document.components?.schemas?.RegisterDto as { required?: string[]; properties?: Record<string, Record<string, unknown>> };
+    assert.deepEqual(register.required, ["email", "password", "name"], "organizationName es opcional y no debe aparecer");
+    assert.deepEqual(register.properties?.email, { type: "string", maxLength: 320, format: "email" });
+    assert.equal(register.properties?.password.minLength, 12, "es el mínimo que el pipe rechaza de verdad");
+
+    // Y lo anidado se resuelve en línea: `source` es el único campo que toma el endpoint de
+    // importación, y valía `{}`.
+    const importSpec = document.components?.schemas?.ImportSpecDto as { properties?: Record<string, { properties?: object }> };
+    assert.ok(Object.keys(importSpec.properties?.source.properties ?? {}).length > 0, "el DTO anidado no se resolvió");
   });
 
   test("un 401 real tiene la forma que el documento promete", async () => {

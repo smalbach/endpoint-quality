@@ -11,6 +11,7 @@ import type { ConditionalScenario, ProjectConfig, ScenarioTemplate } from "./con
 import { toSample } from "./config.ts";
 import { interpolate } from "./text.ts";
 import { responseShapeFor } from "./envelope.ts";
+import { exampleFromSchema } from "./example.ts";
 
 /** Path parameters are the ones the path template mentions; everything else is a query. */
 export function pathParameters(operation: Operation): string[] {
@@ -23,11 +24,25 @@ export function queryParameters(operation: Operation): string[] {
 /** An operation plus the project's overlay: routed or not, its payloads, its envelope. */
 export function resolveOperation(operation: Operation, config: ProjectConfig): ResolvedOperation {
   const template = config.bodyTemplates[operation.id] ?? {};
+  /**
+   * **Configuration first, the contract second, nothing third.**
+   *
+   * A schema says what is structurally valid; a project knows what is *acceptable* — which store
+   * id exists, which EAN is real, which name is already taken. So a `bodies` entry always wins,
+   * and the derived example only fills the silence where there used to be no payload at all and
+   * every write came back 422.
+   *
+   * `conflictBody` is not derived on purpose: a 409 needs a payload that collides with a row that
+   * is already there, which is knowledge about the data and not about the schema. Without one
+   * there is no conflict case, exactly as before.
+   */
+  const derived = template.body ? undefined : exampleFromSchema(operation.requestSchema);
+  const body = template.body ?? (derived && typeof derived === "object" ? (derived as Record<string, unknown>) : undefined);
   return {
     ...operation,
     implemented: config.implemented === null ? true : config.implemented.includes(operation.id),
     responseShape: responseShapeFor(operation, config),
-    ...(template.body ? { body: template.body } : {}),
+    ...(body ? { body } : {}),
     ...(template.conflictBody ? { conflictBody: template.conflictBody } : {}),
     ...(template.replaceBody ? { replaceBody: template.replaceBody } : {}),
   };

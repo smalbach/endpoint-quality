@@ -37,7 +37,12 @@ let base: string;
 
 /** A project pointed at a freshly configured target. Each test gets its own so one run's writes
  * cannot change what the next one measures. */
-async function projectAgainst(faults: StubFaults, environment: Partial<{ writesAllowed: boolean; authEnforced: boolean; baseUrl: string }> = {}) {
+async function projectAgainst(
+  faults: StubFaults,
+  environment: Partial<{ writesAllowed: boolean; authEnforced: boolean; baseUrl: string }> = {},
+  /** Skips the `bodies` section, to exercise a project that was only ever pointed at a contract. */
+  options: { withoutBodies?: boolean } = {},
+) {
   const target = new StubTarget(faults);
   await target.start();
 
@@ -48,7 +53,9 @@ async function projectAgainst(faults: StubFaults, environment: Partial<{ writesA
   const projectBase = `/orgs/${owner.organizationId}/projects/${project.body.projectId}`;
   const imported = await api().post(`${projectBase}/spec-versions`).set(as(owner)).send({ source: { kind: "inline", raw: STUB_SPEC_YAML } });
   assert.equal(imported.status, 201, `no se pudo importar el contrato: ${JSON.stringify(imported.body)}`);
-  await api().put(`${projectBase}/config/bodies`).set(as(owner)).send({ bodyTemplates: { createThing: { body: { name: "creado", size: 7 } } } });
+  if (!options.withoutBodies) {
+    await api().put(`${projectBase}/config/bodies`).set(as(owner)).send({ bodyTemplates: { createThing: { body: { name: "creado", size: 7 } } } });
+  }
   await api().put(`${projectBase}/config/parameters`).set(as(owner)).send({
     parameterSamples: {},
     fallbackSamples: ["test"],
@@ -177,6 +184,56 @@ describe("una corrida completa contra un destino correcto", () => {
     const history = await api().get(`${fixture.projectBase}/runs`).set(as(owner));
     assert.ok(history.body.length >= 1);
     assert.ok(history.body[0].finishedAt);
+  });
+});
+
+/**
+ * The case for "point it at a project" rather than "configure a project".
+ *
+ * A contract that declares a `requestBody` has already said what the operation accepts. Before
+ * this, the engine ignored that and sent nothing unless somebody wrote a `bodies` section, so a
+ * project on its first day came back with every POST, PUT and PATCH red on a 422 — which reads as
+ * a finding about the API and was a gap in this tool.
+ */
+describe("un proyecto sin configurar todavía puede escribir", () => {
+  test("el cuerpo sale del contrato cuando el proyecto no lo define", async () => {
+    const fixture = await projectAgainst({}, {}, { withoutBodies: true });
+    const { run } = await runAndWait(fixture.projectBase, { environmentId: fixture.environmentId, operationIds: ["createThing"] });
+
+    const runCase = caseOf(run, "createThing", "create-read");
+    assert.equal(runCase.status, "passed", "sin sección bodies el POST debería seguir siendo verde");
+
+    const detail = await api().get(`${fixture.projectBase}/runs/${run.id}/cases/${runCase.id}`).set(as(owner));
+    const sent = detail.body.steps[0].request.body as Record<string, unknown>;
+    // Los obligatorios, con el mínimo declarado respetado…
+    assert.deepEqual(sent, { name: "ejemplo", size: 2 });
+    // …y **sin** `id`, que es readOnly: mandarlo es lo que un API estricto responde con 422, o
+    // sea que seríamos nosotros provocando el fallo que luego reportamos.
+    assert.equal("id" in sent, false);
+    await fixture.target.stop();
+  });
+
+  test("y la configuración sigue mandando cuando existe", async () => {
+    // A schema says what is structurally valid; a project knows what is acceptable. The derived
+    // body fills a silence, it does not overrule anybody.
+    const fixture = await projectAgainst({});
+    const { run } = await runAndWait(fixture.projectBase, { environmentId: fixture.environmentId, operationIds: ["createThing"] });
+    const runCase = caseOf(run, "createThing", "create-read");
+    const detail = await api().get(`${fixture.projectBase}/runs/${run.id}/cases/${runCase.id}`).set(as(owner));
+    assert.deepEqual(detail.body.steps[0].request.body, { name: "creado", size: 7 });
+    await fixture.target.stop();
+  });
+
+  test("el caso invalid-body sigue mandando un objeto vacío", async () => {
+    // Si el cuerpo derivado se colara aquí, el caso que comprueba el 422 mandaría un payload
+    // válido y esperaría que lo rechazaran.
+    const fixture = await projectAgainst({}, {}, { withoutBodies: true });
+    const { run } = await runAndWait(fixture.projectBase, { environmentId: fixture.environmentId, operationIds: ["createThing"] });
+    const runCase = caseOf(run, "createThing", "invalid-body");
+    assert.equal(runCase.status, "passed");
+    const detail = await api().get(`${fixture.projectBase}/runs/${run.id}/cases/${runCase.id}`).set(as(owner));
+    assert.deepEqual(detail.body.steps[0].request.body, {});
+    await fixture.target.stop();
   });
 });
 

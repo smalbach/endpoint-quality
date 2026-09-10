@@ -19,6 +19,9 @@ export type Operation = {
   /** Parameter names, path and query alike. A name that appears in `path` as `{name}` is a
    * path parameter; the generators tell them apart that way rather than by a second field. */
   parameters: string[];
+  /** The JSON Schema of the request body, dereferenced, when the contract declares one. It is
+   * what lets a project with no `bodies` section still send a payload — see `example.ts`. */
+  requestSchema?: unknown;
 };
 
 /** An operation plus what a project adds to it: whether it is routed, its payloads, and the

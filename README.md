@@ -118,12 +118,35 @@ node examples/sample-api/server.mjs                       # :9000
 EQ_API=http://localhost:3001 EQ_TARGET=http://localhost:9000 node tools/seed-demo.mjs
 ```
 
+## Qué hay que configurar, y qué no
+
+Un contrato que declara su `requestBody` ya ha dicho qué acepta cada escritura, así que los cuerpos
+salen de ahí: **un proyecto recién apuntado a un contrato escribe sin que nadie configure nada**.
+Se respetan `example`, `default` y `enum` primero —son el autor diciendo qué mandar—, luego los
+campos obligatorios, los formatos (`date-time`, `email`, `uuid`…) y los rangos declarados. Es
+determinista, para que dos corridas se puedan comparar.
+
+Lo que un contrato nunca dice, y sí pone el proyecto:
+
+- **qué valor existe de verdad** — un `store_id` que devuelve 200 y no 404;
+- **qué payload choca** con una fila que ya está ahí, que es el caso 409;
+- **qué forma tiene el envelope** de este equipo, cuando no hay schema declarado para ese estado;
+- **cuánto debería tardar** cada cosa.
+
+La configuración siempre gana sobre lo derivado: un schema dice qué es estructuralmente válido, un
+proyecto sabe qué es aceptable. `examples/sample-api/config.json` es un ejemplo entero y corto.
+
 ## Su propio contrato
 
-La API publica el suyo en `/openapi.json`, **con los errores que responde**, no solo el camino
-feliz: 45 operaciones y 220 respuestas declaradas, todas las de error como RFC 9457. No es
-cortesía — la matriz se genera desde los estados que una operación declara, así que un contrato con
-solo el 200 no produce ni matriz de autorización, ni caso de no-encontrado, ni de cuerpo inválido.
+La API publica el suyo en `/openapi.json`, **con los errores que responde y con lo que llevan
+dentro sus cuerpos**: 45 operaciones, 220 respuestas declaradas, todas las de error como RFC 9457.
+No es cortesía — la matriz se genera desde lo que una operación declara, así que un contrato con
+solo el 200 no produce ni matriz de autorización, ni caso de no-encontrado, ni de cuerpo inválido, y
+uno cuyos cuerpos son «un objeto» no produce ninguna escritura que se pueda ejecutar.
+
+Los cuerpos se derivan de `class-validator`, no se escriben a mano con `@ApiProperty`: repetir cada
+restricción al lado de la primera es cómo el documento acaba mintiendo sobre la regla que la API
+aplica. **El documento no puede separarse de la validación porque sale de ella.**
 
 Lo que permite la prueba más barata de si esto generaliza: importar la propia API como un proyecto
 más. Sin configurar nada, salen **182 casos** y 165 de las 220 respuestas quedan cubiertas. Los

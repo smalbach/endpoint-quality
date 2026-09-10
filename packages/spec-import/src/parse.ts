@@ -35,6 +35,19 @@ export type ImportedOperation = {
    * id is stable, but it is not the contract's own name for the operation, and configuration
    * keyed by it would break the day the author adds a real one. */
   derivedId: boolean;
+  /**
+   * The JSON Schema of the operation's request body, fully dereferenced, or `null`.
+   *
+   * Kept because it is the only thing that lets a project pointed at a fresh contract send a
+   * payload at all. Without it every write case had to wait for somebody to write a `bodies`
+   * section, and until they did, every POST, PUT and PATCH came back red on a 422 — which reads
+   * as a finding about the API and is a gap in this tool.
+   *
+   * Dereferenced here rather than at use: a request schema is a handful of components, the
+   * resolution needs the whole document, and the document is not what gets stored. The row is
+   * self-contained afterwards.
+   */
+  requestSchema: unknown;
 };
 
 export type ImportProblem = {
@@ -206,6 +219,7 @@ export function importSpec(raw: string): ImportedSpec {
         // the document default, so the presence of the key is what decides — not its emptiness.
         security: securitySchemes(operation.security) ?? defaultSecurity,
         derivedId: !declaredId,
+        requestSchema: requestSchema(operation.requestBody, document),
       });
     }
   }
@@ -232,6 +246,50 @@ export function importSpec(raw: string): ImportedSpec {
  */
 function compare(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * The schema of the JSON the operation accepts.
+ *
+ * Only JSON. A `multipart/form-data` upload or a `text/csv` import is a real thing for an API to
+ * accept and not something a generated example can stand in for, so those produce `null` and the
+ * operation keeps behaving as it did — no derived body, no invented payload.
+ *
+ * `application/json` is matched by prefix so `application/json; charset=utf-8` and the vendor
+ * types (`application/vnd.acme.v2+json`) are not missed.
+ */
+function requestSchema(node: unknown, root: Record<string, unknown>): unknown {
+  const body = resolve(node, root) as Record<string, unknown> | undefined;
+  const content = body?.content as Record<string, unknown> | undefined;
+  if (!content || typeof content !== "object") return null;
+  const mediaType = Object.keys(content).find((type) => /^application\/(.*\+)?json\b/.test(type.trim().toLowerCase()));
+  if (!mediaType) return null;
+  const media = resolve(content[mediaType], root) as Record<string, unknown> | undefined;
+  if (!media?.schema) return null;
+  return dereference(media.schema, root) ?? null;
+}
+
+/**
+ * `$ref` resolved everywhere, not just at the top.
+ *
+ * `resolve` above follows a chain of refs on one node, which is what a parameter needs. A request
+ * schema is a tree, and the refs are usually on the leaves — `properties.store.$ref`. Leaving
+ * those unresolved produces an example with a `$ref` string in it, which is worse than no example.
+ *
+ * A cycle becomes `{}`: a category whose `parent` is a category is a perfectly ordinary schema,
+ * and the alternative to stopping is not stopping.
+ */
+function dereference(node: unknown, root: Record<string, unknown>, seen: Set<string> = new Set()): unknown {
+  if (Array.isArray(node)) return node.map((item) => dereference(item, root, seen));
+  if (!node || typeof node !== "object") return node;
+  const record = node as Record<string, unknown>;
+  if (typeof record.$ref === "string") {
+    if (!record.$ref.startsWith("#/") || seen.has(record.$ref)) return {};
+    let target: unknown = root;
+    for (const part of record.$ref.slice(2).split("/")) target = (target as Record<string, unknown> | undefined)?.[decodePointerSegment(part)];
+    return dereference(target, root, new Set(seen).add(record.$ref));
+  }
+  return Object.fromEntries(Object.entries(record).map(([key, value]) => [key, dereference(value, root, seen)]));
 }
 
 function parameterNames(node: unknown, root: Record<string, unknown>, pointer: string, problems: ImportProblem[]): string[] {

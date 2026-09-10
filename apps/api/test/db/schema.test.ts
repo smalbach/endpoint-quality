@@ -19,7 +19,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { DataSource } from "typeorm";
 
-import { buildDataSourceOptions } from "@/shared/database/data-source";
+import { buildDataSourceOptions, MIGRATIONS } from "@/shared/database/data-source";
 
 const DATABASE_URL = process.env.EQ_TEST_DATABASE_URL;
 const REASON = "sin EQ_TEST_DATABASE_URL: levanta Postgres (docker compose -f docker/compose.yml up -d postgres) y reexporta la variable";
@@ -57,34 +57,31 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
     ]);
   });
 
-  test("son reversibles: cada down deshace su up y up lo reconstruye", async () => {
+  test("son reversibles: se deshacen todas y up lo reconstruye entero", async () => {
     // A migration nobody has ever reverted is a migration that cannot be reverted, and that is
-    // discovered during the incident rather than before it. Both are undone, in order, because
-    // the second adds a foreign key into a table the first creates — reverting only the last
-    // would leave a constraint pointing at a table about to disappear.
-    const exists = async (table: string) =>
-      ((await dataSource!.query(`SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=$1`, [table])) as unknown[]).length;
+    // discovered during the incident rather than before it.
+    //
+    // Counted from `MIGRATIONS` instead of unrolled by hand. The unrolled version asserted, step
+    // by step, which table each `down` removes — and broke the day a fifth migration was added,
+    // for a reason that had nothing to do with reversibility. What is actually being claimed is
+    // that the whole ladder comes down and goes back up.
+    const tables = async () =>
+      ((await dataSource!.query(`SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name <> 'migrations'`)) as { table_name: string }[])
+        .map((row) => row.table_name)
+        .sort();
 
-    await dataSource!.undoLastMigration();
-    assert.equal(await exists("runs"), 0);
-    assert.equal(await exists("environments"), 1, "revertir la última migración no debe tocar las anteriores");
+    const before = await tables();
+    assert.ok(before.length > 0);
 
-    await dataSource!.undoLastMigration();
-    assert.equal(await exists("environments"), 0);
-    assert.equal(await exists("spec_versions"), 1, "revertir la última migración no debe tocar las anteriores");
-
-    await dataSource!.undoLastMigration();
-    assert.equal(await exists("spec_versions"), 0);
-    assert.equal(await exists("users"), 1);
-
-    await dataSource!.undoLastMigration();
-    assert.equal(await exists("users"), 0);
+    for (let remaining = MIGRATIONS.length; remaining > 0; remaining -= 1) {
+      await dataSource!.undoLastMigration();
+    }
+    // Nothing of ours left standing: a `down` that forgets a table leaves it here, and the next
+    // `up` fails on an object that already exists — during the incident.
+    assert.deepEqual(await tables(), []);
 
     await dataSource!.runMigrations();
-    assert.equal(await exists("users"), 1);
-    assert.equal(await exists("spec_operations"), 1);
-    assert.equal(await exists("environment_credentials"), 1);
-    assert.equal(await exists("run_steps"), 1);
+    assert.deepEqual(await tables(), before, "el esquema reconstruido no es el mismo");
   });
 
   test("correr las migraciones dos veces no hace nada la segunda", async () => {

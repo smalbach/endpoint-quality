@@ -4,9 +4,15 @@
     "`PUT /config/:section`.",
     "",
     "Está aquí y no dentro del código a propósito: es lo que hay que escribir para adaptar el",
-    "producto a un contrato nuevo, y verlo es la mitad de la demostración. Un contrato dice qué",
-    "responde cada operación; no dice qué payload es válido, cuál choca contra una clave única,",
-    "ni cuánto debería tardar. Eso lo pone el proyecto.",
+    "producto a un contrato nuevo, y verlo es la mitad de la demostración.",
+    "",
+    "Fíjate en lo que casi no hay: la sección `bodies` solo trae un `conflictBody`. Los cuerpos de",
+    "las escrituras salen del `requestBody` que el propio contrato declara — el proyecto no los",
+    "escribe. El del 409 sí, porque un contrato describe qué es válido y no sabe qué fila ya",
+    "existe; sin él, sencillamente no hay caso de conflicto.",
+    "",
+    "El resto es lo mismo: lo que un contrato nunca dice. Qué valor de parámetro existe de verdad,",
+    "qué forma tiene el envelope, y cuánto debería tardar cada cosa.",
     "",
     "Solo se envían las secciones que este contrato necesita. Las demás se quedan con su valor",
     "por defecto, que es casi vacío a propósito: el motor no sabe nada de ningún proyecto."
@@ -24,16 +30,19 @@
   "bodies": {
     "bodyTemplates": {
       "createWidget": {
-        "body": { "name": "Widget de prueba", "colour": "morado", "stock": 7 },
         "conflictBody": { "name": "Widget de muestra", "colour": "azul", "stock": 1 }
-      },
-      "patchWidget": {
-        "body": { "colour": "verde" }
       }
     }
   },
   "envelope": {
-    "envelope": {
+    "bodies": {
+    "bodyTemplates": {
+      "createWidget": {
+        "conflictBody": { "name": "Widget de muestra", "colour": "azul", "stock": 1 }
+      }
+    }
+  },
+  "envelope": {
       "rules": [
         { "id": "sin-cuerpo", "match": { "methods": ["DELETE"] }, "shape": "No body" },
         { "_comment": "Sin esta regla /health sale en rojo con el motivo escrito: cumple su schema y no tiene la forma { data }. Es el mensaje que dice dónde está la perilla.", "id": "salud", "match": { "operationId": "healthCheck" }, "shape": "{ status, checks }" }

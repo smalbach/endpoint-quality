@@ -56,6 +56,7 @@ export class TypeOrmSpecRepository implements SpecRepositoryPort {
           parameters: operation.parameters,
           security: operation.security,
           derivedId: operation.derivedId,
+          requestSchema: operation.requestSchema ?? null,
         }));
         // Chunked: a contract with thousands of operations would otherwise build one statement
         // past what the driver will accept.
@@ -83,6 +84,7 @@ export class TypeOrmSpecRepository implements SpecRepositoryPort {
       parameters: row.parameters,
       security: row.security,
       derivedId: row.derivedId,
+      requestSchema: row.requestSchema ?? null,
     }));
   }
 

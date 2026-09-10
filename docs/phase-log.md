@@ -673,3 +673,90 @@ colgar un flujo de borrado, y el 202 es el arranque asíncrono de una corrida.
   `examples/sample-api/config.json` y es media demostración— pero derivar un ejemplo del JSON
   Schema declarado es lo que separa «funciona configurándolo» de «funciona apuntándolo». Es el
   siguiente trabajo con más valor por línea.
+
+---
+
+## Apuntar en vez de configurar · cerrada
+
+La deuda que P7 dejó señalada como el siguiente trabajo con más valor por línea: un proyecto nuevo
+apuntado a un contrato que declara su `requestBody` seguía necesitando una sección `bodies` escrita
+a mano, y hasta que alguien la escribía **todos sus POST, PUT y PATCH volvían en 422**. Eso se lee
+como un hallazgo sobre la API y era un hueco de esta herramienta. El contrato tenía la respuesta
+desde el principio; la importación la estaba tirando a la basura.
+
+### Lo que se hizo
+
+`spec-import` guarda el JSON Schema del `requestBody`, con los `$ref` resueltos **en todo el
+árbol** y no solo en la raíz — los refs suelen estar en las hojas, y dejarlos sin resolver produce
+un ejemplo con la cadena `$ref` dentro, que es peor que no tener ejemplo. Una columna `jsonb`
+nullable lo persiste; nula significa «nada que derivar», que es exactamente lo que hacía cada fila
+antes de que la columna existiera, así que los contratos importados con la versión anterior siguen
+comportándose igual y reimportar es lo que los rellena.
+
+`runner-core` gana `exampleFromSchema`. Las reglas, y el porqué de cada una:
+
+- **Lo que dice el documento gana**: `example`, `default`, `const`, `enum`, en ese orden y a
+  cualquier profundidad. Un `example` en el cuerpo entero es el autor diciendo qué mandar.
+- **Los obligatorios siempre; los opcionales solo si el documento les dio valor.** El payload
+  mínimo válido es el que más probablemente se acepte, y un 422 provocado por un campo opcional que
+  nadie pidió se lee como un fallo del endpoint.
+- **Salvo que no haya ninguno obligatorio**, y entonces todos los que declare. Declararlo todo
+  opcional es lo que *es* un `PATCH`: su payload mínimo válido es `{}`, que es no mandar nada, y a
+  eso varias APIs responden 422 con razón.
+- **`readOnly` no viaja.** Lo dice OpenAPI, y una API que valida estricto responde 422 — seríamos
+  nosotros provocando el fallo que luego reportamos.
+- **`minLength`, `maxLength`, `minimum`, `multipleOf`, `minItems`** se respetan. Un valor que
+  incumple la restricción que el propio contrato publicó sería esta herramienta escribiendo el 422.
+- **Determinista.** Un cuerpo que cambia entre corridas hace dos corridas incomparables y un fallo
+  irreproducible.
+- **Nunca un objeto vacío.** Un objeto vacío *es* el caso `invalid-body`; devolverlo aquí haría que
+  el caso de creación y el de cuerpo inválido mandaran el mismo payload y esperaran lo contrario.
+- **El 409 no se deriva.** Necesita un payload que choque con una fila que ya está ahí, que es
+  conocimiento sobre los datos y no sobre el schema. `conflictBody` sigue siendo configuración, y
+  sin él sencillamente no hay caso de conflicto.
+
+Y **la configuración sigue mandando**: un schema dice qué es estructuralmente válido; un proyecto
+sabe qué es *aceptable* — qué tienda existe, qué EAN es real, qué nombre está cogido.
+
+### La prueba
+
+La sección `bodies` de la demostración se borró. Lo único que quedó de ella es un `conflictBody`,
+que es justo la línea que hay que explicar. La corrida sigue en **15 casos, 13 verdes y 2 rojos**, y
+los rojos siguen siendo el fallo sembrado. Los cuerpos de `createWidget` y `patchWidget` los pone
+ahora el contrato.
+
+El corte de paridad de P6 se volvió a ejecutar entero: **idéntico**, las dos pasadas. Digital
+Catalog define sus 21 cuerpos, así que la configuración gana y no cambió nada — que es la propiedad
+que se quería.
+
+### Y por el camino, otra vez el mismo defecto un nivel más abajo
+
+Apuntar el producto a su propio contrato tras esto seguía dando **22 casos de escritura sin
+cuerpo**. El motivo: Nest genera `{"type":"object","properties":{}}` para cada DTO, porque las
+clases llevan decoradores de `class-validator` y ningún `@ApiProperty`. El contrato decía que cada
+escritura acepta «un objeto» y nada más.
+
+La solución obvia —`@ApiProperty` en las cincuenta y tres propiedades— no se tomó por una razón:
+repetiría cada restricción una segunda vez, al lado de la primera, sin nada que mantenga las dos de
+acuerdo. Un `@MinLength(12)` y un `@ApiProperty({ minLength: 8 })` en el mismo campo compilan los
+dos, y el documento estaría mintiendo sobre la regla que la API aplica.
+
+`describe-bodies.ts` lee las reglas en vez de repetirlas: `class-validator` guarda cada una con el
+nombre del validador que la produjo, y eso basta para escribir la misma regla como JSON Schema.
+**El documento no puede separarse de la validación porque sale de ella.** Los anidados
+(`@ValidateNested`) se resuelven por `design:type` y se escriben en línea, porque Nest nunca puso
+esas clases en `components` y una referencia colgaría.
+
+Resultado: de 22 escrituras sin cuerpo a **5**, y las cinco son honestas — tres operaciones que no
+llevan cuerpo, una que acepta JSON arbitrario (`PUT /config/{section}`), y el arranque de corrida.
+Una prueba recorre el documento y falla si cualquier operación declara un cuerpo y no dice qué
+lleva dentro, que es lo que hace que la lista de DTOs no se pueda olvidar.
+
+### Deuda
+
+- `EnvironmentDto` declara **todos** sus campos opcionales porque lo comparten el POST y el PATCH,
+  así que el documento dice ahora, con razón, que crear un entorno no exige nada. El 422 de un
+  `name` que falta sale del handler y no del pipe. Separar los dos DTOs es la corrección.
+- Los formatos que `exampleFromSchema` no conoce caen al marcador genérico. Es correcto —inventar
+  un valor para una regla que no entiende metería en el contrato una afirmación que nada respalda—
+  pero un `pattern` con una expresión regular sencilla sí se podría satisfacer.

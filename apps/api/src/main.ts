@@ -11,6 +11,7 @@ import { ENV, type Env } from "./shared/config/env";
 import { HttpStatus } from "@nestjs/common";
 import { MAX_JSON_BODY } from "./shared/http/body-limits";
 import { describeErrors } from "./shared/openapi/describe-errors";
+import { describeBodies } from "./shared/openapi/describe-bodies";
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
@@ -41,15 +42,17 @@ async function bootstrap(): Promise<void> {
   // path; the errors are added from the shape of the route, because that is where the guards
   // decide them. A contract that promises less than the service does is the exact fault this
   // product looks for elsewhere.
-  const document = describeErrors(
-    SwaggerModule.createDocument(
-      app,
-      new DocumentBuilder()
-        .setTitle("Endpoint Quality API")
-        .setDescription("Verificación de contratos HTTP. Todos los errores son RFC 9457 (application/problem+json).")
-        .setVersion("0.1.0")
-        .addBearerAuth()
-        .build(),
+  const document = describeBodies(
+    describeErrors(
+      SwaggerModule.createDocument(
+        app,
+        new DocumentBuilder()
+          .setTitle("Endpoint Quality API")
+          .setDescription("Verificación de contratos HTTP. Todos los errores son RFC 9457 (application/problem+json).")
+          .setVersion("0.1.0")
+          .addBearerAuth()
+          .build(),
+      ),
     ),
   );
   SwaggerModule.setup("docs", app, document, { jsonDocumentUrl: "openapi.json" });

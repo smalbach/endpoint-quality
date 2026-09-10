@@ -10,10 +10,11 @@ import { InitialSchema1700000000000 } from "./migrations/1700000000000-InitialSc
 import { ProjectsAndSpecs1700000001000 } from "./migrations/1700000001000-ProjectsAndSpecs";
 import { EnvironmentsAndConfig1700000002000 } from "./migrations/1700000002000-EnvironmentsAndConfig";
 import { Runs1700000003000 } from "./migrations/1700000003000-Runs";
+import { RequestSchemas1700000004000 } from "./migrations/1700000004000-RequestSchemas";
 
 // Ordered. TypeORM runs them by the timestamp in the class name, and the second one adds a
 // foreign key into a table the first creates.
-export const MIGRATIONS = [InitialSchema1700000000000, ProjectsAndSpecs1700000001000, EnvironmentsAndConfig1700000002000, Runs1700000003000];
+export const MIGRATIONS = [InitialSchema1700000000000, ProjectsAndSpecs1700000001000, EnvironmentsAndConfig1700000002000, Runs1700000003000, RequestSchemas1700000004000];
 
 export function buildDataSourceOptions(databaseUrl: string) {
   return {

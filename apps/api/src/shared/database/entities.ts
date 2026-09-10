@@ -177,6 +177,10 @@ export class SpecOperationEntity {
   @Column({ type: "jsonb" }) parameters: string[];
   @Column({ type: "jsonb" }) security: string[];
   @Column({ type: "boolean", default: false }) derivedId: boolean;
+  /** The request body's JSON Schema, dereferenced at import. Null for operations that take no
+   * body, take one that is not JSON, or were imported before this column existed — all three
+   * mean the same thing to the engine: nothing to derive a payload from. */
+  @Column({ type: "jsonb", nullable: true }) requestSchema: unknown;
   /** The document order, so "contrato" ordering survives a round trip through the database
    * instead of depending on whatever order Postgres returns rows in. */
   @Column({ type: "int" }) position: number;
