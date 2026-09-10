@@ -1,3 +1,5 @@
+import type { MemberOf, MembersViewOf, PendingInvitationOf } from "@eq/contracts";
+
 import { Inject } from "@nestjs/common";
 import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
 
@@ -9,9 +11,9 @@ export class ListMembersQuery implements IQuery {
   constructor(readonly organizationId: string) {}
 }
 
-export type MemberView = { userId: string; email: string; name: string; role: Role; since: Date };
-export type PendingInvitationView = { id: string; email: string; role: Role; expiresAt: Date };
-export type MembersView = { members: MemberView[]; invitations: PendingInvitationView[] };
+export type MemberView = MemberOf<Date>;
+export type PendingInvitationView = PendingInvitationOf<Date>;
+export type MembersView = MembersViewOf<Date>;
 
 @QueryHandler(ListMembersQuery)
 export class ListMembersHandler implements IQueryHandler<ListMembersQuery, MembersView> {

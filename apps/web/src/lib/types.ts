@@ -12,6 +12,7 @@
  * `@/lib/types` and the change stops at this file.
  */
 export type {
+  ApiTokenView,
   Assertion,
   CaseStatus,
   ConfigView,
@@ -19,6 +20,9 @@ export type {
   CoverageView,
   CurrentUser,
   Environment,
+  Member,
+  MembersView,
+  PendingInvitation,
   OperationScenarios,
   ProblemDetails,
   ProjectSummary,

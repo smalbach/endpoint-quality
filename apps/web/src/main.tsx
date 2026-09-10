@@ -9,6 +9,7 @@ import { AuthProvider, useAuth } from "@/lib/auth";
 import { AppLayout } from "@/components/layout";
 import { LoginPage } from "@/routes/login";
 import { ProjectsPage } from "@/routes/projects";
+import { SettingsPage } from "@/routes/settings";
 import { MatrixPage } from "@/routes/matrix";
 import { EnvironmentsPage } from "@/routes/environments";
 import { ConfigPage } from "@/routes/config";
@@ -49,6 +50,7 @@ createRoot(document.getElementById("root")!).render(
             <Route path="/register" element={<LoginPage mode="register" />} />
             <Route element={<Protected />}>
               <Route index element={<ProjectsPage />} />
+              <Route path="settings/org" element={<SettingsPage />} />
               <Route path="p/:projectId">
                 <Route index element={<MatrixPage />} />
                 <Route path="environments" element={<EnvironmentsPage />} />

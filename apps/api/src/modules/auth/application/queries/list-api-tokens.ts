@@ -1,3 +1,5 @@
+import type { ApiTokenViewOf } from "@eq/contracts";
+
 import { Inject } from "@nestjs/common";
 import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
 
@@ -7,7 +9,7 @@ export class ListApiTokensQuery implements IQuery {
   constructor(readonly organizationId: string) {}
 }
 
-export type ApiTokenView = { id: string; name: string; preview: string; createdAt: Date; lastUsedAt: Date | null; revokedAt: Date | null };
+export type ApiTokenView = ApiTokenViewOf<Date>;
 
 /** The token list an operator sees. `tokenHash` never appears in it — the hash is not the secret,
  * but publishing it turns an offline check of a guessed token into a free oracle. */

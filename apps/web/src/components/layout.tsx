@@ -45,7 +45,9 @@ export function AppLayout() {
             Endpoint Quality
           </NavLink>
           <div className="flex items-center gap-3 text-xs text-slate-500">
-            <span>{user?.organizations[0]?.name}</span>
+            <NavLink to="/settings/org" className="underline-offset-2 hover:underline">
+              {user?.organizations[0]?.name}
+            </NavLink>
             <span className="text-slate-300">·</span>
             <span>{user?.email}</span>
             <Button variant="ghost" className="h-7 px-2 text-xs" onClick={() => void signOut()}>

@@ -33,6 +33,21 @@ export type CurrentUser = {
   organizations: OrganizationMembership[];
 };
 
+export type MemberOf<T> = { userId: string; email: string; name: string; role: Role; since: T };
+/** An invitation that has not been accepted. It is listed next to the members because «invited»
+ * and «is a member» look the same to whoever is waiting for access. */
+export type PendingInvitationOf<T> = { id: string; email: string; role: Role; expiresAt: T };
+export type MembersViewOf<T> = { members: MemberOf<T>[]; invitations: PendingInvitationOf<T>[] };
+
+/**
+ * A service credential, as it is listed.
+ *
+ * `preview` is the only part of the token any query ever returns — the whole thing is shown once,
+ * when it is issued, and stored as a hash. A list that could show it again would be a list worth
+ * stealing.
+ */
+export type ApiTokenViewOf<T> = { id: string; name: string; preview: string; createdAt: T; lastUsedAt: T | null; revokedAt: T | null };
+
 // ---------------------------------------------------------------------------------------------
 // Projects and contracts
 // ---------------------------------------------------------------------------------------------
@@ -195,6 +210,10 @@ export type RunReportOf<T> = { run: RunOf<T>; cases: RunReportCase[] };
 // The wire: every shape above, as JSON delivers it
 // ---------------------------------------------------------------------------------------------
 
+export type Member = MemberOf<string>;
+export type PendingInvitation = PendingInvitationOf<string>;
+export type MembersView = MembersViewOf<string>;
+export type ApiTokenView = ApiTokenViewOf<string>;
 export type ContractSummary = ContractSummaryOf<string>;
 export type ProjectSummary = ProjectSummaryOf<string>;
 export type CredentialSummary = CredentialSummaryOf<string>;

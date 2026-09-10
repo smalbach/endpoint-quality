@@ -8,7 +8,8 @@
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, login as apiLogin, logout as apiLogout, refreshOnce, register as apiRegister } from "./api";
-import type { CurrentUser } from "./types";
+import { atLeast } from "./roles";
+import type { CurrentUser, Role } from "./types";
 
 type AuthState = {
   status: "loading" | "authenticated" | "anonymous";
@@ -84,16 +85,15 @@ export function useAuth(): AuthState {
 
 /** The organization the app is acting in. Everything below a project hangs off it, so it is
  * resolved once here rather than threaded through every query key. */
-export function useOrganization(): { id: string; role: string } | null {
+export function useOrganization(): { id: string; name: string; role: Role } | null {
   const { user } = useAuth();
   const organization = user?.organizations[0];
-  return organization ? { id: organization.id, role: organization.role } : null;
+  return organization ? { id: organization.id, name: organization.name, role: organization.role } : null;
 }
 
 /** Whether the signed-in member reaches a given rung. The server enforces it; this only decides
- * whether to render a button that would come back 403. */
-const RANK: Record<string, number> = { viewer: 0, editor: 1, admin: 2, owner: 3 };
-export function useCan(required: "viewer" | "editor" | "admin" | "owner"): boolean {
-  const organization = useOrganization();
-  return organization ? (RANK[organization.role] ?? -1) >= RANK[required] : false;
+ * whether to render a button that would come back 403. The ladder itself lives in `./roles`, once
+ * — two copies of it is how «admin» ends up outranking «owner» on one screen and not the other. */
+export function useCan(required: Role): boolean {
+  return atLeast(useOrganization()?.role, required);
 }

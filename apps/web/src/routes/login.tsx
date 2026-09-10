@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
-import { Link, Navigate, useNavigate } from "react-router-dom";
-import { ApiError } from "@/lib/api";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Button, Card, Field, inputClass } from "@/components/ui";
 
@@ -13,7 +13,16 @@ import { Button, Card, Field, inputClass } from "@/components/ui";
  * undo it.
  */
 export function LoginPage({ mode }: { mode: "login" | "register" }) {
-  const { status, signIn, signUp } = useAuth();
+  const { status, signIn, signUp, reload } = useAuth();
+  /**
+   * An invitation carried in the URL.
+   *
+   * The API accepts an invitation on behalf of a signed-in user, which means the token has to
+   * survive the sign-up: the invitee follows a link, creates the account the link was meant for,
+   * and would otherwise land in an organization of their own with no way back to the one that
+   * invited them. Accepting right after the session exists is what closes that.
+   */
+  const invitation = useSearchParams()[0].get("invitation");
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -33,6 +42,10 @@ export function LoginPage({ mode }: { mode: "login" | "register" }) {
     try {
       if (mode === "login") await signIn(email, password);
       else await signUp({ email, password, name, ...(organizationName ? { organizationName } : {}) });
+      if (invitation) {
+        await api("/invitations/accept", { method: "POST", body: { token: invitation } });
+        await reload();
+      }
       navigate("/", { replace: true });
     } catch (caught) {
       setError(caught as Error);
@@ -46,7 +59,11 @@ export function LoginPage({ mode }: { mode: "login" | "register" }) {
       <Card className="w-full max-w-sm p-6">
         <h1 className="text-lg font-semibold text-slate-900">Endpoint Quality</h1>
         <p className="mt-1 text-xs text-slate-500">
-          {mode === "login" ? "Entra para ver tus proyectos y sus corridas." : "Crea una cuenta y la organización que la contiene."}
+          {invitation
+            ? "Te han invitado a una organización. Crea tu cuenta y entrarás directamente en ella."
+            : mode === "login"
+              ? "Entra para ver tus proyectos y sus corridas."
+              : "Crea una cuenta y la organización que la contiene."}
         </p>
 
         <form className="mt-6 space-y-4" onSubmit={submit}>
@@ -72,7 +89,7 @@ export function LoginPage({ mode }: { mode: "login" | "register" }) {
               autoComplete={mode === "login" ? "current-password" : "new-password"}
             />
           </Field>
-          {mode === "register" && (
+          {mode === "register" && !invitation && (
             <Field label="Organización" hint="Opcional. Si la dejas vacía se crea una con tu nombre.">
               <input className={inputClass} value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} autoComplete="organization" />
             </Field>
