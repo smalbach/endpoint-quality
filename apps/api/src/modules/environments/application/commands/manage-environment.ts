@@ -19,13 +19,26 @@ export type EnvironmentInput = {
 };
 
 export class CreateEnvironmentCommand implements ICommand {
-  constructor(readonly organizationId: string, readonly projectId: string, readonly input: EnvironmentInput) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly input: EnvironmentInput,
+  ) {}
 }
 export class UpdateEnvironmentCommand implements ICommand {
-  constructor(readonly organizationId: string, readonly projectId: string, readonly environmentId: string, readonly input: EnvironmentInput) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly environmentId: string,
+    readonly input: EnvironmentInput,
+  ) {}
 }
 export class DeleteEnvironmentCommand implements ICommand {
-  constructor(readonly organizationId: string, readonly projectId: string, readonly environmentId: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly environmentId: string,
+  ) {}
 }
 
 /** Loads an environment and refuses to admit it exists outside its project. Folded into the 404
@@ -39,7 +52,8 @@ export async function ownedEnvironment(
 ): Promise<Environment> {
   await ownedProject(projects, organizationId, projectId);
   const environment = await environments.findById(environmentId);
-  if (!environment || environment.projectId !== projectId) throw new NotFoundError("El entorno no existe", "environment-not-found");
+  if (!environment || environment.projectId !== projectId)
+    throw new NotFoundError("El entorno no existe", "environment-not-found");
   return environment;
 }
 
@@ -50,14 +64,28 @@ function normalizeBaseUrl(value: string): string {
   try {
     url = new URL(value);
   } catch {
-    throw new InvalidInputError("La URL base no es válida", [{ field: "baseUrl", detail: "Debe ser una URL absoluta" }]);
+    throw new InvalidInputError("La URL base no es válida", [
+      { field: "baseUrl", detail: "Debe ser una URL absoluta" },
+    ]);
   }
   if (!["http:", "https:"].includes(url.protocol)) {
-    throw new InvalidInputError("La URL base no es válida", [{ field: "baseUrl", detail: "Solo se admiten http y https" }]);
+    throw new InvalidInputError("La URL base no es válida", [
+      { field: "baseUrl", detail: "Solo se admiten http y https" },
+    ]);
   }
   // Trailing slash removed once, here, so every path join downstream is `${baseUrl}${path}` and
   // nothing has to guess whether it will produce a double slash.
   return url.toString().replace(/\/+$/, "");
+}
+
+function normalizeVariables(value: Record<string, string>): Record<string, string> {
+  const entries = Object.entries(value);
+  const invalid = entries.find(([key, item]) => !/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(key) || typeof item !== "string");
+  if (invalid)
+    throw new InvalidInputError("Las variables del entorno no son válidas", [
+      { field: `variables.${invalid[0]}`, detail: "Use un nombre válido y un valor de texto" },
+    ]);
+  return Object.fromEntries(entries.map(([key, item]) => [key.trim(), item]));
 }
 
 @CommandHandler(CreateEnvironmentCommand)
@@ -72,7 +100,8 @@ export class CreateEnvironmentHandler implements ICommandHandler<CreateEnvironme
     const project = await ownedProject(this.projects, command.organizationId, command.projectId);
     const name = (command.input.name ?? "").trim();
     if (!name) throw new InvalidInputError("El entorno necesita un nombre", [{ field: "name", detail: "Requerido" }]);
-    if (await this.environments.findByName(project.id, name)) throw new ConflictError("Ya hay un entorno con ese nombre", "environment-name-taken");
+    if (await this.environments.findByName(project.id, name))
+      throw new ConflictError("Ya hay un entorno con ese nombre", "environment-name-taken");
 
     const environment: Environment = {
       id: randomUUID(),
@@ -80,7 +109,7 @@ export class CreateEnvironmentHandler implements ICommandHandler<CreateEnvironme
       name,
       baseUrl: normalizeBaseUrl(command.input.baseUrl ?? ""),
       specUrl: command.input.specUrl ?? null,
-      variables: command.input.variables ?? {},
+      variables: normalizeVariables(command.input.variables ?? {}),
       // Both default to off. A run that writes to a target, and a matrix of 401 cases against a
       // backend that grants everything, are each a decision — not something inherited by
       // creating an environment.
@@ -101,7 +130,13 @@ export class UpdateEnvironmentHandler implements ICommandHandler<UpdateEnvironme
   ) {}
 
   async execute(command: UpdateEnvironmentCommand): Promise<void> {
-    const environment = await ownedEnvironment(this.projects, this.environments, command.organizationId, command.projectId, command.environmentId);
+    const environment = await ownedEnvironment(
+      this.projects,
+      this.environments,
+      command.organizationId,
+      command.projectId,
+      command.environmentId,
+    );
     const name = command.input.name?.trim();
     if (name && name !== environment.name && (await this.environments.findByName(environment.projectId, name))) {
       throw new ConflictError("Ya hay un entorno con ese nombre", "environment-name-taken");
@@ -111,7 +146,8 @@ export class UpdateEnvironmentHandler implements ICommandHandler<UpdateEnvironme
       name: name || environment.name,
       baseUrl: command.input.baseUrl ? normalizeBaseUrl(command.input.baseUrl) : environment.baseUrl,
       specUrl: command.input.specUrl === undefined ? environment.specUrl : command.input.specUrl,
-      variables: command.input.variables ?? environment.variables,
+      variables:
+        command.input.variables === undefined ? environment.variables : normalizeVariables(command.input.variables),
       writesAllowed: command.input.writesAllowed ?? environment.writesAllowed,
       authEnforced: command.input.authEnforced ?? environment.authEnforced,
     });
@@ -126,7 +162,13 @@ export class DeleteEnvironmentHandler implements ICommandHandler<DeleteEnvironme
   ) {}
 
   async execute(command: DeleteEnvironmentCommand): Promise<void> {
-    const environment = await ownedEnvironment(this.projects, this.environments, command.organizationId, command.projectId, command.environmentId);
+    const environment = await ownedEnvironment(
+      this.projects,
+      this.environments,
+      command.organizationId,
+      command.projectId,
+      command.environmentId,
+    );
     // The credentials go with it, by the cascade in the migration. Deleting an environment and
     // leaving its stored secrets behind would be a set of credentials nothing can reach to
     // revoke.

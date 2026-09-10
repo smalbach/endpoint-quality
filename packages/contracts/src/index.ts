@@ -46,13 +46,26 @@ export type MembersViewOf<T> = { members: MemberOf<T>[]; invitations: PendingInv
  * when it is issued, and stored as a hash. A list that could show it again would be a list worth
  * stealing.
  */
-export type ApiTokenViewOf<T> = { id: string; name: string; preview: string; createdAt: T; lastUsedAt: T | null; revokedAt: T | null };
+export type ApiTokenViewOf<T> = {
+  id: string;
+  name: string;
+  preview: string;
+  createdAt: T;
+  lastUsedAt: T | null;
+  revokedAt: T | null;
+};
 
 // ---------------------------------------------------------------------------------------------
 // Projects and contracts
 // ---------------------------------------------------------------------------------------------
 
-export type ContractSummaryOf<T> = { versionId: string; title: string; version: string; operationCount: number; importedAt: T };
+export type ContractSummaryOf<T> = {
+  versionId: string;
+  title: string;
+  version: string;
+  operationCount: number;
+  importedAt: T;
+};
 
 /**
  * Where the contract was last read from.
@@ -78,16 +91,69 @@ export type ProjectSummaryOf<T> = {
 // ---------------------------------------------------------------------------------------------
 
 /** A credential as it leaves the API: named, typed, and without the secret in any form. */
-export type CredentialSummaryOf<T> = { id: string; name: string; role: string; kind: string; headerName: string | null; updatedAt: T };
+export type CredentialSummaryOf<T> = {
+  id: string;
+  name: string;
+  role: string;
+  kind: string;
+  headerName: string | null;
+  updatedAt: T;
+};
 
 export type EnvironmentSummaryOf<T> = {
   id: string;
   name: string;
   baseUrl: string;
   specUrl: string | null;
+  /** Plain, project-owned values available as `{{name}}` in paths, parameters and JSON bodies. */
+  variables: Record<string, string>;
   writesAllowed: boolean;
   authEnforced: boolean;
   credentials: CredentialSummaryOf<T>[];
+};
+
+// ---------------------------------------------------------------------------------------------
+// Reusable requests and the flows composed from them
+// ---------------------------------------------------------------------------------------------
+
+/** A value read out of one response and published as a variable the next requests can spend. */
+export type WorkflowCaptureView = { variable: string; from: "body" | "header"; path: string };
+
+export type WorkflowStepView = {
+  id: string;
+  requestTemplateId: string;
+  dependsOn?: string[];
+  captures?: WorkflowCaptureView[];
+  /** Where the node sits on the canvas. The engine never reads it; the editor would lose the
+   * layout on every reload without it. */
+  position?: { x: number; y: number };
+};
+
+/** A saved request. `body` is null when there is none, which is not the same as an empty one. */
+export type RequestTemplateViewOf<T> = {
+  id: string;
+  name: string;
+  operationId: string;
+  description: string | null;
+  expectedStatus: number;
+  parameters: Record<string, string>;
+  body: Record<string, unknown> | null;
+  auth: string;
+  updatedAt: T;
+};
+
+export type WorkflowViewOf<T> = {
+  id: string;
+  name: string;
+  description: string | null;
+  steps: WorkflowStepView[];
+  updatedAt: T;
+};
+
+/** Both lists together: a node cannot be drawn without the request its step names. */
+export type WorkflowsViewOf<T> = {
+  requestTemplates: RequestTemplateViewOf<T>[];
+  workflows: WorkflowViewOf<T>[];
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -202,8 +268,23 @@ export type RunViewOf<T> = RunOf<T> & { cases: RunCaseOf<T>[] };
 export type RunCaseViewOf<T> = RunCaseOf<T> & { steps: RunStepOf<T>[] };
 
 /** The whole run as a report: every case, every assertion, no bodies. What a pipeline reads. */
-export type RunReportStep = { index: number; purpose: string; label: string; ok: boolean; durationMs: number; assertions: Assertion[] };
-export type RunReportCase = { id: string; operationId: string; scenarioId: string; method: string; path: string; status: CaseStatus; steps: RunReportStep[] };
+export type RunReportStep = {
+  index: number;
+  purpose: string;
+  label: string;
+  ok: boolean;
+  durationMs: number;
+  assertions: Assertion[];
+};
+export type RunReportCase = {
+  id: string;
+  operationId: string;
+  scenarioId: string;
+  method: string;
+  path: string;
+  status: CaseStatus;
+  steps: RunReportStep[];
+};
 export type RunReportOf<T> = { run: RunOf<T>; cases: RunReportCase[] };
 
 // ---------------------------------------------------------------------------------------------
@@ -218,6 +299,9 @@ export type ContractSummary = ContractSummaryOf<string>;
 export type ProjectSummary = ProjectSummaryOf<string>;
 export type CredentialSummary = CredentialSummaryOf<string>;
 export type Environment = EnvironmentSummaryOf<string>;
+export type RequestTemplateView = RequestTemplateViewOf<string>;
+export type WorkflowView = WorkflowViewOf<string>;
+export type WorkflowsView = WorkflowsViewOf<string>;
 export type ConfigSectionView = ConfigSectionViewOf<string>;
 export type ConfigView = ConfigViewOf<string>;
 export type RunCase = RunCaseOf<string>;

@@ -30,6 +30,8 @@ import type { Credential, CredentialRole, Environment } from "@/modules/environm
 import type { EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
 import type { ConfigRepositoryPort, ConfigRow } from "@/modules/config/domain/ports";
 import type { ConfigSection } from "@eq/runner-core";
+import type { RequestTemplateRow, WorkflowRow } from "@/modules/workflows/domain/model";
+import type { WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
 import type { CaseStatus, Run, RunCase, RunStatus, RunStep, RunTotals } from "@/modules/runs/domain/model";
 import type { RunRepositoryPort } from "@/modules/runs/domain/ports";
 
@@ -402,5 +404,63 @@ export class InMemoryRunRepository implements RunRepositoryPort {
       this.runs.delete(run.id);
     }
     return doomed.length;
+  }
+}
+
+/**
+ * Reusable requests and flows, with the two guarantees the SQL gives.
+ *
+ * `(projectId, name)` is unique, and a read that names a project cannot reach another one's row —
+ * a fake keyed only by id would let a test pass that Postgres, and the repository, would fail.
+ */
+export class InMemoryWorkflowRepository implements WorkflowRepositoryPort {
+  private readonly templates = new Map<string, RequestTemplateRow>();
+  private readonly workflows = new Map<string, WorkflowRow>();
+
+  async listTemplates(projectId: string): Promise<RequestTemplateRow[]> {
+    return [...this.templates.values()]
+      .filter((row) => row.projectId === projectId)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+  async findTemplate(projectId: string, templateId: string): Promise<RequestTemplateRow | null> {
+    const row = this.templates.get(templateId);
+    return row && row.projectId === projectId ? row : null;
+  }
+  async findTemplateByName(projectId: string, name: string): Promise<RequestTemplateRow | null> {
+    return [...this.templates.values()].find((row) => row.projectId === projectId && row.name === name) ?? null;
+  }
+  async saveTemplate(row: RequestTemplateRow): Promise<void> {
+    this.templates.set(row.id, { ...row });
+  }
+  async deleteTemplate(projectId: string, templateId: string): Promise<void> {
+    const row = this.templates.get(templateId);
+    if (row?.projectId === projectId) this.templates.delete(templateId);
+  }
+  async isTemplateReferenced(projectId: string, templateId: string): Promise<boolean> {
+    return [...this.workflows.values()].some(
+      (workflow) =>
+        workflow.projectId === projectId &&
+        workflow.definition.steps.some((step) => step.requestTemplateId === templateId),
+    );
+  }
+
+  async listWorkflows(projectId: string): Promise<WorkflowRow[]> {
+    return [...this.workflows.values()]
+      .filter((row) => row.projectId === projectId)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+  async findWorkflow(projectId: string, workflowId: string): Promise<WorkflowRow | null> {
+    const row = this.workflows.get(workflowId);
+    return row && row.projectId === projectId ? row : null;
+  }
+  async findWorkflowByName(projectId: string, name: string): Promise<WorkflowRow | null> {
+    return [...this.workflows.values()].find((row) => row.projectId === projectId && row.name === name) ?? null;
+  }
+  async saveWorkflow(row: WorkflowRow): Promise<void> {
+    this.workflows.set(row.id, { ...row, definition: { steps: [...row.definition.steps] } });
+  }
+  async deleteWorkflow(projectId: string, workflowId: string): Promise<void> {
+    const row = this.workflows.get(workflowId);
+    if (row?.projectId === projectId) this.workflows.delete(workflowId);
   }
 }

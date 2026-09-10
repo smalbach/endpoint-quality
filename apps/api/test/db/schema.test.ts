@@ -66,6 +66,7 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
       "project_config",
       "projects",
       "refresh_tokens",
+      "request_templates",
       "run_cases",
       "run_steps",
       "runs",
@@ -73,6 +74,7 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
       "spec_sources",
       "spec_versions",
       "users",
+      "workflows",
     ]);
   });
 

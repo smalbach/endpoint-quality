@@ -13,6 +13,7 @@ import { ProjectsModule } from "./modules/projects/projects.module";
 import { SpecsModule } from "./modules/specs/specs.module";
 import { EnvironmentsModule } from "./modules/environments/environments.module";
 import { ProjectConfigModule } from "./modules/config/config.module";
+import { WorkflowsModule } from "./modules/workflows/workflows.module";
 import { RunsModule } from "./modules/runs/runs.module";
 import { AuthGuard } from "./modules/auth/infrastructure/guards/auth.guard";
 import { HealthController } from "./shared/health.controller";
@@ -37,6 +38,7 @@ import { HealthController } from "./shared/health.controller";
     SpecsModule,
     EnvironmentsModule,
     ProjectConfigModule,
+    WorkflowsModule,
     RunsModule,
   ],
   controllers: [HealthController],

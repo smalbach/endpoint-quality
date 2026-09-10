@@ -16,4 +16,7 @@ export class StartRunDto {
   @IsOptional() @IsInt() @Min(1) @Max(50) samples?: number;
   /** Some targets rate-limit, and 311 cases fired flat out are indistinguishable from an attack. */
   @IsOptional() @IsInt() @Min(0) @Max(30_000) delayMs?: number;
+  /** A row's id, so it is a uuid. When present the run executes that graph instead of the
+   * generated matrix. */
+  @IsOptional() @IsUUID() workflowId?: string;
 }

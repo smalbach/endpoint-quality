@@ -30,6 +30,9 @@ import {
   type StepOutcome,
   type StepRequest,
   type TestScenario,
+  interpolateValue,
+  type RuntimeVariables,
+  unresolvedVariables,
 } from "@eq/runner-core";
 
 import { SAFE_FETCH, BlockedTargetError, type SafeFetchPort } from "@/shared/http/safe-fetch";
@@ -43,6 +46,15 @@ export type ExecutionTarget = {
   spec: Record<string, unknown> | null;
   specError: string | null;
   credentials: Credential[];
+  /**
+   * Mutable only for the lifetime of one run; stored environment values are never changed by a test.
+   *
+   * The copy is made once per run in `RunOrchestrator.execute`, and the cases inside a run are
+   * sequential — so a capture in one step is visible to the next, and two runs of the same flow
+   * against the same environment cannot see each other's values. `CaseExecutor` is a singleton and
+   * keeps no per-run state of its own: this map travels in the argument.
+   */
+  variables: RuntimeVariables;
 };
 
 export type ExecutedStep = {
@@ -80,19 +92,34 @@ export class CaseExecutor {
   }): Promise<ExecutedCase> {
     const started = Date.now();
     const steps: ExecutedStep[] = [];
+    // Interpolate before requestPathFor URL-encodes parameter values. Doing it after planning
+    // would turn `{{userId}}` into `%7B%7BuserId%7D%7D`, which is no longer a token.
+    //
+    // Skipped entirely when the environment defines no variables, which is most of them: the
+    // substitution walks the whole `ProjectConfig` — the text bundle, every sample, every budget
+    // rule — and a 311-case matrix was deep-copying all of it 311 times to replace nothing.
+    const substituting = Object.keys(input.target.variables).length > 0;
+    const source = { operation: input.operation, scenario: input.scenario, config: input.config };
+    const runtime = substituting ? interpolateValue(source, input.target.variables) : source;
     const flow = planFlow({
-      operation: input.operation,
-      scenario: input.scenario,
-      config: input.config,
+      operation: runtime.operation,
+      scenario: runtime.scenario,
+      config: runtime.config,
       operations: input.operations,
       samples: input.samples,
     });
 
     let cursor = flow.next();
     while (!cursor.done) {
-      const executed = await this.perform(cursor.value, input);
+      const step = substituting ? interpolateValue(cursor.value, input.target.variables) : cursor.value;
+      const executed = await this.perform(step, { ...input, config: runtime.config, scenario: runtime.scenario });
       steps.push(executed);
-      const outcome: StepOutcome = { request: executed.request, actual: executed.actual, ok: executed.ok, assertions: executed.assertions };
+      const outcome: StepOutcome = {
+        request: executed.request,
+        actual: executed.actual,
+        ok: executed.ok,
+        assertions: executed.assertions,
+      };
       cursor = flow.next(outcome);
     }
 
@@ -115,6 +142,11 @@ export class CaseExecutor {
     const masked = maskHeaders(headers);
     const sent = { method: step.method, url, headers: masked, body: step.body ?? null };
 
+    const missingVariables = unresolvedVariables({ requestPath: step.requestPath, body: step.body });
+    if (missingVariables.length) {
+      return blocked(step, sent, `Faltan variables: ${missingVariables.join(", ")}`, "Variables del entorno");
+    }
+
     if (!input.target.writesAllowed && !IDEMPOTENT.has(step.method)) {
       // Refused before anything leaves the process. The check lives here and not in the UI
       // because CI never sees the UI.
@@ -131,7 +163,12 @@ export class CaseExecutor {
       });
       samples.push(response.durationMs);
     } catch (error) {
-      const detail = error instanceof BlockedTargetError ? error.message : error instanceof Error ? error.message : "La petición falló";
+      const detail =
+        error instanceof BlockedTargetError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : "La petición falló";
       return blocked(step, sent, detail, "Conexión con la API");
     }
 
@@ -149,7 +186,9 @@ export class CaseExecutor {
     // `step.method` is a string on the request because a flow can add a step for an operation
     // the contract types differently; the budget matcher wants the narrowed union.
     const budget = budgetFor(input.config, step.method as HttpMethod, step.operationPath, step.requestPath);
-    const declared = input.target.spec ? responseSchema(input.target.spec, step.operationPath, step.method, step.expectedStatus, actual.contentType) : undefined;
+    const declared = input.target.spec
+      ? responseSchema(input.target.spec, step.operationPath, step.method, step.expectedStatus, actual.contentType)
+      : undefined;
 
     const verdict = evaluateResponse({
       method: step.method,
@@ -232,5 +271,7 @@ function blocked(step: StepRequest, sent: ExecutedStep["sent"], detail: string, 
 /** Masked before the row is written. A redaction applied at read time is one query away from
  * being forgotten, and the value is a live credential for somebody's staging environment. */
 export function maskHeaders(headers: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(Object.entries(headers).map(([key, value]) => [key, SECRET_HEADER.test(key) ? "••••••••" : value]));
+  return Object.fromEntries(
+    Object.entries(headers).map(([key, value]) => [key, SECRET_HEADER.test(key) ? "••••••••" : value]),
+  );
 }

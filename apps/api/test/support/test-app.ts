@@ -58,6 +58,9 @@ import { ENVIRONMENT_COMMAND_HANDLERS, ENVIRONMENT_QUERY_HANDLERS } from "@/modu
 import { CONFIG_REPOSITORY } from "@/modules/config/domain/ports";
 import { CONFIG_COMMAND_HANDLERS, CONFIG_QUERY_HANDLERS } from "@/modules/config/config.module";
 import { ProjectConfigController } from "@/modules/config/presentation/config.controller";
+import { WORKFLOW_REPOSITORY } from "@/modules/workflows/domain/ports";
+import { WORKFLOW_COMMAND_HANDLERS, WORKFLOW_QUERY_HANDLERS } from "@/modules/workflows/workflows.module";
+import { WorkflowsController } from "@/modules/workflows/presentation/workflows.controller";
 import { RUN_QUEUE, RUN_REPOSITORY } from "@/modules/runs/domain/ports";
 import { PROGRESS_RELAY } from "@/modules/runs/domain/progress";
 import { InProcessRelay } from "@/modules/runs/infrastructure/progress/in-process-relay";
@@ -74,6 +77,7 @@ import {
   InMemoryOrganizationRepository,
   InMemoryRefreshTokenRepository,
   InMemoryConfigRepository,
+  InMemoryWorkflowRepository,
   InMemoryEnvironmentRepository,
   InMemoryProjectRepository,
   InMemoryRunRepository,
@@ -160,6 +164,7 @@ export type TestContext = {
     specs: InMemorySpecRepository;
     environments: InMemoryEnvironmentRepository;
     config: InMemoryConfigRepository;
+    workflows: InMemoryWorkflowRepository;
     runs: InMemoryRunRepository;
   };
   http: StubSafeFetch;
@@ -182,6 +187,7 @@ export async function createTestApp(): Promise<TestContext> {
     specs: new InMemorySpecRepository(),
     environments: new InMemoryEnvironmentRepository(),
     config: new InMemoryConfigRepository(),
+    workflows: new InMemoryWorkflowRepository(),
     runs: new InMemoryRunRepository(),
   };
   // Loopback is allowed here because the run tests point the engine at a stub server on
@@ -202,6 +208,7 @@ export async function createTestApp(): Promise<TestContext> {
       ProjectsController,
       EnvironmentsController,
       ProjectConfigController,
+      WorkflowsController,
       RunsController,
     ],
     providers: [
@@ -229,6 +236,7 @@ export async function createTestApp(): Promise<TestContext> {
       ...RUN_PROJECTORS,
       { provide: ENVIRONMENT_REPOSITORY, useValue: repositories.environments },
       { provide: CONFIG_REPOSITORY, useValue: repositories.config },
+      { provide: WORKFLOW_REPOSITORY, useValue: repositories.workflows },
       // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the
       // repository is ciphertext, and a pass-through would make that assertion meaningless.
       { provide: SECRET_CIPHER, useValue: new AesGcmSecretCipher(Buffer.alloc(32, 9).toString("base64")) },
@@ -244,6 +252,8 @@ export async function createTestApp(): Promise<TestContext> {
       ...ENVIRONMENT_QUERY_HANDLERS,
       ...CONFIG_COMMAND_HANDLERS,
       ...CONFIG_QUERY_HANDLERS,
+      ...WORKFLOW_COMMAND_HANDLERS,
+      ...WORKFLOW_QUERY_HANDLERS,
       ...RUN_COMMAND_HANDLERS,
       ...RUN_QUERY_HANDLERS,
       // The global guard and filter are registered exactly as `AppModule` does, because half of

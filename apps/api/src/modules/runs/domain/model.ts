@@ -1,4 +1,3 @@
-
 import type { Assertion, OrderMode } from "@eq/runner-core";
 
 export type RunStatus = "queued" | "running" | "passed" | "failed" | "cancelled" | "error";
@@ -16,6 +15,8 @@ export type RunPlan = {
   /** Pause between cases. Not a nicety: some targets rate-limit, and a matrix of 311 cases fired
    * flat out is indistinguishable from an attack. */
   delayMs: number;
+  /** When set, the run executes this project-defined graph instead of the generated matrix. */
+  workflowId?: string;
 };
 
 export type Run = {
@@ -92,6 +93,16 @@ export const isFinished = (status: RunStatus): boolean => ["passed", "failed", "
  * run — a write against a read-only target — is not a finding about the API, and reporting it as
  * one would train people to ignore red.
  */
+/**
+ * A case with no steps ran nothing — the environment refused every request in it — and is
+ * `skipped`, not `failed`. Reporting it as a finding would train people to ignore red.
+ *
+ * One function because there are two walks, the generated matrix and a user-authored flow, and
+ * they had drifted: the same empty case was `skipped` in one and `failed` in the other.
+ */
+export const caseStatusFor = (executed: { ok: boolean; steps: unknown[] }): CaseStatus =>
+  executed.steps.length === 0 ? "skipped" : executed.ok ? "passed" : "failed";
+
 export function verdictFor(totals: RunTotals): RunStatus {
   return totals.failed > 0 ? "failed" : "passed";
 }

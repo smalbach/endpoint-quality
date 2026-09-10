@@ -7,6 +7,7 @@ import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
+import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
 import type { Run, RunPlan } from "../../domain/model";
 import { RUN_QUEUE, RUN_REPOSITORY, type RunQueuePort, type RunRepositoryPort } from "../../domain/ports";
 
@@ -34,6 +35,7 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(ENVIRONMENT_REPOSITORY) private readonly environments: EnvironmentRepositoryPort,
+    @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
     @Inject(RUN_REPOSITORY) private readonly runs: RunRepositoryPort,
     @Inject(RUN_QUEUE) private readonly queue: RunQueuePort,
     @Inject(CLOCK) private readonly clock: ClockPort,
@@ -41,17 +43,35 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
 
   async execute(command: StartRunCommand): Promise<{ runId: string }> {
     const project = await this.projects.findById(command.projectId);
-    if (!project || project.organizationId !== command.organizationId) throw new NotFoundError("El proyecto no existe", "project-not-found");
-    if (!project.activeSpecVersionId) throw new ConflictError("El proyecto no tiene contrato importado", "no-active-spec");
+    if (!project || project.organizationId !== command.organizationId)
+      throw new NotFoundError("El proyecto no existe", "project-not-found");
+    if (!project.activeSpecVersionId)
+      throw new ConflictError("El proyecto no tiene contrato importado", "no-active-spec");
 
     const environment = await this.environments.findById(command.input.environmentId);
     // Folded into the 404 as everywhere else: a 403 would confirm the id is real to somebody
     // outside the project.
-    if (!environment || environment.projectId !== project.id) throw new NotFoundError("El entorno no existe", "environment-not-found");
+    if (!environment || environment.projectId !== project.id)
+      throw new NotFoundError("El entorno no existe", "environment-not-found");
+
+    // Checked here and not when the worker picks the job up: a flow that does not exist is a
+    // mistake in the request, and answering it with a queued run that later lands in `error` puts
+    // the message minutes away from the click that caused it.
+    if (command.input.workflowId) {
+      const workflow = await this.workflows.findWorkflow(project.id, command.input.workflowId);
+      if (!workflow) {
+        throw new InvalidInputError(
+          "El flujo no existe",
+          [{ field: "workflowId", detail: "No hay ningún flujo con ese id en este proyecto" }],
+          "workflow-not-found",
+        );
+      }
+    }
 
     const samples = clamp(command.input.samples ?? 1, 1, 50);
     const delayMs = clamp(command.input.delayMs ?? 0, 0, 30_000);
-    if (!Number.isFinite(samples) || !Number.isFinite(delayMs)) throw new InvalidInputError("Plan de ejecución inválido");
+    if (!Number.isFinite(samples) || !Number.isFinite(delayMs))
+      throw new InvalidInputError("Plan de ejecución inválido");
 
     const plan: RunPlan = {
       // Reads first, deletes last, by default. Alphabetical order runs a DELETE before the GET
@@ -63,6 +83,7 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
       caseSelection: command.input.caseSelection ?? {},
       samples,
       delayMs,
+      ...(command.input.workflowId ? { workflowId: command.input.workflowId } : {}),
     };
 
     const run: Run = {

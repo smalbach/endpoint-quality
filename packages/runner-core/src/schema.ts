@@ -35,7 +35,15 @@ export const sampleValueSchema = z.union([
   }),
 ]);
 
-export const scenarioFlowSchema = z.enum(["request", "create-read", "replace-read", "patch-read", "delete-read", "deleted-read", "bulk-read"]);
+export const scenarioFlowSchema = z.enum([
+  "request",
+  "create-read",
+  "replace-read",
+  "patch-read",
+  "delete-read",
+  "deleted-read",
+  "bulk-read",
+]);
 export const scenarioAuthSchema = z.enum(["default", "none", "insufficient", "api-key"]);
 
 export const scenarioTemplateSchema = z.object({
@@ -157,7 +165,10 @@ export function parseSection<S extends ConfigSection>(section: S, data: unknown)
   return configSections[section].parse(data) as z.infer<(typeof configSections)[S]>;
 }
 
-export function safeParseSection(section: ConfigSection, data: unknown): { ok: true } | { ok: false; issues: { field: string; detail: string }[] } {
+export function safeParseSection(
+  section: ConfigSection,
+  data: unknown,
+): { ok: true } | { ok: false; issues: { field: string; detail: string }[] } {
   const result = configSections[section].safeParse(data);
   if (result.success) return { ok: true };
   return {
@@ -188,5 +199,6 @@ function isValidRegExp(source: string): boolean {
 type SectionUnion = { [S in ConfigSection]: z.infer<(typeof configSections)[S]> }[ConfigSection];
 type CoveredKeys = SectionUnion extends infer U ? (U extends unknown ? keyof U : never) : never;
 type UncoveredKeys = Exclude<keyof ProjectConfig, CoveredKeys>;
-const _allSectionsCovered: UncoveredKeys extends never ? true : ["falta cubrir en configSections:", UncoveredKeys] = true;
+const _allSectionsCovered: UncoveredKeys extends never ? true : ["falta cubrir en configSections:", UncoveredKeys] =
+  true;
 void _allSectionsCovered;

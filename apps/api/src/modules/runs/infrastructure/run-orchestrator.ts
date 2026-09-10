@@ -26,9 +26,12 @@ import {
   buildQueue,
   dereference,
   resolveOperations,
+  applyCaptures,
+  orderWorkflowSteps,
   type Operation,
   type ProjectConfig,
   type ResolvedOperation,
+  type TestScenario,
 } from "@eq/runner-core";
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
@@ -38,9 +41,11 @@ import { SPEC_REPOSITORY, type SpecRepositoryPort } from "@/modules/specs/domain
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
 import { CONFIG_REPOSITORY, type ConfigRepositoryPort } from "@/modules/config/domain/ports";
 import { assembleProjectConfig } from "@/modules/config/application/queries/get-project-config";
-import { verdictFor, type Run, type RunCase, type RunStep } from "../domain/model";
+import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
+import type { RequestTemplateRow, WorkflowRow } from "@/modules/workflows/domain/model";
+import { caseStatusFor, verdictFor, type Run, type RunCase, type RunStep } from "../domain/model";
 import { RUN_QUEUE, RUN_REPOSITORY, type RunQueuePort, type RunRepositoryPort } from "../domain/ports";
-import { CaseExecutor, type ExecutionTarget } from "./case-executor";
+import { CaseExecutor, type ExecutedStep, type ExecutionTarget } from "./case-executor";
 import { RunCaseFinishedEvent, RunFinishedEvent, RunStartedEvent } from "../application/events/run.events";
 
 @Injectable()
@@ -54,6 +59,7 @@ export class RunOrchestrator {
     @Inject(SPEC_REPOSITORY) private readonly specs: SpecRepositoryPort,
     @Inject(ENVIRONMENT_REPOSITORY) private readonly environments: EnvironmentRepositoryPort,
     @Inject(CONFIG_REPOSITORY) private readonly config: ConfigRepositoryPort,
+    @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
     @Inject(SAFE_FETCH) private readonly http: SafeFetchPort,
     private readonly executor: CaseExecutor,
@@ -80,7 +86,9 @@ export class RunOrchestrator {
       const message = error instanceof Error ? error.message : "La corrida no pudo ejecutarse";
       this.logger.error(`Corrida ${runId}: ${message}`);
       await this.runs.updateStatus(runId, "error", this.clock.now(), message);
-      this.eventBus.publish(new RunFinishedEvent(run.projectId, runId, "error", await this.runs.recomputeTotals(runId)));
+      this.eventBus.publish(
+        new RunFinishedEvent(run.projectId, runId, "error", await this.runs.recomputeTotals(runId)),
+      );
     }
   }
 
@@ -95,13 +103,16 @@ export class RunOrchestrator {
     if (stored.length === 0) throw new Error("La versión del contrato no tiene operaciones");
 
     const config = await assembleProjectConfig(this.config, project.id);
-    const operations: Operation[] = stored.map(({ rowId, specVersionId, position, derivedId, security, ...operation }) => operation);
+    const operations: Operation[] = stored.map(
+      ({ rowId, specVersionId, position, derivedId, security, ...operation }) => operation,
+    );
     const resolved = resolveOperations(operations, config);
 
     const target: ExecutionTarget = {
       baseUrl: environment.baseUrl,
       writesAllowed: environment.writesAllowed,
       credentials: await this.environments.listCredentials(environment.id),
+      variables: { ...environment.variables },
       ...(await this.loadSpec(environment.specUrl ?? `${environment.baseUrl}/openapi.json`)),
     };
 
@@ -133,6 +144,18 @@ export class RunOrchestrator {
     run: Run,
     context: { config: ProjectConfig; resolved: ResolvedOperation[]; target: ExecutionTarget; authEnabled: boolean },
   ): Promise<void> {
+    if (run.plan.workflowId) {
+      // Read with the project id, so a flow that belongs to another tenant is indistinguishable
+      // from one that does not exist. `StartRunHandler` already refused this at 422; getting here
+      // means the flow was deleted between queueing and executing.
+      const workflow = await this.workflows.findWorkflow(run.projectId, run.plan.workflowId);
+      if (!workflow) throw new Error(`El flujo "${run.plan.workflowId}" ya no existe`);
+      const templates = new Map(
+        (await this.workflows.listTemplates(run.projectId)).map((template) => [template.id, template]),
+      );
+      await this.walkWorkflow(run, context, workflow, templates);
+      return;
+    }
     const queue = buildQueue(context.resolved, context.config, {
       mode: run.plan.order,
       customOrder: run.plan.customOrder,
@@ -182,38 +205,189 @@ export class RunOrchestrator {
         samples: run.plan.samples,
       });
 
-      const steps: RunStep[] = executed.steps.map((step) => ({
-        id: randomUUID(),
-        runCaseId: runCase.id,
-        index: step.request.index,
-        purpose: step.request.purpose,
-        label: step.request.label,
-        request: step.sent,
-        expected: { status: step.request.expectedStatus, shape: step.request.expectedShape, operationPath: step.request.operationPath },
-        actual: step.actual,
-        assertions: step.assertions,
-        latency: step.latency,
-        ok: step.ok,
-        durationMs: step.durationMs,
-      }));
-      await this.runs.saveSteps(steps);
+      await this.runs.saveSteps(toRunSteps(runCase.id, executed.steps));
 
       const finishedAt = this.clock.now();
-      // A case with no steps ran nothing — the environment refused every request in it — and is
-      // `skipped`, not `failed`. Reporting it as a finding would train people to ignore red.
-      const status = executed.steps.length === 0 ? "skipped" : executed.ok ? "passed" : "failed";
-      const finished: RunCase = { ...runCase, status, startedAt, finishedAt, durationMs: executed.durationMs };
+      const finished: RunCase = {
+        ...runCase,
+        status: caseStatusFor(executed),
+        startedAt,
+        finishedAt,
+        durationMs: executed.durationMs,
+      };
       await this.runs.saveCase(finished);
-
       // Published per case so a follower sees progress rather than a result at the end.
-      this.eventBus.publish(new RunCaseFinishedEvent(run.projectId, run.id, finished, await this.runs.recomputeTotals(run.id)));
+      await this.announce(run, finished);
     }
 
+    await this.finish(run, cancelled);
+  }
+
+  /**
+   * A user-authored graph instead of the generated matrix.
+   *
+   * Each step becomes an ordinary `RunCase`, so a flow is read, streamed and reported like any
+   * other run. What is different is the edge: a step whose dependency did not pass is `skipped`
+   * rather than attempted, because «create failed, therefore read failed» is one finding reported
+   * twice.
+   */
+  private async walkWorkflow(
+    run: Run,
+    context: { config: ProjectConfig; resolved: ResolvedOperation[]; target: ExecutionTarget; authEnabled: boolean },
+    workflow: WorkflowRow,
+    templates: Map<string, RequestTemplateRow>,
+  ): Promise<void> {
+    const ordered = orderWorkflowSteps(workflow.definition, `El flujo "${workflow.name}"`);
+    const prepared = ordered.map((step, position) => {
+      const template = templates.get(step.requestTemplateId);
+      if (!template)
+        throw new Error(`El paso "${step.id}" referencia la prueba inexistente "${step.requestTemplateId}"`);
+      const operation = context.resolved.find((candidate) => candidate.id === template.operationId);
+      if (!operation) {
+        throw new Error(`La prueba "${template.name}" referencia la operación inexistente "${template.operationId}"`);
+      }
+      return {
+        step,
+        template,
+        operation,
+        runCase: {
+          id: randomUUID(),
+          runId: run.id,
+          operationId: operation.id,
+          scenarioId: `workflow:${workflow.id}:${step.id}`,
+          method: operation.method,
+          path: operation.path,
+          status: "queued" as const,
+          position,
+          durationMs: null,
+          startedAt: null,
+          finishedAt: null,
+        } satisfies RunCase,
+      };
+    });
+
+    await this.runs.saveCases(prepared.map((item) => item.runCase));
+    await this.runs.updateStatus(run.id, "running", this.clock.now());
+    this.eventBus.publish(new RunStartedEvent(run.projectId, run.id, prepared.length));
+
+    const passed = new Map<string, boolean>();
+    let cancelled = false;
+    for (const [index, item] of prepared.entries()) {
+      if (await this.queue.isCancelled(run.id)) {
+        cancelled = true;
+        break;
+      }
+      if (index > 0 && run.plan.delayMs > 0) await delay(run.plan.delayMs);
+
+      const startedAt = this.clock.now();
+      if ((item.step.dependsOn ?? []).some((id) => passed.get(id) !== true)) {
+        const skipped: RunCase = {
+          ...item.runCase,
+          status: "skipped",
+          startedAt,
+          finishedAt: startedAt,
+          durationMs: 0,
+        };
+        passed.set(item.step.id, false);
+        await this.runs.saveCase(skipped);
+        await this.announce(run, skipped);
+        continue;
+      }
+
+      await this.runs.saveCase({ ...item.runCase, status: "running", startedAt });
+      const executed = await this.executor.run({
+        operation: item.operation,
+        scenario: scenarioFor(item.template),
+        operations: context.resolved,
+        config: context.config,
+        target: context.target,
+        samples: run.plan.samples,
+      });
+
+      // The capture is an assertion of its own, on the step that was supposed to yield the value.
+      // Writing it into the variables without saying so would make the next case fail for a reason
+      // recorded nowhere.
+      const last = executed.steps.at(-1);
+      if (last?.actual && item.step.captures?.length) {
+        const capture = applyCaptures(item.step.captures, last.actual, context.target.variables);
+        const ok = capture.missing.length === 0;
+        last.assertions.push({
+          label: "Variables capturadas",
+          pass: ok,
+          detail: ok ? capture.captured.join(", ") : `No se encontraron: ${capture.missing.join(", ")}`,
+        });
+        last.ok = last.ok && ok;
+        executed.ok = executed.steps.every((step) => step.ok);
+      }
+
+      await this.runs.saveSteps(toRunSteps(item.runCase.id, executed.steps));
+      const status = caseStatusFor(executed);
+      const finished: RunCase = {
+        ...item.runCase,
+        status,
+        startedAt,
+        finishedAt: this.clock.now(),
+        durationMs: executed.durationMs,
+      };
+      passed.set(item.step.id, status === "passed");
+      await this.runs.saveCase(finished);
+      await this.announce(run, finished);
+    }
+
+    await this.finish(run, cancelled);
+  }
+
+  /** Progress, per case, so a follower sees it happening instead of a result at the end. */
+  private async announce(run: Run, runCase: RunCase): Promise<void> {
+    this.eventBus.publish(
+      new RunCaseFinishedEvent(run.projectId, run.id, runCase, await this.runs.recomputeTotals(run.id)),
+    );
+  }
+
+  private async finish(run: Run, cancelled: boolean): Promise<void> {
     const totals = await this.runs.recomputeTotals(run.id);
     const status = cancelled ? "cancelled" : verdictFor(totals);
     await this.runs.updateStatus(run.id, status, this.clock.now());
     this.eventBus.publish(new RunFinishedEvent(run.projectId, run.id, status, totals));
   }
+}
+
+/** A saved request, as the engine wants it. The row keeps `null` for absent; the engine wants the
+ * key gone, which is what `exactOptionalPropertyTypes` is there to keep honest. */
+function scenarioFor(template: RequestTemplateRow): TestScenario {
+  return {
+    id: template.id,
+    name: template.name,
+    description: template.description ?? "Paso de un flujo reutilizable",
+    expectedStatus: template.expectedStatus,
+    ...(Object.keys(template.parameters ?? {}).length ? { parameters: template.parameters } : {}),
+    ...(template.body ? { body: template.body } : {}),
+    flow: "request",
+    auth: template.auth,
+  };
+}
+
+/** The one mapping from what the executor produced to what the repository stores. It was written
+ * twice, once per walk, which is one copy too many for a shape with nine fields. */
+function toRunSteps(runCaseId: string, steps: ExecutedStep[]): RunStep[] {
+  return steps.map((step) => ({
+    id: randomUUID(),
+    runCaseId,
+    index: step.request.index,
+    purpose: step.request.purpose,
+    label: step.request.label,
+    request: step.sent,
+    expected: {
+      status: step.request.expectedStatus,
+      shape: step.request.expectedShape,
+      operationPath: step.request.operationPath,
+    },
+    actual: step.actual,
+    assertions: step.assertions,
+    latency: step.latency,
+    ok: step.ok,
+    durationMs: step.durationMs,
+  }));
 }
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

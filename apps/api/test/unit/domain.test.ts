@@ -22,6 +22,9 @@ import { AesGcmSecretCipher } from "@/shared/crypto/secret-cipher";
 import { parseDuration } from "@/modules/auth/infrastructure/jwt-access-token.service";
 import { loadEnv } from "@/shared/config/env";
 import { TEST_ENV } from "../support/test-app";
+import { caseStatusFor } from "@/modules/runs/domain/model";
+import type { Assertion as WireAssertion } from "@eq/contracts";
+import type { Assertion as EngineAssertion } from "@eq/runner-core";
 
 describe("la escalera de roles", () => {
   test("cada rol alcanza a los de debajo y no a los de encima", () => {
@@ -269,3 +272,27 @@ describe("duración del access token", () => {
     assert.equal(parseDuration("quince minutos"), 900);
   });
 });
+
+describe("el veredicto de un caso", () => {
+  test("sin pasos es «saltado», no «fallado»", () => {
+    // A case that ran nothing — the environment refused every request in it — is not a finding
+    // about the endpoint. Reporting it as one teaches people to ignore red.
+    assert.equal(caseStatusFor({ ok: false, steps: [] }), "skipped");
+    assert.equal(caseStatusFor({ ok: true, steps: [] }), "skipped");
+    assert.equal(caseStatusFor({ ok: true, steps: [1] }), "passed");
+    assert.equal(caseStatusFor({ ok: false, steps: [1] }), "failed");
+  });
+});
+
+/**
+ * `Assertion` is declared twice — once in the engine, once in the wire contracts — because
+ * `@eq/contracts` carries no runtime and cannot depend on the engine. This is the only package
+ * that sees both, so this is where the two are held to saying the same thing. It asserts nothing
+ * at runtime: if they ever diverge, the build fails here.
+ */
+type _AssertionsAgree = [
+  EngineAssertion extends WireAssertion ? true : never,
+  WireAssertion extends EngineAssertion ? true : never,
+];
+const _assertionsAgree: _AssertionsAgree = [true, true];
+void _assertionsAgree;

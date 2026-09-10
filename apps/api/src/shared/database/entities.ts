@@ -326,6 +326,52 @@ export class RunStepEntity {
   @Column({ type: "timestamptz", nullable: true }) prunedAt: Date | null;
 }
 
+/**
+ * A reusable request: one operation, with the parameters, payload, credential and expected status
+ * somebody decided are worth sending again.
+ *
+ * A row and not a document inside a workflow, because reuse is the whole point: several flows name
+ * the same template, editing it has to reach all of them, and «delete this one» has to be a
+ * question the database can answer.
+ */
+@Entity({ name: "request_templates" })
+export class RequestTemplateEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Column({ type: "varchar", length: 120 }) name: string;
+  @Column({ type: "varchar", length: 200 }) operationId: string;
+  @Column({ type: "text", nullable: true }) description: string | null;
+  @Column({ type: "int" }) expectedStatus: number;
+  @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) parameters: Record<string, string>;
+  /** Null and `{}` are different: no payload at all, versus an empty one somebody chose to send. */
+  @Column({ type: "jsonb", nullable: true }) body: Record<string, unknown> | null;
+  @Column({ type: "varchar", length: 20, default: "default" }) auth: string;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) updatedAt: Date;
+  @Column("uuid") updatedBy: string;
+}
+
+/**
+ * A directed flow over those requests, stored as one document.
+ *
+ * The steps, their edges and their canvas coordinates are `definition` and not three tables on
+ * purpose: the unit of change is the whole graph. Saving nodes and edges separately can produce
+ * «node deleted, edge still pointing at it», which is a state that must not exist — and the
+ * property worth enforcing, that the graph has no cycle, is not one Postgres can enforce anyway.
+ * The zod schema in `@eq/runner-core` does it on every write.
+ */
+@Entity({ name: "workflows" })
+export class WorkflowEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Column({ type: "varchar", length: 120 }) name: string;
+  @Column({ type: "text", nullable: true }) description: string | null;
+  @Column({ type: "jsonb", default: () => `'{"steps":[]}'::jsonb` }) definition: { steps: unknown[] };
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) updatedAt: Date;
+  @Column("uuid") updatedBy: string;
+}
+
 // The line breaks group these by module, which is information a formatter cannot know and
 // one-per-line would lose.
 // prettier-ignore
@@ -333,5 +379,6 @@ export const ENTITIES = [
   UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity,
   ProjectEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity,
   EnvironmentEntity, EnvironmentCredentialEntity, ProjectConfigEntity,
+  RequestTemplateEntity, WorkflowEntity,
   RunEntity, RunCaseEntity, RunStepEntity,
 ];

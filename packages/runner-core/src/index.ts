@@ -12,4 +12,7 @@ export * from "./example.ts";
 export * from "./pattern.ts";
 export * from "./assertions.ts";
 export * from "./flow.ts";
+export * from "./variables.ts";
+export * from "./workflows.ts";
+export * from "./workflow-schema.ts";
 export * as presets from "./presets.ts";

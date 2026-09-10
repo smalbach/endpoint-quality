@@ -2,14 +2,24 @@ import type { ConfigSectionViewOf, ConfigViewOf } from "@eq/contracts";
 
 import { Inject } from "@nestjs/common";
 import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
-import { CONFIG_SECTIONS, DEFAULT_CONFIG, defineProjectConfig, bundles, type ConfigSection, type ProjectConfig } from "@eq/runner-core";
+import {
+  CONFIG_SECTIONS,
+  DEFAULT_CONFIG,
+  defineProjectConfig,
+  bundles,
+  type ConfigSection,
+  type ProjectConfig,
+} from "@eq/runner-core";
 
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
 import { CONFIG_REPOSITORY, type ConfigRepositoryPort } from "../../domain/ports";
 
 export class GetProjectConfigQuery implements IQuery {
-  constructor(readonly organizationId: string, readonly projectId: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+  ) {}
 }
 
 export type ProjectConfigView = ConfigViewOf<Date> & {
@@ -32,7 +42,10 @@ export type ProjectConfigView = ConfigViewOf<Date> & {
  */
 export async function assembleProjectConfig(config: ConfigRepositoryPort, projectId: string): Promise<ProjectConfig> {
   const stored = await config.listSections(projectId);
-  const merged = stored.reduce<Record<string, unknown>>((accumulator, row) => ({ ...accumulator, ...(row.data as Record<string, unknown>) }), {});
+  const merged = stored.reduce<Record<string, unknown>>(
+    (accumulator, row) => ({ ...accumulator, ...(row.data as Record<string, unknown>) }),
+    {},
+  );
   // `defineProjectConfig` fills the gaps and merges the text bundle key by key, so a project that
   // reworded one case does not have to restate the other thirty.
   return defineProjectConfig(merged as Parameters<typeof defineProjectConfig>[0]);
@@ -59,7 +72,10 @@ export class GetProjectConfigHandler implements IQueryHandler<GetProjectConfigQu
     const sections = Object.fromEntries(
       CONFIG_SECTIONS.map((section) => {
         const row = stored.get(section);
-        return [section, { data: row?.data ?? defaultsFor(section), configured: Boolean(row), updatedAt: row?.updatedAt ?? null }];
+        return [
+          section,
+          { data: row?.data ?? defaultsFor(section), configured: Boolean(row), updatedAt: row?.updatedAt ?? null },
+        ];
       }),
     ) as ProjectConfigView["sections"];
 
@@ -91,7 +107,11 @@ export function defaultsFor(section: ConfigSection): unknown {
     case "bodies":
       return { bodyTemplates: defaults.bodyTemplates };
     case "authorization":
-      return { authRules: defaults.authRules, authExcludedOperationIds: defaults.authExcludedOperationIds, scopes: defaults.scopes };
+      return {
+        authRules: defaults.authRules,
+        authExcludedOperationIds: defaults.authExcludedOperationIds,
+        scopes: defaults.scopes,
+      };
     case "budgets":
       return { budgets: defaults.budgets };
     case "envelope":

@@ -166,7 +166,13 @@ export const DEFAULT_CONFIG: ProjectConfig = {
   implemented: null,
   authRules: [
     { id: "auth-none", credential: "none", expectedStatus: 401, when: { declaredStatus: 401 }, sendBody: true },
-    { id: "auth-insufficient", credential: "insufficient", expectedStatus: 403, when: { declaredStatus: 403 }, sendBody: true },
+    {
+      id: "auth-insufficient",
+      credential: "insufficient",
+      expectedStatus: 403,
+      when: { declaredStatus: 403 },
+      sendBody: true,
+    },
   ],
   authExcludedOperationIds: [],
   scopes: { default: "lectura" },

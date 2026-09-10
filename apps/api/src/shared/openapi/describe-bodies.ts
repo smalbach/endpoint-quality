@@ -52,6 +52,12 @@ import {
   UpdateProjectDto,
 } from "@/modules/projects/presentation/dto/projects.dto";
 import { StartRunDto } from "@/modules/runs/presentation/dto/runs.dto";
+import {
+  CreateRequestTemplateDto,
+  CreateWorkflowDto,
+  UpdateRequestTemplateDto,
+  UpdateWorkflowDto,
+} from "@/modules/workflows/presentation/dto/workflows.dto";
 
 /**
  * Every DTO whose schema should be filled in, listed by hand.
@@ -80,6 +86,10 @@ const DTOS = [
   CreateEnvironmentDto,
   UpdateEnvironmentDto,
   CredentialDto,
+  CreateRequestTemplateDto,
+  UpdateRequestTemplateDto,
+  CreateWorkflowDto,
+  UpdateWorkflowDto,
   StartRunDto,
 ];
 
