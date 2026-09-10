@@ -10,6 +10,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@eq/runner-core':
+        specifier: workspace:^
+        version: link:../../packages/runner-core
       '@eq/spec-import':
         specifier: workspace:^
         version: link:../../packages/spec-import
@@ -97,6 +100,10 @@ importers:
         version: 5.9.3
 
   packages/runner-core:
+    dependencies:
+      zod:
+        specifier: ^4.1.5
+        version: 4.6.1
     devDependencies:
       '@types/node':
         specifier: ^22.19.19

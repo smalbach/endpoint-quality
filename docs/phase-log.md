@@ -182,3 +182,85 @@ apuntar a `http://localhost:8100` desde un portátil es el uso normal en self-ho
   `.ts` y emite CommonJS con `rewriteRelativeImportExtensions`. `runner-core` necesitará lo mismo
   en P4.
 - El drift check es bajo demanda. Programarlo (y avisar) es post-P7.
+
+---
+
+## P3 — Entornos y configuración · cerrada
+
+**Alcance**: módulo `environments` con credenciales cifradas por rol; módulo `config` con las
+secciones validadas; `GET /scenarios`, que ensambla contrato + configuración + entorno y devuelve
+la matriz; `tools/migrate-digital-catalog.ts`.
+
+**Evidencia**
+
+    apps/api $ pnpm test
+    ℹ tests 140  ℹ pass 140  ℹ fail 0
+
+    apps/api $ EQ_TEST_DATABASE_URL=… pnpm test:db
+    ℹ tests 15   ℹ pass 15   ℹ fail 0
+
+**El criterio de aceptación.** `apps/api/test/http/config.test.ts` crea un proyecto por la API,
+importa el `bundled.yaml` real, escribe las ocho secciones **una a una por
+`PUT /config/:section`, como lo haría un operador**, y compara `GET /scenarios` contra el golden
+de P0: **46 operaciones, 311 casos**, mismos nombres, mismas descripciones, mismos estados
+esperados, mismas rutas resueltas, mismos presupuestos, y las dos colas de ejecución idénticas
+caso por caso. Sembrar el repositorio directamente habría probado el motor y saltado justo la
+mitad que esta fase añade.
+
+Con eso, la cadena se sostiene entera: contrato leído en runtime, fixtures como filas, motor que
+no conoce ninguno de los dos, y la misma matriz que producía la versión con cinco módulos de
+literales.
+
+**Un fallo que encontró el test**: `z.record` sobre una clave de enum exige en zod 4 que estén
+**todas** las claves, así que un `scopes.byMethod` que solo nombra `DELETE` se rechazaba por los
+seis métodos que deliberadamente no menciona. Es `z.partialRecord`.
+
+**Desviación consciente del plan.** El plan dibujaba tablas normalizadas — `parameter_samples`,
+`budget_rules` con `position`. La configuración se guarda como **un documento JSONB por sección**:
+
+- el orden **es** dato: los presupuestos y los escenarios condicionales casan por primera
+  coincidencia, y un array lo dice mejor que una columna `position`;
+- una sección se escribe entera, así que una edición a medias no es un estado que exista;
+- nada consulta entre proyectos "todas las reglas por debajo de 50 ms", que es lo único que la
+  forma normalizada compraría.
+
+Lo que cuesta es que Postgres no puede validar la forma, y por eso los esquemas zod viven **junto
+a los tipos** en `@eq/runner-core` — un validador en la capa de transporte se separa en silencio
+del tipo que describe — y toda escritura pasa por ellos. Hay además una comprobación en tiempo de
+compilación de que las secciones cubren `ProjectConfig` entero: añadir un campo y olvidar una
+sección es un error de build, no un motor leyendo un default que nadie eligió.
+
+**Decisiones que conviene conocer**
+
+- **Un proyecto sin configurar no falla: genera lo que el contrato permite.** Los defaults están
+  casi vacíos a propósito. Un proyecto nuevo produce el listado sin filtros y los 401/403 que el
+  contrato declara, y nada que dependa de conocer el dominio: nunca finge saber un EAN que nadie
+  le dijo.
+- **`writesAllowed` y `authEnforced` nacen apagados.** La primera corrida contra una URL de
+  producción no puede ser la que descubre que el interruptor estaba puesto.
+- **Un caso bloqueado se lista igual.** Esconderlo haría que la matriz pareciera más pequeña que
+  el contrato, que es lo único que un informe de cobertura no debe hacer nunca. Y los dos motivos
+  se distinguen, porque el arreglo es distinto: falta autorización en el destino, o falta permitir
+  escrituras.
+- **Los tres campos de credencial del dashboard acoplado (`token`, `readToken`, `apiKey`) son
+  ahora roles**: `primary`, `insufficient`, `alternate`. Uno por entorno y por rol, con índice
+  único: dos filas respondiendo a "la insuficiente" harían que el token que envía un caso 403
+  dependiese del orden de las filas.
+- **El secreto se cifra con AES-256-GCM y no sale nunca**, ni en claro ni como ciphertext. Sin
+  `SECRETS_KEY` la API se niega a guardarlo en vez de caer a una clave fija: una clave por defecto
+  es lo mismo que no cifrar, y peor, porque el ciphertext parece significar algo.
+- **Guardar credenciales es `admin`; curar la matriz es `editor`.** Es donde la escalera de roles
+  se gana el sueldo: las dos cosas que pueden dañar algo fuera de este sistema — una credencial de
+  staging ajena y el permiso de escribir en un destino — están un peldaño por encima del trabajo
+  diario.
+
+**Deuda que P3 deja anotada**
+
+- `runner-core` emite ya CommonJS igual que `spec-import`; el paquete sigue escrito en ESM y el
+  `dist` declara su formato con un `package.json` de una línea. La deuda de P1 queda saldada.
+- `tools/migrate-digital-catalog.ts` no tiene prueba automatizada: necesita una API viva. Su
+  reparto en secciones sí está cubierto — hay un round-trip que comprueba que
+  `toSections(defineProjectConfig(merge(secciones)))` devuelve las mismas secciones — y el camino
+  HTTP lo ejercita la suite de `config`.
+- Las cabeceras de un contrato tras autenticación siguen sin persistirse. Ahora hay cifrador; el
+  trabajo es conectarlo, y es media hora en P4.

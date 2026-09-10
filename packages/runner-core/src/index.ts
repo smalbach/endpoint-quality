@@ -1,5 +1,6 @@
 export * from "./types.ts";
 export * from "./config.ts";
+export * from "./schema.ts";
 export * from "./text.ts";
 export * from "./scenarios.ts";
 export * from "./execution-plan.ts";

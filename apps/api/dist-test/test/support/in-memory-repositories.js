@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.InMemorySpecRepository = exports.InMemoryProjectRepository = exports.InMemoryInvitationRepository = exports.InMemoryMembershipRepository = exports.InMemoryOrganizationRepository = exports.InMemoryApiTokenRepository = exports.InMemoryRefreshTokenRepository = exports.InMemoryUserRepository = void 0;
+exports.InMemoryConfigRepository = exports.InMemoryEnvironmentRepository = exports.InMemorySpecRepository = exports.InMemoryProjectRepository = exports.InMemoryInvitationRepository = exports.InMemoryMembershipRepository = exports.InMemoryOrganizationRepository = exports.InMemoryApiTokenRepository = exports.InMemoryRefreshTokenRepository = exports.InMemoryUserRepository = void 0;
 class InMemoryUserRepository {
     rows = new Map();
     async findById(id) {
@@ -167,4 +167,65 @@ class InMemorySpecRepository {
     }
 }
 exports.InMemorySpecRepository = InMemorySpecRepository;
+class InMemoryEnvironmentRepository {
+    rows = new Map();
+    credentials = new Map();
+    key(environmentId, role) {
+        return `${environmentId}:${role}`;
+    }
+    async findById(id) {
+        return this.rows.get(id) ?? null;
+    }
+    async findByName(projectId, name) {
+        return [...this.rows.values()].find((environment) => environment.projectId === projectId && environment.name === name) ?? null;
+    }
+    async listForProject(projectId) {
+        return [...this.rows.values()].filter((environment) => environment.projectId === projectId);
+    }
+    async save(environment) {
+        this.rows.set(environment.id, { ...environment });
+    }
+    async remove(id) {
+        this.rows.delete(id);
+        // The cascade the migration declares, honoured here too: a fake that leaves the credentials
+        // behind would let a test pass that the database would fail.
+        for (const [key, credential] of this.credentials)
+            if (credential.environmentId === id)
+                this.credentials.delete(key);
+    }
+    async listCredentials(environmentId) {
+        return [...this.credentials.values()].filter((credential) => credential.environmentId === environmentId);
+    }
+    async findCredential(environmentId, role) {
+        return this.credentials.get(this.key(environmentId, role)) ?? null;
+    }
+    async saveCredential(credential) {
+        // Keyed by (environment, role) rather than by id, which is the unique index the migration
+        // declares: a map keyed by id would happily hold two `primary` credentials.
+        this.credentials.set(this.key(credential.environmentId, credential.role), { ...credential });
+    }
+    async removeCredential(environmentId, role) {
+        this.credentials.delete(this.key(environmentId, role));
+    }
+}
+exports.InMemoryEnvironmentRepository = InMemoryEnvironmentRepository;
+class InMemoryConfigRepository {
+    rows = new Map();
+    key(projectId, section) {
+        return `${projectId}:${section}`;
+    }
+    async listSections(projectId) {
+        return [...this.rows.values()].filter((row) => row.projectId === projectId).sort((a, b) => a.section.localeCompare(b.section));
+    }
+    async findSection(projectId, section) {
+        return this.rows.get(this.key(projectId, section)) ?? null;
+    }
+    async saveSection(row) {
+        this.rows.set(this.key(row.projectId, row.section), { ...row });
+    }
+    async deleteSection(projectId, section) {
+        this.rows.delete(this.key(projectId, section));
+    }
+}
+exports.InMemoryConfigRepository = InMemoryConfigRepository;
 //# sourceMappingURL=in-memory-repositories.js.map

@@ -11,7 +11,7 @@
   "scripts": {
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json && node -e \"require('fs').writeFileSync('dist/package.json', JSON.stringify({type:'commonjs'}) + '\\n')\""
   },
   "dependencies": {
     "yaml": "^2.8.1"
@@ -24,5 +24,6 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist"
-  ]
+  ],
+  "type": "module"
 }

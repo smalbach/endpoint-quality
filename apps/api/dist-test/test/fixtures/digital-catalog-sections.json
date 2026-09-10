@@ -1,0 +1,725 @@
+{
+    "parameters": {
+        "parameterSamples": {
+            "cursor": [
+                "eyJpZCI6MX0="
+            ],
+            "limit": [
+                "1",
+                "100",
+                {
+                    "value": "0",
+                    "expectedStatus": 422,
+                    "description": "Comprueba el límite fuera de rango."
+                },
+                {
+                    "value": "101",
+                    "expectedStatus": 422,
+                    "description": "Comprueba el límite fuera de rango."
+                }
+            ],
+            "ean_sap": [
+                "7702001234567",
+                "0000000000000"
+            ],
+            "code_sap": [
+                "MAT-00123"
+            ],
+            "name_sap": [
+                "leche",
+                "producto-inexistente"
+            ],
+            "category_id": [
+                "1",
+                "999999"
+            ],
+            "store_id": [
+                "1",
+                "999999"
+            ],
+            "type_akn": [
+                "product",
+                "model"
+            ],
+            "family_code_akn": [
+                "alimentos_liquidos"
+            ],
+            "q": [
+                "leche entera",
+                "termino-inexistente"
+            ],
+            "region": [
+                "Centro",
+                "region-inexistente"
+            ],
+            "department": [
+                "Cundinamarca",
+                "departamento-inexistente"
+            ],
+            "zone_id": [
+                "ZN-01",
+                "zona-inexistente"
+            ],
+            "lat": [
+                "4.6482"
+            ],
+            "lon": [
+                "-74.0648"
+            ],
+            "radius_km": [
+                "1",
+                "10"
+            ],
+            "product_id": [
+                "1",
+                "999999"
+            ],
+            "is_enabled": [
+                "true",
+                "false"
+            ],
+            "locale_akn": [
+                "es_CO",
+                "en_US"
+            ],
+            "channel_akn": [
+                "app",
+                "web"
+            ],
+            "parent_code_akn": [
+                "alimentos",
+                "root"
+            ],
+            "include_children": [
+                "true",
+                "false"
+            ]
+        },
+        "fallbackSamples": [
+            "test"
+        ],
+        "excludeFromSoloScenarios": [
+            "lat",
+            "lon",
+            "radius_km"
+        ],
+        "pathDefaults": {
+            "product_id": "1",
+            "store_id": "1",
+            "category_id": "1",
+            "price_id": "1",
+            "projection_id": "1",
+            "product_category_id": "1",
+            "store_assortment_id": "1"
+        },
+        "fallbackPathValue": "1",
+        "missingIdValue": "999999"
+    },
+    "scenarios": {
+        "conditionalScenarios": [
+            {
+                "id": "cursor-invalid",
+                "name": "Cursor inválido",
+                "description": "Un cursor corrupto debe producir Problem Details y nunca un 500.",
+                "expectedStatus": 422,
+                "parameters": {
+                    "cursor": "broken"
+                },
+                "requiresParameters": [
+                    "cursor"
+                ]
+            },
+            {
+                "id": "geo-1km",
+                "name": "Radio geográfico · 1 km",
+                "description": "Combina latitud, longitud y radio.",
+                "expectedStatus": 200,
+                "parameters": {
+                    "lat": "4.6482",
+                    "lon": "-74.0648",
+                    "radius_km": "1"
+                },
+                "requiresParameters": [
+                    "lat"
+                ]
+            },
+            {
+                "id": "geo-20km",
+                "name": "Radio geográfico · 20 km",
+                "description": "Un radio amplio debe alcanzar más tiendas que el de 1 km.",
+                "expectedStatus": 200,
+                "parameters": {
+                    "lat": "4.6482",
+                    "lon": "-74.0648",
+                    "radius_km": "20"
+                },
+                "requiresParameters": [
+                    "lat"
+                ]
+            },
+            {
+                "id": "geo-default",
+                "name": "Radio geográfico por defecto",
+                "description": "Envía coordenadas y verifica el radio contractual por defecto.",
+                "expectedStatus": 200,
+                "parameters": {
+                    "lat": "4.6482",
+                    "lon": "-74.0648"
+                },
+                "requiresParameters": [
+                    "lat"
+                ]
+            },
+            {
+                "id": "geo-empty",
+                "name": "Radio sin tiendas dentro",
+                "description": "Coordenadas en mitad del océano: 200 con lista vacía, nunca el catálogo completo.",
+                "expectedStatus": 200,
+                "parameters": {
+                    "lat": "0",
+                    "lon": "0",
+                    "radius_km": "1"
+                },
+                "requiresParameters": [
+                    "lat"
+                ]
+            },
+            {
+                "id": "geo-incomplete",
+                "name": "Coordenadas incompletas",
+                "description": "Latitud sin longitud debe rechazarse.",
+                "expectedStatus": 422,
+                "parameters": {
+                    "lat": "4.6482"
+                },
+                "requiresParameters": [
+                    "lat"
+                ]
+            },
+            {
+                "id": "geo-radius-alone",
+                "name": "radius_km sin coordenadas",
+                "description": "Un radio sin lat/lon no es media búsqueda: debe rechazarse.",
+                "expectedStatus": 422,
+                "parameters": {
+                    "radius_km": "5"
+                },
+                "requiresParameters": [
+                    "lat"
+                ]
+            },
+            {
+                "id": "store-enabled",
+                "name": "Tienda + habilitados",
+                "description": "Valida la combinación de filtros store_id e is_enabled.",
+                "expectedStatus": 200,
+                "parameters": {
+                    "store_id": "1",
+                    "is_enabled": "true"
+                },
+                "requiresParameters": [
+                    "store_id",
+                    "is_enabled"
+                ]
+            }
+        ],
+        "operationOverrides": {
+            "healthCheck": {
+                "functional": [
+                    {
+                        "id": "healthy",
+                        "name": "Dependencias disponibles",
+                        "description": "Espera estado ok o degraded con HTTP 200.",
+                        "expectedStatus": 200
+                    }
+                ]
+            },
+            "getProductFull": {
+                "extraFunctional": [
+                    {
+                        "id": "store-price",
+                        "name": "Precio por tienda",
+                        "description": "Comprueba que el precio de tienda tenga prioridad.",
+                        "expectedStatus": 200,
+                        "parameters": {
+                            "product_id": "1",
+                            "store_id": "1"
+                        }
+                    }
+                ]
+            }
+        },
+        "listOperations": {
+            "methods": [
+                "GET"
+            ],
+            "operationIdPrefix": "list"
+        },
+        "bulkOperationIdPrefix": "bulk"
+    },
+    "bodies": {
+        "bodyTemplates": {
+            "createCategory": {
+                "body": {
+                    "code_akn": "e2e-category",
+                    "parent_code_akn": "alimentos",
+                    "labels_akn": {
+                        "es_CO": "Categoría E2E"
+                    }
+                },
+                "conflictBody": {
+                    "code_akn": "alimentos",
+                    "parent_code_akn": "alimentos",
+                    "labels_akn": {
+                        "es_CO": "Categoría E2E"
+                    }
+                }
+            },
+            "patchCategory": {
+                "body": {
+                    "labels_akn": {
+                        "es_CO": "Lácteos y derivados"
+                    }
+                }
+            },
+            "replaceCategory": {
+                "body": {
+                    "code_akn": "e2e-category",
+                    "parent_code_akn": "alimentos",
+                    "labels_akn": {
+                        "es_CO": "Categoría E2E"
+                    }
+                },
+                "replaceBody": {
+                    "code_akn": "e2e-category",
+                    "parent_code_akn": "alimentos",
+                    "labels_akn": {
+                        "es_CO": "Categoría reemplazada E2E"
+                    }
+                }
+            },
+            "createPrice": {
+                "body": {
+                    "vkp0_base_price_sap": 4900,
+                    "vka0_promotional_price_sap": 3900,
+                    "vkp0_start_validity_date": "2026-01-01T00:00:00Z",
+                    "vkp0_end_validity_date": "2026-12-31T23:59:59Z",
+                    "vka0_start_validity_date": "2026-06-01T00:00:00Z",
+                    "vka0_end_validity_date": "2026-06-30T23:59:59Z",
+                    "pum_vkp0": 4.9,
+                    "pum_vka0": 3.9
+                }
+            },
+            "patchPrice": {
+                "body": {
+                    "vkp0_base_price_sap": 5100
+                }
+            },
+            "replacePrice": {
+                "body": {
+                    "vkp0_base_price_sap": 4900,
+                    "vka0_promotional_price_sap": 3900,
+                    "vkp0_start_validity_date": "2026-01-01T00:00:00Z",
+                    "vkp0_end_validity_date": "2026-12-31T23:59:59Z",
+                    "vka0_start_validity_date": "2026-06-01T00:00:00Z",
+                    "vka0_end_validity_date": "2026-06-30T23:59:59Z",
+                    "pum_vkp0": 4.9,
+                    "pum_vka0": 3.9
+                },
+                "replaceBody": {
+                    "vkp0_base_price_sap": 5150,
+                    "vka0_promotional_price_sap": 3900,
+                    "vkp0_start_validity_date": "2026-01-01T00:00:00Z",
+                    "vkp0_end_validity_date": "2026-12-31T23:59:59Z",
+                    "vka0_start_validity_date": "2026-06-01T00:00:00Z",
+                    "vka0_end_validity_date": "2026-06-30T23:59:59Z",
+                    "pum_vkp0": 4.9,
+                    "pum_vka0": 3.9
+                }
+            },
+            "createProduct": {
+                "body": {
+                    "ean_sap": "7702005555555",
+                    "code_sap": "MAT-E2E-001",
+                    "name_sap": "Producto E2E",
+                    "description_sap": "Producto de prueba E2E",
+                    "pack_code_sap": "UNIDAD",
+                    "quantity_in_pack_sap": "1",
+                    "measure_unit_sap": "1",
+                    "measure_unit_code_sap": "L",
+                    "measure_unit_value_sap": "1000",
+                    "sub_category_sap": "Lácteos",
+                    "sub_category_code_sap": "LAC-01",
+                    "type_akn": "product"
+                },
+                "conflictBody": {
+                    "ean_sap": "7702001234567",
+                    "code_sap": "MAT-E2E-001",
+                    "name_sap": "Producto E2E",
+                    "description_sap": "Producto de prueba E2E",
+                    "pack_code_sap": "UNIDAD",
+                    "quantity_in_pack_sap": "1",
+                    "measure_unit_sap": "1",
+                    "measure_unit_code_sap": "L",
+                    "measure_unit_value_sap": "1000",
+                    "sub_category_sap": "Lácteos",
+                    "sub_category_code_sap": "LAC-01",
+                    "type_akn": "product"
+                }
+            },
+            "bulkUpsertProducts": {
+                "body": {
+                    "records": [
+                        {
+                            "ean_sap": "7702005555556",
+                            "code_sap": "MAT-E2E-002",
+                            "name_sap": "Producto E2E bulk",
+                            "description_sap": "Producto de prueba E2E",
+                            "pack_code_sap": "UNIDAD",
+                            "quantity_in_pack_sap": "1",
+                            "measure_unit_sap": "1",
+                            "measure_unit_code_sap": "L",
+                            "measure_unit_value_sap": "1000",
+                            "sub_category_sap": "Lácteos",
+                            "sub_category_code_sap": "LAC-01",
+                            "type_akn": "product"
+                        }
+                    ]
+                }
+            },
+            "patchProduct": {
+                "body": {
+                    "name_sap": "Producto actualizado"
+                }
+            },
+            "replaceProduct": {
+                "body": {
+                    "ean_sap": "7702005555555",
+                    "code_sap": "MAT-E2E-001",
+                    "name_sap": "Producto E2E",
+                    "description_sap": "Producto de prueba E2E",
+                    "pack_code_sap": "UNIDAD",
+                    "quantity_in_pack_sap": "1",
+                    "measure_unit_sap": "1",
+                    "measure_unit_code_sap": "L",
+                    "measure_unit_value_sap": "1000",
+                    "sub_category_sap": "Lácteos",
+                    "sub_category_code_sap": "LAC-01",
+                    "type_akn": "product"
+                },
+                "replaceBody": {
+                    "ean_sap": "7702005555555",
+                    "code_sap": "MAT-E2E-001",
+                    "name_sap": "Producto reemplazado E2E",
+                    "description_sap": "Producto de prueba E2E",
+                    "pack_code_sap": "UNIDAD",
+                    "quantity_in_pack_sap": "1",
+                    "measure_unit_sap": "1",
+                    "measure_unit_code_sap": "L",
+                    "measure_unit_value_sap": "1000",
+                    "sub_category_sap": "Lácteos",
+                    "sub_category_code_sap": "LAC-01",
+                    "type_akn": "product"
+                }
+            },
+            "assignProductCategory": {
+                "body": {
+                    "category_id": 1
+                },
+                "conflictBody": {
+                    "category_id": 2
+                }
+            },
+            "createProductProjection": {
+                "body": {
+                    "locale_akn": "pt_BR",
+                    "channel_akn": "kiosk",
+                    "name_akn": "Produto E2E"
+                },
+                "conflictBody": {
+                    "locale_akn": "es_CO",
+                    "channel_akn": "app",
+                    "name_akn": "Proyección duplicada"
+                }
+            },
+            "patchProductProjection": {
+                "body": {
+                    "name_akn": "Nombre actualizado"
+                }
+            },
+            "replaceProductProjection": {
+                "body": {
+                    "locale_akn": "pt_BR",
+                    "channel_akn": "kiosk",
+                    "name_akn": "Produto E2E"
+                },
+                "replaceBody": {
+                    "locale_akn": "pt_BR",
+                    "channel_akn": "kiosk",
+                    "name_akn": "Proyección reemplazada E2E"
+                }
+            },
+            "createStoreAssortment": {
+                "body": {
+                    "product_id": 2,
+                    "store_id": 4,
+                    "is_enabled": true,
+                    "vkp0_base_price_sap": 4900,
+                    "vka0_promotional_price_sap": 3900,
+                    "vkp0_start_validity_date": "2026-01-01T00:00:00Z",
+                    "vkp0_end_validity_date": "2026-12-31T23:59:59Z",
+                    "vka0_start_validity_date": "2026-06-01T00:00:00Z",
+                    "vka0_end_validity_date": "2026-06-30T23:59:59Z",
+                    "pum_vkp0": 4.9,
+                    "pum_vka0": 3.9
+                },
+                "conflictBody": {
+                    "product_id": 1,
+                    "store_id": 1,
+                    "vkp0_base_price_sap": 4900,
+                    "vka0_promotional_price_sap": 0,
+                    "vkp0_start_validity_date": "2026-01-01T00:00:00Z",
+                    "vkp0_end_validity_date": "2026-12-31T23:59:59Z",
+                    "vka0_start_validity_date": "2026-06-01T00:00:00Z",
+                    "vka0_end_validity_date": "2026-06-30T23:59:59Z",
+                    "pum_vkp0": 4.9,
+                    "pum_vka0": 0
+                }
+            },
+            "bulkUpsertStoreAssortments": {
+                "body": {
+                    "records": [
+                        {
+                            "product_id": 2,
+                            "store_id": 3,
+                            "is_enabled": true,
+                            "vkp0_base_price_sap": 4900,
+                            "vka0_promotional_price_sap": 3900,
+                            "vkp0_start_validity_date": "2026-01-01T00:00:00Z",
+                            "vkp0_end_validity_date": "2026-12-31T23:59:59Z",
+                            "vka0_start_validity_date": "2026-06-01T00:00:00Z",
+                            "vka0_end_validity_date": "2026-06-30T23:59:59Z",
+                            "pum_vkp0": 4.9,
+                            "pum_vka0": 3.9
+                        }
+                    ]
+                }
+            },
+            "patchStoreAssortment": {
+                "body": {
+                    "is_enabled": false
+                }
+            },
+            "replaceStoreAssortment": {
+                "body": {
+                    "product_id": 2,
+                    "store_id": 4,
+                    "is_enabled": true,
+                    "vkp0_base_price_sap": 4900,
+                    "vka0_promotional_price_sap": 3900,
+                    "vkp0_start_validity_date": "2026-01-01T00:00:00Z",
+                    "vkp0_end_validity_date": "2026-12-31T23:59:59Z",
+                    "vka0_start_validity_date": "2026-06-01T00:00:00Z",
+                    "vka0_end_validity_date": "2026-06-30T23:59:59Z",
+                    "pum_vkp0": 4.9,
+                    "pum_vka0": 3.9
+                },
+                "replaceBody": {
+                    "product_id": 2,
+                    "store_id": 4,
+                    "is_enabled": false,
+                    "vkp0_base_price_sap": 4900,
+                    "vka0_promotional_price_sap": 3900,
+                    "vkp0_start_validity_date": "2026-01-01T00:00:00Z",
+                    "vkp0_end_validity_date": "2026-12-31T23:59:59Z",
+                    "vka0_start_validity_date": "2026-06-01T00:00:00Z",
+                    "vka0_end_validity_date": "2026-06-30T23:59:59Z",
+                    "pum_vkp0": 4.9,
+                    "pum_vka0": 3.9
+                }
+            },
+            "createStore": {
+                "body": {
+                    "name": "Ara Prueba E2E",
+                    "address": "Cra 7 # 62-15",
+                    "department": "Cundinamarca",
+                    "region": "Bogotá",
+                    "latitude": 4.6482,
+                    "longitude": -74.0648
+                }
+            },
+            "patchStore": {
+                "body": {
+                    "name": "Ara Chapinero Norte"
+                }
+            },
+            "replaceStore": {
+                "body": {
+                    "name": "Ara Prueba E2E",
+                    "address": "Cra 7 # 62-15",
+                    "department": "Cundinamarca",
+                    "region": "Bogotá",
+                    "latitude": 4.6482,
+                    "longitude": -74.0648
+                },
+                "replaceBody": {
+                    "name": "Ara reemplazada E2E",
+                    "address": "Cra 7 # 62-15",
+                    "department": "Cundinamarca",
+                    "region": "Bogotá",
+                    "latitude": 4.6482,
+                    "longitude": -74.0648
+                }
+            }
+        }
+    },
+    "authorization": {
+        "authRules": [
+            {
+                "id": "auth-none",
+                "credential": "none",
+                "expectedStatus": 401,
+                "when": {
+                    "declaredStatus": 401
+                },
+                "sendBody": true
+            },
+            {
+                "id": "auth-insufficient",
+                "credential": "insufficient",
+                "expectedStatus": 403,
+                "when": {
+                    "declaredStatus": 403
+                },
+                "sendBody": true
+            },
+            {
+                "id": "auth-api-key",
+                "credential": "api-key",
+                "expectedStatus": 401,
+                "when": {
+                    "methods": [
+                        "DELETE"
+                    ]
+                }
+            }
+        ],
+        "authExcludedOperationIds": [
+            "healthCheck"
+        ],
+        "scopes": {
+            "default": "catalog:read",
+            "byMethod": {
+                "DELETE": "catalog:write"
+            }
+        }
+    },
+    "budgets": {
+        "budgets": [
+            {
+                "id": "health",
+                "pathEquals": "/health",
+                "thresholdMs": 20,
+                "label": "GET /health < 20 ms",
+                "source": "RFP §6"
+            },
+            {
+                "id": "bulk",
+                "pathSuffix": "/bulk",
+                "thresholdMs": 5000,
+                "label": "Bulk de 5.000 registros < 5 s",
+                "source": "RFP §6"
+            },
+            {
+                "id": "ean",
+                "methods": [
+                    "GET"
+                ],
+                "queryMatches": "[?&]ean_sap=",
+                "thresholdMs": 50,
+                "label": "?ean_sap= p95 con caché caliente < 50 ms",
+                "source": "RFP §6"
+            },
+            {
+                "id": "get",
+                "methods": [
+                    "GET"
+                ],
+                "thresholdMs": 70,
+                "label": "GET p95 < 70 ms",
+                "source": "RFP §6"
+            }
+        ]
+    },
+    "envelope": {
+        "envelope": {
+            "rules": [
+                {
+                    "id": "delete",
+                    "match": {
+                        "methods": [
+                            "DELETE"
+                        ]
+                    },
+                    "shape": "No body"
+                },
+                {
+                    "id": "health",
+                    "match": {
+                        "operationId": "healthCheck"
+                    },
+                    "shape": "HealthStatus"
+                },
+                {
+                    "id": "list",
+                    "match": {
+                        "operationIdPrefix": "list"
+                    },
+                    "shape": "{ data: [...], meta, links }"
+                },
+                {
+                    "id": "bulk-products",
+                    "match": {
+                        "operationId": "bulkUpsertProducts"
+                    },
+                    "shape": "{ data: ProductBulkResult }"
+                },
+                {
+                    "id": "bulk",
+                    "match": {
+                        "operationIdPrefix": "bulk"
+                    },
+                    "shape": "{ data: StoreAssortmentBulkResult }"
+                }
+            ],
+            "fallbackShape": "{ data: Resource }",
+            "errorShape": "ProblemDetails"
+        }
+    },
+    "implemented": {
+        "implemented": [
+            "healthCheck",
+            "listProducts",
+            "getProduct",
+            "getProductFull",
+            "listStoreAssortments",
+            "createStoreAssortment",
+            "bulkUpsertStoreAssortments",
+            "deleteStoreAssortment",
+            "getStoreAssortment",
+            "patchStoreAssortment",
+            "replaceStoreAssortment",
+            "listStores",
+            "createStore",
+            "deleteStore",
+            "getStore",
+            "patchStore",
+            "replaceStore",
+            "listStoreAssortment"
+        ]
+    },
+    "text": {
+        "locale": "es",
+        "text": {}
+    }
+}

@@ -2,12 +2,29 @@
   "name": "@eq/runner-core",
   "version": "0.0.0",
   "private": true,
-  "type": "module",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "golden": "node --experimental-strip-types test/golden/generate.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json && node -e \"require('fs').writeFileSync('dist/package.json', JSON.stringify({type:'commonjs'}) + '\\n')\""
   },
-  "devDependencies": { "typescript": "^5.9.3", "@types/node": "^22.19.19" }
+  "devDependencies": {
+    "@types/node": "^22.19.19",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "zod": "^4.1.5"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "type": "module"
 }

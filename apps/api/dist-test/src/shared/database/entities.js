@@ -9,7 +9,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ENTITIES = exports.SpecOperationEntity = exports.SpecVersionEntity = exports.SpecSourceEntity = exports.ProjectEntity = exports.ApiTokenEntity = exports.RefreshTokenEntity = exports.InvitationEntity = exports.MembershipEntity = exports.OrganizationEntity = exports.UserEntity = void 0;
+exports.ENTITIES = exports.ProjectConfigEntity = exports.EnvironmentCredentialEntity = exports.EnvironmentEntity = exports.SpecOperationEntity = exports.SpecVersionEntity = exports.SpecSourceEntity = exports.ProjectEntity = exports.ApiTokenEntity = exports.RefreshTokenEntity = exports.InvitationEntity = exports.MembershipEntity = exports.OrganizationEntity = exports.UserEntity = void 0;
 /**
  * The tables, as TypeORM entities.
  *
@@ -554,5 +554,182 @@ __decorate([
 exports.SpecOperationEntity = SpecOperationEntity = __decorate([
     (0, typeorm_1.Entity)({ name: "spec_operations" })
 ], SpecOperationEntity);
-exports.ENTITIES = [UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity, ProjectEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity];
+/**
+ * Where a project's contract is exercised: a base URL, and the credentials to present there.
+ *
+ * `writesAllowed` is the flag that keeps a production target from being written to by a matrix
+ * that includes POSTs and DELETEs. It is enforced in the engine rather than in the UI, because a
+ * run can be launched from CI with no UI in sight.
+ */
+let EnvironmentEntity = class EnvironmentEntity {
+    id;
+    projectId;
+    name;
+    baseUrl;
+    /** Where the live OpenAPI document is served, when it is not `${baseUrl}/openapi.json`. The
+     * schema assertion reads it during a run. */
+    specUrl;
+    variables;
+    writesAllowed;
+    /** Whether the target actually enforces authorization. Against one that grants every scope to
+     * everyone, the 401/403 cases fail for a reason that has nothing to do with the endpoint. */
+    authEnforced;
+    createdAt;
+};
+exports.EnvironmentEntity = EnvironmentEntity;
+__decorate([
+    (0, typeorm_1.PrimaryColumn)("uuid"),
+    __metadata("design:type", String)
+], EnvironmentEntity.prototype, "id", void 0);
+__decorate([
+    (0, typeorm_1.Index)(),
+    (0, typeorm_1.Column)("uuid"),
+    __metadata("design:type", String)
+], EnvironmentEntity.prototype, "projectId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 80 }),
+    __metadata("design:type", String)
+], EnvironmentEntity.prototype, "name", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "text" }),
+    __metadata("design:type", String)
+], EnvironmentEntity.prototype, "baseUrl", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "text", nullable: true }),
+    __metadata("design:type", Object)
+], EnvironmentEntity.prototype, "specUrl", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "jsonb", default: () => "'{}'::jsonb" }),
+    __metadata("design:type", Object)
+], EnvironmentEntity.prototype, "variables", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "boolean", default: false }),
+    __metadata("design:type", Boolean)
+], EnvironmentEntity.prototype, "writesAllowed", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "boolean", default: false }),
+    __metadata("design:type", Boolean)
+], EnvironmentEntity.prototype, "authEnforced", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "timestamptz" }),
+    __metadata("design:type", Date)
+], EnvironmentEntity.prototype, "createdAt", void 0);
+exports.EnvironmentEntity = EnvironmentEntity = __decorate([
+    (0, typeorm_1.Entity)({ name: "environments" })
+], EnvironmentEntity);
+/**
+ * A credential the runner presents to a target.
+ *
+ * `role` is what generalizes the coupled dashboard's three hard-coded fields (`token`,
+ * `readToken`, `apiKey`) into something a project defines: `primary` is the working credential,
+ * `insufficient` is the one that authenticates but falls short of the scope — that is the 403 —
+ * and `alternate` is a scheme the operation does not declare, which is a 401 and not a 403.
+ *
+ * The secret is AES-256-GCM ciphertext and is never returned by any query. The column name says
+ * so, because a column called `secret` invites somebody to select it.
+ */
+let EnvironmentCredentialEntity = class EnvironmentCredentialEntity {
+    id;
+    environmentId;
+    name;
+    role;
+    kind;
+    /** The header the credential travels in, for the kinds that need naming — `X-API-Key` and
+     * friends. Bearer and Basic imply `Authorization`. */
+    headerName;
+    secretCiphertext;
+    scopes;
+    createdAt;
+    updatedAt;
+};
+exports.EnvironmentCredentialEntity = EnvironmentCredentialEntity;
+__decorate([
+    (0, typeorm_1.PrimaryColumn)("uuid"),
+    __metadata("design:type", String)
+], EnvironmentCredentialEntity.prototype, "id", void 0);
+__decorate([
+    (0, typeorm_1.Index)(),
+    (0, typeorm_1.Column)("uuid"),
+    __metadata("design:type", String)
+], EnvironmentCredentialEntity.prototype, "environmentId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 80 }),
+    __metadata("design:type", String)
+], EnvironmentCredentialEntity.prototype, "name", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 20 }),
+    __metadata("design:type", String)
+], EnvironmentCredentialEntity.prototype, "role", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 40 }),
+    __metadata("design:type", String)
+], EnvironmentCredentialEntity.prototype, "kind", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 80, nullable: true }),
+    __metadata("design:type", Object)
+], EnvironmentCredentialEntity.prototype, "headerName", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "text" }),
+    __metadata("design:type", String)
+], EnvironmentCredentialEntity.prototype, "secretCiphertext", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "jsonb", default: () => "'[]'::jsonb" }),
+    __metadata("design:type", Array)
+], EnvironmentCredentialEntity.prototype, "scopes", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "timestamptz" }),
+    __metadata("design:type", Date)
+], EnvironmentCredentialEntity.prototype, "createdAt", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "timestamptz" }),
+    __metadata("design:type", Date)
+], EnvironmentCredentialEntity.prototype, "updatedAt", void 0);
+exports.EnvironmentCredentialEntity = EnvironmentCredentialEntity = __decorate([
+    (0, typeorm_1.Entity)({ name: "environment_credentials" })
+], EnvironmentCredentialEntity);
+/**
+ * One document per configuration section.
+ *
+ * Documents rather than a table per concept, which is a departure from the plan's sketch and a
+ * deliberate one: order is data — budget rules and conditional scenarios are matched first-hit —
+ * and an array says that better than a `position` column. A section is also written as one unit,
+ * so a half-applied edit is not a state that can exist. What Postgres cannot enforce here, the
+ * zod schemas in `@eq/runner-core` do on every write.
+ */
+let ProjectConfigEntity = class ProjectConfigEntity {
+    projectId;
+    section;
+    data;
+    updatedAt;
+    updatedBy;
+};
+exports.ProjectConfigEntity = ProjectConfigEntity;
+__decorate([
+    (0, typeorm_1.PrimaryColumn)("uuid"),
+    __metadata("design:type", String)
+], ProjectConfigEntity.prototype, "projectId", void 0);
+__decorate([
+    (0, typeorm_1.PrimaryColumn)({ type: "varchar", length: 40 }),
+    __metadata("design:type", String)
+], ProjectConfigEntity.prototype, "section", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "jsonb" }),
+    __metadata("design:type", Object)
+], ProjectConfigEntity.prototype, "data", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "timestamptz" }),
+    __metadata("design:type", Date)
+], ProjectConfigEntity.prototype, "updatedAt", void 0);
+__decorate([
+    (0, typeorm_1.Column)("uuid"),
+    __metadata("design:type", String)
+], ProjectConfigEntity.prototype, "updatedBy", void 0);
+exports.ProjectConfigEntity = ProjectConfigEntity = __decorate([
+    (0, typeorm_1.Entity)({ name: "project_config" })
+], ProjectConfigEntity);
+exports.ENTITIES = [
+    UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity,
+    ProjectEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity,
+    EnvironmentEntity, EnvironmentCredentialEntity, ProjectConfigEntity,
+];
 //# sourceMappingURL=entities.js.map

@@ -44,12 +44,19 @@ import { PROJECT_COMMAND_HANDLERS, PROJECT_QUERY_HANDLERS } from "@/modules/proj
 import { SPEC_REPOSITORY } from "@/modules/specs/domain/ports";
 import { SPEC_COMMAND_HANDLERS, SPEC_QUERY_HANDLERS } from "@/modules/specs/specs.module";
 import { SAFE_FETCH, type SafeFetchPort, type SafeFetchResult } from "@/shared/http/safe-fetch";
+import { SECRET_CIPHER, AesGcmSecretCipher } from "@/shared/crypto/secret-cipher";
+import { ENVIRONMENT_REPOSITORY } from "@/modules/environments/domain/ports";
+import { EnvironmentsController } from "@/modules/environments/presentation/environments.controller";
+import { ENVIRONMENT_COMMAND_HANDLERS, ENVIRONMENT_QUERY_HANDLERS } from "@/modules/environments/environments.module";
+import { CONFIG_REPOSITORY } from "@/modules/config/domain/ports";
 import {
   InMemoryApiTokenRepository,
   InMemoryInvitationRepository,
   InMemoryMembershipRepository,
   InMemoryOrganizationRepository,
   InMemoryRefreshTokenRepository,
+  InMemoryConfigRepository,
+  InMemoryEnvironmentRepository,
   InMemoryProjectRepository,
   InMemorySpecRepository,
   InMemoryUserRepository,
@@ -100,6 +107,8 @@ export type TestContext = {
     invitations: InMemoryInvitationRepository;
     projects: InMemoryProjectRepository;
     specs: InMemorySpecRepository;
+    environments: InMemoryEnvironmentRepository;
+    config: InMemoryConfigRepository;
   };
   http: StubSafeFetch;
   close(): Promise<void>;
@@ -117,12 +126,14 @@ export async function createTestApp(): Promise<TestContext> {
     invitations: new InMemoryInvitationRepository(),
     projects: new InMemoryProjectRepository(),
     specs: new InMemorySpecRepository(),
+    environments: new InMemoryEnvironmentRepository(),
+    config: new InMemoryConfigRepository(),
   };
   const http = new StubSafeFetch();
 
   const moduleRef = await Test.createTestingModule({
     imports: [CqrsModule.forRoot(), JwtModule.register({})],
-    controllers: [AuthController, OrganizationsController, ProjectsController],
+    controllers: [AuthController, OrganizationsController, ProjectsController, EnvironmentsController],
     providers: [
       { provide: ENV, useValue: env },
       { provide: CLOCK, useValue: clock },
@@ -137,6 +148,11 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: PROJECT_REPOSITORY, useValue: repositories.projects },
       { provide: SPEC_REPOSITORY, useValue: repositories.specs },
       { provide: SAFE_FETCH, useValue: http },
+      { provide: ENVIRONMENT_REPOSITORY, useValue: repositories.environments },
+      { provide: CONFIG_REPOSITORY, useValue: repositories.config },
+      // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the
+      // repository is ciphertext, and a pass-through would make that assertion meaningless.
+      { provide: SECRET_CIPHER, useValue: new AesGcmSecretCipher(Buffer.alloc(32, 9).toString("base64")) },
       ...AUTH_COMMAND_HANDLERS,
       ...AUTH_QUERY_HANDLERS,
       ...IAM_COMMAND_HANDLERS,
@@ -145,6 +161,8 @@ export async function createTestApp(): Promise<TestContext> {
       ...PROJECT_QUERY_HANDLERS,
       ...SPEC_COMMAND_HANDLERS,
       ...SPEC_QUERY_HANDLERS,
+      ...ENVIRONMENT_COMMAND_HANDLERS,
+      ...ENVIRONMENT_QUERY_HANDLERS,
       // The global guard and filter are registered exactly as `AppModule` does, because half of
       // what these tests check is that the wiring protects what it should. Throttling is left
       // out: it is the one piece whose behaviour is a rate, and asserting it here would make

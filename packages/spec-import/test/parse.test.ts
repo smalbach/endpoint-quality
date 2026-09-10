@@ -14,7 +14,14 @@ import { deriveOperationId, importSpec, parseDocument } from "../src/parse.ts";
 import { diffOperations } from "../src/drift.ts";
 import { fingerprint } from "../src/fingerprint.ts";
 
-const minimal = {
+/**
+ * Typed loosely on purpose: the drift cases mutate a clone — deleting a path, swapping a security
+ * scheme — and a literal type inferred from this object would make each of those a compile error
+ * about a shape that is precisely what is being varied.
+ */
+type Doc = Record<string, any>;
+
+const minimal: Doc = {
   openapi: "3.1.0",
   info: { title: "Blog", version: "2.0.0" },
   security: [{ bearerAuth: [] }],
@@ -203,7 +210,7 @@ describe("drift entre dos versiones", () => {
   });
 
   test("una operación nueva es superficie sin cubrir, no un cambio rompedor", () => {
-    const next = structuredClone(minimal) as typeof minimal & { paths: Record<string, unknown> };
+    const next = structuredClone(minimal) as Doc;
     next.paths["/comments"] = { get: { operationId: "listComments", responses: { "200": {} } } };
     const drift = diffOperations(before, importSpec(JSON.stringify(next)).operations);
     assert.equal(drift.breaking.length, 0);
@@ -214,7 +221,7 @@ describe("drift entre dos versiones", () => {
   test("una operación que desaparece sí es rompedora", () => {
     // Configuration keyed by it is now dead, and a run would assert something the contract no
     // longer promises.
-    const next = structuredClone(minimal) as typeof minimal & { paths: Record<string, unknown> };
+    const next = structuredClone(minimal) as Doc;
     delete next.paths["/posts/{slug}"];
     const drift = diffOperations(before, importSpec(JSON.stringify(next)).operations);
     assert.equal(drift.breaking.filter((change) => change.kind === "removed").length, 2);
@@ -223,7 +230,7 @@ describe("drift entre dos versiones", () => {
   test("una ruta que se mueve es un movimiento, no un alta más una baja", () => {
     // Matched by id, so the operator reads "getPost moved" instead of hunting through two
     // unrelated-looking entries.
-    const next = structuredClone(minimal) as typeof minimal & { paths: Record<string, unknown> };
+    const next = structuredClone(minimal) as Doc;
     next.paths["/articles/{slug}"] = next.paths["/posts/{slug}"];
     delete next.paths["/posts/{slug}"];
     const drift = diffOperations(before, importSpec(JSON.stringify(next)).operations);
@@ -233,8 +240,8 @@ describe("drift entre dos versiones", () => {
   });
 
   test("un estado que deja de declararse invalida los casos que lo esperaban", () => {
-    const next = structuredClone(minimal);
-    next.paths["/posts"].get.responses = { "200": {} } as never;
+    const next = structuredClone(minimal) as Doc;
+    next.paths["/posts"].get.responses = { "200": {} };
     const drift = diffOperations(before, importSpec(JSON.stringify(next)).operations);
     assert.deepEqual(drift.breaking, [{ kind: "statuses", id: "listPosts", added: [], removed: [401] }]);
   });
@@ -242,7 +249,7 @@ describe("drift entre dos versiones", () => {
   test("un cambio de esquema de seguridad siempre se marca como rompedor", () => {
     // It is the change most likely to be made without anybody thinking about the test matrix,
     // and it decides which authorization cases mean anything.
-    const next = structuredClone(minimal);
+    const next = structuredClone(minimal) as Doc;
     next.security = [{ apiKey: [] }];
     const drift = diffOperations(before, importSpec(JSON.stringify(next)).operations);
     assert.equal(drift.breaking.every((change) => change.kind === "security"), true);
@@ -260,7 +267,7 @@ describe("huella del documento", () => {
   test("cubre cambios que no tocan ninguna operación", () => {
     // Two documents differing only in a description are still two documents. The operation-level
     // diff answers the narrower question of whether anything the engine cares about moved.
-    const other = structuredClone(minimal);
+    const other = structuredClone(minimal) as Doc;
     other.info.title = "Otro";
     assert.notEqual(fingerprint(JSON.stringify(minimal)), fingerprint(JSON.stringify(other)));
     assert.deepEqual(diffOperations(importSpec(JSON.stringify(minimal)).operations, importSpec(JSON.stringify(other)).operations).changes, []);

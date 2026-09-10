@@ -47,6 +47,11 @@ const projects_module_1 = require("../../src/modules/projects/projects.module");
 const ports_4 = require("../../src/modules/specs/domain/ports");
 const specs_module_1 = require("../../src/modules/specs/specs.module");
 const safe_fetch_1 = require("../../src/shared/http/safe-fetch");
+const secret_cipher_1 = require("../../src/shared/crypto/secret-cipher");
+const ports_5 = require("../../src/modules/environments/domain/ports");
+const environments_controller_1 = require("../../src/modules/environments/presentation/environments.controller");
+const environments_module_1 = require("../../src/modules/environments/environments.module");
+const ports_6 = require("../../src/modules/config/domain/ports");
 const in_memory_repositories_1 = require("./in-memory-repositories");
 /**
  * A stand-in for the network.
@@ -90,11 +95,13 @@ async function createTestApp() {
         invitations: new in_memory_repositories_1.InMemoryInvitationRepository(),
         projects: new in_memory_repositories_1.InMemoryProjectRepository(),
         specs: new in_memory_repositories_1.InMemorySpecRepository(),
+        environments: new in_memory_repositories_1.InMemoryEnvironmentRepository(),
+        config: new in_memory_repositories_1.InMemoryConfigRepository(),
     };
     const http = new StubSafeFetch();
     const moduleRef = await testing_1.Test.createTestingModule({
         imports: [cqrs_1.CqrsModule.forRoot(), jwt_1.JwtModule.register({})],
-        controllers: [auth_controller_1.AuthController, organizations_controller_1.OrganizationsController, projects_controller_1.ProjectsController],
+        controllers: [auth_controller_1.AuthController, organizations_controller_1.OrganizationsController, projects_controller_1.ProjectsController, environments_controller_1.EnvironmentsController],
         providers: [
             { provide: env_1.ENV, useValue: env },
             { provide: clock_port_1.CLOCK, useValue: clock },
@@ -109,6 +116,11 @@ async function createTestApp() {
             { provide: ports_3.PROJECT_REPOSITORY, useValue: repositories.projects },
             { provide: ports_4.SPEC_REPOSITORY, useValue: repositories.specs },
             { provide: safe_fetch_1.SAFE_FETCH, useValue: http },
+            { provide: ports_5.ENVIRONMENT_REPOSITORY, useValue: repositories.environments },
+            { provide: ports_6.CONFIG_REPOSITORY, useValue: repositories.config },
+            // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the
+            // repository is ciphertext, and a pass-through would make that assertion meaningless.
+            { provide: secret_cipher_1.SECRET_CIPHER, useValue: new secret_cipher_1.AesGcmSecretCipher(Buffer.alloc(32, 9).toString("base64")) },
             ...auth_module_1.AUTH_COMMAND_HANDLERS,
             ...auth_module_1.AUTH_QUERY_HANDLERS,
             ...iam_module_1.IAM_COMMAND_HANDLERS,
@@ -117,6 +129,8 @@ async function createTestApp() {
             ...projects_module_1.PROJECT_QUERY_HANDLERS,
             ...specs_module_1.SPEC_COMMAND_HANDLERS,
             ...specs_module_1.SPEC_QUERY_HANDLERS,
+            ...environments_module_1.ENVIRONMENT_COMMAND_HANDLERS,
+            ...environments_module_1.ENVIRONMENT_QUERY_HANDLERS,
             // The global guard and filter are registered exactly as `AppModule` does, because half of
             // what these tests check is that the wiring protects what it should. Throttling is left
             // out: it is the one piece whose behaviour is a rate, and asserting it here would make

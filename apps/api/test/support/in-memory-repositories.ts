@@ -18,6 +18,10 @@ import type { Project } from "@/modules/projects/domain/model";
 import type { ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import type { SpecOperation, SpecSource, SpecVersion, SpecVersionSummary } from "@/modules/specs/domain/model";
 import type { SpecRepositoryPort } from "@/modules/specs/domain/ports";
+import type { Credential, CredentialRole, Environment } from "@/modules/environments/domain/model";
+import type { EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
+import type { ConfigRepositoryPort, ConfigRow } from "@/modules/config/domain/ports";
+import type { ConfigSection } from "@eq/runner-core";
 
 export class InMemoryUserRepository implements UserRepositoryPort {
   readonly rows = new Map<string, User>();
@@ -191,5 +195,67 @@ export class InMemorySpecRepository implements SpecRepositoryPort {
   async deleteVersion(id: string): Promise<void> {
     this.versions.delete(id);
     this.operations.delete(id);
+  }
+}
+
+export class InMemoryEnvironmentRepository implements EnvironmentRepositoryPort {
+  readonly rows = new Map<string, Environment>();
+  readonly credentials = new Map<string, Credential>();
+  private key(environmentId: string, role: CredentialRole) {
+    return `${environmentId}:${role}`;
+  }
+
+  async findById(id: string): Promise<Environment | null> {
+    return this.rows.get(id) ?? null;
+  }
+  async findByName(projectId: string, name: string): Promise<Environment | null> {
+    return [...this.rows.values()].find((environment) => environment.projectId === projectId && environment.name === name) ?? null;
+  }
+  async listForProject(projectId: string): Promise<Environment[]> {
+    return [...this.rows.values()].filter((environment) => environment.projectId === projectId);
+  }
+  async save(environment: Environment): Promise<void> {
+    this.rows.set(environment.id, { ...environment });
+  }
+  async remove(id: string): Promise<void> {
+    this.rows.delete(id);
+    // The cascade the migration declares, honoured here too: a fake that leaves the credentials
+    // behind would let a test pass that the database would fail.
+    for (const [key, credential] of this.credentials) if (credential.environmentId === id) this.credentials.delete(key);
+  }
+
+  async listCredentials(environmentId: string): Promise<Credential[]> {
+    return [...this.credentials.values()].filter((credential) => credential.environmentId === environmentId);
+  }
+  async findCredential(environmentId: string, role: CredentialRole): Promise<Credential | null> {
+    return this.credentials.get(this.key(environmentId, role)) ?? null;
+  }
+  async saveCredential(credential: Credential): Promise<void> {
+    // Keyed by (environment, role) rather than by id, which is the unique index the migration
+    // declares: a map keyed by id would happily hold two `primary` credentials.
+    this.credentials.set(this.key(credential.environmentId, credential.role), { ...credential });
+  }
+  async removeCredential(environmentId: string, role: CredentialRole): Promise<void> {
+    this.credentials.delete(this.key(environmentId, role));
+  }
+}
+
+export class InMemoryConfigRepository implements ConfigRepositoryPort {
+  readonly rows = new Map<string, ConfigRow>();
+  private key(projectId: string, section: ConfigSection) {
+    return `${projectId}:${section}`;
+  }
+
+  async listSections(projectId: string): Promise<ConfigRow[]> {
+    return [...this.rows.values()].filter((row) => row.projectId === projectId).sort((a, b) => a.section.localeCompare(b.section));
+  }
+  async findSection(projectId: string, section: ConfigSection): Promise<ConfigRow | null> {
+    return this.rows.get(this.key(projectId, section)) ?? null;
+  }
+  async saveSection(row: ConfigRow): Promise<void> {
+    this.rows.set(this.key(row.projectId, row.section), { ...row });
+  }
+  async deleteSection(projectId: string, section: ConfigSection): Promise<void> {
+    this.rows.delete(this.key(projectId, section));
   }
 }

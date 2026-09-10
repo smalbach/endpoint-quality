@@ -182,4 +182,78 @@ export class SpecOperationEntity {
   @Column({ type: "int" }) position: number;
 }
 
-export const ENTITIES = [UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity, ProjectEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity];
+
+/**
+ * Where a project's contract is exercised: a base URL, and the credentials to present there.
+ *
+ * `writesAllowed` is the flag that keeps a production target from being written to by a matrix
+ * that includes POSTs and DELETEs. It is enforced in the engine rather than in the UI, because a
+ * run can be launched from CI with no UI in sight.
+ */
+@Entity({ name: "environments" })
+export class EnvironmentEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Column({ type: "varchar", length: 80 }) name: string;
+  @Column({ type: "text" }) baseUrl: string;
+  /** Where the live OpenAPI document is served, when it is not `${baseUrl}/openapi.json`. The
+   * schema assertion reads it during a run. */
+  @Column({ type: "text", nullable: true }) specUrl: string | null;
+  @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) variables: Record<string, string>;
+  @Column({ type: "boolean", default: false }) writesAllowed: boolean;
+  /** Whether the target actually enforces authorization. Against one that grants every scope to
+   * everyone, the 401/403 cases fail for a reason that has nothing to do with the endpoint. */
+  @Column({ type: "boolean", default: false }) authEnforced: boolean;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+}
+
+/**
+ * A credential the runner presents to a target.
+ *
+ * `role` is what generalizes the coupled dashboard's three hard-coded fields (`token`,
+ * `readToken`, `apiKey`) into something a project defines: `primary` is the working credential,
+ * `insufficient` is the one that authenticates but falls short of the scope — that is the 403 —
+ * and `alternate` is a scheme the operation does not declare, which is a 401 and not a 403.
+ *
+ * The secret is AES-256-GCM ciphertext and is never returned by any query. The column name says
+ * so, because a column called `secret` invites somebody to select it.
+ */
+@Entity({ name: "environment_credentials" })
+export class EnvironmentCredentialEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") environmentId: string;
+  @Column({ type: "varchar", length: 80 }) name: string;
+  @Column({ type: "varchar", length: 20 }) role: string;
+  @Column({ type: "varchar", length: 40 }) kind: string;
+  /** The header the credential travels in, for the kinds that need naming — `X-API-Key` and
+   * friends. Bearer and Basic imply `Authorization`. */
+  @Column({ type: "varchar", length: 80, nullable: true }) headerName: string | null;
+  @Column({ type: "text" }) secretCiphertext: string;
+  @Column({ type: "jsonb", default: () => "'[]'::jsonb" }) scopes: string[];
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) updatedAt: Date;
+}
+
+/**
+ * One document per configuration section.
+ *
+ * Documents rather than a table per concept, which is a departure from the plan's sketch and a
+ * deliberate one: order is data — budget rules and conditional scenarios are matched first-hit —
+ * and an array says that better than a `position` column. A section is also written as one unit,
+ * so a half-applied edit is not a state that can exist. What Postgres cannot enforce here, the
+ * zod schemas in `@eq/runner-core` do on every write.
+ */
+@Entity({ name: "project_config" })
+export class ProjectConfigEntity {
+  @PrimaryColumn("uuid") projectId: string;
+  @PrimaryColumn({ type: "varchar", length: 40 }) section: string;
+  @Column({ type: "jsonb" }) data: unknown;
+  @Column({ type: "timestamptz" }) updatedAt: Date;
+  @Column("uuid") updatedBy: string;
+}
+
+export const ENTITIES = [
+  UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity,
+  ProjectEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity,
+  EnvironmentEntity, EnvironmentCredentialEntity, ProjectConfigEntity,
+];

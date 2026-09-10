@@ -47,8 +47,9 @@ const insertOrganization = (id, slug) => dataSource.query(`INSERT INTO organizat
         const rows = await dataSource.query(`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name <> 'migrations'`);
         const tables = rows.map((row) => row.table_name).sort();
         strict_1.default.deepEqual(tables, [
-            "api_tokens", "invitations", "memberships", "organizations", "projects",
-            "refresh_tokens", "spec_operations", "spec_sources", "spec_versions", "users",
+            "api_tokens", "environment_credentials", "environments", "invitations", "memberships",
+            "organizations", "project_config", "projects", "refresh_tokens", "spec_operations",
+            "spec_sources", "spec_versions", "users",
         ]);
     });
     (0, node_test_1.test)("son reversibles: cada down deshace su up y up lo reconstruye", async () => {
@@ -58,13 +59,17 @@ const insertOrganization = (id, slug) => dataSource.query(`INSERT INTO organizat
         // would leave a constraint pointing at a table about to disappear.
         const exists = async (table) => (await dataSource.query(`SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=$1`, [table])).length;
         await dataSource.undoLastMigration();
+        strict_1.default.equal(await exists("environments"), 0);
+        strict_1.default.equal(await exists("spec_versions"), 1, "revertir la última migración no debe tocar las anteriores");
+        await dataSource.undoLastMigration();
         strict_1.default.equal(await exists("spec_versions"), 0);
-        strict_1.default.equal(await exists("users"), 1, "revertir la segunda migración no debe tocar la primera");
+        strict_1.default.equal(await exists("users"), 1);
         await dataSource.undoLastMigration();
         strict_1.default.equal(await exists("users"), 0);
         await dataSource.runMigrations();
         strict_1.default.equal(await exists("users"), 1);
         strict_1.default.equal(await exists("spec_operations"), 1);
+        strict_1.default.equal(await exists("environment_credentials"), 1);
     });
     (0, node_test_1.test)("correr las migraciones dos veces no hace nada la segunda", async () => {
         strict_1.default.deepEqual(await dataSource.runMigrations(), []);
@@ -161,16 +166,45 @@ const insertOrganization = (id, slug) => dataSource.query(`INSERT INTO organizat
         const left = await dataSource.query(`SELECT 1 FROM spec_operations WHERE "specVersionId" = $1`, [versionId]);
         strict_1.default.equal(left.length, 0);
     });
+    (0, node_test_1.test)("un entorno no puede tener dos credenciales del mismo rol", async () => {
+        // The generator asks for "the insufficient one"; two rows answering to that would make which
+        // token a 403 case sends depend on row order.
+        const [userId, organizationId, projectId, environmentId] = [(0, node_crypto_1.randomUUID)(), (0, node_crypto_1.randomUUID)(), (0, node_crypto_1.randomUUID)(), (0, node_crypto_1.randomUUID)()];
+        await insertUser(userId, `cred-${userId}@example.com`);
+        await insertOrganization(organizationId, `c-${organizationId.slice(0, 8)}`);
+        await dataSource.query(`INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`, [projectId, organizationId, `c-${projectId.slice(0, 8)}`, userId]);
+        await dataSource.query(`INSERT INTO environments (id, "projectId", name, "baseUrl", "createdAt") VALUES ($1, $2, 'e2e', 'https://x.example.com', now())`, [environmentId, projectId]);
+        const insertCredential = () => dataSource.query(`INSERT INTO environment_credentials (id, "environmentId", name, role, kind, "secretCiphertext", "createdAt", "updatedAt")
+         VALUES ($1, $2, 'admin', 'primary', 'bearer', 'v1.x.y.z', now(), now())`, [(0, node_crypto_1.randomUUID)(), environmentId]);
+        await insertCredential();
+        await strict_1.default.rejects(insertCredential(), /duplicate key|unique/i);
+        // And deleting the environment must take the secrets with it: credentials left behind are a
+        // set of live tokens nothing can reach to revoke.
+        await dataSource.query(`DELETE FROM environments WHERE id = $1`, [environmentId]);
+        const left = await dataSource.query(`SELECT 1 FROM environment_credentials WHERE "environmentId" = $1`, [environmentId]);
+        strict_1.default.equal(left.length, 0);
+    });
+    (0, node_test_1.test)("una sección de configuración es única por proyecto", async () => {
+        const [userId, organizationId, projectId] = [(0, node_crypto_1.randomUUID)(), (0, node_crypto_1.randomUUID)(), (0, node_crypto_1.randomUUID)()];
+        await insertUser(userId, `cfg-${userId}@example.com`);
+        await insertOrganization(organizationId, `g-${organizationId.slice(0, 8)}`);
+        await dataSource.query(`INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`, [projectId, organizationId, `g-${projectId.slice(0, 8)}`, userId]);
+        const insertSection = () => dataSource.query(`INSERT INTO project_config ("projectId", section, data, "updatedAt", "updatedBy") VALUES ($1, 'budgets', '{}'::jsonb, now(), $2)`, [projectId, userId]);
+        await insertSection();
+        // Two rows for one section would make the assembled configuration depend on row order.
+        await strict_1.default.rejects(insertSection(), /duplicate key|unique/i);
+    });
     (0, node_test_1.test)("los índices que sostienen cada comprobación de autorización existen", async () => {
         // Every request resolves "what is this user's role here", so this lookup is as hot as the
         // primary key.
-        const rows = await dataSource.query(`SELECT indexname FROM pg_indexes WHERE tablename IN ('memberships','refresh_tokens','api_tokens','projects','spec_versions','spec_operations')`);
+        const rows = await dataSource.query(`SELECT indexname FROM pg_indexes WHERE tablename IN ('memberships','refresh_tokens','api_tokens','projects','spec_versions','spec_operations','environments','environment_credentials')`);
         const names = rows.map((row) => row.indexname);
         for (const expected of [
             "ix_memberships_user", "ix_refresh_tokens_session", "ux_refresh_tokens_hash", "ux_api_tokens_hash",
             // A re-import looks the document up by hash before parsing it; without this index a
             // scheduled drift check scans every version the project ever had.
             "ux_projects_org_slug", "ux_spec_versions_project_hash", "ix_spec_operations_version",
+            "ux_environments_project_name", "ux_credentials_environment_role",
         ]) {
             strict_1.default.ok(names.includes(expected), `falta el índice ${expected}`);
         }
