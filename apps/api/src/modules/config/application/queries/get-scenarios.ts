@@ -1,3 +1,5 @@
+import type { OperationScenarios as WireOperationScenarios, ScenariosView as WireScenariosView } from "@eq/contracts";
+
 import { Inject } from "@nestjs/common";
 import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
 import {
@@ -44,27 +46,11 @@ export type ScenarioView = TestScenario & {
   blockedReason?: string;
 };
 
-export type OperationScenarios = {
-  id: string;
-  method: string;
-  path: string;
-  tag: string;
-  summary: string;
-  implemented: boolean;
-  responseShape: string;
-  scenarios: ScenarioView[];
-};
+export type OperationScenarios = WireOperationScenarios & { scenarios: ScenarioView[] };
 
-export type ScenariosView = {
-  specVersionId: string;
-  contractVersion: string;
-  environment: { id: string; name: string; baseUrl: string; writesAllowed: boolean; authEnforced: boolean } | null;
-  operations: OperationScenarios[];
-  /** The flat execution queue, in the chosen order. Built here rather than in the browser so the
-   * preview and the run agree by construction. */
-  queue: { operationId: string; scenarioId: string }[];
-  totals: { operations: number; cases: number; runnable: number; blocked: number };
-};
+/** The flat execution queue is built here and not in the browser, so the preview and the run
+ * agree by construction. The shape is declared once, in `@eq/contracts`. */
+export type ScenariosView = WireScenariosView & { operations: OperationScenarios[] };
 
 const IDEMPOTENT = new Set(["GET", "HEAD", "OPTIONS"]);
 

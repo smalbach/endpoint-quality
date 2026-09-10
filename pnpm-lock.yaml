@@ -10,6 +10,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@eq/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@eq/runner-core':
         specifier: workspace:^
         version: link:../../packages/runner-core
@@ -101,6 +104,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@eq/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@tanstack/react-query':
         specifier: ^5.90.2
         version: 5.102.8(react@19.3.0)
@@ -147,6 +153,12 @@ importers:
       vitest:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@22.20.2)(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@1.8.0))(lightningcss@1.32.0)(terser@5.51.2)(yaml@2.9.0)
+
+  packages/contracts:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
 
   packages/runner-core:
     dependencies:

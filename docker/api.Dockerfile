@@ -8,18 +8,22 @@ WORKDIR /repo
 RUN corepack enable
 
 # Los manifiestos primero, para que la capa de `pnpm install` sobreviva a cualquier cambio de
-# código. **Los tres**: la API depende de `@eq/runner-core` y `@eq/spec-import` como paquetes del
-# workspace, y sin sus manifiestos aquí `pnpm install` no crea los enlaces — que fue exactamente
-# cómo esta imagen llegó a arrancar y morir con `Cannot find module '@eq/spec-import'`.
+# código. **Todos**: la API depende de `@eq/runner-core`, `@eq/spec-import` y `@eq/contracts` como
+# paquetes del workspace, y sin sus manifiestos aquí `pnpm install` no crea los enlaces — que fue
+# exactamente cómo esta imagen llegó a arrancar y morir con `Cannot find module '@eq/spec-import'`.
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY apps/api/package.json apps/api/
 COPY packages/runner-core/package.json packages/runner-core/
 COPY packages/spec-import/package.json packages/spec-import/
+COPY packages/contracts/package.json packages/contracts/
 RUN pnpm install --frozen-lockfile
 
 COPY . .
 # En orden: la API importa el resultado compilado de los otros dos, no sus fuentes.
-RUN pnpm --filter @eq/runner-core build \
+# `@eq/contracts` no emite código: son las declaraciones que el navegador y la API comparten, y
+# `tsc` las necesita presentes para compilar la API aunque el `import type` se borre al salir.
+RUN pnpm --filter @eq/contracts build \
+ && pnpm --filter @eq/runner-core build \
  && pnpm --filter @eq/spec-import build \
  && pnpm --filter @eq/api build
 # Fuera las dependencias de desarrollo — TypeScript, los tipos, el corredor de pruebas — de todo
@@ -38,6 +42,10 @@ RUN addgroup -S eq && adduser -S eq -G eq
 COPY --from=build --chown=eq:eq /repo/node_modules ./node_modules
 COPY --from=build --chown=eq:eq /repo/packages/runner-core/package.json ./packages/runner-core/
 COPY --from=build --chown=eq:eq /repo/packages/runner-core/dist ./packages/runner-core/dist
+# Nada lo importa en ejecución —son solo tipos— pero el enlace de pnpm apunta aquí, y un enlace
+# colgando es una forma de que algún día un `require` resuelva a la nada.
+COPY --from=build --chown=eq:eq /repo/packages/contracts/package.json ./packages/contracts/
+COPY --from=build --chown=eq:eq /repo/packages/contracts/dist ./packages/contracts/dist
 COPY --from=build --chown=eq:eq /repo/packages/spec-import/package.json ./packages/spec-import/
 COPY --from=build --chown=eq:eq /repo/packages/spec-import/dist ./packages/spec-import/dist
 COPY --from=build --chown=eq:eq /repo/packages/spec-import/node_modules ./packages/spec-import/node_modules

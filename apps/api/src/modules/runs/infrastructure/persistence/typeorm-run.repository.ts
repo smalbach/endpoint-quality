@@ -43,7 +43,7 @@ export class TypeOrmRunRepository implements RunRepositoryPort {
     if (steps.length) await this.steps.save(steps as unknown as RunStepEntity[], { chunk: 100 });
   }
   async listSteps(runCaseId: string): Promise<RunStep[]> {
-    return (await this.steps.find({ where: { runCaseId }, order: { index: "ASC" } })).map((row) => ({ ...row }));
+    return (await this.steps.find({ where: { runCaseId }, order: { index: "ASC" } })).map(toStep);
   }
   /** Joined on the case rather than filtered by a list of case ids: a 311-case run would put 311
    * parameters in an `IN`, which is a limit worth not discovering later. */
@@ -56,7 +56,7 @@ export class TypeOrmRunRepository implements RunRepositoryPort {
         .orderBy("c.position", "ASC")
         .addOrderBy("s.index", "ASC")
         .getMany()
-    ).map((row) => ({ ...row }));
+    ).map(toStep);
   }
 
   /**
@@ -140,3 +140,22 @@ function toRun(row: RunEntity | null): Run | null {
     : null;
 }
 const toCase = (row: RunCaseEntity): RunCase => ({ ...row, status: row.status as CaseStatus });
+
+/**
+ * The jsonb boundary, and the only place these columns are asserted into a shape.
+ *
+ * Postgres hands back `unknown` and something has to say what it is. Doing it here, once, is what
+ * lets every layer above be typed — the domain used to carry `unknown` all the way to the API's
+ * response, where it was assignable to whatever the browser claimed and no compiler was in a
+ * position to disagree.
+ */
+function toStep(row: RunStepEntity): RunStep {
+  return {
+    ...row,
+    request: (row.request ?? null) as RunStep["request"],
+    expected: (row.expected ?? null) as RunStep["expected"],
+    actual: (row.actual ?? null) as RunStep["actual"],
+    assertions: (row.assertions ?? []) as RunStep["assertions"],
+    latency: (row.latency ?? null) as RunStep["latency"],
+  };
+}

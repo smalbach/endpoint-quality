@@ -1,0 +1,219 @@
+/**
+ * What the API answers, written once.
+ *
+ * The front end used to keep its own copy of every response shape. The comment above it said the
+ * duplication was the right call while there was one consumer, and it was — until a column
+ * changed and nothing anywhere noticed: `run_steps` learned to have its bodies retired, the API
+ * started answering `request: null`, and the browser kept a type that said `request` was always
+ * there. TypeScript cannot catch a lie it was told twice.
+ *
+ * Types only, no runtime. Every import of this package is an `import type` and erases at compile
+ * time, so the CommonJS API and the ESM browser bundle can share it without either one loading
+ * anything from the other.
+ *
+ * **The generic parameter is a timestamp.** It is the one place the two sides genuinely differ: a
+ * handler returns `Date`, JSON delivers a string, and pretending otherwise is how a `.getTime()`
+ * ends up in a browser on something that is text. So each shape is written once over `T` and
+ * instantiated twice — `…Of<Date>` on the server, the plain alias on the wire.
+ */
+
+// ---------------------------------------------------------------------------------------------
+// Identity and access
+// ---------------------------------------------------------------------------------------------
+
+/** Ordered by capability, and compared as such: `viewer < editor < admin < owner`. */
+export type Role = "viewer" | "editor" | "admin" | "owner";
+
+export type OrganizationMembership = { id: string; name: string; slug: string; role: Role };
+
+export type CurrentUser = {
+  id: string;
+  email: string;
+  name: string;
+  organizations: OrganizationMembership[];
+};
+
+// ---------------------------------------------------------------------------------------------
+// Projects and contracts
+// ---------------------------------------------------------------------------------------------
+
+export type ContractSummaryOf<T> = { versionId: string; title: string; version: string; operationCount: number; importedAt: T };
+
+/**
+ * Where the contract was last read from.
+ *
+ * `headersStored` is a boolean and stays one: the credential is stored encrypted precisely so
+ * that no query returns it. What a screen needs is that there is one, not what it says.
+ */
+export type SpecSourceSummary = { kind: string; location: string; headersStored: boolean };
+
+export type ProjectSummaryOf<T> = {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  archivedAt: T | null;
+  /** Null is a real state and the UI renders it: a project exists before its first import. */
+  contract: ContractSummaryOf<T> | null;
+  source: SpecSourceSummary | null;
+};
+
+// ---------------------------------------------------------------------------------------------
+// Environments
+// ---------------------------------------------------------------------------------------------
+
+/** A credential as it leaves the API: named, typed, and without the secret in any form. */
+export type CredentialSummaryOf<T> = { id: string; name: string; role: string; kind: string; headerName: string | null; updatedAt: T };
+
+export type EnvironmentSummaryOf<T> = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  specUrl: string | null;
+  writesAllowed: boolean;
+  authEnforced: boolean;
+  credentials: CredentialSummaryOf<T>[];
+};
+
+// ---------------------------------------------------------------------------------------------
+// The matrix
+// ---------------------------------------------------------------------------------------------
+
+export type Assertion = { label: string; pass: boolean; detail: string };
+
+export type ScenarioView = {
+  id: string;
+  name: string;
+  description: string;
+  expectedStatus: number;
+  parameters?: Record<string, string>;
+  body?: Record<string, unknown>;
+  flow: string;
+  auth?: string;
+  requestPath: string;
+  budget: { ms: number; label: string; source: string } | null;
+  /** False when the environment forbids it — a read-only target, or one that does not enforce
+   * authorization. `blockedReason` is what the screen shows instead of a red case. */
+  runnable: boolean;
+  blockedReason?: string;
+};
+
+export type OperationScenarios = {
+  id: string;
+  method: string;
+  path: string;
+  tag: string;
+  summary: string;
+  implemented: boolean;
+  responseShape: string;
+  scenarios: ScenarioView[];
+};
+
+export type ScenariosView = {
+  specVersionId: string;
+  contractVersion: string;
+  environment: { id: string; name: string; baseUrl: string; writesAllowed: boolean; authEnforced: boolean } | null;
+  operations: OperationScenarios[];
+  queue: { operationId: string; scenarioId: string }[];
+  totals: { operations: number; cases: number; runnable: number; blocked: number };
+};
+
+/** A declared response with no case is a run that comes back green having never tried. */
+export type CoverageGap = { operationId: string; method: string; path: string; tag: string; status: number };
+
+export type CoverageView = {
+  specVersionId: string;
+  contractVersion: string;
+  totals: { operations: number; declaredResponses: number; covered: number; uncovered: number; cases: number };
+  byStatus: { status: number; declared: number; covered: number }[];
+  gaps: CoverageGap[];
+};
+
+export type ConfigSectionViewOf<T> = { data: unknown; configured: boolean; updatedAt: T | null };
+export type ConfigViewOf<T> = { sections: Record<string, ConfigSectionViewOf<T>> };
+
+// ---------------------------------------------------------------------------------------------
+// Runs
+// ---------------------------------------------------------------------------------------------
+
+export type RunTotals = { cases: number; completed: number; passed: number; failed: number; skipped: number };
+export type CaseStatus = "queued" | "running" | "passed" | "failed" | "skipped";
+export type RunStatus = "queued" | "running" | "passed" | "failed" | "cancelled" | "error";
+
+export type RunCaseOf<T> = {
+  id: string;
+  operationId: string;
+  scenarioId: string;
+  method: string;
+  path: string;
+  status: CaseStatus;
+  position: number;
+  durationMs: number | null;
+  startedAt?: T | null;
+  finishedAt?: T | null;
+};
+
+export type RunOf<T> = {
+  id: string;
+  projectId: string;
+  environmentId: string | null;
+  status: RunStatus;
+  totals: RunTotals;
+  startedAt: T;
+  finishedAt: T | null;
+  error: string | null;
+};
+
+export type RunStepOf<T> = {
+  id: string;
+  index: number;
+  purpose: string;
+  label: string;
+  /** Null once a retention sweep has emptied the payloads; `prunedAt` says when. A reader that
+   * cannot tell this from «nothing came back» reports an old step as a timeout. */
+  request: { method: string; url: string; headers: Record<string, string>; body: unknown } | null;
+  expected: { status: number; shape: string; operationPath: string } | null;
+  actual: { status: number; contentType: string; headers: Record<string, string>; body: unknown } | null;
+  assertions: Assertion[];
+  latency: { samples: number[]; budgetMs: number | null } | null;
+  ok: boolean;
+  durationMs: number;
+  prunedAt?: T | null;
+};
+
+/** A run with its case list and **without the steps**: the progress screen polls this, and the
+ * steps hold whole response bodies. */
+export type RunViewOf<T> = RunOf<T> & { cases: RunCaseOf<T>[] };
+export type RunCaseViewOf<T> = RunCaseOf<T> & { steps: RunStepOf<T>[] };
+
+/** The whole run as a report: every case, every assertion, no bodies. What a pipeline reads. */
+export type RunReportStep = { index: number; purpose: string; label: string; ok: boolean; durationMs: number; assertions: Assertion[] };
+export type RunReportCase = { id: string; operationId: string; scenarioId: string; method: string; path: string; status: CaseStatus; steps: RunReportStep[] };
+export type RunReportOf<T> = { run: RunOf<T>; cases: RunReportCase[] };
+
+// ---------------------------------------------------------------------------------------------
+// The wire: every shape above, as JSON delivers it
+// ---------------------------------------------------------------------------------------------
+
+export type ContractSummary = ContractSummaryOf<string>;
+export type ProjectSummary = ProjectSummaryOf<string>;
+export type CredentialSummary = CredentialSummaryOf<string>;
+export type Environment = EnvironmentSummaryOf<string>;
+export type ConfigSectionView = ConfigSectionViewOf<string>;
+export type ConfigView = ConfigViewOf<string>;
+export type RunCase = RunCaseOf<string>;
+export type Run = RunOf<string>;
+export type RunStep = RunStepOf<string>;
+export type RunView = RunViewOf<string>;
+export type RunCaseView = RunCaseViewOf<string>;
+export type RunReport = RunReportOf<string>;
+
+/** RFC 9457, which is what every error in this system is written as. */
+export type ProblemDetails = {
+  type: string;
+  title: string;
+  status: number;
+  detail: string;
+  instance?: string;
+  errors?: { field: string; detail: string }[];
+};

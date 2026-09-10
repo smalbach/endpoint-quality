@@ -1,3 +1,5 @@
+import type { ProjectSummaryOf } from "@eq/contracts";
+
 import { Inject } from "@nestjs/common";
 import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
 
@@ -12,18 +14,9 @@ export class GetProjectQuery implements IQuery {
   constructor(readonly organizationId: string, readonly projectId: string) {}
 }
 
-export type ProjectSummary = {
-  id: string; name: string; slug: string; description: string; archivedAt: Date | null;
-  contract: { versionId: string; title: string; version: string; operationCount: number; importedAt: Date } | null;
-  /**
-   * Where the contract was last read from, and whether a credential is on file for it.
-   *
-   * `headersStored` is a boolean and stays one: the point of storing the header encrypted is
-   * that nothing reads it back out, and a query that returned it would undo that in one line.
-   * What the screen needs is «hay una credencial guardada», not the credential.
-   */
-  source: { kind: string; location: string; headersStored: boolean } | null;
-};
+/** The wire shape, with this side's timestamps. Written once in `@eq/contracts`, so the browser
+ * cannot hold a different opinion about what this returns. */
+export type ProjectSummary = ProjectSummaryOf<Date>;
 
 @QueryHandler(ListProjectsQuery)
 export class ListProjectsHandler implements IQueryHandler<ListProjectsQuery, ProjectSummary[]> {

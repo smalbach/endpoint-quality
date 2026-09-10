@@ -1,4 +1,5 @@
-import type { OrderMode } from "@eq/runner-core";
+
+import type { Assertion, OrderMode } from "@eq/runner-core";
 
 export type RunStatus = "queued" | "running" | "passed" | "failed" | "cancelled" | "error";
 export type CaseStatus = "queued" | "running" | "passed" | "failed" | "skipped";
@@ -48,17 +49,33 @@ export type RunCase = {
   finishedAt: Date | null;
 };
 
+/**
+ * A step's three payloads, typed.
+ *
+ * They were `unknown` because they are `jsonb` columns and the domain did not want to know their
+ * shape. The cost showed up the day the browser's copy of these types said `request` was always
+ * present and the API had started answering null: `unknown` is assignable to anything, so no
+ * compiler anywhere was in a position to notice. The jsonb boundary is the repository's problem,
+ * and the repository is where the cast now lives.
+ */
+export type StepRequestRecord = { method: string; url: string; headers: Record<string, string>; body: unknown };
+export type StepExpectation = { status: number; shape: string; operationPath: string };
+export type StepResult = { status: number; contentType: string; headers: Record<string, string>; body: unknown };
+export type StepLatency = { samples: number[]; budgetMs: number | null };
+
 export type RunStep = {
   id: string;
   runCaseId: string;
   index: number;
   purpose: string;
   label: string;
-  request: unknown;
-  expected: unknown;
-  actual: unknown;
-  assertions: unknown;
-  latency: unknown;
+  /** Null once a retention sweep has emptied it — see `prunedAt`, which is what separates that
+   * from a step that never got a response. */
+  request: StepRequestRecord | null;
+  expected: StepExpectation | null;
+  actual: StepResult | null;
+  assertions: Assertion[];
+  latency: StepLatency | null;
   ok: boolean;
   durationMs: number;
   /** Set when a retention sweep emptied `request`, `expected` and `actual`. A reader that cannot

@@ -1,3 +1,5 @@
+import type { RunCaseViewOf, RunReportOf, RunReportStep, RunViewOf } from "@eq/contracts";
+
 import { Inject } from "@nestjs/common";
 import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
 
@@ -17,8 +19,9 @@ export class GetRunCaseQuery implements IQuery {
   constructor(readonly organizationId: string, readonly projectId: string, readonly runId: string, readonly caseId: string) {}
 }
 
-export type RunView = Run & { cases: RunCase[] };
-export type RunCaseView = RunCase & { steps: RunStep[] };
+/** The same declarations the browser reads, instantiated with this side's timestamps. */
+export type RunView = Run & { cases: RunCase[] } & RunViewOf<Date>;
+export type RunCaseView = RunCase & { steps: RunStep[] } & RunCaseViewOf<Date>;
 
 @QueryHandler(ListRunsQuery)
 export class ListRunsHandler implements IQueryHandler<ListRunsQuery, Run[]> {
@@ -89,13 +92,10 @@ export class GetRunReportQuery implements IQuery {
   constructor(readonly organizationId: string, readonly projectId: string, readonly runId: string) {}
 }
 
-export type ReportAssertion = { label: string; pass: boolean; detail: string };
-export type ReportStep = { index: number; purpose: string; label: string; ok: boolean; durationMs: number; assertions: ReportAssertion[] };
+export type ReportAssertion = RunReportStep["assertions"][number];
+export type ReportStep = RunReportStep;
 export type ReportCase = Omit<RunCase, "runId"> & { steps: ReportStep[] };
-export type RunReport = {
-  run: Omit<Run, "plan"> & { plan: Run["plan"] };
-  cases: ReportCase[];
-};
+export type RunReport = RunReportOf<Date> & { run: Run; cases: ReportCase[] };
 
 @QueryHandler(GetRunReportQuery)
 export class GetRunReportHandler implements IQueryHandler<GetRunReportQuery, RunReport> {

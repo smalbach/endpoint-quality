@@ -1,3 +1,5 @@
+import type { EnvironmentSummaryOf } from "@eq/contracts";
+
 import { Inject } from "@nestjs/common";
 import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
 
@@ -10,9 +12,12 @@ export class ListEnvironmentsQuery implements IQuery {
   constructor(readonly organizationId: string, readonly projectId: string) {}
 }
 
-export type EnvironmentView = Environment & {
-  credentials: { id: string; name: string; role: CredentialRole; kind: string; headerName: string | null; scopes: string[]; updatedAt: Date }[];
-};
+export type EnvironmentView = Environment &
+  EnvironmentSummaryOf<Date> & {
+    /** `scopes` is on the wire too and the browser does not read it yet; the contract declares
+     * what a client can rely on, not everything the row happens to carry. */
+    credentials: { id: string; name: string; role: CredentialRole; kind: string; headerName: string | null; scopes: string[]; updatedAt: Date }[];
+  };
 
 @QueryHandler(ListEnvironmentsQuery)
 export class ListEnvironmentsHandler implements IQueryHandler<ListEnvironmentsQuery, EnvironmentView[]> {

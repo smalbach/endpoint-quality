@@ -1,3 +1,5 @@
+import type { CoverageGap, CoverageView } from "@eq/contracts";
+
 /**
  * How much of the contract the matrix actually reaches, and which responses it does not.
  *
@@ -29,17 +31,10 @@ export class GetCoverageQuery implements IQuery {
   constructor(readonly organizationId: string, readonly projectId: string) {}
 }
 
-export type CoverageGap = { operationId: string; method: string; path: string; tag: string; status: number };
-export type CoverageByStatus = { status: number; declared: number; covered: number };
-export type CoverageView = {
-  specVersionId: string;
-  contractVersion: string;
-  totals: { operations: number; declaredResponses: number; covered: number; uncovered: number; cases: number };
-  byStatus: CoverageByStatus[];
-  /** Every declared response with no case, named. A total without this is a number to feel good
-   * about; the list is the thing somebody can act on. */
-  gaps: CoverageGap[];
-};
+/** Every declared response with no case, named: a total without the list is a number to feel
+ * good about. Defined in `@eq/contracts`, where the browser reads the same one. */
+export type { CoverageGap, CoverageView };
+export type CoverageByStatus = CoverageView["byStatus"][number];
 
 @QueryHandler(GetCoverageQuery)
 export class GetCoverageHandler implements IQueryHandler<GetCoverageQuery, CoverageView> {

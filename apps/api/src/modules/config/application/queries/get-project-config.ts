@@ -1,3 +1,5 @@
+import type { ConfigSectionViewOf, ConfigViewOf } from "@eq/contracts";
+
 import { Inject } from "@nestjs/common";
 import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
 import { CONFIG_SECTIONS, DEFAULT_CONFIG, defineProjectConfig, bundles, type ConfigSection, type ProjectConfig } from "@eq/runner-core";
@@ -10,8 +12,8 @@ export class GetProjectConfigQuery implements IQuery {
   constructor(readonly organizationId: string, readonly projectId: string) {}
 }
 
-export type ProjectConfigView = {
-  sections: Record<ConfigSection, { data: unknown; configured: boolean; updatedAt: Date | null }>;
+export type ProjectConfigView = ConfigViewOf<Date> & {
+  sections: Record<ConfigSection, ConfigSectionViewOf<Date>>;
 };
 
 /**
