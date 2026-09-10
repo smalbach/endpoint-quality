@@ -881,3 +881,67 @@ no haber hecho nada. Verificado ahora de punta a punta contra la demo.
   No se declara arreglado: no se ha reproducido, que no es lo mismo.
 
 Suites: runner-core **104** · spec-import 35 · api **195** · api/Postgres **21** · web **48**.
+
+## Entornos, pruebas reutilizables y flujos · cerrada
+
+La matriz que un contrato declara se genera sola. Lo que un contrato nunca dice es «crea esto y
+vuelve a leer lo que te devolvió», y hasta aquí no había forma de escribirlo: ni variables por
+entorno, ni una petición guardada, ni un orden entre dos de ellas.
+
+### Filas, y no una novena sección de configuración
+
+El primer intento las guardaba como una sección más de `project_config`. Se descartó por lo que una
+prueba reutilizable **es**: la nombran varios flujos, editarla tiene que alcanzarlos a todos, y
+«bórrala» tiene que ser una pregunta con respuesta. Dentro de un documento JSON eso son tres
+recorridos a mano y ninguna garantía.
+
+El grafo, en cambio, sí es un documento, y por el mismo razonamiento que ya estaba escrito para
+`project_config`: la unidad de cambio es el grafo entero. Guardar nodos y aristas por separado
+admite el estado «nodo borrado, arista apuntándolo», que no debe poder existir; y la propiedad que
+de verdad importa —que no haya ciclos— no es una que Postgres pueda sostener de todos modos.
+
+Lo que la base de datos no puede sostener lo sostiene el comando, y por eso son un 422 y un 409 al
+guardar en vez de un caso rojo a las tres de la mañana: un paso que nombra una prueba inexistente
+se rechaza, y borrar una prueba que algún flujo usa también. La consulta que lo comprueba mira
+dentro del `jsonb` sin índice a propósito: un proyecto tiene decenas de flujos, y un índice GIN se
+pagaría en cada guardado para acelerar una pregunta que solo se hace al borrar.
+
+### Lo que apareció al escribirlo
+
+- `walk` y `walkWorkflow` habían divergido en tres semanas de vida: un caso sin pasos era `skipped`
+  en la matriz generada y `failed` en un flujo. Es una función ahora, `caseStatusFor`, y con ella se
+  fueron las otras dos copias.
+- Interpolar `{{variables}}` clonaba el `ProjectConfig` **entero** una vez por caso. Con 311 casos y
+  cero variables eran 311 copias profundas para no sustituir nada.
+- El regexp del nombre de una variable estaba escrito tres veces.
+- `workflowId` se validaba al ejecutar. Una corrida encolada que acaba en `error` pone el mensaje a
+  minutos del clic que lo causó; ahora es un 422 nombrando el campo.
+
+### El editor no se probó hasta que se abrió
+
+Los nodos no se podían arrastrar: faltaba `onNodesChange`. Y al añadirlo seguían sin verse, con
+`visibility: hidden`, porque React Flow guarda de cada nodo lo que **midió** y reconstruir el array
+desde el documento en cada render tiraba esa medida. Ninguna prueba lo habría cazado: es un
+contrato entre dos estados, no una función.
+
+Lo que sí se prueba, y sin renderizar nada, es la lógica de grafo — borrar un nodo se lleva sus
+aristas, conectar es idempotente, un ciclo se nombra antes de guardar —, siguiendo el patrón que ya
+seguía `config-draft.ts`. Doce pruebas, sin `@testing-library/react`.
+
+### Lo que el repo no tenía
+
+Ni linter, ni formateador, ni CI. `pnpm lint` en la raíz era `pnpm -r lint` y ningún paquete
+declaraba ese script: pasaba en verde sin ejecutar una regla. Ahora hay ESLint con las reglas de
+capas que el plan de arquitectura prometía —`domain/` no importa TypeORM, `packages/` no importa
+framework—, Prettier a 120 columnas en un commit de solo formato con su `.git-blame-ignore-revs`, y
+un CI con Postgres de servicio para que `test:db` no se salte: sin `EQ_TEST_DATABASE_URL` esa suite
+no falla, se salta, y un CI que informa verde sin haber aplicado una migración es exactamente el
+fallo que este producto existe para detectar.
+
+Suites: runner-core **116** · spec-import 35 · api **206** · api/Postgres **22** · web **65**.
+
+### Lo que queda
+
+- La suite de la API es **intermitente**: en cinco ejecuciones completas dos fallaron, cada vez en
+  un test distinto y ninguna reproducible. Coincide con el `signUp` intermitente que ya estaba
+  anotado y sigue sin reproducirse a propósito.
