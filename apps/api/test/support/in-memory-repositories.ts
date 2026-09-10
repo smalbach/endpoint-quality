@@ -327,4 +327,35 @@ export class InMemoryRunRepository implements RunRepositoryPort {
     const finished = ["passed", "failed", "cancelled", "error"].includes(status);
     this.runs.set(runId, { ...run, status, ...(finished ? { finishedAt: at } : {}), ...(error ? { error } : {}) });
   }
+
+  /** Skips rows already emptied and runs still going, as the SQL one does. A fake that swept
+   * everything every time would hide the `prunedAt IS NULL` guard that makes the sweep converge. */
+  async pruneStepBodies(before: Date): Promise<number> {
+    const stale = new Set(
+      [...this.cases.values()].filter((runCase) => {
+        const run = this.runs.get(runCase.runId);
+        return run?.finishedAt && run.finishedAt < before;
+      }).map((runCase) => runCase.id),
+    );
+    let affected = 0;
+    for (const [id, step] of this.steps) {
+      if (!stale.has(step.runCaseId) || step.prunedAt) continue;
+      this.steps.set(id, { ...step, request: null, expected: null, actual: null, prunedAt: new Date() });
+      affected += 1;
+    }
+    return affected;
+  }
+
+  /** The cases and steps go with the run, as the foreign keys make them go in SQL. */
+  async deleteRunsBefore(before: Date): Promise<number> {
+    const doomed = [...this.runs.values()].filter((run) => run.finishedAt && run.finishedAt < before);
+    for (const run of doomed) {
+      for (const runCase of [...this.cases.values()].filter((entry) => entry.runId === run.id)) {
+        for (const [id, step] of this.steps) if (step.runCaseId === runCase.id) this.steps.delete(id);
+        this.cases.delete(runCase.id);
+      }
+      this.runs.delete(run.id);
+    }
+    return doomed.length;
+  }
 }

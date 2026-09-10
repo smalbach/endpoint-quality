@@ -114,13 +114,17 @@ export type RunStep = {
   index: number;
   purpose: string;
   label: string;
-  request: { method: string; url: string; headers: Record<string, string>; body: unknown };
-  expected: { status: number; shape: string; operationPath: string };
+  /** Null once a retention sweep has emptied the payloads; `prunedAt` says when. */
+  request: { method: string; url: string; headers: Record<string, string>; body: unknown } | null;
+  expected: { status: number; shape: string; operationPath: string } | null;
   actual: { status: number; contentType: string; headers: Record<string, string>; body: unknown } | null;
   assertions: Assertion[];
   latency: { samples: number[]; budgetMs: number | null } | null;
   ok: boolean;
   durationMs: number;
+  /** A step whose bodies were retired months later is not a step that never got a response. The
+   * screen has to say which, or an old run reads as a wall of timeouts. */
+  prunedAt: string | null;
 };
 
 export type RunCaseView = RunCase & { steps: RunStep[] };

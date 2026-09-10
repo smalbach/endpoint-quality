@@ -78,6 +78,8 @@ services:
       # El motor hace peticiones a URLs que escribe el usuario. En un despliegue alojado esto
       # tiene que seguir en false o la API alcanza la red interna: ver docs/decoupling-plan.md §4.8.
       ALLOW_PRIVATE_TARGETS: ${ALLOW_PRIVATE_TARGETS:-false}
+      RETENTION_BODIES_DAYS: ${RETENTION_BODIES_DAYS:-30}
+      RETENTION_RUNS_DAYS: ${RETENTION_RUNS_DAYS:-365}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:${EQ_WEB_PORT:-8080}}
     ports: ["${EQ_API_PORT:-3001}:3001"]
     healthcheck:

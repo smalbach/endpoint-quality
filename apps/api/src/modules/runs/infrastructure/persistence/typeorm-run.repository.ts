@@ -90,6 +90,48 @@ export class TypeOrmRunRepository implements RunRepositoryPort {
     const finished = ["passed", "failed", "cancelled", "error"].includes(status);
     await this.runs.update({ id: runId }, { status, ...(finished ? { finishedAt: at } : {}), ...(error ? { error } : {}) });
   }
+
+  /**
+   * One UPDATE, driven by a subquery over the runs that are old enough.
+   *
+   * `prunedAt IS NULL` is what makes the sweep converge: without it every pass would rewrite
+   * every old row it had already emptied, so a nightly sweep would keep doing yesterday's work
+   * forever and the row count would say nothing about what changed.
+   *
+   * A run still going is never touched — `finishedAt` is null while it runs, and a comparison
+   * against null is not true — so a sweep cannot empty the bodies of a case that is still being
+   * looked at.
+   */
+  async pruneStepBodies(before: Date): Promise<number> {
+    const result = await this.steps
+      .createQueryBuilder()
+      .update(RunStepEntity)
+      // Written as SQL literals: TypeORM's typed `set` will not take `null` for a column it
+      // declared as `unknown`, and the three columns are exactly the ones being emptied.
+      .set({ request: () => "NULL", expected: () => "NULL", actual: () => "NULL", prunedAt: () => "now()" })
+      .where(
+        `"prunedAt" IS NULL AND "runCaseId" IN (
+           SELECT c."id" FROM "run_cases" c
+           JOIN "runs" r ON r."id" = c."runId"
+           WHERE r."finishedAt" IS NOT NULL AND r."finishedAt" < :before
+         )`,
+        { before },
+      )
+      .execute();
+    return result.affected ?? 0;
+  }
+
+  /** Cases and steps go with the run, by the cascade the runs migration declared. Deleting a run
+   * and leaving its steps behind would be rows nothing can reach to read or remove. */
+  async deleteRunsBefore(before: Date): Promise<number> {
+    const result = await this.runs
+      .createQueryBuilder()
+      .delete()
+      .from(RunEntity)
+      .where(`"finishedAt" IS NOT NULL AND "finishedAt" < :before`, { before })
+      .execute();
+    return result.affected ?? 0;
+  }
 }
 
 function toRun(row: RunEntity | null): Run | null {

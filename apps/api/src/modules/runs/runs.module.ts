@@ -16,12 +16,14 @@ import { RedisRunQueue } from "./infrastructure/queue/redis-queue";
 import { CaseExecutor } from "./infrastructure/case-executor";
 import { RunOrchestrator } from "./infrastructure/run-orchestrator";
 import { RunCaseProjector, RunFinishedProjector, RunProgressStream, RunStartedProjector } from "./infrastructure/run-progress.stream";
+import { RetentionScheduler } from "./infrastructure/retention.scheduler";
 import { StartRunHandler } from "./application/commands/start-run";
 import { CancelRunHandler } from "./application/commands/cancel-run";
+import { PruneRunsHandler } from "./application/commands/prune-runs";
 import { GetRunCaseHandler, GetRunHandler, GetRunReportHandler, ListRunsHandler } from "./application/queries/get-run";
 import { RunsController } from "./presentation/runs.controller";
 
-export const RUN_COMMAND_HANDLERS = [StartRunHandler, CancelRunHandler];
+export const RUN_COMMAND_HANDLERS = [StartRunHandler, CancelRunHandler, PruneRunsHandler];
 export const RUN_QUERY_HANDLERS = [ListRunsHandler, GetRunHandler, GetRunCaseHandler, GetRunReportHandler];
 export const RUN_PROJECTORS = [RunStartedProjector, RunCaseProjector, RunFinishedProjector];
 
@@ -55,6 +57,7 @@ export const RUN_QUEUE_PROVIDER = {
     CaseExecutor,
     RunOrchestrator,
     RunProgressStream,
+    RetentionScheduler,
     ...RUN_PROJECTORS,
     ...RUN_COMMAND_HANDLERS,
     ...RUN_QUERY_HANDLERS,

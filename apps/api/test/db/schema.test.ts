@@ -20,6 +20,8 @@ import { randomUUID } from "node:crypto";
 import { DataSource } from "typeorm";
 
 import { buildDataSourceOptions, MIGRATIONS } from "@/shared/database/data-source";
+import { RunCaseEntity, RunEntity, RunStepEntity } from "@/shared/database/entities";
+import { TypeOrmRunRepository } from "@/modules/runs/infrastructure/persistence/typeorm-run.repository";
 
 const DATABASE_URL = process.env.EQ_TEST_DATABASE_URL;
 const REASON = "sin EQ_TEST_DATABASE_URL: levanta Postgres (docker compose -f docker/compose.yml up -d postgres) y reexporta la variable";
@@ -323,8 +325,104 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
       // The history view is "this project's runs, newest first", and it is the only query
       // anybody makes against that table often.
       "ix_runs_project_started", "ux_run_cases_run_position",
+      // Every retention sweep filters runs by when they finished. Without this it is a
+      // sequential scan of every run ever executed — of the table the sweep exists to bound.
+      "idx_runs_finished_at",
     ]) {
       assert.ok(names.includes(expected), `falta el índice ${expected}`);
     }
+  });
+});
+
+/**
+ * The retention sweep, against real SQL.
+ *
+ * The in-memory adapter is a fake and cannot check any of this: whether the subquery reaches the
+ * right steps, whether `prunedAt IS NULL` really makes a second pass a no-op, whether deleting a
+ * run takes its cases and steps with it. Those are the three ways this could quietly destroy data
+ * or quietly destroy nothing, and all three live in Postgres.
+ */
+describe("retención en SQL", { skip: DATABASE_URL ? false : REASON }, () => {
+  const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  /** A run with one case and two steps, finished whenever the caller says — or still going. */
+  async function seedRun(finishedAt: Date | null): Promise<{ runId: string; caseId: string }> {
+    const [userId, organizationId, projectId, versionId, runId, caseId] = [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    await insertUser(userId, `ret-${userId}@example.com`);
+    await insertOrganization(organizationId, `t-${organizationId.slice(0, 8)}`);
+    await dataSource!.query(`INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`, [projectId, organizationId, `t-${projectId.slice(0, 8)}`, userId]);
+    await dataSource!.query(
+      `INSERT INTO spec_versions (id, "projectId", hash, raw, format, "openapiVersion", title, "contractVersion", "operationCount", problems, "importedBy", "importedAt")
+       VALUES ($1, $2, $3, 'x', 'yaml', '3.1.0', 't', '1', 0, '[]'::jsonb, $4, now())`,
+      [versionId, projectId, randomUUID().replace(/-/g, ""), userId],
+    );
+    await dataSource!.query(
+      `INSERT INTO runs (id, "projectId", "specVersionId", status, plan, totals, "triggeredByKind", "triggeredBy", "startedAt", "finishedAt")
+       VALUES ($1, $2, $3, 'passed', '{}'::jsonb, '{}'::jsonb, 'user', $4, now(), $5)`,
+      [runId, projectId, versionId, userId, finishedAt],
+    );
+    await dataSource!.query(`INSERT INTO run_cases (id, "runId", "operationId", "scenarioId", method, path, status, position) VALUES ($1, $2, 'o', 's', 'GET', '/x', 'passed', 0)`, [caseId, runId]);
+    for (const index of [0, 1]) {
+      await dataSource!.query(
+        `INSERT INTO run_steps (id, "runCaseId", index, purpose, label, request, expected, actual, assertions, ok, "durationMs")
+         VALUES ($1, $2, $3, 'act', 'l', '{"body":"grande"}'::jsonb, '{"status":200}'::jsonb, '{"body":"grande"}'::jsonb, '[{"label":"Estado 200","pass":true}]'::jsonb, true, 5)`,
+        [randomUUID(), caseId, index],
+      );
+    }
+    return { runId, caseId };
+  }
+
+  const steps = (caseId: string) =>
+    dataSource!.query(`SELECT request, expected, actual, assertions, ok, "prunedAt" FROM run_steps WHERE "runCaseId" = $1 ORDER BY index`, [caseId]) as Promise<
+      { request: unknown; expected: unknown; actual: unknown; assertions: unknown[]; ok: boolean; prunedAt: Date | null }[]
+    >;
+
+  /**
+   * The repository itself, not a copy of its SQL.
+   *
+   * A test that re-types the UPDATE it is checking passes while the repository is wrong, which is
+   * the one thing this file exists not to do.
+   */
+  const repository = () =>
+    new TypeOrmRunRepository(dataSource!.getRepository(RunEntity), dataSource!.getRepository(RunCaseEntity), dataSource!.getRepository(RunStepEntity));
+
+  test("vacía los cuerpos de una corrida vieja y deja el veredicto", async () => {
+    const { caseId } = await seedRun(daysAgo(40));
+    await repository().pruneStepBodies(daysAgo(30));
+    for (const step of await steps(caseId)) {
+      assert.equal(step.request, null);
+      assert.equal(step.expected, null);
+      assert.equal(step.actual, null);
+      assert.ok(step.prunedAt, "la marca es lo que distingue esto de un paso que no recibió respuesta");
+      assert.equal(step.assertions.length, 1, "la aserción es lo que hace que la fila siga valiendo algo");
+      assert.equal(step.ok, true);
+    }
+  });
+
+  test("no toca una corrida que todavía está corriendo", async () => {
+    // `finishedAt` es null mientras corre, y una comparación contra null no es cierta. Sin eso
+    // el barrido podría vaciar los cuerpos de un caso que alguien está mirando.
+    const { caseId } = await seedRun(null);
+    await repository().pruneStepBodies(daysAgo(0));
+    assert.ok((await steps(caseId))[0].request, "una corrida en marcha conserva sus cuerpos");
+  });
+
+  test("la segunda pasada no reescribe nada", async () => {
+    const { caseId } = await seedRun(daysAgo(40));
+    const first = await repository().pruneStepBodies(daysAgo(30));
+    const marks = (await steps(caseId)).map((step) => step.prunedAt?.getTime());
+    await repository().pruneStepBodies(daysAgo(30));
+    assert.deepEqual((await steps(caseId)).map((step) => step.prunedAt?.getTime()), marks, "la marca cambiaría si la fila se hubiera vuelto a escribir");
+    assert.equal(first, 2, "los dos pasos de la corrida sembrada, y solo esos");
+  });
+
+  test("borrar la corrida se lleva sus casos y sus pasos", async () => {
+    // Por la cascada de la migración de corridas. Sin ella quedarían filas que nadie puede ya
+    // alcanzar para leer ni para borrar.
+    const { runId, caseId } = await seedRun(daysAgo(400));
+    assert.ok((await repository().deleteRunsBefore(daysAgo(365))) >= 1);
+    assert.deepEqual(await dataSource!.query(`SELECT id FROM runs WHERE id = $1`, [runId]), []);
+    assert.deepEqual(await dataSource!.query(`SELECT id FROM run_cases WHERE id = $1`, [caseId]), []);
+    assert.deepEqual(await steps(caseId), []);
   });
 });

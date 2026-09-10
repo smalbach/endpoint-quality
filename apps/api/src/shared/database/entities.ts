@@ -302,9 +302,13 @@ export class RunCaseEntity {
  * One HTTP request inside a case, with what was sent, what came back and every assertion.
  *
  * The table that grows. A `create-read` case is three of these and each holds a full response
- * body, so retention is a policy rather than an afterthought — the plan's
- * `keepFullBodiesForDays`. Credentials are masked before the row is written, never on the way
- * out: a redaction applied at read time is one query away from being forgotten.
+ * body, so retention is a policy and not an afterthought: `RETENTION_BODIES_DAYS` empties the
+ * three payload columns and stamps `prunedAt`, `RETENTION_RUNS_DAYS` removes the run entirely.
+ * The verdict outlives the payload on purpose — an assertion list and a label are a few hundred
+ * bytes and are what makes a run from March still answer «was this green, and what failed».
+ *
+ * Credentials are masked before the row is written, never on the way out: a redaction applied at
+ * read time is one query away from being forgotten.
  */
 @Entity({ name: "run_steps" })
 export class RunStepEntity {
@@ -313,13 +317,16 @@ export class RunStepEntity {
   @Column({ type: "int" }) index: number;
   @Column({ type: "varchar", length: 20 }) purpose: string;
   @Column({ type: "varchar", length: 200 }) label: string;
-  @Column({ type: "jsonb" }) request: unknown;
-  @Column({ type: "jsonb" }) expected: unknown;
+  @Column({ type: "jsonb", nullable: true }) request: unknown;
+  @Column({ type: "jsonb", nullable: true }) expected: unknown;
   @Column({ type: "jsonb", nullable: true }) actual: unknown;
   @Column({ type: "jsonb" }) assertions: unknown;
   @Column({ type: "jsonb", nullable: true }) latency: unknown;
   @Column({ type: "boolean" }) ok: boolean;
   @Column({ type: "int" }) durationMs: number;
+  /** When the three payload columns were emptied by a retention sweep. Null means they were never
+   * swept, which is not the same fact as a body that was never there. */
+  @Column({ type: "timestamptz", nullable: true }) prunedAt: Date | null;
 }
 
 export const ENTITIES = [

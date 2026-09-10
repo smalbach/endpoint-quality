@@ -57,6 +57,8 @@ reconstruirla con `VITE_API_URL` y aflojar la cookie, que es exactamente lo que 
 | `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` | *ninguno* | La API **se niega a arrancar** sin ellos. Un valor por defecto en un fichero versionado firma las sesiones de todo el mundo con la misma clave. Cambiarlos cierra todas las sesiones. |
 | `SECRETS_KEY` | *ninguno* | Cifra las credenciales de los destinos con AES-256-GCM. **Perderla es perderlas**: no hay forma de descifrarlas sin ella, que es la única propiedad que hace que guardarlas valga la pena. Guárdala donde guardes las contraseñas de producción. |
 | `ALLOW_PRIVATE_TARGETS` | `false` | El motor pide URLs que escribe quien usa el producto. En `true`, cualquiera con una cuenta puede apuntarlo a `169.254.169.254` o a tu base de datos y leer la respuesta. Déjalo en `false` salvo que el producto y los destinos vivan en la misma máquina de alguien. |
+| `RETENTION_BODIES_DAYS` | `30` | Pasados esos días se vacían las peticiones y respuestas guardadas de cada corrida, y queda la marca de cuándo. El veredicto y sus aserciones siguen: una corrida de marzo sigue contestando «esto estaba en verde, y esto falló» por unos cientos de bytes. `0` es «nunca», y es la tabla que crece. |
+| `RETENTION_RUNS_DAYS` | `365` | Pasados esos días la corrida entera desaparece, con sus casos y sus pasos. `0` es «nunca». |
 | `QUEUE_DRIVER` | `memory` | `memory` ejecuta la cola en el propio proceso: sin infraestructura, y una corrida muere si la API se reinicia. `redis` es lo que quiere una instancia compartida. |
 | `CORS_ORIGINS` | `http://localhost:8080` | Solo hace falta si sirves la interfaz desde otro origen. |
 | `EQ_*_PORT` | 8080 / 3001 / 5432 | Los puertos publicados hacia fuera. Nada más. |

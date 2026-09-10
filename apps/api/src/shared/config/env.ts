@@ -35,6 +35,19 @@ export const envSchema = z.object({
   REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(12_000),
   MAX_RESPONSE_BYTES: z.coerce.number().int().positive().default(5_242_880),
 
+  /**
+   * Retention, in days. `0` means never, and is a decision somebody has to make on purpose.
+   *
+   * Two stages because the two things cost differently. A step's request and response bodies are
+   * what make `run_steps` the table with no ceiling; its assertion list and label are a few
+   * hundred bytes and are what lets a run from March still answer «was this green, and what
+   * failed». So the bodies go first, at 30 days, and the run itself much later.
+   */
+  RETENTION_BODIES_DAYS: z.coerce.number().int().min(0).default(30),
+  RETENTION_RUNS_DAYS: z.coerce.number().int().min(0).default(365),
+  /** How often the sweep runs. Not a cron: one interval, started at boot, is the whole of it. */
+  RETENTION_SWEEP_HOURS: z.coerce.number().int().min(0).max(168).default(6),
+
   CORS_ORIGINS: z.string().default("http://localhost:5173"),
   COOKIE_DOMAIN: z.string().optional(),
 });

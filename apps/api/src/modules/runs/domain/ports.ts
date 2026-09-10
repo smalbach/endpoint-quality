@@ -25,6 +25,19 @@ export interface RunRepositoryPort {
    * mid-run must not lose the count, and two workers must not both add one. */
   recomputeTotals(runId: string): Promise<RunTotals>;
   updateStatus(runId: string, status: RunStatus, at: Date, error?: string): Promise<void>;
+
+  /**
+   * Empties the payload columns of every step belonging to a run that finished before `before`,
+   * and stamps `prunedAt`. Returns how many rows were emptied.
+   *
+   * The step survives. What weighs is the body; what makes a run from March still worth reading
+   * is the assertion list, the label and the duration, and those are a few hundred bytes.
+   */
+  pruneStepBodies(before: Date): Promise<number>;
+
+  /** Removes runs that finished before `before`, with their cases and steps. Returns how many
+   * runs went. */
+  deleteRunsBefore(before: Date): Promise<number>;
 }
 
 /**

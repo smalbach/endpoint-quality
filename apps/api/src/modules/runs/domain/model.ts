@@ -61,6 +61,9 @@ export type RunStep = {
   latency: unknown;
   ok: boolean;
   durationMs: number;
+  /** Set when a retention sweep emptied `request`, `expected` and `actual`. A reader that cannot
+   * tell this from «nothing came back» eventually reports an old step as a timeout. */
+  prunedAt?: Date | null;
 };
 
 export const isFinished = (status: RunStatus): boolean => ["passed", "failed", "cancelled", "error"].includes(status);

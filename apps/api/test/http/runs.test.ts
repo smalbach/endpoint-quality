@@ -12,6 +12,9 @@ import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import request from "supertest";
 
+import { CommandBus } from "@nestjs/cqrs";
+
+import { PruneRunsCommand } from "@/modules/runs/application/commands/prune-runs";
 import { createTestApp, type TestContext } from "../support/test-app";
 import { StubTarget, STUB_SPEC_YAML, type StubFaults } from "../support/stub-target";
 
@@ -426,5 +429,99 @@ describe("permisos y aislamiento", () => {
     const response = await api().post(`${base}/projects/${bare.body.projectId}/runs`).set(as(owner)).send({ environmentId: fixture.environmentId });
     assert.equal(response.status, 409);
     assert.match(response.body.type, /no-active-spec$/);
+  });
+});
+
+/**
+ * Retention: what a run is still worth once its bodies are gone.
+ *
+ * `run_steps` is the one table here with no ceiling — a nightly 311-case matrix writes hundreds of
+ * rows a day, each holding a whole response body. The policy keeps the verdict and drops the
+ * payload, so a run from March still answers «was this green, and what failed» for a few hundred
+ * bytes instead of a few hundred kilobytes.
+ */
+describe("retención de corridas", () => {
+  let fixture: Awaited<ReturnType<typeof projectAgainst>>;
+  before(async () => {
+    fixture = await projectAgainst({});
+  });
+  after(async () => {
+    await fixture.target.stop();
+  });
+
+  /** Backdates a finished run so the sweep reaches it. Measured against the suite's fixed clock,
+   * which is what the handler reads: `new Date()` here would put the run in a different year to
+   * the policy comparing against it. */
+  const age = async (runId: string, days: number) => {
+    const run = await context.repositories.runs.findById(runId);
+    if (!run) throw new Error(`No existe la corrida ${runId}`);
+    await context.repositories.runs.save({ ...run, finishedAt: new Date(context.clock.now().getTime() - days * 24 * 60 * 60 * 1000) });
+  };
+  const prune = (bodiesDays?: number, runsDays?: number) => context.app.get(CommandBus).execute(new PruneRunsCommand(bodiesDays, runsDays));
+
+  test("los cuerpos se retiran y el veredicto se queda", async () => {
+    const { run } = await runAndWait(fixture.projectBase, { environmentId: fixture.environmentId, operationIds: ["createThing"] });
+    const runCase = caseOf(run, "createThing", "create-read");
+    const before = (await api().get(`${fixture.projectBase}/runs/${run.id}/cases/${runCase.id}`).set(as(owner))).body;
+    assert.ok(before.steps[0].request, "el caso recién corrido sí trae la petición");
+
+    await age(run.id, 40);
+    const report = await prune(30, 0);
+    assert.ok(report.bodiesPruned > 0);
+    assert.equal(report.runsDeleted, 0, "la política de borrado estaba en 0, que es «nunca»");
+
+    const after = (await api().get(`${fixture.projectBase}/runs/${run.id}/cases/${runCase.id}`).set(as(owner))).body;
+    for (const step of after.steps) {
+      assert.equal(step.request, null);
+      assert.equal(step.expected, null);
+      assert.equal(step.actual, null);
+      assert.ok(step.prunedAt, "sin esta marca, un paso viejo se lee como un timeout");
+      // Lo que hace que la fila siga valiendo algo.
+      assert.ok(step.assertions.length > 0);
+      assert.equal(typeof step.ok, "boolean");
+      assert.equal(typeof step.durationMs, "number");
+    }
+    // Y el informe, que es lo que lee una pipeline, no dependía de los cuerpos.
+    const stillReadable = await api().get(`${fixture.projectBase}/runs/${run.id}/report`).set(as(owner));
+    assert.equal(stillReadable.status, 200);
+    assert.ok(stillReadable.body.cases.length > 0);
+  });
+
+  test("una segunda pasada no vuelve a hacer el trabajo de la primera", async () => {
+    // `prunedAt IS NULL` es lo que hace converger el barrido. Sin eso, una pasada nocturna
+    // reescribiría cada noche todo lo que ya vació, y el número que reporta no diría nada.
+    const { run } = await runAndWait(fixture.projectBase, { environmentId: fixture.environmentId, operationIds: ["createThing"] });
+    await age(run.id, 40);
+    assert.ok((await prune(30, 0)).bodiesPruned > 0);
+    assert.equal((await prune(30, 0)).bodiesPruned, 0);
+  });
+
+  test("una corrida reciente no se toca", async () => {
+    const { run } = await runAndWait(fixture.projectBase, { environmentId: fixture.environmentId, operationIds: ["createThing"] });
+    const runCase = caseOf(run, "createThing", "create-read");
+    await prune(30, 365);
+    const detail = (await api().get(`${fixture.projectBase}/runs/${run.id}/cases/${runCase.id}`).set(as(owner))).body;
+    assert.ok(detail.steps[0].request, "una corrida de hace un segundo tiene sus cuerpos");
+  });
+
+  test("`0` es «nunca», y es una decisión que alguien toma a propósito", async () => {
+    const { run } = await runAndWait(fixture.projectBase, { environmentId: fixture.environmentId, operationIds: ["createThing"] });
+    const runCase = caseOf(run, "createThing", "create-read");
+    await age(run.id, 4000);
+    const report = await prune(0, 0);
+    assert.deepEqual(report, { bodiesPruned: 0, runsDeleted: 0 });
+    assert.ok((await api().get(`${fixture.projectBase}/runs/${run.id}/cases/${runCase.id}`).set(as(owner))).body.steps[0].request);
+  });
+
+  test("pasado el plazo largo, la corrida entera se va con sus casos y sus pasos", async () => {
+    const { run } = await runAndWait(fixture.projectBase, { environmentId: fixture.environmentId, operationIds: ["createThing"] });
+    const runCase = caseOf(run, "createThing", "create-read");
+    await age(run.id, 400);
+    assert.equal((await prune(0, 365)).runsDeleted >= 1, true);
+
+    assert.equal((await api().get(`${fixture.projectBase}/runs/${run.id}`).set(as(owner))).status, 404);
+    // Los pasos se van con ella: filas que nadie puede ya alcanzar para leer ni para borrar.
+    assert.deepEqual(await context.repositories.runs.listSteps(runCase.id), []);
+    assert.equal(await context.repositories.runs.findCase(runCase.id), null);
   });
 });

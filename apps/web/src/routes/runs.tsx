@@ -247,13 +247,13 @@ function CaseDetail({ runCase }: { runCase: RunCaseView }) {
             <span className="text-xs font-medium text-slate-800">{step.label}</span>
             <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">{step.purpose}</span>
             <span className="ml-auto font-mono text-[10px] text-slate-500">
-              {step.actual ? `${step.actual.status} · ${formatDuration(step.durationMs)}` : "sin respuesta"}
+              {step.actual ? `${step.actual.status} · ${formatDuration(step.durationMs)}` : step.prunedAt ? formatDuration(step.durationMs) : "sin respuesta"}
             </span>
           </div>
 
           <div className="px-3 py-2">
             <p className="truncate font-mono text-[10px] text-slate-500">
-              {step.request.method} {step.request.url}
+              {step.request ? `${step.request.method} ${step.request.url}` : "petición retirada"}
             </p>
             <div className="mt-2">
               {step.assertions.map((assertion, index) => (
@@ -263,19 +263,28 @@ function CaseDetail({ runCase }: { runCase: RunCaseView }) {
             {step.latency && step.latency.samples.length > 1 && (
               <p className="mt-2 font-mono text-[10px] text-slate-400">muestras: {step.latency.samples.join(", ")} ms</p>
             )}
-            <details className="mt-2">
-              <summary className="cursor-pointer text-[11px] text-slate-500">Ver petición y respuesta</summary>
-              <div className="mt-2 grid gap-2 md:grid-cols-2">
-                <div>
-                  <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-400">Enviado</p>
-                  <Json value={{ headers: step.request.headers, body: step.request.body }} />
+            {step.prunedAt ? (
+              // Sin esto, una corrida vieja se lee como una pared de timeouts: `actual` en null
+              // significa «no contestó», y aquí significa «se retiró el cuerpo». Son dos cosas.
+              <p className="mt-2 text-[11px] text-slate-400">
+                Los cuerpos de esta petición se retiraron el {formatDate(step.prunedAt)} por la política de retención. El veredicto y sus aserciones se
+                conservan.
+              </p>
+            ) : (
+              <details className="mt-2">
+                <summary className="cursor-pointer text-[11px] text-slate-500">Ver petición y respuesta</summary>
+                <div className="mt-2 grid gap-2 md:grid-cols-2">
+                  <div>
+                    <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-400">Enviado</p>
+                    <Json value={step.request ? { headers: step.request.headers, body: step.request.body } : undefined} empty="Sin petición registrada" />
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-400">Recibido</p>
+                    <Json value={step.actual?.body} empty="La API no respondió" />
+                  </div>
                 </div>
-                <div>
-                  <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-400">Recibido</p>
-                  <Json value={step.actual?.body} empty="La API no respondió" />
-                </div>
-              </div>
-            </details>
+              </details>
+            )}
           </div>
         </div>
       ))}
