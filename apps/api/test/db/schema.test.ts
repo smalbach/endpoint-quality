@@ -52,8 +52,8 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
     const tables = rows.map((row) => row.table_name).sort();
     assert.deepEqual(tables, [
       "api_tokens", "environment_credentials", "environments", "invitations", "memberships",
-      "organizations", "project_config", "projects", "refresh_tokens", "spec_operations",
-      "spec_sources", "spec_versions", "users",
+      "organizations", "project_config", "projects", "refresh_tokens", "run_cases", "run_steps",
+      "runs", "spec_operations", "spec_sources", "spec_versions", "users",
     ]);
   });
 
@@ -64,6 +64,10 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
     // would leave a constraint pointing at a table about to disappear.
     const exists = async (table: string) =>
       ((await dataSource!.query(`SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=$1`, [table])) as unknown[]).length;
+
+    await dataSource!.undoLastMigration();
+    assert.equal(await exists("runs"), 0);
+    assert.equal(await exists("environments"), 1, "revertir la última migración no debe tocar las anteriores");
 
     await dataSource!.undoLastMigration();
     assert.equal(await exists("environments"), 0);
@@ -80,6 +84,7 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
     assert.equal(await exists("users"), 1);
     assert.equal(await exists("spec_operations"), 1);
     assert.equal(await exists("environment_credentials"), 1);
+    assert.equal(await exists("run_steps"), 1);
   });
 
   test("correr las migraciones dos veces no hace nada la segunda", async () => {
@@ -249,10 +254,68 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
     await assert.rejects(insertSection(), /duplicate key|unique/i);
   });
 
+  test("una versión del contrato no se borra mientras una corrida la referencia", async () => {
+    // RESTRICT and not CASCADE: a run is only interpretable next to the contract it was measured
+    // against, and deleting the snapshot would turn stored evidence into a set of assertions
+    // about nothing.
+    const [userId, organizationId, projectId, versionId] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    await insertUser(userId, `run-${userId}@example.com`);
+    await insertOrganization(organizationId, `r-${organizationId.slice(0, 8)}`);
+    await dataSource!.query(`INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`, [projectId, organizationId, `r-${projectId.slice(0, 8)}`, userId]);
+    await dataSource!.query(
+      `INSERT INTO spec_versions (id, "projectId", hash, raw, format, "openapiVersion", title, "contractVersion", "operationCount", problems, "importedBy", "importedAt")
+       VALUES ($1, $2, $3, 'x', 'yaml', '3.1.0', 't', '1', 0, '[]'::jsonb, $4, now())`,
+      [versionId, projectId, randomUUID().replace(/-/g, ""), userId],
+    );
+    const runId = randomUUID();
+    await dataSource!.query(
+      `INSERT INTO runs (id, "projectId", "specVersionId", status, plan, totals, "triggeredByKind", "triggeredBy", "startedAt")
+       VALUES ($1, $2, $3, 'passed', '{}'::jsonb, '{}'::jsonb, 'user', $4, now())`,
+      [runId, projectId, versionId, userId],
+    );
+
+    await assert.rejects(dataSource!.query(`DELETE FROM spec_versions WHERE id = $1`, [versionId]), /foreign key|violates/i);
+
+    // Deleting the project, on the other hand, takes its runs, cases and steps with it.
+    const caseId = randomUUID();
+    await dataSource!.query(`INSERT INTO run_cases (id, "runId", "operationId", "scenarioId", method, path, status, position) VALUES ($1, $2, 'o', 's', 'GET', '/x', 'passed', 0)`, [caseId, runId]);
+    await dataSource!.query(
+      `INSERT INTO run_steps (id, "runCaseId", index, purpose, label, request, expected, assertions, ok, "durationMs")
+       VALUES ($1, $2, 0, 'act', 'l', '{}'::jsonb, '{}'::jsonb, '[]'::jsonb, true, 5)`,
+      [randomUUID(), caseId],
+    );
+    await dataSource!.query(`DELETE FROM projects WHERE id = $1`, [projectId]);
+    const steps: unknown[] = await dataSource!.query(`SELECT 1 FROM run_steps WHERE "runCaseId" = $1`, [caseId]);
+    assert.equal(steps.length, 0);
+  });
+
+  test("dos casos de una corrida no pueden ocupar la misma posición", async () => {
+    // The position is the execution order, and two rows claiming one slot would make the replay
+    // of a run depend on which came back first.
+    const [userId, organizationId, projectId, versionId, runId] = [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    await insertUser(userId, `pos-${userId}@example.com`);
+    await insertOrganization(organizationId, `p-${organizationId.slice(0, 8)}`);
+    await dataSource!.query(`INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`, [projectId, organizationId, `s-${projectId.slice(0, 8)}`, userId]);
+    await dataSource!.query(
+      `INSERT INTO spec_versions (id, "projectId", hash, raw, format, "openapiVersion", title, "contractVersion", "operationCount", problems, "importedBy", "importedAt")
+       VALUES ($1, $2, $3, 'x', 'yaml', '3.1.0', 't', '1', 0, '[]'::jsonb, $4, now())`,
+      [versionId, projectId, randomUUID().replace(/-/g, ""), userId],
+    );
+    await dataSource!.query(
+      `INSERT INTO runs (id, "projectId", "specVersionId", status, plan, totals, "triggeredByKind", "triggeredBy", "startedAt")
+       VALUES ($1, $2, $3, 'running', '{}'::jsonb, '{}'::jsonb, 'user', $4, now())`,
+      [runId, projectId, versionId, userId],
+    );
+    const insertCase = () =>
+      dataSource!.query(`INSERT INTO run_cases (id, "runId", "operationId", "scenarioId", method, path, status, position) VALUES ($1, $2, 'o', 's', 'GET', '/x', 'queued', 0)`, [randomUUID(), runId]);
+    await insertCase();
+    await assert.rejects(insertCase(), /duplicate key|unique/i);
+  });
+
   test("los índices que sostienen cada comprobación de autorización existen", async () => {
     // Every request resolves "what is this user's role here", so this lookup is as hot as the
     // primary key.
-    const rows: { indexname: string }[] = await dataSource!.query(`SELECT indexname FROM pg_indexes WHERE tablename IN ('memberships','refresh_tokens','api_tokens','projects','spec_versions','spec_operations','environments','environment_credentials')`);
+    const rows: { indexname: string }[] = await dataSource!.query(`SELECT indexname FROM pg_indexes WHERE tablename IN ('memberships','refresh_tokens','api_tokens','projects','spec_versions','spec_operations','environments','environment_credentials','runs','run_cases')`);
     const names = rows.map((row) => row.indexname);
     for (const expected of [
       "ix_memberships_user", "ix_refresh_tokens_session", "ux_refresh_tokens_hash", "ux_api_tokens_hash",
@@ -260,6 +323,9 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
       // scheduled drift check scans every version the project ever had.
       "ux_projects_org_slug", "ux_spec_versions_project_hash", "ix_spec_operations_version",
       "ux_environments_project_name", "ux_credentials_environment_role",
+      // The history view is "this project's runs, newest first", and it is the only query
+      // anybody makes against that table often.
+      "ix_runs_project_started", "ux_run_cases_run_position",
     ]) {
       assert.ok(names.includes(expected), `falta el índice ${expected}`);
     }

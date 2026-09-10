@@ -39,6 +39,9 @@ let ConfiguredSafeFetch = class ConfiguredSafeFetch {
     get(url, options = {}) {
         return (0, safe_fetch_1.safeFetch)(url, this.policy, options);
     }
+    request(url, options) {
+        return (0, safe_fetch_1.safeFetch)(url, this.policy, options);
+    }
 };
 exports.ConfiguredSafeFetch = ConfiguredSafeFetch;
 exports.ConfiguredSafeFetch = ConfiguredSafeFetch = __decorate([

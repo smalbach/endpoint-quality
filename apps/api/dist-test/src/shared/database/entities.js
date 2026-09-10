@@ -9,7 +9,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ENTITIES = exports.ProjectConfigEntity = exports.EnvironmentCredentialEntity = exports.EnvironmentEntity = exports.SpecOperationEntity = exports.SpecVersionEntity = exports.SpecSourceEntity = exports.ProjectEntity = exports.ApiTokenEntity = exports.RefreshTokenEntity = exports.InvitationEntity = exports.MembershipEntity = exports.OrganizationEntity = exports.UserEntity = void 0;
+exports.ENTITIES = exports.RunStepEntity = exports.RunCaseEntity = exports.RunEntity = exports.ProjectConfigEntity = exports.EnvironmentCredentialEntity = exports.EnvironmentEntity = exports.SpecOperationEntity = exports.SpecVersionEntity = exports.SpecSourceEntity = exports.ProjectEntity = exports.ApiTokenEntity = exports.RefreshTokenEntity = exports.InvitationEntity = exports.MembershipEntity = exports.OrganizationEntity = exports.UserEntity = void 0;
 /**
  * The tables, as TypeORM entities.
  *
@@ -727,9 +727,224 @@ __decorate([
 exports.ProjectConfigEntity = ProjectConfigEntity = __decorate([
     (0, typeorm_1.Entity)({ name: "project_config" })
 ], ProjectConfigEntity);
+/**
+ * One execution of a matrix.
+ *
+ * Persisted, which is capability the coupled dashboard did not have: there the result lived in
+ * `useState` and died on refresh. With rows there is history, trend, and an answer to "was this
+ * green last Tuesday" — for no extra work beyond storing it.
+ */
+let RunEntity = class RunEntity {
+    id;
+    projectId;
+    environmentId;
+    /** The snapshot the run asserted against. A run is only interpretable next to the contract it
+     * was measured on, so the version is recorded rather than looked up later. */
+    specVersionId;
+    status;
+    plan;
+    totals;
+    triggeredByKind;
+    triggeredBy;
+    startedAt;
+    finishedAt;
+    error;
+};
+exports.RunEntity = RunEntity;
+__decorate([
+    (0, typeorm_1.PrimaryColumn)("uuid"),
+    __metadata("design:type", String)
+], RunEntity.prototype, "id", void 0);
+__decorate([
+    (0, typeorm_1.Index)(),
+    (0, typeorm_1.Column)("uuid"),
+    __metadata("design:type", String)
+], RunEntity.prototype, "projectId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "uuid", nullable: true }),
+    __metadata("design:type", Object)
+], RunEntity.prototype, "environmentId", void 0);
+__decorate([
+    (0, typeorm_1.Column)("uuid"),
+    __metadata("design:type", String)
+], RunEntity.prototype, "specVersionId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 20 }),
+    __metadata("design:type", String)
+], RunEntity.prototype, "status", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "jsonb" }),
+    __metadata("design:type", Object)
+], RunEntity.prototype, "plan", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "jsonb" }),
+    __metadata("design:type", Object)
+], RunEntity.prototype, "totals", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 20 }),
+    __metadata("design:type", String)
+], RunEntity.prototype, "triggeredByKind", void 0);
+__decorate([
+    (0, typeorm_1.Column)("uuid"),
+    __metadata("design:type", String)
+], RunEntity.prototype, "triggeredBy", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "timestamptz" }),
+    __metadata("design:type", Date)
+], RunEntity.prototype, "startedAt", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "timestamptz", nullable: true }),
+    __metadata("design:type", Object)
+], RunEntity.prototype, "finishedAt", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "text", nullable: true }),
+    __metadata("design:type", Object)
+], RunEntity.prototype, "error", void 0);
+exports.RunEntity = RunEntity = __decorate([
+    (0, typeorm_1.Entity)({ name: "runs" })
+], RunEntity);
+/** One scenario of one operation, within a run. */
+let RunCaseEntity = class RunCaseEntity {
+    id;
+    runId;
+    operationId;
+    scenarioId;
+    method;
+    path;
+    status;
+    position;
+    durationMs;
+    startedAt;
+    finishedAt;
+};
+exports.RunCaseEntity = RunCaseEntity;
+__decorate([
+    (0, typeorm_1.PrimaryColumn)("uuid"),
+    __metadata("design:type", String)
+], RunCaseEntity.prototype, "id", void 0);
+__decorate([
+    (0, typeorm_1.Index)(),
+    (0, typeorm_1.Column)("uuid"),
+    __metadata("design:type", String)
+], RunCaseEntity.prototype, "runId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 200 }),
+    __metadata("design:type", String)
+], RunCaseEntity.prototype, "operationId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 200 }),
+    __metadata("design:type", String)
+], RunCaseEntity.prototype, "scenarioId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 10 }),
+    __metadata("design:type", String)
+], RunCaseEntity.prototype, "method", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "text" }),
+    __metadata("design:type", String)
+], RunCaseEntity.prototype, "path", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 20 }),
+    __metadata("design:type", String)
+], RunCaseEntity.prototype, "status", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "int" }),
+    __metadata("design:type", Number)
+], RunCaseEntity.prototype, "position", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "int", nullable: true }),
+    __metadata("design:type", Object)
+], RunCaseEntity.prototype, "durationMs", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "timestamptz", nullable: true }),
+    __metadata("design:type", Object)
+], RunCaseEntity.prototype, "startedAt", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "timestamptz", nullable: true }),
+    __metadata("design:type", Object)
+], RunCaseEntity.prototype, "finishedAt", void 0);
+exports.RunCaseEntity = RunCaseEntity = __decorate([
+    (0, typeorm_1.Entity)({ name: "run_cases" })
+], RunCaseEntity);
+/**
+ * One HTTP request inside a case, with what was sent, what came back and every assertion.
+ *
+ * The table that grows. A `create-read` case is three of these and each holds a full response
+ * body, so retention is a policy rather than an afterthought — the plan's
+ * `keepFullBodiesForDays`. Credentials are masked before the row is written, never on the way
+ * out: a redaction applied at read time is one query away from being forgotten.
+ */
+let RunStepEntity = class RunStepEntity {
+    id;
+    runCaseId;
+    index;
+    purpose;
+    label;
+    request;
+    expected;
+    actual;
+    assertions;
+    latency;
+    ok;
+    durationMs;
+};
+exports.RunStepEntity = RunStepEntity;
+__decorate([
+    (0, typeorm_1.PrimaryColumn)("uuid"),
+    __metadata("design:type", String)
+], RunStepEntity.prototype, "id", void 0);
+__decorate([
+    (0, typeorm_1.Index)(),
+    (0, typeorm_1.Column)("uuid"),
+    __metadata("design:type", String)
+], RunStepEntity.prototype, "runCaseId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "int" }),
+    __metadata("design:type", Number)
+], RunStepEntity.prototype, "index", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 20 }),
+    __metadata("design:type", String)
+], RunStepEntity.prototype, "purpose", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 200 }),
+    __metadata("design:type", String)
+], RunStepEntity.prototype, "label", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "jsonb" }),
+    __metadata("design:type", Object)
+], RunStepEntity.prototype, "request", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "jsonb" }),
+    __metadata("design:type", Object)
+], RunStepEntity.prototype, "expected", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "jsonb", nullable: true }),
+    __metadata("design:type", Object)
+], RunStepEntity.prototype, "actual", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "jsonb" }),
+    __metadata("design:type", Object)
+], RunStepEntity.prototype, "assertions", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "jsonb", nullable: true }),
+    __metadata("design:type", Object)
+], RunStepEntity.prototype, "latency", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "boolean" }),
+    __metadata("design:type", Boolean)
+], RunStepEntity.prototype, "ok", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "int" }),
+    __metadata("design:type", Number)
+], RunStepEntity.prototype, "durationMs", void 0);
+exports.RunStepEntity = RunStepEntity = __decorate([
+    (0, typeorm_1.Entity)({ name: "run_steps" })
+], RunStepEntity);
 exports.ENTITIES = [
     UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity,
     ProjectEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity,
     EnvironmentEntity, EnvironmentCredentialEntity, ProjectConfigEntity,
+    RunEntity, RunCaseEntity, RunStepEntity,
 ];
 //# sourceMappingURL=entities.js.map

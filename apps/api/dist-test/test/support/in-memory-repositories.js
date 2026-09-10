@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.InMemoryConfigRepository = exports.InMemoryEnvironmentRepository = exports.InMemorySpecRepository = exports.InMemoryProjectRepository = exports.InMemoryInvitationRepository = exports.InMemoryMembershipRepository = exports.InMemoryOrganizationRepository = exports.InMemoryApiTokenRepository = exports.InMemoryRefreshTokenRepository = exports.InMemoryUserRepository = void 0;
+exports.InMemoryRunRepository = exports.InMemoryConfigRepository = exports.InMemoryEnvironmentRepository = exports.InMemorySpecRepository = exports.InMemoryProjectRepository = exports.InMemoryInvitationRepository = exports.InMemoryMembershipRepository = exports.InMemoryOrganizationRepository = exports.InMemoryApiTokenRepository = exports.InMemoryRefreshTokenRepository = exports.InMemoryUserRepository = void 0;
 class InMemoryUserRepository {
     rows = new Map();
     async findById(id) {
@@ -228,4 +228,66 @@ class InMemoryConfigRepository {
     }
 }
 exports.InMemoryConfigRepository = InMemoryConfigRepository;
+class InMemoryRunRepository {
+    runs = new Map();
+    cases = new Map();
+    steps = new Map();
+    async findById(id) {
+        return this.runs.get(id) ?? null;
+    }
+    async listForProject(projectId, limit) {
+        return [...this.runs.values()]
+            .filter((run) => run.projectId === projectId)
+            .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
+            .slice(0, limit);
+    }
+    async save(run) {
+        this.runs.set(run.id, { ...run });
+    }
+    async saveCases(cases) {
+        for (const runCase of cases)
+            this.cases.set(runCase.id, { ...runCase });
+    }
+    async listCases(runId) {
+        return [...this.cases.values()].filter((runCase) => runCase.runId === runId).sort((a, b) => a.position - b.position);
+    }
+    async findCase(id) {
+        return this.cases.get(id) ?? null;
+    }
+    async saveCase(runCase) {
+        this.cases.set(runCase.id, { ...runCase });
+    }
+    async saveSteps(steps) {
+        for (const step of steps)
+            this.steps.set(step.id, { ...step });
+    }
+    async listSteps(runCaseId) {
+        return [...this.steps.values()].filter((step) => step.runCaseId === runCaseId).sort((a, b) => a.index - b.index);
+    }
+    /** Counted from the case rows, exactly as the SQL repository does. A fake that kept its own
+     * counter would let a test pass that the real one fails. */
+    async recomputeTotals(runId) {
+        const cases = await this.listCases(runId);
+        const by = (status) => cases.filter((runCase) => runCase.status === status).length;
+        const totals = {
+            cases: cases.length,
+            passed: by("passed"),
+            failed: by("failed"),
+            skipped: by("skipped"),
+            completed: by("passed") + by("failed") + by("skipped"),
+        };
+        const run = this.runs.get(runId);
+        if (run)
+            this.runs.set(runId, { ...run, totals });
+        return totals;
+    }
+    async updateStatus(runId, status, at, error) {
+        const run = this.runs.get(runId);
+        if (!run)
+            return;
+        const finished = ["passed", "failed", "cancelled", "error"].includes(status);
+        this.runs.set(runId, { ...run, status, ...(finished ? { finishedAt: at } : {}), ...(error ? { error } : {}) });
+    }
+}
+exports.InMemoryRunRepository = InMemoryRunRepository;
 //# sourceMappingURL=in-memory-repositories.js.map

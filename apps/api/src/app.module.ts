@@ -12,6 +12,7 @@ import { IamModule } from "./modules/iam/iam.module";
 import { ProjectsModule } from "./modules/projects/projects.module";
 import { SpecsModule } from "./modules/specs/specs.module";
 import { EnvironmentsModule } from "./modules/environments/environments.module";
+import { RunsModule } from "./modules/runs/runs.module";
 import { AuthGuard } from "./modules/auth/infrastructure/guards/auth.guard";
 import { HealthController } from "./shared/health.controller";
 
@@ -33,6 +34,7 @@ import { HealthController } from "./shared/health.controller";
     ProjectsModule,
     SpecsModule,
     EnvironmentsModule,
+    RunsModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -22,6 +22,8 @@ import type { Credential, CredentialRole, Environment } from "@/modules/environm
 import type { EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
 import type { ConfigRepositoryPort, ConfigRow } from "@/modules/config/domain/ports";
 import type { ConfigSection } from "@eq/runner-core";
+import type { CaseStatus, Run, RunCase, RunStatus, RunStep, RunTotals } from "@/modules/runs/domain/model";
+import type { RunRepositoryPort } from "@/modules/runs/domain/ports";
 
 export class InMemoryUserRepository implements UserRepositoryPort {
   readonly rows = new Map<string, User>();
@@ -257,5 +259,66 @@ export class InMemoryConfigRepository implements ConfigRepositoryPort {
   }
   async deleteSection(projectId: string, section: ConfigSection): Promise<void> {
     this.rows.delete(this.key(projectId, section));
+  }
+}
+
+export class InMemoryRunRepository implements RunRepositoryPort {
+  readonly runs = new Map<string, Run>();
+  readonly cases = new Map<string, RunCase>();
+  readonly steps = new Map<string, RunStep>();
+
+  async findById(id: string): Promise<Run | null> {
+    return this.runs.get(id) ?? null;
+  }
+  async listForProject(projectId: string, limit: number): Promise<Run[]> {
+    return [...this.runs.values()]
+      .filter((run) => run.projectId === projectId)
+      .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
+      .slice(0, limit);
+  }
+  async save(run: Run): Promise<void> {
+    this.runs.set(run.id, { ...run });
+  }
+  async saveCases(cases: RunCase[]): Promise<void> {
+    for (const runCase of cases) this.cases.set(runCase.id, { ...runCase });
+  }
+  async listCases(runId: string): Promise<RunCase[]> {
+    return [...this.cases.values()].filter((runCase) => runCase.runId === runId).sort((a, b) => a.position - b.position);
+  }
+  async findCase(id: string): Promise<RunCase | null> {
+    return this.cases.get(id) ?? null;
+  }
+  async saveCase(runCase: RunCase): Promise<void> {
+    this.cases.set(runCase.id, { ...runCase });
+  }
+  async saveSteps(steps: RunStep[]): Promise<void> {
+    for (const step of steps) this.steps.set(step.id, { ...step });
+  }
+  async listSteps(runCaseId: string): Promise<RunStep[]> {
+    return [...this.steps.values()].filter((step) => step.runCaseId === runCaseId).sort((a, b) => a.index - b.index);
+  }
+
+  /** Counted from the case rows, exactly as the SQL repository does. A fake that kept its own
+   * counter would let a test pass that the real one fails. */
+  async recomputeTotals(runId: string): Promise<RunTotals> {
+    const cases = await this.listCases(runId);
+    const by = (status: CaseStatus) => cases.filter((runCase) => runCase.status === status).length;
+    const totals: RunTotals = {
+      cases: cases.length,
+      passed: by("passed"),
+      failed: by("failed"),
+      skipped: by("skipped"),
+      completed: by("passed") + by("failed") + by("skipped"),
+    };
+    const run = this.runs.get(runId);
+    if (run) this.runs.set(runId, { ...run, totals });
+    return totals;
+  }
+
+  async updateStatus(runId: string, status: RunStatus, at: Date, error?: string): Promise<void> {
+    const run = this.runs.get(runId);
+    if (!run) return;
+    const finished = ["passed", "failed", "cancelled", "error"].includes(status);
+    this.runs.set(runId, { ...run, status, ...(finished ? { finishedAt: at } : {}), ...(error ? { error } : {}) });
   }
 }

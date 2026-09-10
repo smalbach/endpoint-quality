@@ -1,6 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { ENV, type Env } from "../config/env";
-import { safeFetch, type SafeFetchPolicy, type SafeFetchPort, type SafeFetchResult } from "./safe-fetch";
+import { safeFetch, type SafeFetchPolicy, type SafeFetchPort, type SafeFetchResult, type SafeRequestOptions } from "./safe-fetch";
 
 /**
  * The guard, wired to the deployment's policy.
@@ -23,6 +23,10 @@ export class ConfiguredSafeFetch implements SafeFetchPort {
   }
 
   get(url: string, options: { headers?: Record<string, string> } = {}): Promise<SafeFetchResult> {
+    return safeFetch(url, this.policy, options);
+  }
+
+  request(url: string, options: SafeRequestOptions): Promise<SafeFetchResult> {
     return safeFetch(url, this.policy, options);
   }
 }

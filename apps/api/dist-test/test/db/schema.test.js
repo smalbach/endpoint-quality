@@ -48,8 +48,8 @@ const insertOrganization = (id, slug) => dataSource.query(`INSERT INTO organizat
         const tables = rows.map((row) => row.table_name).sort();
         strict_1.default.deepEqual(tables, [
             "api_tokens", "environment_credentials", "environments", "invitations", "memberships",
-            "organizations", "project_config", "projects", "refresh_tokens", "spec_operations",
-            "spec_sources", "spec_versions", "users",
+            "organizations", "project_config", "projects", "refresh_tokens", "run_cases", "run_steps",
+            "runs", "spec_operations", "spec_sources", "spec_versions", "users",
         ]);
     });
     (0, node_test_1.test)("son reversibles: cada down deshace su up y up lo reconstruye", async () => {
@@ -58,6 +58,9 @@ const insertOrganization = (id, slug) => dataSource.query(`INSERT INTO organizat
         // the second adds a foreign key into a table the first creates — reverting only the last
         // would leave a constraint pointing at a table about to disappear.
         const exists = async (table) => (await dataSource.query(`SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=$1`, [table])).length;
+        await dataSource.undoLastMigration();
+        strict_1.default.equal(await exists("runs"), 0);
+        strict_1.default.equal(await exists("environments"), 1, "revertir la última migración no debe tocar las anteriores");
         await dataSource.undoLastMigration();
         strict_1.default.equal(await exists("environments"), 0);
         strict_1.default.equal(await exists("spec_versions"), 1, "revertir la última migración no debe tocar las anteriores");
@@ -70,6 +73,7 @@ const insertOrganization = (id, slug) => dataSource.query(`INSERT INTO organizat
         strict_1.default.equal(await exists("users"), 1);
         strict_1.default.equal(await exists("spec_operations"), 1);
         strict_1.default.equal(await exists("environment_credentials"), 1);
+        strict_1.default.equal(await exists("run_steps"), 1);
     });
     (0, node_test_1.test)("correr las migraciones dos veces no hace nada la segunda", async () => {
         strict_1.default.deepEqual(await dataSource.runMigrations(), []);
@@ -194,10 +198,48 @@ const insertOrganization = (id, slug) => dataSource.query(`INSERT INTO organizat
         // Two rows for one section would make the assembled configuration depend on row order.
         await strict_1.default.rejects(insertSection(), /duplicate key|unique/i);
     });
+    (0, node_test_1.test)("una versión del contrato no se borra mientras una corrida la referencia", async () => {
+        // RESTRICT and not CASCADE: a run is only interpretable next to the contract it was measured
+        // against, and deleting the snapshot would turn stored evidence into a set of assertions
+        // about nothing.
+        const [userId, organizationId, projectId, versionId] = [(0, node_crypto_1.randomUUID)(), (0, node_crypto_1.randomUUID)(), (0, node_crypto_1.randomUUID)(), (0, node_crypto_1.randomUUID)()];
+        await insertUser(userId, `run-${userId}@example.com`);
+        await insertOrganization(organizationId, `r-${organizationId.slice(0, 8)}`);
+        await dataSource.query(`INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`, [projectId, organizationId, `r-${projectId.slice(0, 8)}`, userId]);
+        await dataSource.query(`INSERT INTO spec_versions (id, "projectId", hash, raw, format, "openapiVersion", title, "contractVersion", "operationCount", problems, "importedBy", "importedAt")
+       VALUES ($1, $2, $3, 'x', 'yaml', '3.1.0', 't', '1', 0, '[]'::jsonb, $4, now())`, [versionId, projectId, (0, node_crypto_1.randomUUID)().replace(/-/g, ""), userId]);
+        const runId = (0, node_crypto_1.randomUUID)();
+        await dataSource.query(`INSERT INTO runs (id, "projectId", "specVersionId", status, plan, totals, "triggeredByKind", "triggeredBy", "startedAt")
+       VALUES ($1, $2, $3, 'passed', '{}'::jsonb, '{}'::jsonb, 'user', $4, now())`, [runId, projectId, versionId, userId]);
+        await strict_1.default.rejects(dataSource.query(`DELETE FROM spec_versions WHERE id = $1`, [versionId]), /foreign key|violates/i);
+        // Deleting the project, on the other hand, takes its runs, cases and steps with it.
+        const caseId = (0, node_crypto_1.randomUUID)();
+        await dataSource.query(`INSERT INTO run_cases (id, "runId", "operationId", "scenarioId", method, path, status, position) VALUES ($1, $2, 'o', 's', 'GET', '/x', 'passed', 0)`, [caseId, runId]);
+        await dataSource.query(`INSERT INTO run_steps (id, "runCaseId", index, purpose, label, request, expected, assertions, ok, "durationMs")
+       VALUES ($1, $2, 0, 'act', 'l', '{}'::jsonb, '{}'::jsonb, '[]'::jsonb, true, 5)`, [(0, node_crypto_1.randomUUID)(), caseId]);
+        await dataSource.query(`DELETE FROM projects WHERE id = $1`, [projectId]);
+        const steps = await dataSource.query(`SELECT 1 FROM run_steps WHERE "runCaseId" = $1`, [caseId]);
+        strict_1.default.equal(steps.length, 0);
+    });
+    (0, node_test_1.test)("dos casos de una corrida no pueden ocupar la misma posición", async () => {
+        // The position is the execution order, and two rows claiming one slot would make the replay
+        // of a run depend on which came back first.
+        const [userId, organizationId, projectId, versionId, runId] = [(0, node_crypto_1.randomUUID)(), (0, node_crypto_1.randomUUID)(), (0, node_crypto_1.randomUUID)(), (0, node_crypto_1.randomUUID)(), (0, node_crypto_1.randomUUID)()];
+        await insertUser(userId, `pos-${userId}@example.com`);
+        await insertOrganization(organizationId, `p-${organizationId.slice(0, 8)}`);
+        await dataSource.query(`INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`, [projectId, organizationId, `s-${projectId.slice(0, 8)}`, userId]);
+        await dataSource.query(`INSERT INTO spec_versions (id, "projectId", hash, raw, format, "openapiVersion", title, "contractVersion", "operationCount", problems, "importedBy", "importedAt")
+       VALUES ($1, $2, $3, 'x', 'yaml', '3.1.0', 't', '1', 0, '[]'::jsonb, $4, now())`, [versionId, projectId, (0, node_crypto_1.randomUUID)().replace(/-/g, ""), userId]);
+        await dataSource.query(`INSERT INTO runs (id, "projectId", "specVersionId", status, plan, totals, "triggeredByKind", "triggeredBy", "startedAt")
+       VALUES ($1, $2, $3, 'running', '{}'::jsonb, '{}'::jsonb, 'user', $4, now())`, [runId, projectId, versionId, userId]);
+        const insertCase = () => dataSource.query(`INSERT INTO run_cases (id, "runId", "operationId", "scenarioId", method, path, status, position) VALUES ($1, $2, 'o', 's', 'GET', '/x', 'queued', 0)`, [(0, node_crypto_1.randomUUID)(), runId]);
+        await insertCase();
+        await strict_1.default.rejects(insertCase(), /duplicate key|unique/i);
+    });
     (0, node_test_1.test)("los índices que sostienen cada comprobación de autorización existen", async () => {
         // Every request resolves "what is this user's role here", so this lookup is as hot as the
         // primary key.
-        const rows = await dataSource.query(`SELECT indexname FROM pg_indexes WHERE tablename IN ('memberships','refresh_tokens','api_tokens','projects','spec_versions','spec_operations','environments','environment_credentials')`);
+        const rows = await dataSource.query(`SELECT indexname FROM pg_indexes WHERE tablename IN ('memberships','refresh_tokens','api_tokens','projects','spec_versions','spec_operations','environments','environment_credentials','runs','run_cases')`);
         const names = rows.map((row) => row.indexname);
         for (const expected of [
             "ix_memberships_user", "ix_refresh_tokens_session", "ux_refresh_tokens_hash", "ux_api_tokens_hash",
@@ -205,6 +247,9 @@ const insertOrganization = (id, slug) => dataSource.query(`INSERT INTO organizat
             // scheduled drift check scans every version the project ever had.
             "ux_projects_org_slug", "ux_spec_versions_project_hash", "ix_spec_operations_version",
             "ux_environments_project_name", "ux_credentials_environment_role",
+            // The history view is "this project's runs, newest first", and it is the only query
+            // anybody makes against that table often.
+            "ix_runs_project_started", "ux_run_cases_run_position",
         ]) {
             strict_1.default.ok(names.includes(expected), `falta el índice ${expected}`);
         }

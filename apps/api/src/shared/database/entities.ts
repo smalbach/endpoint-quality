@@ -252,8 +252,75 @@ export class ProjectConfigEntity {
   @Column("uuid") updatedBy: string;
 }
 
+
+/**
+ * One execution of a matrix.
+ *
+ * Persisted, which is capability the coupled dashboard did not have: there the result lived in
+ * `useState` and died on refresh. With rows there is history, trend, and an answer to "was this
+ * green last Tuesday" — for no extra work beyond storing it.
+ */
+@Entity({ name: "runs" })
+export class RunEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Column({ type: "uuid", nullable: true }) environmentId: string | null;
+  /** The snapshot the run asserted against. A run is only interpretable next to the contract it
+   * was measured on, so the version is recorded rather than looked up later. */
+  @Column("uuid") specVersionId: string;
+  @Column({ type: "varchar", length: 20 }) status: string;
+  @Column({ type: "jsonb" }) plan: unknown;
+  @Column({ type: "jsonb" }) totals: unknown;
+  @Column({ type: "varchar", length: 20 }) triggeredByKind: string;
+  @Column("uuid") triggeredBy: string;
+  @Column({ type: "timestamptz" }) startedAt: Date;
+  @Column({ type: "timestamptz", nullable: true }) finishedAt: Date | null;
+  @Column({ type: "text", nullable: true }) error: string | null;
+}
+
+/** One scenario of one operation, within a run. */
+@Entity({ name: "run_cases" })
+export class RunCaseEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") runId: string;
+  @Column({ type: "varchar", length: 200 }) operationId: string;
+  @Column({ type: "varchar", length: 200 }) scenarioId: string;
+  @Column({ type: "varchar", length: 10 }) method: string;
+  @Column({ type: "text" }) path: string;
+  @Column({ type: "varchar", length: 20 }) status: string;
+  @Column({ type: "int" }) position: number;
+  @Column({ type: "int", nullable: true }) durationMs: number | null;
+  @Column({ type: "timestamptz", nullable: true }) startedAt: Date | null;
+  @Column({ type: "timestamptz", nullable: true }) finishedAt: Date | null;
+}
+
+/**
+ * One HTTP request inside a case, with what was sent, what came back and every assertion.
+ *
+ * The table that grows. A `create-read` case is three of these and each holds a full response
+ * body, so retention is a policy rather than an afterthought — the plan's
+ * `keepFullBodiesForDays`. Credentials are masked before the row is written, never on the way
+ * out: a redaction applied at read time is one query away from being forgotten.
+ */
+@Entity({ name: "run_steps" })
+export class RunStepEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") runCaseId: string;
+  @Column({ type: "int" }) index: number;
+  @Column({ type: "varchar", length: 20 }) purpose: string;
+  @Column({ type: "varchar", length: 200 }) label: string;
+  @Column({ type: "jsonb" }) request: unknown;
+  @Column({ type: "jsonb" }) expected: unknown;
+  @Column({ type: "jsonb", nullable: true }) actual: unknown;
+  @Column({ type: "jsonb" }) assertions: unknown;
+  @Column({ type: "jsonb", nullable: true }) latency: unknown;
+  @Column({ type: "boolean" }) ok: boolean;
+  @Column({ type: "int" }) durationMs: number;
+}
+
 export const ENTITIES = [
   UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity,
   ProjectEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity,
   EnvironmentEntity, EnvironmentCredentialEntity, ProjectConfigEntity,
+  RunEntity, RunCaseEntity, RunStepEntity,
 ];

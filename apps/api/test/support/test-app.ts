@@ -43,12 +43,19 @@ import { ProjectsController } from "@/modules/projects/presentation/projects.con
 import { PROJECT_COMMAND_HANDLERS, PROJECT_QUERY_HANDLERS } from "@/modules/projects/projects.module";
 import { SPEC_REPOSITORY } from "@/modules/specs/domain/ports";
 import { SPEC_COMMAND_HANDLERS, SPEC_QUERY_HANDLERS } from "@/modules/specs/specs.module";
-import { SAFE_FETCH, type SafeFetchPort, type SafeFetchResult } from "@/shared/http/safe-fetch";
+import { SAFE_FETCH, safeFetch, type SafeFetchPolicy, type SafeFetchPort, type SafeFetchResult, type SafeRequestOptions } from "@/shared/http/safe-fetch";
 import { SECRET_CIPHER, AesGcmSecretCipher } from "@/shared/crypto/secret-cipher";
 import { ENVIRONMENT_REPOSITORY } from "@/modules/environments/domain/ports";
 import { EnvironmentsController } from "@/modules/environments/presentation/environments.controller";
 import { ENVIRONMENT_COMMAND_HANDLERS, ENVIRONMENT_QUERY_HANDLERS } from "@/modules/environments/environments.module";
 import { CONFIG_REPOSITORY } from "@/modules/config/domain/ports";
+import { RUN_QUEUE, RUN_REPOSITORY } from "@/modules/runs/domain/ports";
+import { RunsController } from "@/modules/runs/presentation/runs.controller";
+import { RUN_COMMAND_HANDLERS, RUN_PROJECTORS, RUN_QUERY_HANDLERS } from "@/modules/runs/runs.module";
+import { CaseExecutor } from "@/modules/runs/infrastructure/case-executor";
+import { RunOrchestrator } from "@/modules/runs/infrastructure/run-orchestrator";
+import { RunProgressStream } from "@/modules/runs/infrastructure/run-progress.stream";
+import { InMemoryRunQueue } from "@/modules/runs/infrastructure/queue/in-memory-queue";
 import {
   InMemoryApiTokenRepository,
   InMemoryInvitationRepository,
@@ -58,30 +65,44 @@ import {
   InMemoryConfigRepository,
   InMemoryEnvironmentRepository,
   InMemoryProjectRepository,
+  InMemoryRunRepository,
   InMemorySpecRepository,
   InMemoryUserRepository,
 } from "./in-memory-repositories";
 
 /**
- * A stand-in for the network.
+ * The network, with a hole for the tests to reach through.
  *
- * The SSRF guard has its own suite against a real loopback server; here what matters is that the
- * import command asks for a URL and gets a document back. Registering responses by URL keeps the
- * HTTP tests from depending on anything being reachable.
+ * A URL a test registered is answered from the map; **anything else goes out through the real
+ * guard**, unchanged. That split is deliberate: the spec-import tests want a document without
+ * depending on anything being reachable, and the run tests drive a genuine HTTP server on
+ * loopback — swapping the network out for those would leave the whole point of the execution
+ * engine untested.
+ *
+ * One token, not two. A second `SAFE_FETCH`-like provider for "the real one" would be a second
+ * place where the SSRF policy is decided.
  */
 export class StubSafeFetch implements SafeFetchPort {
   readonly responses = new Map<string, { status: number; body: string }>();
   readonly requested: string[] = [];
 
+  constructor(private readonly policy: SafeFetchPolicy) {}
+
   reply(url: string, body: string, status = 200) {
     this.responses.set(url, { status, body });
   }
 
-  async get(url: string): Promise<SafeFetchResult> {
+  async get(url: string, options: { headers?: Record<string, string> } = {}): Promise<SafeFetchResult> {
+    return this.request(url, { method: "GET", ...options });
+  }
+
+  async request(url: string, options: SafeRequestOptions): Promise<SafeFetchResult> {
     this.requested.push(url);
     const stored = this.responses.get(url);
-    if (!stored) throw new Error(`El destino ${url} está bloqueado: sin respuesta registrada en la prueba`);
-    return { status: stored.status, headers: { "content-type": "application/yaml" }, body: stored.body, finalUrl: url, durationMs: 1 };
+    if (stored) {
+      return { status: stored.status, headers: { "content-type": "application/yaml" }, body: stored.body, finalUrl: url, durationMs: 1 };
+    }
+    return safeFetch(url, this.policy, options);
   }
 }
 
@@ -109,8 +130,11 @@ export type TestContext = {
     specs: InMemorySpecRepository;
     environments: InMemoryEnvironmentRepository;
     config: InMemoryConfigRepository;
+    runs: InMemoryRunRepository;
   };
   http: StubSafeFetch;
+  /** Lets a test await the queue instead of polling for a run to finish. */
+  queue: InMemoryRunQueue;
   close(): Promise<void>;
 };
 
@@ -128,12 +152,16 @@ export async function createTestApp(): Promise<TestContext> {
     specs: new InMemorySpecRepository(),
     environments: new InMemoryEnvironmentRepository(),
     config: new InMemoryConfigRepository(),
+    runs: new InMemoryRunRepository(),
   };
-  const http = new StubSafeFetch();
+  // Loopback is allowed here because the run tests point the engine at a stub server on
+  // 127.0.0.1, which is also the ordinary self-hosted case.
+  const http = new StubSafeFetch({ allowPrivateTargets: true, maxRedirects: env.MAX_REDIRECTS, timeoutMs: 5_000, maxResponseBytes: env.MAX_RESPONSE_BYTES });
+  const queue = new InMemoryRunQueue();
 
   const moduleRef = await Test.createTestingModule({
     imports: [CqrsModule.forRoot(), JwtModule.register({})],
-    controllers: [AuthController, OrganizationsController, ProjectsController, EnvironmentsController],
+    controllers: [AuthController, OrganizationsController, ProjectsController, EnvironmentsController, RunsController],
     providers: [
       { provide: ENV, useValue: env },
       { provide: CLOCK, useValue: clock },
@@ -148,6 +176,12 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: PROJECT_REPOSITORY, useValue: repositories.projects },
       { provide: SPEC_REPOSITORY, useValue: repositories.specs },
       { provide: SAFE_FETCH, useValue: http },
+      { provide: RUN_REPOSITORY, useValue: repositories.runs },
+      { provide: RUN_QUEUE, useValue: queue },
+      CaseExecutor,
+      RunOrchestrator,
+      RunProgressStream,
+      ...RUN_PROJECTORS,
       { provide: ENVIRONMENT_REPOSITORY, useValue: repositories.environments },
       { provide: CONFIG_REPOSITORY, useValue: repositories.config },
       // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the
@@ -163,6 +197,8 @@ export async function createTestApp(): Promise<TestContext> {
       ...SPEC_QUERY_HANDLERS,
       ...ENVIRONMENT_COMMAND_HANDLERS,
       ...ENVIRONMENT_QUERY_HANDLERS,
+      ...RUN_COMMAND_HANDLERS,
+      ...RUN_QUERY_HANDLERS,
       // The global guard and filter are registered exactly as `AppModule` does, because half of
       // what these tests check is that the wiring protects what it should. Throttling is left
       // out: it is the one piece whose behaviour is a rate, and asserting it here would make
@@ -183,5 +219,8 @@ export async function createTestApp(): Promise<TestContext> {
   );
   await app.init();
 
-  return { app, clock, env, repositories, http, close: () => app.close() };
+  // The worker starts listening exactly as `RunsModule.onApplicationBootstrap` does.
+  moduleRef.get(RunOrchestrator).listen();
+
+  return { app, clock, env, repositories, http, queue, close: () => app.close() };
 }

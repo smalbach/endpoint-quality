@@ -135,18 +135,30 @@ async function lookupOrFail(hostname: string, rawUrl: string): Promise<{ address
   }
 }
 
+export type SafeRequestOptions = {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+};
+
 /**
- * A GET that follows redirects by hand, re-validating each hop.
+ * A request that follows redirects by hand, re-validating each hop.
  *
  * `redirect: "manual"` and a loop, rather than letting fetch follow them: the whole point is
  * that hop two gets the same scrutiny as hop one, and a client that follows redirects internally
  * gives no opportunity to look.
+ *
+ * Any method, because the runner exercises all of them — but the **body is not replayed across a
+ * redirect**, and a redirected non-idempotent request is refused instead. A 307 that moves a
+ * DELETE somewhere else is either a misconfiguration or an attempt to have us delete something
+ * at an address we did not check, and neither is worth guessing about.
  */
 export async function safeFetch(
   rawUrl: string,
   policy: SafeFetchPolicy,
-  options: { headers?: Record<string, string> } = {},
+  options: SafeRequestOptions = {},
 ): Promise<SafeFetchResult> {
+  const method = (options.method ?? "GET").toUpperCase();
   let current = rawUrl;
   const visited = new Set<string>();
 
@@ -168,7 +180,13 @@ export async function safeFetch(
       const direct = new URL(url.toString());
       direct.hostname = literalHost;
       const headers: Record<string, string> = { Accept: "application/json, application/yaml, text/yaml, */*", ...options.headers, Host: url.host };
-      response = await fetch(direct, { method: "GET", headers, redirect: "manual", signal: controller.signal });
+      response = await fetch(direct, {
+        method,
+        headers,
+        ...(options.body === undefined ? {} : { body: options.body }),
+        redirect: "manual",
+        signal: controller.signal,
+      });
     } catch (error) {
       if (controller.signal.aborted) throw new BlockedTargetError(current, `sin respuesta en ${policy.timeoutMs} ms`);
       throw new BlockedTargetError(current, error instanceof Error ? error.message : "la petición falló");
@@ -179,6 +197,11 @@ export async function safeFetch(
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get("location");
       if (!location) throw new BlockedTargetError(current, `redirección ${response.status} sin cabecera Location`);
+      if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+        // Following it would repeat a write at an address the caller never chose. It is also
+        // indistinguishable, from here, from an attempt to have us delete something elsewhere.
+        throw new BlockedTargetError(current, `redirección ${response.status} sobre un ${method}: no se reenvía una escritura`);
+      }
       current = new URL(location, url).toString();
       continue;
     }
@@ -234,4 +257,5 @@ export const SAFE_FETCH = Symbol("SAFE_FETCH");
 
 export interface SafeFetchPort {
   get(url: string, options?: { headers?: Record<string, string> }): Promise<SafeFetchResult>;
+  request(url: string, options: SafeRequestOptions): Promise<SafeFetchResult>;
 }

@@ -29,8 +29,25 @@ export function responseShapeFor(operation: Operation, config: ProjectConfig): s
   return rule ? rule.shape : config.envelope.fallbackShape;
 }
 
-/** The shape a case expects, which for any 4xx/5xx is the error envelope regardless of the
- * operation. Reproduces `scenario.expectedStatus >= 400 ? "ProblemDetails" : responseShape`. */
+/**
+ * Statuses that cannot carry content, by the specification rather than by convention.
+ *
+ * RFC 9110 is explicit: a 204 response "is terminated by the first empty line after the header
+ * fields because it cannot contain content", and 205 and 304 are the same. This is a fact about
+ * HTTP, so it belongs in the engine — a project that had to configure "my DELETEs answer 204
+ * with no body" would be configuring the specification, and every project that forgot would get
+ * a red DELETE with the envelope of a resource it never asked for.
+ */
+const BODILESS_STATUSES = new Set([204, 205, 304]);
+
+/**
+ * The shape a case expects.
+ *
+ * Three tiers, in order: a status that cannot carry content is `No body` whatever anyone
+ * configured; a 4xx or 5xx is the project's error envelope regardless of the operation; anything
+ * else is the operation's own success shape.
+ */
 export function expectedShapeFor(operation: Operation, expectedStatus: number, config: ProjectConfig): string {
+  if (BODILESS_STATUSES.has(expectedStatus)) return "No body";
   return expectedStatus >= 400 ? config.envelope.errorShape : responseShapeFor(operation, config);
 }

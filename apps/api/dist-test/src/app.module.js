@@ -20,6 +20,7 @@ const iam_module_1 = require("./modules/iam/iam.module");
 const projects_module_1 = require("./modules/projects/projects.module");
 const specs_module_1 = require("./modules/specs/specs.module");
 const environments_module_1 = require("./modules/environments/environments.module");
+const runs_module_1 = require("./modules/runs/runs.module");
 const auth_guard_1 = require("./modules/auth/infrastructure/guards/auth.guard");
 const health_controller_1 = require("./shared/health.controller");
 /**
@@ -44,6 +45,7 @@ exports.AppModule = AppModule = __decorate([
             projects_module_1.ProjectsModule,
             specs_module_1.SpecsModule,
             environments_module_1.EnvironmentsModule,
+            runs_module_1.RunsModule,
         ],
         controllers: [health_controller_1.HealthController],
         providers: [

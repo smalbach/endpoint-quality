@@ -132,13 +132,19 @@ async function lookupOrFail(hostname, rawUrl) {
     }
 }
 /**
- * A GET that follows redirects by hand, re-validating each hop.
+ * A request that follows redirects by hand, re-validating each hop.
  *
  * `redirect: "manual"` and a loop, rather than letting fetch follow them: the whole point is
  * that hop two gets the same scrutiny as hop one, and a client that follows redirects internally
  * gives no opportunity to look.
+ *
+ * Any method, because the runner exercises all of them — but the **body is not replayed across a
+ * redirect**, and a redirected non-idempotent request is refused instead. A 307 that moves a
+ * DELETE somewhere else is either a misconfiguration or an attempt to have us delete something
+ * at an address we did not check, and neither is worth guessing about.
  */
 async function safeFetch(rawUrl, policy, options = {}) {
+    const method = (options.method ?? "GET").toUpperCase();
     let current = rawUrl;
     const visited = new Set();
     for (let hop = 0; hop <= policy.maxRedirects; hop += 1) {
@@ -158,7 +164,13 @@ async function safeFetch(rawUrl, policy, options = {}) {
             const direct = new URL(url.toString());
             direct.hostname = literalHost;
             const headers = { Accept: "application/json, application/yaml, text/yaml, */*", ...options.headers, Host: url.host };
-            response = await fetch(direct, { method: "GET", headers, redirect: "manual", signal: controller.signal });
+            response = await fetch(direct, {
+                method,
+                headers,
+                ...(options.body === undefined ? {} : { body: options.body }),
+                redirect: "manual",
+                signal: controller.signal,
+            });
         }
         catch (error) {
             if (controller.signal.aborted)
@@ -172,6 +184,11 @@ async function safeFetch(rawUrl, policy, options = {}) {
             const location = response.headers.get("location");
             if (!location)
                 throw new BlockedTargetError(current, `redirección ${response.status} sin cabecera Location`);
+            if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+                // Following it would repeat a write at an address the caller never chose. It is also
+                // indistinguishable, from here, from an attempt to have us delete something elsewhere.
+                throw new BlockedTargetError(current, `redirección ${response.status} sobre un ${method}: no se reenvía una escritura`);
+            }
             current = new URL(location, url).toString();
             continue;
         }

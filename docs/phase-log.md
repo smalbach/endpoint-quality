@@ -264,3 +264,91 @@ sección es un error de build, no un motor leyendo un default que nadie eligió.
   HTTP lo ejercita la suite de `config`.
 - Las cabeceras de un contrato tras autenticación siguen sin persistirse. Ahora hay cifrador; el
   trabajo es conectarlo, y es media hora en P4.
+
+---
+
+## P4 — Motor de ejecución · cerrada
+
+**Alcance**: `runner-core` gana el planificador de flujos y las aserciones; la API gana el
+ejecutor, el orquestador, la cola con dos adaptadores, SSE y la persistencia de corridas.
+
+**Evidencia**
+
+    packages/runner-core $ node --experimental-strip-types --test test/*.test.ts
+    ℹ tests 73   ℹ pass 73   ℹ fail 0
+
+    apps/api $ pnpm test
+    ℹ tests 159  ℹ pass 159  ℹ fail 0
+
+    apps/api $ EQ_TEST_DATABASE_URL=… pnpm test:db
+    ℹ tests 17   ℹ pass 17   ℹ fail 0
+
+**El bucle se mudó del navegador al servidor.** `POST /runs` responde **202 con un id** y nada
+más; la matriz avanza en un worker. Cerrar la pestaña, perder la conexión o lanzar desde CI y
+olvidarse son ahora la misma cosa. En el dashboard acoplado el bucle vivía dentro de un
+componente React: cerrar la pestaña abortaba la corrida a medias, y una corrida lanzada desde una
+pipeline no era algo que pudiera existir.
+
+**Los seis escenarios del §6.4 del plan, contra un servidor HTTP real** — no un `fetch` simulado,
+que solo demostraría que el simulacro se comporta:
+
+| Fallo del destino | Qué lo detecta |
+|---|---|
+| 200 con envelope roto | Pasa el status, falla el schema. **La tesis del producto en un test.** |
+| POST 201 que no persiste los campos | El paso `act` está bien; falla la relectura |
+| DELETE 204 que no borra | `delete-read` pasa, `deleted-read` falla |
+| Destino lento | Falla el presupuesto y **solo** el presupuesto |
+| 405 sobre operación declarada | Diagnóstico propio; silencia el resto y detiene el flujo |
+| Errores sin Problem Details | `{ "error": "..." }` se rechaza |
+
+Más las guardas: sin `writesAllowed` **no sale nada a la red** (comprobado contando las
+peticiones que llegan al destino), una URL base inalcanzable falla como *conexión* y no como
+schema, y con `authEnforced` la matriz 401/403 se ejecuta de verdad usando las dos credenciales
+por rol.
+
+**Un fallo real del motor que encontraron los tests.** Un DELETE que responde 204 se juzgaba
+contra `{ data: Resource }` y fallaba por envelope y por content-type. La configuración de
+Digital Catalog tenía una regla explícita para eso, así que la paridad no lo veía — pero
+cualquier proyecto nuevo habría visto todos sus DELETE en rojo. **Un 204 no puede llevar cuerpo:
+lo dice RFC 9110, no una convención de proyecto**, así que la regla vive ahora en el motor
+(204, 205 y 304). La paridad con el golden se mantiene intacta.
+
+**Decisiones que conviene conocer**
+
+- **Los flujos multi-paso son un generador sin E/S.** En el dashboard acoplado vivían dentro del
+  componente React, enredados con su estado: qué body enviaba un caso dependía de si React había
+  re-renderizado entre dos `await`. Aquí el flujo dice qué pedir, el ejecutor lo pide, y la lógica
+  se prueba sin servidor.
+- **Toda mutación crea su propia entidad.** Un PUT sobre la fila semilla cambia lo que leen todos
+  los casos posteriores de la matriz. Y todo lo que se crea se borra: sin esa limpieza, la segunda
+  corrida de un POST sobre una clave natural es un 409 que reporta la corrida anterior.
+- **El documento en vivo se lee una vez por corrida.** Releerlo por caso significaría que el
+  último caso se afirma contra un contrato que el primero no vio — que es exactamente la deriva
+  que esta herramienta detecta, así que no puede ser además su modo de funcionamiento. Si no se
+  puede leer, la corrida sigue con la verificación de envelope y lo dice.
+- **La cancelación se comprueba entre casos, nunca dentro de uno.** Parar en medio de un
+  `create-read` deja una fila sin su paso de limpieza.
+- **Los totales se recalculan desde las filas**, no se incrementan en memoria: un worker que
+  reinicia no pierde la cuenta.
+- **Un caso saltado no es un fallo.** Una corrida con saltados y ningún fallo **pasa**: un caso
+  que el entorno rechazó no es un hallazgo sobre la API, y reportarlo como tal enseña a ignorar
+  el rojo.
+- **Las credenciales se enmascaran antes de escribir la fila**, nunca al leerla: una redacción en
+  lectura está a una consulta de olvidarse.
+- **`bullmq` se carga con un especificador variable.** Es dependencia opcional de verdad: una
+  instalación self-hosted con `QUEUE_DRIVER=memory` no debe fallar al compilar por una cola que
+  no usa.
+
+**Deuda que P4 deja anotada**
+
+- **SSE es in-process.** Con `QUEUE_DRIVER=redis` y más de una instancia de API, un seguidor
+  conectado a la instancia B no ve nada de una corrida que ejecuta la instancia A. El *fallback*
+  por polling de `GET /runs/:id` lo cubre hoy; un relé por Redis pub/sub es el arreglo cuando
+  multi-instancia sea real.
+- **Sin política de retención.** `run_steps` guarda cuerpos completos y es la tabla que crece.
+  `keepFullBodiesForDays` sigue pendiente.
+- Las cabeceras de un contrato tras autenticación siguen sin persistirse, aunque el cifrador ya
+  existe desde P3.
+- La suite usa `--test-force-exit`: `fetch` mantiene sockets en el dispatcher global de undici y
+  Node no expone forma pública de drenarlo. Sin el flag el proceso se queda colgado al salir con
+  todas las aserciones ya en verde, que parece un timeout y es una fuga.
