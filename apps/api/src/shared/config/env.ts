@@ -29,7 +29,12 @@ export const envSchema = z.object({
   ACCESS_TOKEN_TTL: z.string().default("15m"),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
 
-  /** AES-256-GCM key for target credentials, 32 bytes in base64. Optional until P3 stores one. */
+  /**
+   * AES-256-GCM key, 32 bytes in base64. Optional here and required in practice: the two things
+   * that need it — a target credential and a variable marked secret — both fail loudly at the
+   * moment of the write rather than at boot, because an install that stores neither should not be
+   * made to invent a key it will never use.
+   */
   SECRETS_KEY: z.string().optional(),
 
   ALLOW_PRIVATE_TARGETS: booleanish.default(false),

@@ -1,5 +1,6 @@
 import { IsBoolean, IsIn, IsObject, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 import { CREDENTIAL_KINDS, CREDENTIAL_ROLES, type CredentialKind, type CredentialRole } from "../../domain/model";
+import type { VariableInput } from "../../application/commands/manage-environment";
 
 /**
  * Creating an environment and amending one are two different requests, and they were one class.
@@ -22,8 +23,8 @@ export class CreateEnvironmentDto {
    * `@IsUrl()` would be a second definition of "valid" free to disagree with the first. */
   @IsString() @MinLength(1) @MaxLength(2000) baseUrl: string;
   @IsOptional() @IsString() @MaxLength(2000) specUrl?: string | null;
-  @IsOptional() @IsObject() variables?: Record<string, string>;
-  @IsOptional() @IsObject() disabledVariables?: Record<string, string>;
+  @IsOptional() @IsObject() variables?: Record<string, VariableInput>;
+  @IsOptional() @IsObject() disabledVariables?: Record<string, VariableInput>;
   @IsOptional() @IsBoolean() writesAllowed?: boolean;
   @IsOptional() @IsBoolean() authEnforced?: boolean;
 }
@@ -34,8 +35,8 @@ export class UpdateEnvironmentDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(80) name?: string;
   @IsOptional() @IsString() @MinLength(1) @MaxLength(2000) baseUrl?: string;
   @IsOptional() @IsString() @MaxLength(2000) specUrl?: string | null;
-  @IsOptional() @IsObject() variables?: Record<string, string>;
-  @IsOptional() @IsObject() disabledVariables?: Record<string, string>;
+  @IsOptional() @IsObject() variables?: Record<string, VariableInput>;
+  @IsOptional() @IsObject() disabledVariables?: Record<string, VariableInput>;
   @IsOptional() @IsBoolean() writesAllowed?: boolean;
   @IsOptional() @IsBoolean() authEnforced?: boolean;
 }

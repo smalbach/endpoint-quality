@@ -17,6 +17,7 @@ import {
 } from "../application/commands/manage-environment";
 import { DeleteCredentialCommand, UpsertCredentialCommand } from "../application/commands/manage-credential";
 import { ListEnvironmentsQuery } from "../application/queries/list-environments";
+import { RevealVariablesQuery } from "../application/queries/reveal-variables";
 import { CreateEnvironmentDto, CredentialDto, UpdateEnvironmentDto } from "./dto/environments.dto";
 import type { CredentialRole } from "../domain/model";
 
@@ -32,6 +33,18 @@ export class EnvironmentsController {
   @RequireRole("viewer")
   async list(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string) {
     return this.queryBus.execute(new ListEnvironmentsQuery(organizationId, projectId));
+  }
+
+  /** The clear text of the sensitive variables, and nothing else. `admin`, like credentials: it
+   * answers the same question, so it sits on the same rung. */
+  @Get("environments/:environmentId/variables/reveal")
+  @RequireRole("admin")
+  async reveal(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("environmentId") environmentId: string,
+  ) {
+    return this.queryBus.execute(new RevealVariablesQuery(organizationId, projectId, environmentId));
   }
 
   @Post("environments")

@@ -16,6 +16,7 @@ import {
 } from "./application/commands/manage-environment";
 import { DeleteCredentialHandler, UpsertCredentialHandler } from "./application/commands/manage-credential";
 import { ListEnvironmentsHandler } from "./application/queries/list-environments";
+import { RevealVariablesHandler } from "./application/queries/reveal-variables";
 import { EnvironmentsController } from "./presentation/environments.controller";
 
 export const ENVIRONMENT_COMMAND_HANDLERS = [
@@ -25,7 +26,7 @@ export const ENVIRONMENT_COMMAND_HANDLERS = [
   UpsertCredentialHandler,
   DeleteCredentialHandler,
 ];
-export const ENVIRONMENT_QUERY_HANDLERS = [ListEnvironmentsHandler];
+export const ENVIRONMENT_QUERY_HANDLERS = [ListEnvironmentsHandler, RevealVariablesHandler];
 export const ENVIRONMENT_ADAPTERS = [{ provide: ENVIRONMENT_REPOSITORY, useClass: TypeOrmEnvironmentRepository }];
 
 /**

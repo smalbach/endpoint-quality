@@ -9,16 +9,38 @@
  * inside it, so `variables` keeps meaning everywhere else exactly what it always meant — what a
  * run substitutes. Nothing downstream has to remember to filter.
  *
+ * A row also carries **two values and a secret flag**, which is the rest of what Postman's editor
+ * says. `initial` is what the project shares; `current` is what a run actually spends, and it is
+ * the one a capture overwrites — so debugging with a throwaway token stops rewriting what the next
+ * person pulls. `sensitive` means the API never sent the value at all: both fields arrive as
+ * {@link MASKED_VALUE}, and sending the mask back means «leave it». That is what lets somebody
+ * edit the base URL of an environment whose token they are not allowed to read.
+ *
  * Two views over the same rows, and switching carries the edits across: a table for two values,
  * and the text view for twenty pasted from somewhere else. The round trip is the part worth
  * asserting, so it lives here and not in a component.
  */
-export type VariableRow = { name: string; value: string; enabled: boolean };
+import type { EnvironmentVariableView, MaskedValue } from "@eq/contracts";
+
+export type VariableRow = {
+  name: string;
+  initial: string;
+  current: string;
+  sensitive: boolean;
+  enabled: boolean;
+};
 
 /** The same rule the engine and the API apply, so the three cannot disagree about a name. */
 export const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
 
-export const emptyRow = (): VariableRow => ({ name: "", value: "", enabled: true });
+/** What the API sends instead of a secret. Typed against the contract: if the server's copy ever
+ * changes, this line stops compiling instead of quietly saving eight dots as somebody's token. */
+export const MASKED_VALUE: MaskedValue = "••••••••";
+
+export const emptyRow = (): VariableRow => ({ name: "", initial: "", current: "", sensitive: false, enabled: true });
+
+/** A row nobody has typed in yet. The ghost at the bottom of the table is one. */
+export const isBlank = (row: VariableRow): boolean => !row.name.trim() && !row.initial && !row.current;
 
 /**
  * The two stored maps, as one list.
@@ -27,21 +49,29 @@ export const emptyRow = (): VariableRow => ({ name: "", value: "", enabled: true
  * them by length and then bytewise — so there is no original order to preserve, and anything but
  * sorting looks shuffled to whoever typed them.
  */
-export function rowsFrom(variables: Record<string, string>, disabled: Record<string, string>): VariableRow[] {
-  return [
-    ...Object.entries(variables).map(([name, value]) => ({ name, value, enabled: true })),
-    ...Object.entries(disabled).map(([name, value]) => ({ name, value, enabled: false })),
-  ].sort((left, right) => left.name.localeCompare(right.name));
+export function rowsFrom(
+  variables: Record<string, EnvironmentVariableView>,
+  disabled: Record<string, EnvironmentVariableView>,
+): VariableRow[] {
+  const rows = (map: Record<string, EnvironmentVariableView>, enabled: boolean) =>
+    Object.entries(map).map(([name, variable]) => ({ name, ...variable, enabled }));
+  return [...rows(variables, true), ...rows(disabled, false)].sort((left, right) =>
+    left.name.localeCompare(right.name),
+  );
 }
 
 /** Rows with a blank name are dropped: a half-typed row is not a variable yet. */
 export function mapsFrom(rows: VariableRow[]): {
-  variables: Record<string, string>;
-  disabledVariables: Record<string, string>;
+  variables: Record<string, EnvironmentVariableView>;
+  disabledVariables: Record<string, EnvironmentVariableView>;
 } {
   const named = rows.map((row) => ({ ...row, name: row.name.trim() })).filter((row) => row.name);
   const collect = (enabled: boolean) =>
-    Object.fromEntries(named.filter((row) => row.enabled === enabled).map((row) => [row.name, row.value]));
+    Object.fromEntries(
+      named
+        .filter((row) => row.enabled === enabled)
+        .map((row) => [row.name, { initial: row.initial, current: row.current, sensitive: row.sensitive }]),
+    );
   return { variables: collect(true), disabledVariables: collect(false) };
 }
 
@@ -71,25 +101,48 @@ export function problemsWith(rows: VariableRow[]): { index: number; detail: stri
  * The text view, which is what Postman calls bulk edit: one `nombre:valor` per line, and a
  * disabled one commented out. The comment marker is not decoration — it is how the view stays
  * able to say everything the table says, so switching between them loses nothing.
+ *
+ * The value it shows is `current`, the one a run spends. One line cannot carry two values, and of
+ * the two this is the one somebody pasting twenty of them means.
  */
 export function bulkFrom(rows: VariableRow[]): string {
   return rows
     .filter((row) => row.name.trim())
-    .map((row) => `${row.enabled ? "" : "//"}${row.name.trim()}:${row.value}`)
+    .map((row) => `${row.enabled ? "" : "//"}${row.name.trim()}:${row.current}`)
     .join("\n");
 }
 
 /**
  * Reads the text view back.
  *
+ * `previous` is what keeps the round trip lossless in the direction the text cannot express: a
+ * name that was already there keeps its `initial` and its `sensitive`, so switching to text and
+ * back does not quietly unshare a value or turn a secret into a plain one. A name that is new
+ * gets the same value in both, which is what one value means.
+ *
  * A pasted JSON object is accepted as-is: `{"userId": "42"}` is what the rest of this product
  * shows and what an `.env` exporter or another tab is most likely to hand over, and refusing it
  * on a technicality when the intent is unambiguous is just a puzzle.
  */
-export function parseBulk(text: string): { ok: true; rows: VariableRow[] } | { ok: false; error: string } {
+export function parseBulk(
+  text: string,
+  previous: VariableRow[] = [],
+): { ok: true; rows: VariableRow[] } | { ok: false; error: string } {
   const trimmed = text.trim();
   if (!trimmed) return { ok: true, rows: [] };
-  if (trimmed.startsWith("{") || trimmed.startsWith("[")) return fromJson(trimmed);
+  const known = new Map(previous.filter((row) => row.name.trim()).map((row) => [row.name.trim(), row]));
+  const rowFor = (name: string, current: string, enabled: boolean): VariableRow => {
+    const before = known.get(name);
+    return {
+      name,
+      initial: before ? before.initial : current,
+      current,
+      sensitive: before ? before.sensitive : false,
+      enabled,
+    };
+  };
+
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) return fromJson(trimmed, rowFor);
 
   const rows: VariableRow[] = [];
   for (const [number, line] of trimmed.split("\n").entries()) {
@@ -103,12 +156,15 @@ export function parseBulk(text: string): { ok: true; rows: VariableRow[] } | { o
     if (cut < 1) return { ok: false, error: `Línea ${number + 1}: falta «nombre:valor»` };
     const name = body.slice(0, cut).trim();
     if (!VARIABLE_NAME.test(name)) return { ok: false, error: `Línea ${number + 1}: «${name}» no es un nombre válido` };
-    rows.push({ name, value: body.slice(cut + 1).trim(), enabled });
+    rows.push(rowFor(name, body.slice(cut + 1).trim(), enabled));
   }
   return { ok: true, rows };
 }
 
-function fromJson(text: string): { ok: true; rows: VariableRow[] } | { ok: false; error: string } {
+function fromJson(
+  text: string,
+  rowFor: (name: string, current: string, enabled: boolean) => VariableRow,
+): { ok: true; rows: VariableRow[] } | { ok: false; error: string } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -123,5 +179,5 @@ function fromJson(text: string): { ok: true; rows: VariableRow[] } | { ok: false
   if (wrong) return { ok: false, error: `«${wrong[0]}» no es texto: una variable siempre lo es` };
   const badName = entries.find(([name]) => !VARIABLE_NAME.test(name));
   if (badName) return { ok: false, error: `«${badName[0]}» no es un nombre de variable válido` };
-  return { ok: true, rows: entries.map(([name, value]) => ({ name, value: value as string, enabled: true })) };
+  return { ok: true, rows: entries.map(([name, value]) => rowFor(name, value as string, true)) };
 }

@@ -100,13 +100,34 @@ export type CredentialSummaryOf<T> = {
   updatedAt: T;
 };
 
+/**
+ * A variable as the browser sees it.
+ *
+ * `initial` is the shared value, `current` the one a run actually spends — the pair exists so that
+ * a debugging session does not rewrite what the rest of the team pulls. A `sensitive` one arrives
+ * masked, in both fields; sending the mask back means «leave it as it was», which is the only way
+ * an editor can save a form it was never shown the secret of.
+ */
+export type EnvironmentVariableView = { initial: string; current: string; sensitive: boolean };
+
+/**
+ * What a masked secret is, exactly.
+ *
+ * A *type* and not a constant, because this package emits no runtime — and it is better this way:
+ * both sides declare their own `MASKED_VALUE` annotated with this, so a mask that stopped matching
+ * is a compile error in the file that changed it, not a secret that silently starts saving itself
+ * as eight dots. Eight of them regardless of the length of the value, which is not the API's to
+ * disclose.
+ */
+export type MaskedValue = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
+
 export type EnvironmentSummaryOf<T> = {
   id: string;
   name: string;
   baseUrl: string;
   specUrl: string | null;
-  /** Plain, project-owned values available as `{{name}}` in paths, parameters and JSON bodies. */
-  variables: Record<string, string>;
+  /** Project-owned values available as `{{name}}` in paths, parameters and JSON bodies. */
+  variables: Record<string, EnvironmentVariableView>;
   /**
    * The ones that are switched off: kept, and not substituted.
    *
@@ -114,7 +135,7 @@ export type EnvironmentSummaryOf<T> = {
    * what it means everywhere else — what a run substitutes — and no consumer has to remember to
    * filter. A name is in one map or the other, never in both.
    */
-  disabledVariables: Record<string, string>;
+  disabledVariables: Record<string, EnvironmentVariableView>;
   writesAllowed: boolean;
   authEnforced: boolean;
   credentials: CredentialSummaryOf<T>[];

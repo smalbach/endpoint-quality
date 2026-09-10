@@ -71,9 +71,21 @@ async function signUp(email: string): Promise<Actor> {
 }
 const as = (actor: Actor) => ({ Authorization: `Bearer ${actor.token}` });
 
+/** Una variable que nadie ha sobrescrito: un valor, en los dos campos, en claro. */
+const plain = (value: string) => ({ initial: value, current: value, sensitive: false });
+/** Los ocho puntos, escritos aquí a mano a propósito: si el servidor cambia la máscara, esta
+ * prueba falla, que es exactamente lo que tiene que pasar. */
+const MASKED = "••••••••";
+
 let owner: Actor;
 let projectId: string;
 let base: string;
+
+/** Un entorno de la lista, por id. La lista es la única lectura: no hay `GET` de uno solo. */
+async function environment(environmentId: string) {
+  const listed = await api().get(`${base}/environments`).set(as(owner));
+  return listed.body.find((entry: { id: string }) => entry.id === environmentId);
+}
 
 before(async () => {
   context = await createTestApp();
@@ -557,7 +569,7 @@ describe("credenciales del destino", () => {
     const created = await api()
       .post(`${base}/environments`)
       .set(as(owner))
-      .send({ name: "apagadas", baseUrl: "https://a.example.com", variables: { userId: "42" } });
+      .send({ name: "apagadas", baseUrl: "https://a.example.com", variables: { userId: plain("42") } });
     assert.equal(created.status, 201);
     const environmentId = created.body.environmentId;
 
@@ -566,28 +578,129 @@ describe("credenciales del destino", () => {
         await api()
           .patch(`${base}/environments/${environmentId}`)
           .set(as(owner))
-          .send({ variables: { userId: "42" }, disabledVariables: { legacyId: "7" } })
+          .send({ variables: { userId: plain("42") }, disabledVariables: { legacyId: plain("7") } })
       ).status,
       204,
     );
 
-    const listed = (await api().get(`${base}/environments`).set(as(owner))).body.find(
-      (entry: { id: string }) => entry.id === environmentId,
-    );
+    const listed = await environment(environmentId);
     // Lo que importa de las dos columnas: `variables` es exactamente lo que una corrida sustituye,
     // sin que nadie tenga que filtrarlo, y el valor apagado sigue ahí para volver a encenderlo.
-    assert.deepEqual(listed.variables, { userId: "42" });
-    assert.deepEqual(listed.disabledVariables, { legacyId: "7" });
+    assert.deepEqual(listed.variables, { userId: plain("42") });
+    assert.deepEqual(listed.disabledVariables, { legacyId: plain("7") });
 
     // Y no puede estar en las dos: cualquiera de los dos significados sería una moneda al aire.
     const both = await api()
       .patch(`${base}/environments/${environmentId}`)
       .set(as(owner))
-      .send({ variables: { userId: "42" }, disabledVariables: { userId: "viejo" } });
+      .send({ variables: { userId: plain("42") }, disabledVariables: { userId: plain("viejo") } });
     assert.equal(both.status, 422);
     assert.deepEqual(
       both.body.errors.map((error: { field: string }) => error.field),
       ["disabledVariables.userId"],
+    );
+  });
+
+  test("el valor actual es el que una corrida gasta, y el inicial se queda donde estaba", async () => {
+    const created = await api()
+      .post(`${base}/environments`)
+      .set(as(owner))
+      .send({
+        name: "dos valores",
+        baseUrl: "https://a.example.com",
+        variables: { userId: { initial: "1", current: "42" } },
+      });
+    assert.equal(created.status, 201);
+
+    const listed = await environment(created.body.environmentId);
+    assert.deepEqual(listed.variables.userId, { initial: "1", current: "42", sensitive: false });
+
+    // Sin `current`, una variable vale lo mismo en los dos campos: eso es lo que significa tener
+    // un solo valor, y es lo que llega de un `.env` pegado.
+    assert.equal(
+      (
+        await api()
+          .patch(`${base}/environments/${created.body.environmentId}`)
+          .set(as(owner))
+          .send({ variables: { userId: { initial: "9" } } })
+      ).status,
+      204,
+    );
+    assert.deepEqual((await environment(created.body.environmentId)).variables.userId, {
+      initial: "9",
+      current: "9",
+      sensitive: false,
+    });
+  });
+
+  test("una variable secreta sale enmascarada, y devolver la máscara la deja como estaba", async () => {
+    const created = await api()
+      .post(`${base}/environments`)
+      .set(as(owner))
+      .send({
+        name: "con secreto",
+        baseUrl: "https://a.example.com",
+        variables: { token: { initial: "s3cr3t", sensitive: true }, userId: plain("42") },
+      });
+    assert.equal(created.status, 201);
+    const environmentId = created.body.environmentId;
+
+    // Ni el valor ni su longitud: ocho puntos para cualquier secreto.
+    const listed = await environment(environmentId);
+    assert.deepEqual(listed.variables.token, { initial: MASKED, current: MASKED, sensitive: true });
+    assert.deepEqual(listed.variables.userId, plain("42"));
+
+    // Guardar el formulario tal y como lo recibió la interfaz —máscara incluida— no puede
+    // convertir el secreto en ocho puntos. Es el fallo evidente de la implementación evidente.
+    assert.equal(
+      (
+        await api()
+          .patch(`${base}/environments/${environmentId}`)
+          .set(as(owner))
+          .send({ name: "con secreto y otro nombre", variables: listed.variables, disabledVariables: {} })
+      ).status,
+      204,
+    );
+    const revealed = await api().get(`${base}/environments/${environmentId}/variables/reveal`).set(as(owner));
+    assert.equal(revealed.status, 200);
+    assert.deepEqual(revealed.body, { token: "s3cr3t" });
+  });
+
+  test("destapar una variable la deja en claro, y solo para quien administra", async () => {
+    const created = await api()
+      .post(`${base}/environments`)
+      .set(as(owner))
+      .send({
+        name: "destapable",
+        baseUrl: "https://a.example.com",
+        variables: { token: { initial: "inicial", current: "actual", sensitive: true } },
+      });
+    const environmentId = created.body.environmentId;
+
+    // El actual, que es el que la corrida gasta: destapar sirve para comprobar lo que se envía.
+    const revealed = await api().get(`${base}/environments/${environmentId}/variables/reveal`).set(as(owner));
+    assert.deepEqual(revealed.body, { token: "actual" });
+
+    const stranger = await signUp("config-stranger@example.com");
+    const denied = await api().get(`${base}/environments/${environmentId}/variables/reveal`).set(as(stranger));
+    // 403 desde la guarda de la organización: quien no está dentro no llega ni a preguntar por el
+    // entorno, así que el id no se confirma ni se desmiente.
+    assert.equal(denied.status, 403);
+  });
+
+  test("la máscara no es un valor que se pueda guardar", async () => {
+    const response = await api()
+      .post(`${base}/environments`)
+      .set(as(owner))
+      .send({
+        name: "máscara",
+        baseUrl: "https://a.example.com",
+        variables: { token: { initial: MASKED, sensitive: true } },
+      });
+    assert.equal(response.status, 422);
+    assert.deepEqual(
+      response.body.errors.map((error: { field: string }) => error.field),
+      ["variables.token.initial"],
     );
   });
 

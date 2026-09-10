@@ -39,10 +39,12 @@ import { SAFE_FETCH, type SafeFetchPort } from "@/shared/http/safe-fetch";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { SPEC_REPOSITORY, type SpecRepositoryPort } from "@/modules/specs/domain/ports";
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
+import { resolveVariables } from "@/modules/environments/domain/model";
 import { CONFIG_REPOSITORY, type ConfigRepositoryPort } from "@/modules/config/domain/ports";
 import { assembleProjectConfig } from "@/modules/config/application/queries/get-project-config";
 import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
 import type { RequestTemplateRow, WorkflowRow } from "@/modules/workflows/domain/model";
+import { SECRET_CIPHER, type SecretCipherPort } from "@/shared/crypto/secret-cipher";
 import { caseStatusFor, verdictFor, type Run, type RunCase, type RunStep } from "../domain/model";
 import { RUN_QUEUE, RUN_REPOSITORY, type RunQueuePort, type RunRepositoryPort } from "../domain/ports";
 import { CaseExecutor, type ExecutedStep, type ExecutionTarget } from "./case-executor";
@@ -62,6 +64,7 @@ export class RunOrchestrator {
     @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
     @Inject(SAFE_FETCH) private readonly http: SafeFetchPort,
+    @Inject(SECRET_CIPHER) private readonly cipher: SecretCipherPort,
     private readonly executor: CaseExecutor,
     private readonly eventBus: EventBus,
   ) {}
@@ -112,7 +115,9 @@ export class RunOrchestrator {
       baseUrl: environment.baseUrl,
       writesAllowed: environment.writesAllowed,
       credentials: await this.environments.listCredentials(environment.id),
-      variables: { ...environment.variables },
+      // Resolved, not copied: `current` over `initial`, and a sensitive one decrypted here so that
+      // nothing further down the run has to know the concept exists.
+      variables: resolveVariables(environment.variables, (payload) => this.cipher.decrypt(payload)),
       ...(await this.loadSpec(environment.specUrl ?? `${environment.baseUrl}/openapi.json`)),
     };
 

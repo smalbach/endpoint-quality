@@ -5,7 +5,7 @@ import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
 
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
-import type { CredentialRole, Environment } from "../../domain/model";
+import { maskVariables, type CredentialRole, type Environment } from "../../domain/model";
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "../../domain/ports";
 
 export class ListEnvironmentsQuery implements IQuery {
@@ -43,6 +43,11 @@ export class ListEnvironmentsHandler implements IQueryHandler<ListEnvironmentsQu
     return Promise.all(
       environments.map(async (environment) => ({
         ...environment,
+        // Masked here rather than in the repository, because the repository is also what the run
+        // orchestrator reads through, and a run needs the real value. One of the two callers has
+        // to say which it wants; the one answering a browser is this one.
+        variables: maskVariables(environment.variables),
+        disabledVariables: maskVariables(environment.disabledVariables),
         credentials: (await this.environments.listCredentials(environment.id)).map((credential) => ({
           id: credential.id,
           name: credential.name,

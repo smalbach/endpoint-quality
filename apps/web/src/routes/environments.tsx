@@ -221,6 +221,13 @@ function EnvironmentDetail({
           problems={problems}
           disabled={!canEdit}
           onChange={(rows) => setDraft((value) => ({ ...value, rows }))}
+          // Only for `admin`, and by *absence* rather than a disabled button: reading somebody's
+          // staging token is not a thing the interface should offer and then refuse.
+          onReveal={
+            canManageCredentials
+              ? () => api<Record<string, string>>(`${base}/environments/${environment.id}/variables/reveal`)
+              : undefined
+          }
         />
       </div>
 
@@ -346,8 +353,9 @@ function Credentials({
     <div className="mt-5 border-t border-slate-100 pt-4">
       <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Credenciales</p>
       <p className="mt-1 text-[11px] text-slate-500">
-        Los secretos viven aquí, cifrados, y nunca en las variables: un mapa que la interfaz imprime deshace eso en un
-        render.
+        Lo que el motor presenta al destino. Una credencial se guarda cifrada y no vuelve nunca, en ninguna forma; una
+        variable marcada como secreta se guarda igual de cifrada, pero se puede revelar, porque hay que poder comprobar
+        lo que vale. Un token va aquí.
       </p>
       {environment.credentials.length === 0 ? (
         <p className="mt-2 text-[11px] text-slate-400">Ninguna guardada.</p>

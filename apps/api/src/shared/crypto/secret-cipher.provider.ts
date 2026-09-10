@@ -19,7 +19,9 @@ export class SecretCipherProvider implements SecretCipherPort {
 
   private get delegate(): AesGcmSecretCipher {
     if (!this.env.SECRETS_KEY) {
-      throw new Error("SECRETS_KEY no está configurada: no se pueden guardar credenciales de destino cifradas");
+      throw new Error(
+        "SECRETS_KEY no está configurada: no se pueden guardar credenciales de destino ni variables secretas",
+      );
     }
     this.cipher ??= new AesGcmSecretCipher(this.env.SECRETS_KEY);
     return this.cipher;

@@ -201,10 +201,18 @@ export class EnvironmentEntity {
   /** Where the live OpenAPI document is served, when it is not `${baseUrl}/openapi.json`. The
    * schema assertion reads it during a run. */
   @Column({ type: "text", nullable: true }) specUrl: string | null;
-  @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) variables: Record<string, string>;
+  /** `{ initial, current, sensitive }` per name. A sensitive one holds ciphertext in both values;
+   * nothing here is ever read straight into a run, `resolveVariables` is. */
+  @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) variables: Record<
+    string,
+    { initial: string; current: string; sensitive: boolean }
+  >;
   /** Switched off: kept so that turning one back on is a click and not a retype, and separate so
    * that `variables` never needs filtering before it reaches the engine. */
-  @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) disabledVariables: Record<string, string>;
+  @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) disabledVariables: Record<
+    string,
+    { initial: string; current: string; sensitive: boolean }
+  >;
   @Column({ type: "boolean", default: false }) writesAllowed: boolean;
   /** Whether the target actually enforces authorization. Against one that grants every scope to
    * everyone, the 401/403 cases fail for a reason that has nothing to do with the endpoint. */

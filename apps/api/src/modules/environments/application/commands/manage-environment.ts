@@ -6,17 +6,32 @@ import { VARIABLE_NAME } from "@eq/runner-core";
 
 import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
+import { SECRET_CIPHER, type SecretCipherPort } from "@/shared/crypto/secret-cipher";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
-import type { Environment } from "../../domain/model";
+import {
+  MASKED_VALUE,
+  maskVariables,
+  type Environment,
+  type EnvironmentVariable,
+  type EnvironmentVariables,
+} from "../../domain/model";
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "../../domain/ports";
+
+/**
+ * A variable as it arrives.
+ *
+ * `current` is optional and falls back to `initial`: a variable created with one value has the
+ * same value in both, which is what «this is its value» means before anybody has overridden it.
+ */
+export type VariableInput = string | { initial?: unknown; current?: unknown; sensitive?: unknown };
 
 export type EnvironmentInput = {
   name?: string;
   baseUrl?: string;
   specUrl?: string | null;
-  variables?: Record<string, string>;
-  disabledVariables?: Record<string, string>;
+  variables?: Record<string, VariableInput>;
+  disabledVariables?: Record<string, VariableInput>;
   writesAllowed?: boolean;
   authEnforced?: boolean;
 };
@@ -81,14 +96,75 @@ function normalizeBaseUrl(value: string): string {
   return url.toString().replace(/\/+$/, "");
 }
 
-function normalizeVariables(value: Record<string, string>, field = "variables"): Record<string, string> {
-  const entries = Object.entries(value);
-  const invalid = entries.find(([key, item]) => !VARIABLE_NAME.test(key.trim()) || typeof item !== "string");
+/**
+ * One stored value, which is where the mask earns its keep.
+ *
+ * The editor is never shown a secret, so what it sends back for one it did not touch is eight
+ * dots. Taking that literally is the bug the obvious implementation has: the secret becomes the
+ * string `••••••••` and the run starts presenting it as a token. So the mask is read as **«leave
+ * it as it was»**, and the previous ciphertext is carried over untouched.
+ *
+ * That also makes unticking the box work. The mask plus `sensitive: false` is «stop hiding this»,
+ * and the only value that can mean is the one already stored — decrypted, because a plain
+ * variable holding ciphertext would be substituted into a request verbatim.
+ */
+function storedValue(
+  name: string,
+  field: "initial" | "current",
+  raw: string,
+  sensitive: boolean,
+  previous: EnvironmentVariable | undefined,
+  cipher: SecretCipherPort,
+): string {
+  if (raw !== MASKED_VALUE) return sensitive && raw ? cipher.encrypt(raw) : raw;
+  if (!previous?.sensitive || !previous[field])
+    throw new InvalidInputError("Esa variable no tiene ningún valor oculto que conservar", [
+      { field: `variables.${name}.${field}`, detail: "Escriba el valor: la máscara no es uno" },
+    ]);
+  return sensitive ? previous[field] : cipher.decrypt(previous[field]);
+}
+
+function normalizeVariables(
+  value: Record<string, VariableInput>,
+  previous: EnvironmentVariables,
+  cipher: SecretCipherPort,
+  field = "variables",
+): EnvironmentVariables {
+  // A bare string is the same variable with one value and no secret. Kept because that is what a
+  // `.env` pasted into `curl` looks like, and refusing it would make the shorter, more common
+  // request the one that needs a manual.
+  const entries = Object.entries(value).map(
+    ([key, item]) => [key, typeof item === "string" ? { initial: item } : item] as const,
+  );
+  const invalid = entries.find(
+    ([key, item]) =>
+      !VARIABLE_NAME.test(key.trim()) ||
+      !item ||
+      typeof item !== "object" ||
+      typeof item.initial !== "string" ||
+      (item.current !== undefined && typeof item.current !== "string") ||
+      (item.sensitive !== undefined && typeof item.sensitive !== "boolean"),
+  );
   if (invalid)
     throw new InvalidInputError("Las variables del entorno no son válidas", [
-      { field: `${field}.${invalid[0]}`, detail: "Use un nombre válido y un valor de texto" },
+      { field: `${field}.${invalid[0]}`, detail: "Use un nombre válido y valores de texto" },
     ]);
-  return Object.fromEntries(entries.map(([key, item]) => [key.trim(), item]));
+  return Object.fromEntries(
+    entries.map(([key, item]) => {
+      const name = key.trim();
+      const sensitive = item.sensitive === true;
+      const initial = item.initial as string;
+      const current = (item.current as string | undefined) ?? initial;
+      return [
+        name,
+        {
+          initial: storedValue(name, "initial", initial, sensitive, previous[name], cipher),
+          current: storedValue(name, "current", current, sensitive, previous[name], cipher),
+          sensitive,
+        },
+      ];
+    }),
+  );
 }
 
 /**
@@ -100,11 +176,13 @@ function normalizeVariables(value: Record<string, string>, field = "variables"):
  * the two, and whichever the code happened to pick would be a coin flip nobody could see.
  */
 function normalizeBoth(
-  variables: Record<string, string>,
-  disabled: Record<string, string>,
-): { variables: Record<string, string>; disabledVariables: Record<string, string> } {
-  const active = normalizeVariables(variables);
-  const parked = normalizeVariables(disabled, "disabledVariables");
+  variables: Record<string, VariableInput>,
+  disabled: Record<string, VariableInput>,
+  previous: EnvironmentVariables,
+  cipher: SecretCipherPort,
+): { variables: EnvironmentVariables; disabledVariables: EnvironmentVariables } {
+  const active = normalizeVariables(variables, previous, cipher);
+  const parked = normalizeVariables(disabled, previous, cipher, "disabledVariables");
   const both = Object.keys(parked).find((name) => name in active);
   if (both)
     throw new InvalidInputError("Una variable está activa y apagada a la vez", [
@@ -119,6 +197,7 @@ export class CreateEnvironmentHandler implements ICommandHandler<CreateEnvironme
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(ENVIRONMENT_REPOSITORY) private readonly environments: EnvironmentRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
+    @Inject(SECRET_CIPHER) private readonly cipher: SecretCipherPort,
   ) {}
 
   async execute(command: CreateEnvironmentCommand) {
@@ -134,7 +213,9 @@ export class CreateEnvironmentHandler implements ICommandHandler<CreateEnvironme
       name,
       baseUrl: normalizeBaseUrl(command.input.baseUrl ?? ""),
       specUrl: command.input.specUrl ?? null,
-      ...normalizeBoth(command.input.variables ?? {}, command.input.disabledVariables ?? {}),
+      // No previous values to carry over: an environment being created has nothing hidden yet, so
+      // a mask arriving here is somebody's literal eight dots and is rejected as one.
+      ...normalizeBoth(command.input.variables ?? {}, command.input.disabledVariables ?? {}, {}, this.cipher),
       // Both default to off. A run that writes to a target, and a matrix of 401 cases against a
       // backend that grants everything, are each a decision — not something inherited by
       // creating an environment.
@@ -152,6 +233,7 @@ export class UpdateEnvironmentHandler implements ICommandHandler<UpdateEnvironme
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(ENVIRONMENT_REPOSITORY) private readonly environments: EnvironmentRepositoryPort,
+    @Inject(SECRET_CIPHER) private readonly cipher: SecretCipherPort,
   ) {}
 
   async execute(command: UpdateEnvironmentCommand): Promise<void> {
@@ -172,10 +254,14 @@ export class UpdateEnvironmentHandler implements ICommandHandler<UpdateEnvironme
       baseUrl: command.input.baseUrl ? normalizeBaseUrl(command.input.baseUrl) : environment.baseUrl,
       specUrl: command.input.specUrl === undefined ? environment.specUrl : command.input.specUrl,
       // Both or neither: they are one editor, and patching only half of a pair that has to stay
-      // disjoint is how a name ends up in both.
+      // disjoint is how a name ends up in both. The half that was not sent goes back through the
+      // same path *masked*, so a stored secret is carried over by the one rule that already
+      // handles carrying secrets over, rather than by a second one that could disagree with it.
       ...normalizeBoth(
-        command.input.variables ?? environment.variables,
-        command.input.disabledVariables ?? environment.disabledVariables,
+        command.input.variables ?? maskVariables(environment.variables),
+        command.input.disabledVariables ?? maskVariables(environment.disabledVariables),
+        { ...environment.variables, ...environment.disabledVariables },
+        this.cipher,
       ),
       writesAllowed: command.input.writesAllowed ?? environment.writesAllowed,
       authEnforced: command.input.authEnforced ?? environment.authEnforced,

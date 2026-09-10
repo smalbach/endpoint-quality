@@ -217,7 +217,9 @@ describe("flujos reutilizables y variables de entorno", () => {
     // was given, which is what stops two concurrent runs of the same flow from reading each
     // other's ids.
     const environments = await api().get(`${flow.projectBase}/environments`).set(as(owner));
-    assert.deepEqual(environments.body[0].variables, { entityName: "repetible" });
+    assert.deepEqual(environments.body[0].variables, {
+      entityName: { initial: "repetible", current: "repetible", sensitive: false },
+    });
     await flow.target.stop();
   });
 
