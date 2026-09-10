@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError } from "@/lib/api";
+import { api, type ApiError } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { Badge, Button, Card, Field, inputClass } from "@/components/ui";
 import { SECTION_EDITORS } from "@/components/config-editors";
@@ -10,13 +10,18 @@ import { formatDate } from "@/lib/format";
 import type { ConfigView, ProjectSummary } from "@/lib/types";
 
 const SECTION_HELP: Record<string, string> = {
-  parameters: "Los valores con los que se ejercita cada filtro, y qué identificador usa un caso cuando quiere que el recurso exista o que no exista.",
-  scenarios: "Los casos que solo aparecen cuando la operación acepta un conjunto de parámetros, y las operaciones que necesitan un tratamiento propio.",
-  bodies: "Los payloads por operación. No se pueden derivar del contrato: tienen que respetar las claves ajenas y esquivar las naturales que ya existen.",
+  parameters:
+    "Los valores con los que se ejercita cada filtro, y qué identificador usa un caso cuando quiere que el recurso exista o que no exista.",
+  scenarios:
+    "Los casos que solo aparecen cuando la operación acepta un conjunto de parámetros, y las operaciones que necesitan un tratamiento propio.",
+  bodies:
+    "Los payloads por operación. No se pueden derivar del contrato: tienen que respetar las claves ajenas y esquivar las naturales que ya existen.",
   authorization: "Cómo se genera la matriz 401/403 a partir de lo que el contrato declara.",
-  budgets: "Los objetivos de latencia, en orden. Gana la primera regla que casa; una operación que no casa con ninguna no recibe ninguna aserción.",
+  budgets:
+    "Los objetivos de latencia, en orden. Gana la primera regla que casa; una operación que no casa con ninguna no recibe ninguna aserción.",
   envelope: "Qué envelope se espera cuando el documento en vivo no declara schema para ese estado.",
-  implemented: "Qué operaciones enruta la API hoy. Es un hecho sobre el código, no sobre el contrato: ningún schema puede derivarlo.",
+  implemented:
+    "Qué operaciones enruta la API hoy. Es un hecho sobre el código, no sobre el contrato: ningún schema puede derivarlo.",
   text: "El texto de los casos generados.",
 };
 
@@ -56,12 +61,19 @@ export function ConfigPage() {
   const operationIds = useQuery({
     queryKey: ["operation-ids", projectId, project.data?.contract?.versionId],
     enabled: Boolean(organization && projectId && project.data?.contract),
-    queryFn: async () => (await api<{ operations: { id: string }[] }>(`${base}/operations`)).operations.map((operation) => operation.id),
+    queryFn: async () =>
+      (await api<{ operations: { id: string }[] }>(`${base}/operations`)).operations.map((operation) => operation.id),
   });
 
   return (
     <div className="space-y-4">
-      <ImportContract base={base} contract={project.data?.contract ?? null} source={project.data?.source ?? null} disabled={!canEdit} onImported={() => queryClient.invalidateQueries()} />
+      <ImportContract
+        base={base}
+        contract={project.data?.contract ?? null}
+        source={project.data?.source ?? null}
+        disabled={!canEdit}
+        onImported={() => queryClient.invalidateQueries()}
+      />
 
       {config.data &&
         Object.entries(config.data.sections).map(([section, value]) => (
@@ -99,7 +111,11 @@ function ImportContract({
   const importSpec = useMutation({
     // `source` sin definir relee donde se leyó la última vez, con la credencial que se guardó
     // entonces. Es lo que hace que volver a leer no exija reescribir el token.
-    mutationFn: (next: unknown) => api<{ operationCount: number; unchanged: boolean }>(`${base}/spec-versions`, { method: "POST", body: next ? { source: next } : {} }),
+    mutationFn: (next: unknown) =>
+      api<{ operationCount: number; unchanged: boolean }>(`${base}/spec-versions`, {
+        method: "POST",
+        body: next ? { source: next } : {},
+      }),
     onSuccess: () => {
       setRaw("");
       setHeader("");
@@ -114,7 +130,8 @@ function ImportContract({
       <p className="text-sm font-semibold text-slate-900">Contrato</p>
       {contract ? (
         <p className="mt-1 text-xs text-slate-500">
-          {contract.title} <span className="font-mono">v{contract.version}</span> · {contract.operationCount} operaciones · importado {formatDate(contract.importedAt)}
+          {contract.title} <span className="font-mono">v{contract.version}</span> · {contract.operationCount}{" "}
+          operaciones · importado {formatDate(contract.importedAt)}
         </p>
       ) : (
         <p className="mt-1 text-xs text-amber-600">Todavía no hay contrato. Sin él no hay matriz.</p>
@@ -126,7 +143,11 @@ function ImportContract({
             Última lectura desde <span className="font-mono">{remembered.location}</span>
             {remembered.headersStored ? " · con una credencial guardada" : ""}
           </p>
-          <Button className="mt-2" disabled={disabled || importSpec.isPending} onClick={() => importSpec.mutate(undefined)}>
+          <Button
+            className="mt-2"
+            disabled={disabled || importSpec.isPending}
+            onClick={() => importSpec.mutate(undefined)}
+          >
             Volver a leerlo de ahí
           </Button>
         </div>
@@ -134,28 +155,61 @@ function ImportContract({
 
       <div className="mt-4 grid gap-4 md:grid-cols-2">
         <div>
-          <Field label="Desde una URL" hint="Se comprueba la dirección resuelta antes de pedirla, y se vuelve a comprobar en cada redirección.">
-            <input className={inputClass} value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://api.example.com/openapi.json" disabled={disabled} />
+          <Field
+            label="Desde una URL"
+            hint="Se comprueba la dirección resuelta antes de pedirla, y se vuelve a comprobar en cada redirección."
+          >
+            <input
+              className={inputClass}
+              value={url}
+              onChange={(event) => setUrl(event.target.value)}
+              placeholder="https://api.example.com/openapi.json"
+              disabled={disabled}
+            />
           </Field>
           <Field
             label="Authorization (si el contrato está detrás de login)"
             hint="Se guarda cifrada contra esa dirección y no vuelve a salir. Basta con escribirla una vez: las siguientes lecturas la reutilizan."
           >
-            <input className={inputClass} value={header} onChange={(event) => setHeader(event.target.value)} placeholder="Bearer …" disabled={disabled} />
+            <input
+              className={inputClass}
+              value={header}
+              onChange={(event) => setHeader(event.target.value)}
+              placeholder="Bearer …"
+              disabled={disabled}
+            />
           </Field>
           <Button
             className="mt-2"
             disabled={disabled || !url || importSpec.isPending}
-            onClick={() => importSpec.mutate({ kind: "url", url, ...(header.trim() ? { headers: { Authorization: header.trim() } } : {}) })}
+            onClick={() =>
+              importSpec.mutate({
+                kind: "url",
+                url,
+                ...(header.trim() ? { headers: { Authorization: header.trim() } } : {}),
+              })
+            }
           >
             Importar desde la URL
           </Button>
         </div>
         <div>
-          <Field label="Pegando el documento" hint="YAML o JSON. Se guarda entero: la validación de schema durante una corrida lo lee.">
-            <textarea className={`${inputClass} h-24 font-mono text-[11px]`} value={raw} onChange={(event) => setRaw(event.target.value)} disabled={disabled} />
+          <Field
+            label="Pegando el documento"
+            hint="YAML o JSON. Se guarda entero: la validación de schema durante una corrida lo lee."
+          >
+            <textarea
+              className={`${inputClass} h-24 font-mono text-[11px]`}
+              value={raw}
+              onChange={(event) => setRaw(event.target.value)}
+              disabled={disabled}
+            />
           </Field>
-          <Button className="mt-2" disabled={disabled || !raw.trim() || importSpec.isPending} onClick={() => importSpec.mutate({ kind: "inline", raw })}>
+          <Button
+            className="mt-2"
+            disabled={disabled || !raw.trim() || importSpec.isPending}
+            onClick={() => importSpec.mutate({ kind: "inline", raw })}
+          >
             Importar
           </Button>
         </div>
@@ -173,7 +227,9 @@ function ImportContract({
       )}
       {importSpec.data && (
         <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-          {importSpec.data.unchanged ? "El documento no ha cambiado: se reutiliza la versión ya importada." : `Importadas ${importSpec.data.operationCount} operaciones.`}
+          {importSpec.data.unchanged
+            ? "El documento no ha cambiado: se reutiliza la versión ya importada."
+            : `Importadas ${importSpec.data.operationCount} operaciones.`}
         </p>
       )}
     </Card>
@@ -252,11 +308,20 @@ function SectionEditor({
 
   return (
     <Card className="overflow-hidden">
-      <button className="flex w-full items-center gap-3 px-4 py-3 text-left" onClick={() => setOpen((current) => !current)}>
+      <button
+        className="flex w-full items-center gap-3 px-4 py-3 text-left"
+        onClick={() => setOpen((current) => !current)}
+      >
         <span className="font-mono text-sm text-slate-900">{section}</span>
         {/* "Configured" and "uses the defaults" are different states: the first is a decision, the
             second is a prompt to make one. */}
-        <Badge className={data.configured ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-500"}>
+        <Badge
+          className={
+            data.configured
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+              : "border-slate-200 bg-slate-50 text-slate-500"
+          }
+        >
           {data.configured ? "configurada" : "por defecto"}
         </Badge>
         {data.updatedAt && <span className="text-[11px] text-slate-400">{formatDate(data.updatedAt)}</span>}
@@ -268,7 +333,11 @@ function SectionEditor({
           <div className="flex items-start gap-3">
             <p className="flex-1 text-[11px] leading-5 text-slate-500">{SECTION_HELP[section]}</p>
             {Editor && (
-              <Button variant="ghost" className="h-7 shrink-0 px-2 text-xs" onClick={() => (asJson ? toForm() : toJson())}>
+              <Button
+                variant="ghost"
+                className="h-7 shrink-0 px-2 text-xs"
+                onClick={() => (asJson ? toForm() : toJson())}
+              >
                 {asJson ? "Ver como formulario" : "Ver como JSON"}
               </Button>
             )}
@@ -304,7 +373,12 @@ function SectionEditor({
               Guardar
             </Button>
             {data.configured && (
-              <Button variant="ghost" disabled={disabled || reset.isPending} onClick={() => reset.mutate()} title="Borra la sección para que el proyecto vuelva a los valores por defecto del motor">
+              <Button
+                variant="ghost"
+                disabled={disabled || reset.isPending}
+                onClick={() => reset.mutate()}
+                title="Borra la sección para que el proyecto vuelva a los valores por defecto del motor"
+              >
                 Volver a los valores por defecto
               </Button>
             )}

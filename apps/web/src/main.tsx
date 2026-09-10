@@ -1,4 +1,4 @@
-import { StrictMode } from "react";
+import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
@@ -14,6 +14,10 @@ import { MatrixPage } from "@/routes/matrix";
 import { EnvironmentsPage } from "@/routes/environments";
 import { ConfigPage } from "@/routes/config";
 import { RunDetailPage, RunsPage } from "@/routes/runs";
+
+// The graph editor brings its own renderer and controls. Keep it out of the initial dashboard
+// bundle so users who only inspect the matrix do not download it on every visit.
+const WorkflowsPage = lazy(() => import("@/routes/workflows").then((module) => ({ default: module.WorkflowsPage })));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -55,6 +59,14 @@ createRoot(document.getElementById("root")!).render(
                 <Route index element={<MatrixPage />} />
                 <Route path="environments" element={<EnvironmentsPage />} />
                 <Route path="config" element={<ConfigPage />} />
+                <Route
+                  path="workflows"
+                  element={
+                    <Suspense fallback={<p className="text-sm text-slate-500">Cargando editor…</p>}>
+                      <WorkflowsPage />
+                    </Suspense>
+                  }
+                />
                 <Route path="runs" element={<RunsPage />} />
                 <Route path="runs/:runId" element={<RunDetailPage />} />
               </Route>

@@ -43,7 +43,7 @@ Cuatro servicios: `postgres`, `migrate`, `api`, `web`. `migrate` es un paso prop
 código de salida, y `api` no arranca hasta que termina bien. No es `migrationsRun` al arrancar a
 propósito: eso ata «el esquema cambió» a «un proceso arrancó», cada réplica de un despliegue lo
 intentaría a la vez, la API atendería peticiones con el DDL a medias, y una migración que falla
-parecería un *crash loop* en vez de una migración fallida.
+parecería un _crash loop_ en vez de una migración fallida.
 
 La interfaz queda en `http://localhost:8080` y la API detrás de `/api`, **mismo origen**. Eso no es
 cosmético: la cookie de refresh es `httpOnly` y `SameSite=Strict`, y para que lo segundo signifique
@@ -52,16 +52,16 @@ reconstruirla con `VITE_API_URL` y aflojar la cookie, que es exactamente lo que 
 
 ### Las variables que importan
 
-| Variable | Por defecto | Qué pasa si te equivocas |
-|---|---|---|
-| `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` | *ninguno* | La API **se niega a arrancar** sin ellos. Un valor por defecto en un fichero versionado firma las sesiones de todo el mundo con la misma clave. Cambiarlos cierra todas las sesiones. |
-| `SECRETS_KEY` | *ninguno* | Cifra las credenciales de los destinos con AES-256-GCM. **Perderla es perderlas**: no hay forma de descifrarlas sin ella, que es la única propiedad que hace que guardarlas valga la pena. Guárdala donde guardes las contraseñas de producción. |
-| `ALLOW_PRIVATE_TARGETS` | `false` | El motor pide URLs que escribe quien usa el producto. En `true`, cualquiera con una cuenta puede apuntarlo a `169.254.169.254` o a tu base de datos y leer la respuesta. Déjalo en `false` salvo que el producto y los destinos vivan en la misma máquina de alguien. |
-| `RETENTION_BODIES_DAYS` | `30` | Pasados esos días se vacían las peticiones y respuestas guardadas de cada corrida, y queda la marca de cuándo. El veredicto y sus aserciones siguen: una corrida de marzo sigue contestando «esto estaba en verde, y esto falló» por unos cientos de bytes. `0` es «nunca», y es la tabla que crece. |
-| `RETENTION_RUNS_DAYS` | `365` | Pasados esos días la corrida entera desaparece, con sus casos y sus pasos. `0` es «nunca». |
-| `QUEUE_DRIVER` | `memory` | `memory` ejecuta la cola en el propio proceso: sin infraestructura, y una corrida muere si la API se reinicia. `redis` es lo que quiere una instancia compartida. |
-| `CORS_ORIGINS` | `http://localhost:8080` | Solo hace falta si sirves la interfaz desde otro origen. |
-| `EQ_*_PORT` | 8080 / 3001 / 5432 | Los puertos publicados hacia fuera. Nada más. |
+| Variable                                  | Por defecto             | Qué pasa si te equivocas                                                                                                                                                                                                                                                                             |
+| ----------------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` | _ninguno_               | La API **se niega a arrancar** sin ellos. Un valor por defecto en un fichero versionado firma las sesiones de todo el mundo con la misma clave. Cambiarlos cierra todas las sesiones.                                                                                                                |
+| `SECRETS_KEY`                             | _ninguno_               | Cifra las credenciales de los destinos con AES-256-GCM. **Perderla es perderlas**: no hay forma de descifrarlas sin ella, que es la única propiedad que hace que guardarlas valga la pena. Guárdala donde guardes las contraseñas de producción.                                                     |
+| `ALLOW_PRIVATE_TARGETS`                   | `false`                 | El motor pide URLs que escribe quien usa el producto. En `true`, cualquiera con una cuenta puede apuntarlo a `169.254.169.254` o a tu base de datos y leer la respuesta. Déjalo en `false` salvo que el producto y los destinos vivan en la misma máquina de alguien.                                |
+| `RETENTION_BODIES_DAYS`                   | `30`                    | Pasados esos días se vacían las peticiones y respuestas guardadas de cada corrida, y queda la marca de cuándo. El veredicto y sus aserciones siguen: una corrida de marzo sigue contestando «esto estaba en verde, y esto falló» por unos cientos de bytes. `0` es «nunca», y es la tabla que crece. |
+| `RETENTION_RUNS_DAYS`                     | `365`                   | Pasados esos días la corrida entera desaparece, con sus casos y sus pasos. `0` es «nunca».                                                                                                                                                                                                           |
+| `QUEUE_DRIVER`                            | `memory`                | `memory` ejecuta la cola en el propio proceso: sin infraestructura, y una corrida muere si la API se reinicia. `redis` es lo que quiere una instancia compartida.                                                                                                                                    |
+| `CORS_ORIGINS`                            | `http://localhost:8080` | Solo hace falta si sirves la interfaz desde otro origen.                                                                                                                                                                                                                                             |
+| `EQ_*_PORT`                               | 8080 / 3001 / 5432      | Los puertos publicados hacia fuera. Nada más.                                                                                                                                                                                                                                                        |
 
 Genera los tres secretos así, una vez, y guárdalos:
 
@@ -99,7 +99,7 @@ API, así que `docker compose run --rm api node tools/eq-run.mjs …` funciona s
 
 Los códigos de salida distinguen las tres cosas que le pueden pasar a un trabajo: **0** la corrida
 pasó, **1** hay casos en rojo —y los imprime con la aserción que falló—, **2** no se pudo ejecutar:
-faltan argumentos, el token no vale, la API no responde. Los casos *saltados* —una escritura contra
+faltan argumentos, el token no vale, la API no responde. Los casos _saltados_ —una escritura contra
 un entorno de solo lectura— no rompen la build salvo que se lo pidas con `--fail-on-skip`: no son
 un hallazgo sobre la API, y reportarlos como tal enseña a la gente a ignorar el rojo.
 
@@ -137,6 +137,34 @@ Lo que un contrato nunca dice, y sí pone el proyecto:
 - **qué forma tiene el envelope** de este equipo, cuando no hay schema declarado para ese estado;
 - **cuánto debería tardar** cada cosa.
 
+### Entornos y flujos reutilizables
+
+Cada entorno mantiene variables de texto al estilo Postman. Se pueden usar como `{{variable}}` en
+parámetros, rutas y cuerpos JSON. La interfaz de **Entornos** permite editarlas como filas o como
+JSON; los secretos siguen separados en credenciales cifradas y nunca se mezclan con las variables
+visibles. Una petición a la que le falta una variable **no sale a la red**: el paso queda bloqueado
+diciendo cuál falta, en vez de pedir `/users/{{userId}}`.
+
+La pestaña **Flujos** añade dos cosas que un proyecto posee, cada una en su propia tabla:
+
+- **pruebas reutilizables** — una operación del contrato con sus parámetros, su cuerpo, su
+  credencial y el estado que espera. Son filas porque existen para reutilizarse: las nombran varios
+  flujos, editarlas los alcanza a todos, y borrar una que está en uso responde 409 en vez de
+  romper una corrida esta noche;
+- **flujos dirigidos** que las encadenan y capturan valores de un cuerpo (`data.id`) o de una
+  cabecera, publicándolos como variables para los pasos que dependen de ellos.
+
+El grafo se guarda entero, en un solo documento: sus aristas y su orden _son_ el dato, y escribir
+nodos y aristas por separado permitiría el estado «nodo borrado, arista apuntándolo». Lo que
+Postgres no puede sostener —que no haya ciclos, que cada paso nombre una prueba de este proyecto—
+lo comprueban el esquema del motor y el comando, al guardar.
+
+El diagrama y el JSON son dos vistas del mismo documento, y las posiciones de los nodos se guardan
+con él. Al ejecutar, el motor ordena el grafo, salta los descendientes de un paso fallido y
+registra cada nodo como un caso normal de la corrida. Las variables se copian al inicio: una
+captura afecta a esa corrida, no modifica el entorno guardado ni interfiere con otra ejecución
+concurrente.
+
 La configuración siempre gana sobre lo derivado: un schema dice qué es estructuralmente válido, un
 proyecto sabe qué es aceptable. `examples/sample-api/config.json` es un ejemplo entero y corto.
 
@@ -166,7 +194,7 @@ es una decisión y no un caso automático.
 ## Estructura
 
     apps/api          NestJS 11 + @nestjs/cqrs — comandos, consultas, saga de ejecución
-    apps/web          Vite + React 19 + Tailwind — SPA, sin SSR
+    apps/web          Vite + React 19 + Tailwind + React Flow — SPA, sin SSR
     packages/
       runner-core     Dominio puro: generación de escenarios, plan de ejecución,
                       presupuestos, validación JSON Schema. Sin framework.

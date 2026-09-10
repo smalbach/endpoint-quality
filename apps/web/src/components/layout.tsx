@@ -24,6 +24,7 @@ export function projectTabs(projectId: string | undefined) {
     { to: base, label: "Matriz", end: true },
     { to: `${base}/environments`, label: "Entornos", end: false },
     { to: `${base}/config`, label: "Configuración", end: false },
+    { to: `${base}/workflows`, label: "Flujos", end: false },
     { to: `${base}/runs`, label: "Corridas", end: false },
   ];
 }
@@ -58,7 +59,7 @@ export function AppLayout() {
                   selectOrganization(event.target.value);
                   // Out of the project: its id belongs to the organization being left, and
                   // staying would be a 404 with no explanation.
-                  navigate("/", { replace: true });
+                  void navigate("/", { replace: true });
                 }}
               >
                 {user.organizations.map((entry) => (
@@ -92,7 +93,12 @@ export function AppLayout() {
                 to={tab.to}
                 end={tab.end}
                 className={({ isActive }) =>
-                  cn("border-b-2 px-3 py-2 text-xs font-medium transition-colors", isActive ? "border-slate-900 text-slate-900" : "border-transparent text-slate-500 hover:text-slate-800")
+                  cn(
+                    "border-b-2 px-3 py-2 text-xs font-medium transition-colors",
+                    isActive
+                      ? "border-slate-900 text-slate-900"
+                      : "border-transparent text-slate-500 hover:text-slate-800",
+                  )
                 }
               >
                 {tab.label}

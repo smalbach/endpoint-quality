@@ -26,6 +26,7 @@ export type {
   OperationScenarios,
   ProblemDetails,
   ProjectSummary,
+  RequestTemplateView,
   Role,
   Run,
   RunCase,
@@ -37,4 +38,8 @@ export type {
   RunView,
   ScenarioView,
   ScenariosView,
+  WorkflowCaptureView,
+  WorkflowStepView,
+  WorkflowView,
+  WorkflowsView,
 } from "@eq/contracts";

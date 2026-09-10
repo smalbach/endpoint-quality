@@ -5,7 +5,7 @@
  * paths — `to="runs"` — and react-router resolves those against **the route the link is rendered
  * in**, not the URL in the address bar. This layout is mounted at `/`, so `runs` became `/runs`,
  * which matches no route, falls to the catch-all and redirects to the project list. Three of the
- * four tabs threw you out of the project instead of navigating within it.
+ * original tabs threw you out of the project instead of navigating within it.
  *
  * Nothing caught it: the suite tests the session client and the bundle, and every screen was
  * reached in manual checks through the buttons that navigate with a full path. Clicking a tab is
@@ -23,11 +23,12 @@ describe("las pestañas de un proyecto", () => {
     for (const tab of tabs) expect(tab.to).toMatch(/^\/p\/11111111-2222-3333-4444-555555555555(\/|$)/);
   });
 
-  test("son las cuatro, en orden, con sus destinos", () => {
+  test("están en orden y tienen sus destinos", () => {
     expect(tabs.map((tab) => [tab.label, tab.to])).toEqual([
       ["Matriz", "/p/11111111-2222-3333-4444-555555555555"],
       ["Entornos", "/p/11111111-2222-3333-4444-555555555555/environments"],
       ["Configuración", "/p/11111111-2222-3333-4444-555555555555/config"],
+      ["Flujos", "/p/11111111-2222-3333-4444-555555555555/workflows"],
       ["Corridas", "/p/11111111-2222-3333-4444-555555555555/runs"],
     ]);
   });
