@@ -1,0 +1,68 @@
+# Lo que antes dependía de que alguien se acordara de ejecutarlo.
+#
+# Un solo trabajo, con Postgres como servicio. La suite `http` no lo necesita —sustituye once
+# repositorios por dobles en memoria y solo abre sockets contra un servidor de loopback—, pero
+# `test:db` sí, y sin `EQ_TEST_DATABASE_URL` **se salta a propósito** en vez de fallar. Por eso la
+# variable va aquí y no en un secreto opcional: un CI que informa verde sin haber aplicado una
+# migración es exactamente el fallo que este producto existe para detectar.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: eq
+          POSTGRES_PASSWORD: eq
+          POSTGRES_DB: endpoint_quality
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U eq"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      EQ_TEST_DATABASE_URL: postgres://eq:eq@localhost:5432/endpoint_quality_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Una base propia para las pruebas: `docker/postgres-init` solo corre para el volumen de
+      # compose, no para un contenedor de servicio.
+      - name: Crear la base de pruebas
+        run: PGPASSWORD=eq psql -h localhost -U eq -d endpoint_quality -c 'CREATE DATABASE endpoint_quality_test OWNER eq'
+
+      # Antes que nada: la API resuelve `@eq/runner-core` desde `dist`, y la prueba del bundle de la
+      # interfaz comprueba lo que salió del build, no lo que dice el código fuente.
+      - run: pnpm -r build
+
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+
+      - run: pnpm --filter @eq/runner-core test
+      - run: pnpm --filter @eq/spec-import test
+      - run: pnpm --filter @eq/api test
+      - run: pnpm --filter @eq/web test
