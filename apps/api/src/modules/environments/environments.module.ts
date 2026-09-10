@@ -2,7 +2,7 @@ import { Module, forwardRef } from "@nestjs/common";
 import { CqrsModule } from "@nestjs/cqrs";
 import { TypeOrmModule } from "@nestjs/typeorm";
 
-import { EnvironmentCredentialEntity, EnvironmentEntity, ProjectConfigEntity } from "@/shared/database/entities";
+import { EnvironmentCredentialEntity, EnvironmentEntity } from "@/shared/database/entities";
 import { AuthModule } from "@/modules/auth/auth.module";
 import { IamModule } from "@/modules/iam/iam.module";
 import { ProjectsModule } from "@/modules/projects/projects.module";
@@ -16,15 +16,6 @@ import {
 } from "./application/commands/manage-environment";
 import { DeleteCredentialHandler, UpsertCredentialHandler } from "./application/commands/manage-credential";
 import { ListEnvironmentsHandler } from "./application/queries/list-environments";
-import { CONFIG_REPOSITORY } from "@/modules/config/domain/ports";
-import { TypeOrmConfigRepository } from "@/modules/config/infrastructure/persistence/typeorm-config.repository";
-import {
-  ResetConfigSectionHandler,
-  UpsertConfigSectionHandler,
-} from "@/modules/config/application/commands/upsert-config-section";
-import { GetProjectConfigHandler } from "@/modules/config/application/queries/get-project-config";
-import { GetScenariosHandler } from "@/modules/config/application/queries/get-scenarios";
-import { GetCoverageHandler } from "@/modules/config/application/queries/get-coverage";
 import { EnvironmentsController } from "./presentation/environments.controller";
 
 export const ENVIRONMENT_COMMAND_HANDLERS = [
@@ -33,37 +24,26 @@ export const ENVIRONMENT_COMMAND_HANDLERS = [
   DeleteEnvironmentHandler,
   UpsertCredentialHandler,
   DeleteCredentialHandler,
-  UpsertConfigSectionHandler,
-  ResetConfigSectionHandler,
 ];
-export const ENVIRONMENT_QUERY_HANDLERS = [
-  ListEnvironmentsHandler,
-  GetProjectConfigHandler,
-  GetScenariosHandler,
-  GetCoverageHandler,
-];
-export const ENVIRONMENT_ADAPTERS = [
-  { provide: ENVIRONMENT_REPOSITORY, useClass: TypeOrmEnvironmentRepository },
-  { provide: CONFIG_REPOSITORY, useClass: TypeOrmConfigRepository },
-];
+export const ENVIRONMENT_QUERY_HANDLERS = [ListEnvironmentsHandler];
+export const ENVIRONMENT_ADAPTERS = [{ provide: ENVIRONMENT_REPOSITORY, useClass: TypeOrmEnvironmentRepository }];
 
 /**
- * Environments and configuration ship together because the matrix needs both: the contract says
- * what could be tested, the configuration says with which values, and the environment says which
- * of it may actually run tonight. Splitting them would put `GET /scenarios` in a module that
- * knows only one of the three.
+ * Only environments and their credentials. The configuration used to ship inside this module
+ * because the matrix needs both — that dependency is real, and it now runs the other way:
+ * `ProjectConfigModule` imports this one and reads environments through their port.
  */
 @Module({
   imports: [
     CqrsModule,
     AuthModule,
     IamModule,
-    TypeOrmModule.forFeature([EnvironmentEntity, EnvironmentCredentialEntity, ProjectConfigEntity]),
+    TypeOrmModule.forFeature([EnvironmentEntity, EnvironmentCredentialEntity]),
     forwardRef(() => ProjectsModule),
     forwardRef(() => SpecsModule),
   ],
   controllers: [EnvironmentsController],
   providers: [...ENVIRONMENT_ADAPTERS, ...ENVIRONMENT_COMMAND_HANDLERS, ...ENVIRONMENT_QUERY_HANDLERS],
-  exports: [ENVIRONMENT_REPOSITORY, CONFIG_REPOSITORY],
+  exports: [ENVIRONMENT_REPOSITORY],
 })
 export class EnvironmentsModule {}

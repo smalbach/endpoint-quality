@@ -9,6 +9,7 @@ import { IamModule } from "@/modules/iam/iam.module";
 import { ProjectsModule } from "@/modules/projects/projects.module";
 import { SpecsModule } from "@/modules/specs/specs.module";
 import { EnvironmentsModule } from "@/modules/environments/environments.module";
+import { ProjectConfigModule } from "@/modules/config/config.module";
 import { RUN_QUEUE, RUN_REPOSITORY } from "./domain/ports";
 import { PROGRESS_RELAY } from "./domain/progress";
 import { TypeOrmRunRepository } from "./infrastructure/persistence/typeorm-run.repository";
@@ -75,6 +76,7 @@ export const PROGRESS_RELAY_PROVIDER = {
     forwardRef(() => ProjectsModule),
     forwardRef(() => SpecsModule),
     forwardRef(() => EnvironmentsModule),
+    forwardRef(() => ProjectConfigModule),
   ],
   controllers: [RunsController],
   providers: [

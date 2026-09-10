@@ -56,6 +56,8 @@ import { ENVIRONMENT_REPOSITORY } from "@/modules/environments/domain/ports";
 import { EnvironmentsController } from "@/modules/environments/presentation/environments.controller";
 import { ENVIRONMENT_COMMAND_HANDLERS, ENVIRONMENT_QUERY_HANDLERS } from "@/modules/environments/environments.module";
 import { CONFIG_REPOSITORY } from "@/modules/config/domain/ports";
+import { CONFIG_COMMAND_HANDLERS, CONFIG_QUERY_HANDLERS } from "@/modules/config/config.module";
+import { ProjectConfigController } from "@/modules/config/presentation/config.controller";
 import { RUN_QUEUE, RUN_REPOSITORY } from "@/modules/runs/domain/ports";
 import { PROGRESS_RELAY } from "@/modules/runs/domain/progress";
 import { InProcessRelay } from "@/modules/runs/infrastructure/progress/in-process-relay";
@@ -194,7 +196,14 @@ export async function createTestApp(): Promise<TestContext> {
 
   const moduleRef = await Test.createTestingModule({
     imports: [CqrsModule.forRoot(), JwtModule.register({})],
-    controllers: [AuthController, OrganizationsController, ProjectsController, EnvironmentsController, RunsController],
+    controllers: [
+      AuthController,
+      OrganizationsController,
+      ProjectsController,
+      EnvironmentsController,
+      ProjectConfigController,
+      RunsController,
+    ],
     providers: [
       { provide: ENV, useValue: env },
       { provide: CLOCK, useValue: clock },
@@ -233,6 +242,8 @@ export async function createTestApp(): Promise<TestContext> {
       ...SPEC_QUERY_HANDLERS,
       ...ENVIRONMENT_COMMAND_HANDLERS,
       ...ENVIRONMENT_QUERY_HANDLERS,
+      ...CONFIG_COMMAND_HANDLERS,
+      ...CONFIG_QUERY_HANDLERS,
       ...RUN_COMMAND_HANDLERS,
       ...RUN_QUERY_HANDLERS,
       // The global guard and filter are registered exactly as `AppModule` does, because half of
