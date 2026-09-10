@@ -1,5 +1,5 @@
-import { NavLink, Outlet, useParams } from "react-router-dom";
-import { useAuth } from "@/lib/auth";
+import { NavLink, Outlet, useNavigate, useParams } from "react-router-dom";
+import { useAuth, useOrganization } from "@/lib/auth";
 import { cn } from "@/lib/format";
 import { Button } from "@/components/ui";
 
@@ -32,7 +32,9 @@ export function projectTabs(projectId: string | undefined) {
  * the project you are inside. The tabs disappear outside a project rather than pointing at one
  * that is not selected. */
 export function AppLayout() {
-  const { user, signOut } = useAuth();
+  const { user, signOut, selectOrganization } = useAuth();
+  const organization = useOrganization();
+  const navigate = useNavigate();
   const { projectId } = useParams();
 
   const tabs = projectTabs(projectId);
@@ -45,9 +47,36 @@ export function AppLayout() {
             Endpoint Quality
           </NavLink>
           <div className="flex items-center gap-3 text-xs text-slate-500">
-            <NavLink to="/settings/org" className="underline-offset-2 hover:underline">
-              {user?.organizations[0]?.name}
-            </NavLink>
+            {/* A switcher only when there is something to switch to. Belonging to two
+                organizations is what accepting an invitation does — registering also founds one —
+                and before this the second was unreachable. */}
+            {user && user.organizations.length > 1 ? (
+              <select
+                className="h-7 rounded border border-slate-200 bg-white px-1 text-xs text-slate-600"
+                value={organization?.id ?? ""}
+                onChange={(event) => {
+                  selectOrganization(event.target.value);
+                  // Out of the project: its id belongs to the organization being left, and
+                  // staying would be a 404 with no explanation.
+                  navigate("/", { replace: true });
+                }}
+              >
+                {user.organizations.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <NavLink to="/settings/org" className="underline-offset-2 hover:underline">
+                {organization?.name}
+              </NavLink>
+            )}
+            {user && user.organizations.length > 1 && (
+              <NavLink to="/settings/org" className="underline-offset-2 hover:underline">
+                ajustes
+              </NavLink>
+            )}
             <span className="text-slate-300">·</span>
             <span>{user?.email}</span>
             <Button variant="ghost" className="h-7 px-2 text-xs" onClick={() => void signOut()}>

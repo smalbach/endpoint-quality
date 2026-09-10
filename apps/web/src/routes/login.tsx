@@ -13,7 +13,7 @@ import { Button, Card, Field, inputClass } from "@/components/ui";
  * undo it.
  */
 export function LoginPage({ mode }: { mode: "login" | "register" }) {
-  const { status, signIn, signUp, reload } = useAuth();
+  const { status, signIn, signUp, reload, selectOrganization } = useAuth();
   /**
    * An invitation carried in the URL.
    *
@@ -43,7 +43,10 @@ export function LoginPage({ mode }: { mode: "login" | "register" }) {
       if (mode === "login") await signIn(email, password);
       else await signUp({ email, password, name, ...(organizationName ? { organizationName } : {}) });
       if (invitation) {
-        await api("/invitations/accept", { method: "POST", body: { token: invitation } });
+        const accepted = await api<{ organizationId: string }>("/invitations/accept", { method: "POST", body: { token: invitation } });
+        // And land *in* it. Registering also founds an organization of your own, so without this
+        // the invitee arrives at an empty one and the invitation looks like it did nothing.
+        selectOrganization(accepted.organizationId);
         await reload();
       }
       navigate("/", { replace: true });

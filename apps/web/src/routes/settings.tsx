@@ -4,7 +4,7 @@ import { api, ApiError } from "@/lib/api";
 import { useAuth, useCan, useOrganization } from "@/lib/auth";
 import { canChangeRole, canRemove, ROLES } from "@/lib/roles";
 import { Badge, Button, Card, Empty, Field, inputClass } from "@/components/ui";
-import { formatDate } from "@/lib/format";
+import { cn, formatDate } from "@/lib/format";
 import type { ApiTokenView, MembersView, Role } from "@/lib/types";
 
 /**
@@ -94,7 +94,7 @@ function Members({ organizationId, actorRole }: { organizationId: string; actorR
               </div>
               <span className="ml-auto text-[10px] text-slate-400">desde {formatDate(member.since)}</span>
               <select
-                className={`${inputClass} h-8 w-28`}
+                className={cn(inputClass, "h-8 w-28")}
                 value={member.role}
                 disabled={blockedChange !== null || changeRole.isPending}
                 title={blockedChange ?? roleHint[member.role]}
@@ -162,7 +162,7 @@ function Invite({ base, onInvited }: { base: string; onInvited: () => void }) {
           <input className={inputClass} type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="colega@example.com" required />
         </Field>
       </div>
-      <select className={`${inputClass} h-9 w-28`} value={role} onChange={(event) => setRole(event.target.value as Role)}>
+      <select className={cn(inputClass, "h-9 w-28")} value={role} onChange={(event) => setRole(event.target.value as Role)}>
         {ROLES.filter((candidate) => candidate !== "owner").map((candidate) => (
           <option key={candidate} value={candidate}>
             {candidate}

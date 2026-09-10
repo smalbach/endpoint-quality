@@ -14,6 +14,9 @@ import type { CurrentUser, Role } from "./types";
 type AuthState = {
   status: "loading" | "authenticated" | "anonymous";
   user: CurrentUser | null;
+  /** Which of the user's organizations the app is acting in. */
+  organizationId: string | null;
+  selectOrganization: (organizationId: string) => void;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (input: { email: string; password: string; name: string; organizationName?: string }) => Promise<void>;
   signOut: () => Promise<void>;
@@ -22,9 +25,31 @@ type AuthState = {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+const ORGANIZATION_KEY = "eq.organization";
+
+function readStoredOrganization(): string | null {
+  try {
+    return window.localStorage.getItem(ORGANIZATION_KEY);
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthState["status"]>("loading");
   const [user, setUser] = useState<CurrentUser | null>(null);
+  /**
+   * Which organization the app is acting in.
+   *
+   * It used to be `organizations[0]`, which is fine right up until somebody belongs to two — and
+   * accepting an invitation is exactly how that happens, since registering also founds one. The
+   * second organization was then unreachable: no screen could name it and every query keyed off
+   * the first.
+   *
+   * Remembered across reloads because it is a working context, not a preference: coming back to
+   * a bookmarked project in the wrong organization is a 404 with no explanation.
+   */
+  const [organizationId, setOrganizationId] = useState<string | null>(() => readStoredOrganization());
 
   const load = useCallback(async () => {
     const me = await api<CurrentUser>("/auth/me");
@@ -52,6 +77,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [load]);
 
+  /** The stored choice only counts while it is still one of the user's. Being removed from an
+   * organization must not leave the app pointing at it and every request answering 403. */
+  const resolved = user?.organizations.find((entry) => entry.id === organizationId)?.id ?? user?.organizations[0]?.id ?? null;
+
   const value = useMemo<AuthState>(
     () => ({
       status,
@@ -70,8 +99,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setStatus("anonymous");
       },
       reload: load,
+      organizationId: resolved,
+      selectOrganization: (next: string) => {
+        setOrganizationId(next);
+        try {
+          window.localStorage.setItem(ORGANIZATION_KEY, next);
+        } catch {
+          // Private browsing, or storage denied. The choice still holds for this session.
+        }
+      },
     }),
-    [status, user, load],
+    [status, user, load, resolved],
   );
 
   return <AuthContext value={value}>{children}</AuthContext>;
@@ -86,8 +124,8 @@ export function useAuth(): AuthState {
 /** The organization the app is acting in. Everything below a project hangs off it, so it is
  * resolved once here rather than threaded through every query key. */
 export function useOrganization(): { id: string; name: string; role: Role } | null {
-  const { user } = useAuth();
-  const organization = user?.organizations[0];
+  const { user, organizationId } = useAuth();
+  const organization = user?.organizations.find((entry) => entry.id === organizationId);
   return organization ? { id: organization.id, name: organization.name, role: organization.role } : null;
 }
 
