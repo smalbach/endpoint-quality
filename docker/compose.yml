@@ -1,0 +1,63 @@
+# Todo el producto con un comando. `docker compose -f docker/compose.yml up`
+#
+# Redis es opcional: `QUEUE_DRIVER=memory` (el valor por defecto) ejecuta la cola en el propio
+# proceso, que es lo que sostiene la promesa de "ejecutable en local sin infraestructura".
+# Arranca con el perfil `redis` cuando quieras corridas concurrentes o que sobrevivan a un
+# reinicio de la API.
+name: endpoint-quality
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: eq
+      POSTGRES_PASSWORD: eq
+      POSTGRES_DB: endpoint_quality
+    ports: ["5432:5432"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # `pg_isready` responde antes de que la base acepte conexiones de verdad; la consulta
+      # comprueba lo que la API necesita, que es poder ejecutar SQL.
+      test: ["CMD-SHELL", "psql -U eq -d endpoint_quality -c 'SELECT 1' || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["redis"]
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/api.Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgres://eq:eq@postgres:5432/endpoint_quality
+      QUEUE_DRIVER: ${QUEUE_DRIVER:-memory}
+      REDIS_URL: redis://redis:6379
+      # Sin valor por defecto a propósito: la API se niega a arrancar sin ellos, en vez de
+      # firmar con un secreto que está en un repositorio público.
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?define JWT_ACCESS_SECRET en .env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?define JWT_REFRESH_SECRET en .env}
+      SECRETS_KEY: ${SECRETS_KEY:-}
+      # El motor hace peticiones a URLs que escribe el usuario. En un despliegue alojado esto
+      # tiene que seguir en false o la API alcanza la red interna: ver docs/decoupling-plan.md §4.8.
+      ALLOW_PRIVATE_TARGETS: ${ALLOW_PRIVATE_TARGETS:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+    ports: ["3001:3001"]
+
+volumes:
+  postgres-data:

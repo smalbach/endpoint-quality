@@ -1,0 +1,49 @@
+{
+  "name": "@eq/api",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc-alias -p tsconfig.json",
+    "start": "node dist/main.js",
+    "dev": "nest start --watch",
+    "test": "node --test \"dist-test/test/**/*.test.js\"",
+    "test:unit": "tsc -p tsconfig.test.json && tsc-alias -p tsconfig.test.json && node --test \"dist-test/test/unit/*.test.js\"",
+    "test:http": "tsc -p tsconfig.test.json && tsc-alias -p tsconfig.test.json && node --test \"dist-test/test/http/*.test.js\"",
+    "test:db": "tsc -p tsconfig.test.json && tsc-alias -p tsconfig.test.json && node --test \"dist-test/test/db/*.test.js\"",
+    "typecheck": "tsc --noEmit",
+    "migration:run": "typeorm-ts-node-esm migration:run -d src/shared/database/data-source.ts",
+    "migration:revert": "typeorm-ts-node-esm migration:revert -d src/shared/database/data-source.ts",
+    "pretest": "tsc -p tsconfig.test.json && tsc-alias -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.1.6",
+    "@nestjs/core": "^11.1.6",
+    "@nestjs/cqrs": "^11.0.3",
+    "@nestjs/jwt": "^11.0.1",
+    "@nestjs/platform-express": "^11.1.6",
+    "@nestjs/swagger": "^11.2.0",
+    "@nestjs/throttler": "^6.4.0",
+    "@nestjs/typeorm": "^11.0.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.2",
+    "cookie-parser": "^1.4.7",
+    "helmet": "^8.1.0",
+    "pg": "^8.16.3",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "typeorm": "^0.3.27",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.10",
+    "@nestjs/testing": "^11.1.6",
+    "@types/cookie-parser": "^1.4.9",
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.19.19",
+    "@types/supertest": "^6.0.3",
+    "supertest": "^7.1.4",
+    "ts-node": "^10.9.2",
+    "tsc-alias": "^1.9.4",
+    "typescript": "^5.9.3"
+  }
+}
