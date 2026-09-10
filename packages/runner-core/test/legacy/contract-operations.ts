@@ -1,0 +1,67 @@
+// GENERATED FILE — do not edit.
+//
+// The operations of the OpenAPI v1.8.0 contract, produced by
+// `scripts/gen_dashboard_endpoints.py` from `docs/openapi/bundled.yaml`.
+// Run `make dashboard` to regenerate it; `make dashboard-check` fails when it is out of date.
+//
+// The request bodies and the `implemented` set are **not** here: they cannot be derived from
+// the contract and live hand-written in `endpoints.ts`. See the generator's docstring.
+
+export type ContractOperation = {
+  id: string;
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  path: string;
+  summary: string;
+  tag: string;
+  statuses: number[];
+  parameters: string[];
+};
+
+export const contractOperations: ContractOperation[] = [
+  {"id": "healthCheck", "method": "GET", "path": "/health", "summary": "Health check", "tag": "Health", "statuses": [200, 503], "parameters": []},
+  {"id": "listCategories", "method": "GET", "path": "/v1/categories", "summary": "List categories", "tag": "Categories", "statuses": [200, 401, 403], "parameters": ["cursor", "limit", "parent_code_akn", "q"]},
+  {"id": "createCategory", "method": "POST", "path": "/v1/categories", "summary": "Create a category", "tag": "Categories", "statuses": [201, 401, 403, 409, 422], "parameters": []},
+  {"id": "deleteCategory", "method": "DELETE", "path": "/v1/categories/{category_id}", "summary": "Delete a category", "tag": "Categories", "statuses": [204, 401, 403, 404], "parameters": ["category_id"]},
+  {"id": "getCategory", "method": "GET", "path": "/v1/categories/{category_id}", "summary": "Get a category", "tag": "Categories", "statuses": [200, 401, 403, 404], "parameters": ["category_id"]},
+  {"id": "patchCategory", "method": "PATCH", "path": "/v1/categories/{category_id}", "summary": "Partially update a category", "tag": "Categories", "statuses": [200, 401, 403, 404, 422], "parameters": ["category_id"]},
+  {"id": "replaceCategory", "method": "PUT", "path": "/v1/categories/{category_id}", "summary": "Replace a category (full update)", "tag": "Categories", "statuses": [200, 401, 403, 404, 422], "parameters": ["category_id"]},
+  {"id": "listCategoryProducts", "method": "GET", "path": "/v1/categories/{category_id}/products", "summary": "List products in a category", "tag": "Categories", "statuses": [200, 401, 403, 404], "parameters": ["category_id", "cursor", "limit", "include_children"]},
+  {"id": "listPrices", "method": "GET", "path": "/v1/prices", "summary": "List prices", "tag": "Prices", "statuses": [200, 401, 403], "parameters": ["cursor", "limit"]},
+  {"id": "createPrice", "method": "POST", "path": "/v1/prices", "summary": "Create a price record", "tag": "Prices", "statuses": [201, 401, 403, 422], "parameters": []},
+  {"id": "deletePrice", "method": "DELETE", "path": "/v1/prices/{price_id}", "summary": "Delete a price record", "tag": "Prices", "statuses": [204, 401, 403, 404], "parameters": ["price_id"]},
+  {"id": "getPrice", "method": "GET", "path": "/v1/prices/{price_id}", "summary": "Get a price record", "tag": "Prices", "statuses": [200, 401, 403, 404], "parameters": ["price_id"]},
+  {"id": "patchPrice", "method": "PATCH", "path": "/v1/prices/{price_id}", "summary": "Partially update a price record", "tag": "Prices", "statuses": [200, 401, 403, 404, 422], "parameters": ["price_id"]},
+  {"id": "replacePrice", "method": "PUT", "path": "/v1/prices/{price_id}", "summary": "Replace a price record (full update)", "tag": "Prices", "statuses": [200, 401, 403, 404, 422], "parameters": ["price_id"]},
+  {"id": "listProducts", "method": "GET", "path": "/v1/products", "summary": "List products", "tag": "Products", "statuses": [200, 401, 403], "parameters": ["cursor", "limit", "ean_sap", "code_sap", "name_sap", "category_id", "store_id", "type_akn", "family_code_akn", "q"]},
+  {"id": "createProduct", "method": "POST", "path": "/v1/products", "summary": "Create a product", "tag": "Products", "statuses": [201, 401, 403, 409, 422], "parameters": []},
+  {"id": "bulkUpsertProducts", "method": "POST", "path": "/v1/products/bulk", "summary": "Bulk upsert products", "tag": "Products", "statuses": [200, 401, 403, 422], "parameters": []},
+  {"id": "deleteProduct", "method": "DELETE", "path": "/v1/products/{product_id}", "summary": "Delete a product", "tag": "Products", "statuses": [204, 401, 403, 404], "parameters": ["product_id"]},
+  {"id": "getProduct", "method": "GET", "path": "/v1/products/{product_id}", "summary": "Get product (atomic)", "tag": "Products", "statuses": [200, 401, 403, 404], "parameters": ["product_id"]},
+  {"id": "patchProduct", "method": "PATCH", "path": "/v1/products/{product_id}", "summary": "Partially update a product", "tag": "Products", "statuses": [200, 401, 403, 404, 422], "parameters": ["product_id"]},
+  {"id": "replaceProduct", "method": "PUT", "path": "/v1/products/{product_id}", "summary": "Replace a product (full update)", "tag": "Products", "statuses": [200, 401, 403, 404, 422], "parameters": ["product_id"]},
+  {"id": "listProductCategories", "method": "GET", "path": "/v1/products/{product_id}/categories", "summary": "List categories assigned to a product", "tag": "Product Categories", "statuses": [200, 401, 403, 404], "parameters": ["product_id", "cursor", "limit"]},
+  {"id": "assignProductCategory", "method": "POST", "path": "/v1/products/{product_id}/categories", "summary": "Assign a category to a product", "tag": "Product Categories", "statuses": [201, 401, 403, 404, 409, 422], "parameters": ["product_id"]},
+  {"id": "removeProductCategory", "method": "DELETE", "path": "/v1/products/{product_id}/categories/{product_category_id}", "summary": "Remove a category from a product", "tag": "Product Categories", "statuses": [204, 401, 403, 404], "parameters": ["product_id", "product_category_id"]},
+  {"id": "getProductCategory", "method": "GET", "path": "/v1/products/{product_id}/categories/{product_category_id}", "summary": "Get a product-category association", "tag": "Product Categories", "statuses": [200, 401, 403, 404], "parameters": ["product_id", "product_category_id"]},
+  {"id": "getProductFull", "method": "GET", "path": "/v1/products/{product_id}/full", "summary": "Get product (aggregated)", "tag": "Products", "statuses": [200, 401, 403, 404], "parameters": ["product_id", "store_id"]},
+  {"id": "listProductProjections", "method": "GET", "path": "/v1/products/{product_id}/projections", "summary": "List projections for a product", "tag": "Product Projections", "statuses": [200, 401, 403, 404], "parameters": ["product_id", "cursor", "limit", "locale_akn", "channel_akn", "q"]},
+  {"id": "createProductProjection", "method": "POST", "path": "/v1/products/{product_id}/projections", "summary": "Create a projection", "tag": "Product Projections", "statuses": [201, 401, 403, 404, 409, 422], "parameters": ["product_id"]},
+  {"id": "deleteProductProjection", "method": "DELETE", "path": "/v1/products/{product_id}/projections/{projection_id}", "summary": "Delete a projection", "tag": "Product Projections", "statuses": [204, 401, 403, 404], "parameters": ["product_id", "projection_id"]},
+  {"id": "getProductProjection", "method": "GET", "path": "/v1/products/{product_id}/projections/{projection_id}", "summary": "Get a projection", "tag": "Product Projections", "statuses": [200, 401, 403, 404], "parameters": ["product_id", "projection_id"]},
+  {"id": "patchProductProjection", "method": "PATCH", "path": "/v1/products/{product_id}/projections/{projection_id}", "summary": "Partially update a projection", "tag": "Product Projections", "statuses": [200, 401, 403, 404, 422], "parameters": ["product_id", "projection_id"]},
+  {"id": "replaceProductProjection", "method": "PUT", "path": "/v1/products/{product_id}/projections/{projection_id}", "summary": "Replace a projection (full update)", "tag": "Product Projections", "statuses": [200, 401, 403, 404, 422], "parameters": ["product_id", "projection_id"]},
+  {"id": "listStoreAssortments", "method": "GET", "path": "/v1/store-assortments", "summary": "List all store assortment entries", "tag": "Store Assortments", "statuses": [200, 401, 403], "parameters": ["cursor", "limit", "store_id", "product_id", "is_enabled"]},
+  {"id": "createStoreAssortment", "method": "POST", "path": "/v1/store-assortments", "summary": "Create a store assortment entry", "tag": "Store Assortments", "statuses": [201, 401, 403, 409, 422], "parameters": []},
+  {"id": "bulkUpsertStoreAssortments", "method": "POST", "path": "/v1/store-assortments/bulk", "summary": "Bulk upsert store assortments (ART ingestion)", "tag": "Store Assortments", "statuses": [200, 401, 403, 422], "parameters": []},
+  {"id": "deleteStoreAssortment", "method": "DELETE", "path": "/v1/store-assortments/{store_assortment_id}", "summary": "Delete an assortment entry", "tag": "Store Assortments", "statuses": [204, 401, 403, 404], "parameters": ["store_assortment_id"]},
+  {"id": "getStoreAssortment", "method": "GET", "path": "/v1/store-assortments/{store_assortment_id}", "summary": "Get an assortment entry", "tag": "Store Assortments", "statuses": [200, 401, 403, 404], "parameters": ["store_assortment_id"]},
+  {"id": "patchStoreAssortment", "method": "PATCH", "path": "/v1/store-assortments/{store_assortment_id}", "summary": "Partially update an assortment entry", "tag": "Store Assortments", "statuses": [200, 401, 403, 404, 422], "parameters": ["store_assortment_id"]},
+  {"id": "replaceStoreAssortment", "method": "PUT", "path": "/v1/store-assortments/{store_assortment_id}", "summary": "Replace an assortment entry (full update)", "tag": "Store Assortments", "statuses": [200, 401, 403, 404, 422], "parameters": ["store_assortment_id"]},
+  {"id": "listStores", "method": "GET", "path": "/v1/stores", "summary": "List stores", "tag": "Stores", "statuses": [200, 401, 403], "parameters": ["cursor", "limit", "region", "department", "zone_id", "lat", "lon", "radius_km"]},
+  {"id": "createStore", "method": "POST", "path": "/v1/stores", "summary": "Create a store", "tag": "Stores", "statuses": [201, 401, 403, 422], "parameters": []},
+  {"id": "deleteStore", "method": "DELETE", "path": "/v1/stores/{store_id}", "summary": "Delete a store", "tag": "Stores", "statuses": [204, 401, 403, 404], "parameters": ["store_id"]},
+  {"id": "getStore", "method": "GET", "path": "/v1/stores/{store_id}", "summary": "Get a store", "tag": "Stores", "statuses": [200, 401, 403, 404], "parameters": ["store_id"]},
+  {"id": "patchStore", "method": "PATCH", "path": "/v1/stores/{store_id}", "summary": "Partially update a store", "tag": "Stores", "statuses": [200, 401, 403, 404, 422], "parameters": ["store_id"]},
+  {"id": "replaceStore", "method": "PUT", "path": "/v1/stores/{store_id}", "summary": "Replace a store (full update)", "tag": "Stores", "statuses": [200, 401, 403, 404, 422], "parameters": ["store_id"]},
+  {"id": "listStoreAssortment", "method": "GET", "path": "/v1/stores/{store_id}/assortment", "summary": "List products in a store's assortment", "tag": "Store Assortments", "statuses": [200, 401, 403, 404], "parameters": ["store_id", "cursor", "limit", "is_enabled"]},
+];

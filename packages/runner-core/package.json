@@ -1,0 +1,13 @@
+{
+  "name": "@eq/runner-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "golden": "node --experimental-strip-types test/golden/generate.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": { "typescript": "^5.9.3", "@types/node": "^22.19.19" }
+}
