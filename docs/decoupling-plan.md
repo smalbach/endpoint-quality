@@ -45,6 +45,14 @@ una opción que hay que recordar activar.
 
 ## 2. Arquitectura objetivo
 
+**Ubicación decidida**: `~/Documents/GiProjectos/endpoint-quality/`, repo git propio, hermano de
+`geronimo-martings/` y fuera de él. El producto es genérico y `geronimo-martings/` es una entrega
+de cliente; alojar la herramienta reutilizable dentro de la carpeta `documentation/` de un cliente
+sería el mismo acople que se está quitando, pero a nivel de sistema de ficheros.
+
+`documentation/endpoint-quality-dashboard/` **no se toca**: sigue siendo el oráculo del test de
+paridad hasta P6, y se retira en P7.
+
 ```
 endpoint-quality/
 ├─ apps/
