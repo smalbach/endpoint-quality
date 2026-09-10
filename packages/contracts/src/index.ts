@@ -162,11 +162,23 @@ export type StepCheckView = {
  * it any failure is retried, and a step that writes will write once per attempt. */
 export type StepRetryView = { attempts: number; delayMs: number; backoff?: number; onStatus?: number[] };
 
+/** Whether a step runs at all, decided by what a step it depends on answered. */
+export type StepConditionView = { from: string; check: StepCheckView };
+
+/** Running one step once per element of a list a step it depends on returned. Each element is its
+ * own case: forty products answering is forty findings, not one. */
+export type StepForEachView = { from: string; path: string; as: string; max?: number };
+
 export type WorkflowStepView = {
   id: string;
   requestTemplateId: string;
   dependsOn?: string[];
   captures?: WorkflowCaptureView[];
+  /** Milliseconds to wait before this step. Not a retry: «it was not time yet», not «that failure
+   * was not real». */
+  waitMs?: number;
+  runIf?: StepConditionView;
+  forEach?: StepForEachView;
   checks?: StepCheckView[];
   retry?: StepRetryView;
   /** What a failure does to the rest of the flow. Absent means `skip-dependents`. */

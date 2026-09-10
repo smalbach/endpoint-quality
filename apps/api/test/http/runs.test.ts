@@ -1099,3 +1099,176 @@ describe("comprobaciones, reintentos y política de error de un paso", () => {
     await fixture.target.stop();
   });
 });
+
+/**
+ * Un paso que no siempre se ejecuta, uno que se ejecuta muchas veces, y de dónde viene cada valor.
+ *
+ * Los tres nodos que faltaban —condición, espera y bucle— sin inventar un tipo de nodo nuevo: son
+ * propiedades del paso, porque todo lo que una corrida registra (un caso, sus peticiones, su
+ * veredicto) es sobre una petición que se hizo, y un nodo sin petición sería una fila que
+ * significa otra cosa que el resto de la tabla.
+ */
+describe("condición, espera y bucle de un paso", () => {
+  async function flowOf(
+    steps: (ids: Record<string, string>) => Record<string, unknown>[],
+    variables: Record<string, string> = {},
+  ) {
+    const fixture = await projectAgainst({}, { variables: { entityName: "creado", ...variables } });
+    const send = async (body: Record<string, unknown>) => {
+      const response = await api().post(`${fixture.projectBase}/request-templates`).set(as(owner)).send(body);
+      assert.equal(response.status, 201, JSON.stringify(response.body));
+      return response.body.requestTemplateId as string;
+    };
+    const ids = {
+      create: await send({
+        name: "Crear",
+        operationId: "createThing",
+        expectedStatus: 201,
+        body: { name: "{{env.entityName}}", size: 7 },
+      }),
+      list: await send({ name: "Listar", operationId: "listThings", expectedStatus: 200 }),
+      read: await send({
+        name: "Leer",
+        operationId: "getThing",
+        expectedStatus: 200,
+        parameters: { id: "{{item.id}}" },
+      }),
+      readCaptured: await send({
+        name: "Leer capturado",
+        operationId: "getThing",
+        expectedStatus: 200,
+        parameters: { id: "{{crear.thingId}}" },
+      }),
+    };
+    const workflow = await api()
+      .post(`${fixture.projectBase}/workflows`)
+      .set(as(owner))
+      .send({ name: "Flujo", definition: { steps: steps(ids) } });
+    return { ...fixture, ids, workflow };
+  }
+
+  test("un bucle deja un caso por elemento, no uno que esconde cuarenta resultados", async () => {
+    const flow = await flowOf((ids) => [
+      { id: "crear", requestTemplateId: ids.create },
+      { id: "listar", requestTemplateId: ids.list, dependsOn: ["crear"] },
+      {
+        id: "leer",
+        requestTemplateId: ids.read,
+        dependsOn: ["listar"],
+        forEach: { from: "listar", path: "data", as: "item", max: 10 },
+      },
+    ]);
+    assert.equal(flow.workflow.status, 201, JSON.stringify(flow.workflow.body));
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflow.body.workflowId,
+    });
+    // La semilla del destino más la que creó el flujo: dos elementos, dos casos, cada uno con su
+    // petición y su veredicto.
+    const iterations = (run.cases as { scenarioId: string; status: string }[]).filter((item) =>
+      item.scenarioId.includes(":leer#"),
+    );
+    assert.equal(
+      iterations.length,
+      2,
+      JSON.stringify(run.cases.map((item: { scenarioId: string }) => item.scenarioId)),
+    );
+    assert.deepEqual(new Set(iterations.map((item) => item.status)), new Set(["passed"]));
+    await flow.target.stop();
+  });
+
+  test("un bucle sobre una lista vacía es un caso saltado, no silencio", async () => {
+    const flow = await flowOf((ids) => [
+      { id: "listar", requestTemplateId: ids.list },
+      {
+        id: "leer",
+        requestTemplateId: ids.read,
+        dependsOn: ["listar"],
+        // Una ruta que no lleva a una lista: se camina cero veces y se dice.
+        forEach: { from: "listar", path: "data.0.name", as: "item" },
+      },
+    ]);
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflow.body.workflowId,
+    });
+    assert.equal(run.cases[1].status, "skipped");
+    await flow.target.stop();
+  });
+
+  test("una condición que no se cumple salta el paso y no lo pone en rojo", async () => {
+    const flow = await flowOf((ids) => [
+      { id: "listar", requestTemplateId: ids.list },
+      {
+        id: "crear",
+        requestTemplateId: ids.create,
+        dependsOn: ["listar"],
+        runIf: { from: "listar", check: { source: "body", path: "data", operator: "has_length", value: 99 } },
+      },
+    ]);
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflow.body.workflowId,
+    });
+    // Saltado y no fallido: «no había nada que borrar» es un flujo comportándose bien, y un caso
+    // rojo diría lo contrario.
+    assert.equal(run.cases[1].status, "skipped");
+    assert.equal(run.status, "passed");
+    await flow.target.stop();
+  });
+
+  test("una condición solo puede leer un paso del que el suyo depende", async () => {
+    const flow = await flowOf((ids) => [
+      { id: "listar", requestTemplateId: ids.list },
+      {
+        id: "crear",
+        requestTemplateId: ids.create,
+        runIf: { from: "listar", check: { source: "status", operator: "equals", value: 200 } },
+      },
+    ]);
+    // Sin la arista no hay garantía de que «listar» haya contestado, y la condición se leería
+    // como falsa sin que nadie lo pueda ver.
+    assert.equal(flow.workflow.status, 422, JSON.stringify(flow.workflow.body));
+    await flow.target.stop();
+  });
+
+  test("una espera retrasa el paso lo que dice", async () => {
+    const flow = await flowOf((ids) => [
+      { id: "listar", requestTemplateId: ids.list },
+      { id: "crear", requestTemplateId: ids.create, dependsOn: ["listar"], waitMs: 400 },
+    ]);
+    const started = Date.now();
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflow.body.workflowId,
+    });
+    assert.equal(run.status, "passed");
+    assert.ok(Date.now() - started >= 350, "la corrida no esperó");
+    await flow.target.stop();
+  });
+
+  test("una variable dice de dónde viene: del entorno o de un paso", async () => {
+    const flow = await flowOf(
+      (ids) => [
+        {
+          id: "crear",
+          requestTemplateId: ids.create,
+          captures: [{ variable: "thingId", from: "body", path: "data.id" }],
+        },
+        { id: "leer", requestTemplateId: ids.readCaptured, dependsOn: ["crear"] },
+      ],
+      { entityName: "del-entorno" },
+    );
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflow.body.workflowId,
+    });
+    // `{{crear.thingId}}` no puede ser por accidente la variable del entorno ni la de otro paso,
+    // que es justo lo que un mapa plano no podía decir.
+    assert.equal(run.cases[1].status, "passed", JSON.stringify(run.totals));
+
+    const detail = await api().get(`${flow.projectBase}/runs/${run.id}/cases/${run.cases[0].id}`).set(as(owner));
+    assert.deepEqual(detail.body.steps[0].request.body, { name: "del-entorno", size: 7 });
+    await flow.target.stop();
+  });
+});

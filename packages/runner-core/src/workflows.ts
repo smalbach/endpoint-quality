@@ -72,9 +72,54 @@ export type StepRetry = {
   onStatus?: number[];
 };
 
+/**
+ * Whether this step runs at all, decided by something a previous one answered.
+ *
+ * The reason it is a property of the step and not a node of its own: a condition node has no
+ * request, and every other thing a run records — a case, its steps, its timings, its verdict — is
+ * about a request that was made. A node that produces a case with no HTTP in it would be a row
+ * that means something different from every other row in the table.
+ *
+ * `from` has to be a dependency. That is not a formality: without the edge there is no guarantee
+ * the step it names has answered yet, and a condition over a response that does not exist would
+ * quietly read as false.
+ */
+export type StepCondition = {
+  /** The step whose response decides. Must be in `dependsOn`. */
+  from: string;
+  check: StepCheck;
+};
+
+/**
+ * Running one step once per element of a list a previous step returned.
+ *
+ * Each element is its own case, with its own request, response and verdict — «los 40 productos
+ * del catálogo responden» is forty findings, not one, and a single case hiding thirty-nine
+ * results is exactly the report this product exists to replace.
+ *
+ * `max` is not optional in spirit: the list comes from the target, so without a ceiling the size
+ * of a run is decided by whoever is being tested.
+ */
+export type StepForEach = {
+  /** The step whose response carries the list. Must be in `dependsOn`. */
+  from: string;
+  /** Dot path to the array inside that response's body, for example `data`. */
+  path: string;
+  /** What each element is bound to. An object binds field by field as well: `item.id`. */
+  as: string;
+  /** Hard ceiling on iterations. */
+  max?: number;
+};
+
 export type WorkflowStep = {
   id: string;
   requestTemplateId: string;
+  /** Wait before this step, in milliseconds. For the target that accepts a write and takes a
+   * moment to make it readable — a retry says «that failure was not real», and this says «it was
+   * not time yet», which are different claims about the same target. */
+  waitMs?: number;
+  runIf?: StepCondition;
+  forEach?: StepForEach;
   /** The visual editor stores graph edges explicitly. Empty means this is a start node. */
   dependsOn?: string[];
   captures?: WorkflowCapture[];
@@ -109,10 +154,59 @@ export function orderWorkflowSteps(workflow: WorkflowDocument, label = "el flujo
   return ordered;
 }
 
+/**
+ * The environment's variables, also reachable under `env.`.
+ *
+ * Namespaces without a resolver: `{{env.baseId}}` is just another name in the same flat map, and
+ * the substitution that already existed finds it. That is the whole implementation, and it is the
+ * reason the engine did not have to learn a second syntax — a name with a dot in it was always a
+ * legal name.
+ *
+ * What the prefix buys is the one thing the flat map could not say: **where a value came from**.
+ * In a flow of nine steps, `{{userId}}` might be the environment's or a capture from the second
+ * step, and the two behave differently when a run is repeated. `{{env.userId}}` cannot be either
+ * one by accident.
+ */
+export function withEnvironmentNamespace(variables: RuntimeVariables): RuntimeVariables {
+  return {
+    ...variables,
+    ...Object.fromEntries(Object.entries(variables).map(([name, value]) => [`env.${name}`, value])),
+  };
+}
+
+/**
+ * Binds one element of a looped list.
+ *
+ * An object binds field by field — `item.id`, `item.name` — because that is what a step does with
+ * it, and the whole element is bound to the bare name as JSON for the request that wants the lot.
+ * A nested object under a field is not flattened further: two levels is the depth a request body
+ * template actually uses, and every level after that is a path nobody can read.
+ */
+export function bindElement(as: string, element: unknown): RuntimeVariables {
+  if (element === null || element === undefined) return { [as]: "" };
+  if (typeof element !== "object") return { [as]: String(element) };
+  const bound: RuntimeVariables = { [as]: JSON.stringify(element) };
+  if (Array.isArray(element)) return bound;
+  for (const [key, value] of Object.entries(element as Record<string, unknown>)) {
+    if (value !== null && typeof value === "object") continue;
+    bound[`${as}.${key}`] = value === null || value === undefined ? "" : String(value);
+  }
+  return bound;
+}
+
+/** The array a loop walks, or `null` when the path does not lead to one. */
+export function listAt(body: unknown, path: string): unknown[] | null {
+  const found = valueAtPath(body, path);
+  return Array.isArray(found) ? found : null;
+}
+
 export function applyCaptures(
   captures: WorkflowCapture[],
   response: { body: unknown; headers: Record<string, string> },
   variables: RuntimeVariables,
+  /** The step doing the capturing. Given, the value is also published as `<stepId>.<name>`, which
+   * is what lets a later step say which answer it means when two steps capture the same name. */
+  stepId?: string,
 ): { captured: string[]; missing: string[] } {
   const captured: string[] = [];
   const missing: string[] = [];
@@ -128,6 +222,7 @@ export function applyCaptures(
       continue;
     }
     variables[capture.variable] = String(value);
+    if (stepId) variables[`${stepId}.${capture.variable}`] = String(value);
     captured.push(capture.variable);
   }
   return { captured, missing };

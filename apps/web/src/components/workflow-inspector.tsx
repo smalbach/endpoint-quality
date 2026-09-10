@@ -296,6 +296,7 @@ function StepInspector({
         </Button>
       )}
 
+      <ScheduleEditor step={step} canEdit={canEdit} onChange={onChange} />
       <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />
       <FailureEditor step={step} canEdit={canEdit} onChange={onChange} />
 
@@ -533,6 +534,238 @@ function FailureEditor({
           <p className="text-[11px] leading-5 text-amber-700">
             Un paso que escribe y se reintenta sin acotar por estado escribe una vez por intento.
           </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Cuándo se ejecuta este paso, y cuántas veces.
+ *
+ * Los dos leen la respuesta de otro paso, y los dos exigen que ese paso sea una dependencia: sin
+ * la arista no hay garantía de que haya contestado, y la lectura volvería vacía de una forma que
+ * se parece a una condición falsa o a una lista sin elementos. Por eso el desplegable solo ofrece
+ * los pasos de los que este ya depende, en vez de ofrecerlos todos y dejar que el servidor
+ * conteste un 422.
+ */
+function ScheduleEditor({
+  step,
+  canEdit,
+  onChange,
+}: {
+  step: WorkflowStepView;
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+}) {
+  const sources = step.dependsOn ?? [];
+  const loop = step.forEach;
+  const condition = step.runIf;
+
+  return (
+    <div className="mt-4 border-t border-slate-100 pt-3">
+      <p className="text-xs font-semibold text-slate-800">Cuándo y cuántas veces</p>
+
+      <Field
+        label="Esperar antes (ms)"
+        hint="Para el destino que acepta la escritura y tarda un momento en poder leerla."
+      >
+        <input
+          className={inputClass}
+          type="number"
+          min={0}
+          max={60000}
+          value={step.waitMs ?? 0}
+          disabled={!canEdit}
+          onChange={(event) =>
+            onChange({ ...step, waitMs: Number(event.target.value) > 0 ? Number(event.target.value) : undefined })
+          }
+        />
+      </Field>
+
+      {sources.length === 0 ? (
+        <p className="mt-2 text-[11px] text-slate-400">
+          Conecta este paso a otro para poder condicionarlo o recorrer su lista.
+        </p>
+      ) : (
+        <>
+          <label className="mt-3 flex items-center gap-1.5 text-[11px] font-semibold text-slate-700">
+            <input
+              type="checkbox"
+              checked={Boolean(condition)}
+              disabled={!canEdit}
+              onChange={(event) =>
+                onChange({
+                  ...step,
+                  runIf: event.target.checked
+                    ? { from: sources[0], check: { source: "status", operator: "equals", value: "200" } }
+                    : undefined,
+                })
+              }
+            />
+            Solo si…
+          </label>
+          {condition && (
+            <div className="mt-2 rounded-lg border border-slate-200 p-2">
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Del paso">
+                  <select
+                    className={inputClass}
+                    value={condition.from}
+                    disabled={!canEdit}
+                    onChange={(event) => onChange({ ...step, runIf: { ...condition, from: event.target.value } })}
+                  >
+                    {sources.map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Origen">
+                  <select
+                    className={inputClass}
+                    value={condition.check.source}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      onChange({
+                        ...step,
+                        runIf: {
+                          ...condition,
+                          check: { ...condition.check, source: event.target.value as StepCheckView["source"] },
+                        },
+                      })
+                    }
+                  >
+                    {CHECK_SOURCES.map((source) => (
+                      <option key={source} value={source}>
+                        {source}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <div className="grid grid-cols-[1fr_8rem_1fr] gap-2">
+                <input
+                  aria-label="Ruta de la condición"
+                  className={inputClass}
+                  value={condition.check.path ?? ""}
+                  placeholder="data.0.id"
+                  disabled={!canEdit || condition.check.source === "status" || condition.check.source === "durationMs"}
+                  onChange={(event) =>
+                    onChange({
+                      ...step,
+                      runIf: { ...condition, check: { ...condition.check, path: event.target.value } },
+                    })
+                  }
+                />
+                <select
+                  aria-label="Operador de la condición"
+                  className={inputClass}
+                  value={condition.check.operator}
+                  disabled={!canEdit}
+                  onChange={(event) =>
+                    onChange({
+                      ...step,
+                      runIf: { ...condition, check: { ...condition.check, operator: event.target.value } },
+                    })
+                  }
+                >
+                  {CHECK_OPERATORS.map((operator) => (
+                    <option key={operator} value={operator}>
+                      {operator}
+                    </option>
+                  ))}
+                </select>
+                {!WITHOUT_OPERAND.includes(condition.check.operator) && (
+                  <input
+                    aria-label="Valor de la condición"
+                    className={inputClass}
+                    value={condition.check.value === undefined ? "" : String(condition.check.value)}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      onChange({
+                        ...step,
+                        runIf: { ...condition, check: { ...condition.check, value: event.target.value } },
+                      })
+                    }
+                  />
+                )}
+              </div>
+              <p className="text-[11px] leading-5 text-slate-500">
+                Si no se cumple, el paso queda <span className="font-medium">saltado</span>, no en rojo, y lo que
+                dependa de él se ejecuta igual.
+              </p>
+            </div>
+          )}
+
+          <label className="mt-3 flex items-center gap-1.5 text-[11px] font-semibold text-slate-700">
+            <input
+              type="checkbox"
+              checked={Boolean(loop)}
+              disabled={!canEdit}
+              onChange={(event) =>
+                onChange({
+                  ...step,
+                  forEach: event.target.checked ? { from: sources[0], path: "data", as: "item", max: 50 } : undefined,
+                })
+              }
+            />
+            Una vez por elemento de…
+          </label>
+          {loop && (
+            <div className="mt-2 rounded-lg border border-slate-200 p-2">
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Lista del paso">
+                  <select
+                    className={inputClass}
+                    value={loop.from}
+                    disabled={!canEdit}
+                    onChange={(event) => onChange({ ...step, forEach: { ...loop, from: event.target.value } })}
+                  >
+                    {sources.map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Ruta">
+                  <input
+                    className={inputClass}
+                    value={loop.path}
+                    placeholder="data"
+                    disabled={!canEdit}
+                    onChange={(event) => onChange({ ...step, forEach: { ...loop, path: event.target.value } })}
+                  />
+                </Field>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Se llama" hint="Un objeto también se ata campo a campo: item.id.">
+                  <input
+                    className={`${inputClass} font-mono text-xs`}
+                    value={loop.as}
+                    disabled={!canEdit}
+                    onChange={(event) => onChange({ ...step, forEach: { ...loop, as: event.target.value } })}
+                  />
+                </Field>
+                <Field label="Como mucho">
+                  <input
+                    className={inputClass}
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={loop.max ?? 50}
+                    disabled={!canEdit}
+                    onChange={(event) => onChange({ ...step, forEach: { ...loop, max: Number(event.target.value) } })}
+                  />
+                </Field>
+              </div>
+              <p className="text-[11px] leading-5 text-slate-500">
+                Cada elemento es su propio caso. El tope no es una formalidad: la lista la decide el destino.
+              </p>
+            </div>
+          )}
         </>
       )}
     </div>

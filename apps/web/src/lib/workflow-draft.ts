@@ -105,6 +105,8 @@ export function toNodes(steps: WorkflowStepView[], templates: RequestTemplateVie
         path: template ? (operationById.get(template.operationId)?.path ?? template.operationId) : "?",
         captures: step.captures?.length ?? 0,
         checks: step.checks?.length ?? 0,
+        loops: Boolean(step.forEach),
+        conditional: Boolean(step.runIf),
       },
     };
   });

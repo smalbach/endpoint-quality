@@ -88,6 +88,18 @@ export const workflowStepSchema = z.object({
   requestTemplateId: z.string().uuid(),
   dependsOn: z.array(z.string()).optional(),
   captures: z.array(workflowCaptureSchema).optional(),
+  waitMs: z.number().int().min(0).max(60_000).optional(),
+  runIf: z.object({ from: z.string().min(1).max(60), check: stepCheckSchema }).optional(),
+  forEach: z
+    .object({
+      from: z.string().min(1).max(60),
+      path: z.string().min(1).max(500),
+      as: z.string().regex(VARIABLE_NAME, "nombre de variable inválido"),
+      // Capped in the schema and not only at run time: the list comes from the target, so the
+      // ceiling has to be something the target cannot move.
+      max: z.number().int().min(1).max(200).optional(),
+    })
+    .optional(),
   checks: z.array(stepCheckSchema).max(50).optional(),
   retry: stepRetrySchema.optional(),
   onError: z.enum(STEP_ON_ERROR).optional(),
@@ -114,6 +126,29 @@ export const workflowDocumentSchema = z
             code: "custom",
             message: `el paso depende de un id inexistente: ${dependency}`,
             path: ["steps", index, "dependsOn"],
+          });
+        }
+      }
+
+      // A condition or a loop reads the answer of another step, so that step has to have answered.
+      // The dependency is what guarantees it: without the edge the order is not defined, and the
+      // read would come back empty in a way that looks like a false condition or an empty list.
+      for (const [field, reference] of [
+        ["runIf", step.runIf?.from],
+        ["forEach", step.forEach?.from],
+      ] as const) {
+        if (!reference) continue;
+        if (!ids.has(reference)) {
+          context.addIssue({
+            code: "custom",
+            message: `${field} apunta a un paso inexistente: ${reference}`,
+            path: ["steps", index, field, "from"],
+          });
+        } else if (!(step.dependsOn ?? []).includes(reference)) {
+          context.addIssue({
+            code: "custom",
+            message: `${field} solo puede leer un paso del que este depende`,
+            path: ["steps", index, field, "from"],
           });
         }
       }

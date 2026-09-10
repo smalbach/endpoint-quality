@@ -27,6 +27,8 @@ type StepNodeData = {
   expectedStatus: number;
   captures: number;
   checks: number;
+  loops: boolean;
+  conditional: boolean;
 };
 
 function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
@@ -41,6 +43,10 @@ function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
       <div className="flex items-center gap-2">
         <Badge className={cn("w-14 justify-center", methodStyle(data.method))}>{data.method}</Badge>
         <span className="truncate text-xs font-semibold text-slate-800">{data.name}</span>
+        {/* Un paso que a veces no se ejecuta y uno que se ejecuta N veces no se leen igual que el
+            resto, y el lienzo es donde se mira el flujo antes de abrir ningún panel. */}
+        {data.conditional && <span title="Condicional">◇</span>}
+        {data.loops && <span title="Una vez por elemento">↻</span>}
       </div>
       <p className="mt-2 truncate font-mono text-[10px] text-slate-500">{data.path}</p>
       <div className="mt-2 flex justify-between text-[10px] text-slate-400">
