@@ -12,11 +12,15 @@ const helmet_1 = __importDefault(require("helmet"));
 const app_module_1 = require("./app.module");
 const env_1 = require("./shared/config/env");
 const common_2 = require("@nestjs/common");
+const body_limits_1 = require("./shared/http/body-limits");
 async function bootstrap() {
     const app = await core_1.NestFactory.create(app_module_1.AppModule, { bufferLogs: true });
     const env = app.get(env_1.ENV);
     app.use((0, helmet_1.default)());
     app.use((0, cookie_parser_1.default)());
+    // Express defaults to 100 KB, which is smaller than a real OpenAPI document: Digital
+    // Catalog's is 118 KB. Raised to the figure the DTO validates against so the two agree.
+    app.useBodyParser("json", { limit: body_limits_1.MAX_JSON_BODY });
     app.enableCors({ origin: env.CORS_ORIGINS.split(",").map((origin) => origin.trim()), credentials: true });
     app.useGlobalPipes(new common_1.ValidationPipe({
         whitelist: true,

@@ -11,7 +11,10 @@ exports.buildDataSourceOptions = buildDataSourceOptions;
 const typeorm_1 = require("typeorm");
 const entities_1 = require("./entities");
 const _1700000000000_InitialSchema_1 = require("./migrations/1700000000000-InitialSchema");
-exports.MIGRATIONS = [_1700000000000_InitialSchema_1.InitialSchema1700000000000];
+const _1700000001000_ProjectsAndSpecs_1 = require("./migrations/1700000001000-ProjectsAndSpecs");
+// Ordered. TypeORM runs them by the timestamp in the class name, and the second one adds a
+// foreign key into a table the first creates.
+exports.MIGRATIONS = [_1700000000000_InitialSchema_1.InitialSchema1700000000000, _1700000001000_ProjectsAndSpecs_1.ProjectsAndSpecs1700000001000];
 function buildDataSourceOptions(databaseUrl) {
     return {
         type: "postgres",

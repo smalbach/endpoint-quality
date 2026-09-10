@@ -14,6 +14,10 @@ import type { ApiToken, RefreshToken, User } from "@/modules/auth/domain/model";
 import type { ApiTokenRepositoryPort, RefreshTokenRepositoryPort, UserRepositoryPort } from "@/modules/auth/domain/ports";
 import type { Invitation, Membership, Organization } from "@/modules/iam/domain/model";
 import type { InvitationRepositoryPort, MembershipRepositoryPort, OrganizationRepositoryPort } from "@/modules/iam/domain/ports";
+import type { Project } from "@/modules/projects/domain/model";
+import type { ProjectRepositoryPort } from "@/modules/projects/domain/ports";
+import type { SpecOperation, SpecSource, SpecVersion, SpecVersionSummary } from "@/modules/specs/domain/model";
+import type { SpecRepositoryPort } from "@/modules/specs/domain/ports";
 
 export class InMemoryUserRepository implements UserRepositoryPort {
   readonly rows = new Map<string, User>();
@@ -135,5 +139,57 @@ export class InMemoryInvitationRepository implements InvitationRepositoryPort {
   }
   async save(invitation: Invitation): Promise<void> {
     this.rows.set(invitation.id, { ...invitation });
+  }
+}
+
+export class InMemoryProjectRepository implements ProjectRepositoryPort {
+  readonly rows = new Map<string, Project>();
+
+  async findById(id: string): Promise<Project | null> {
+    return this.rows.get(id) ?? null;
+  }
+  async findBySlug(organizationId: string, slug: string): Promise<Project | null> {
+    return [...this.rows.values()].find((project) => project.organizationId === organizationId && project.slug === slug) ?? null;
+  }
+  async listForOrganization(organizationId: string, includeArchived: boolean): Promise<Project[]> {
+    return [...this.rows.values()].filter((project) => project.organizationId === organizationId && (includeArchived || !project.archivedAt));
+  }
+  async save(project: Project): Promise<void> {
+    this.rows.set(project.id, { ...project });
+  }
+}
+
+export class InMemorySpecRepository implements SpecRepositoryPort {
+  readonly versions = new Map<string, SpecVersion>();
+  readonly operations = new Map<string, SpecOperation[]>();
+  readonly sources = new Map<string, SpecSource>();
+
+  async findVersionById(id: string): Promise<SpecVersion | null> {
+    return this.versions.get(id) ?? null;
+  }
+  async findVersionByHash(projectId: string, hash: string): Promise<SpecVersion | null> {
+    return [...this.versions.values()].find((version) => version.projectId === projectId && version.hash === hash) ?? null;
+  }
+  async listVersions(projectId: string): Promise<SpecVersionSummary[]> {
+    return [...this.versions.values()]
+      .filter((version) => version.projectId === projectId)
+      .sort((a, b) => b.importedAt.getTime() - a.importedAt.getTime())
+      // `raw` is dropped here too, so a test that asserts the listing never ships the document
+      // is checking the same contract the SQL repository implements with a `select`.
+      .map(({ raw, ...summary }) => summary);
+  }
+  async saveVersion(version: SpecVersion, operations: SpecOperation[]): Promise<void> {
+    this.versions.set(version.id, { ...version });
+    this.operations.set(version.id, operations.map((operation) => ({ ...operation })));
+  }
+  async listOperations(specVersionId: string): Promise<SpecOperation[]> {
+    return [...(this.operations.get(specVersionId) ?? [])].sort((a, b) => a.position - b.position);
+  }
+  async saveSource(source: SpecSource): Promise<void> {
+    this.sources.set(source.id, { ...source });
+  }
+  async deleteVersion(id: string): Promise<void> {
+    this.versions.delete(id);
+    this.operations.delete(id);
   }
 }

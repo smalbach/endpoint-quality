@@ -17,6 +17,8 @@ const clock_port_1 = require("./shared/clock/clock.port");
 const problem_details_filter_1 = require("./shared/errors/problem-details.filter");
 const auth_module_1 = require("./modules/auth/auth.module");
 const iam_module_1 = require("./modules/iam/iam.module");
+const projects_module_1 = require("./modules/projects/projects.module");
+const specs_module_1 = require("./modules/specs/specs.module");
 const auth_guard_1 = require("./modules/auth/infrastructure/guards/auth.guard");
 const health_controller_1 = require("./shared/health.controller");
 /**
@@ -38,6 +40,8 @@ exports.AppModule = AppModule = __decorate([
             throttler_1.ThrottlerModule.forRoot([{ name: "default", ttl: 60_000, limit: 120 }]),
             auth_module_1.AuthModule,
             iam_module_1.IamModule,
+            projects_module_1.ProjectsModule,
+            specs_module_1.SpecsModule,
         ],
         controllers: [health_controller_1.HealthController],
         providers: [

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.InMemoryInvitationRepository = exports.InMemoryMembershipRepository = exports.InMemoryOrganizationRepository = exports.InMemoryApiTokenRepository = exports.InMemoryRefreshTokenRepository = exports.InMemoryUserRepository = void 0;
+exports.InMemorySpecRepository = exports.InMemoryProjectRepository = exports.InMemoryInvitationRepository = exports.InMemoryMembershipRepository = exports.InMemoryOrganizationRepository = exports.InMemoryApiTokenRepository = exports.InMemoryRefreshTokenRepository = exports.InMemoryUserRepository = void 0;
 class InMemoryUserRepository {
     rows = new Map();
     async findById(id) {
@@ -117,4 +117,54 @@ class InMemoryInvitationRepository {
     }
 }
 exports.InMemoryInvitationRepository = InMemoryInvitationRepository;
+class InMemoryProjectRepository {
+    rows = new Map();
+    async findById(id) {
+        return this.rows.get(id) ?? null;
+    }
+    async findBySlug(organizationId, slug) {
+        return [...this.rows.values()].find((project) => project.organizationId === organizationId && project.slug === slug) ?? null;
+    }
+    async listForOrganization(organizationId, includeArchived) {
+        return [...this.rows.values()].filter((project) => project.organizationId === organizationId && (includeArchived || !project.archivedAt));
+    }
+    async save(project) {
+        this.rows.set(project.id, { ...project });
+    }
+}
+exports.InMemoryProjectRepository = InMemoryProjectRepository;
+class InMemorySpecRepository {
+    versions = new Map();
+    operations = new Map();
+    sources = new Map();
+    async findVersionById(id) {
+        return this.versions.get(id) ?? null;
+    }
+    async findVersionByHash(projectId, hash) {
+        return [...this.versions.values()].find((version) => version.projectId === projectId && version.hash === hash) ?? null;
+    }
+    async listVersions(projectId) {
+        return [...this.versions.values()]
+            .filter((version) => version.projectId === projectId)
+            .sort((a, b) => b.importedAt.getTime() - a.importedAt.getTime())
+            // `raw` is dropped here too, so a test that asserts the listing never ships the document
+            // is checking the same contract the SQL repository implements with a `select`.
+            .map(({ raw, ...summary }) => summary);
+    }
+    async saveVersion(version, operations) {
+        this.versions.set(version.id, { ...version });
+        this.operations.set(version.id, operations.map((operation) => ({ ...operation })));
+    }
+    async listOperations(specVersionId) {
+        return [...(this.operations.get(specVersionId) ?? [])].sort((a, b) => a.position - b.position);
+    }
+    async saveSource(source) {
+        this.sources.set(source.id, { ...source });
+    }
+    async deleteVersion(id) {
+        this.versions.delete(id);
+        this.operations.delete(id);
+    }
+}
+exports.InMemorySpecRepository = InMemorySpecRepository;
 //# sourceMappingURL=in-memory-repositories.js.map

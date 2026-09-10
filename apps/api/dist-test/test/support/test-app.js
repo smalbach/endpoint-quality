@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.TEST_ENV = void 0;
+exports.TEST_ENV = exports.StubSafeFetch = void 0;
 exports.createTestApp = createTestApp;
 /**
  * The whole application, wired to in-memory adapters.
@@ -27,6 +27,7 @@ const cqrs_1 = require("@nestjs/cqrs");
 const jwt_1 = require("@nestjs/jwt");
 const testing_1 = require("@nestjs/testing");
 const cookie_parser_1 = __importDefault(require("cookie-parser"));
+const body_limits_1 = require("../../src/shared/http/body-limits");
 const env_1 = require("../../src/shared/config/env");
 const clock_port_1 = require("../../src/shared/clock/clock.port");
 const password_hasher_1 = require("../../src/shared/crypto/password-hasher");
@@ -40,7 +41,35 @@ const auth_module_1 = require("../../src/modules/auth/auth.module");
 const ports_2 = require("../../src/modules/iam/domain/ports");
 const organizations_controller_1 = require("../../src/modules/iam/presentation/organizations.controller");
 const iam_module_1 = require("../../src/modules/iam/iam.module");
+const ports_3 = require("../../src/modules/projects/domain/ports");
+const projects_controller_1 = require("../../src/modules/projects/presentation/projects.controller");
+const projects_module_1 = require("../../src/modules/projects/projects.module");
+const ports_4 = require("../../src/modules/specs/domain/ports");
+const specs_module_1 = require("../../src/modules/specs/specs.module");
+const safe_fetch_1 = require("../../src/shared/http/safe-fetch");
 const in_memory_repositories_1 = require("./in-memory-repositories");
+/**
+ * A stand-in for the network.
+ *
+ * The SSRF guard has its own suite against a real loopback server; here what matters is that the
+ * import command asks for a URL and gets a document back. Registering responses by URL keeps the
+ * HTTP tests from depending on anything being reachable.
+ */
+class StubSafeFetch {
+    responses = new Map();
+    requested = [];
+    reply(url, body, status = 200) {
+        this.responses.set(url, { status, body });
+    }
+    async get(url) {
+        this.requested.push(url);
+        const stored = this.responses.get(url);
+        if (!stored)
+            throw new Error(`El destino ${url} está bloqueado: sin respuesta registrada en la prueba`);
+        return { status: stored.status, headers: { "content-type": "application/yaml" }, body: stored.body, finalUrl: url, durationMs: 1 };
+    }
+}
+exports.StubSafeFetch = StubSafeFetch;
 exports.TEST_ENV = {
     NODE_ENV: "test",
     DATABASE_URL: "postgres://unused/unused",
@@ -59,10 +88,13 @@ async function createTestApp() {
         organizations: new in_memory_repositories_1.InMemoryOrganizationRepository(),
         memberships: new in_memory_repositories_1.InMemoryMembershipRepository(),
         invitations: new in_memory_repositories_1.InMemoryInvitationRepository(),
+        projects: new in_memory_repositories_1.InMemoryProjectRepository(),
+        specs: new in_memory_repositories_1.InMemorySpecRepository(),
     };
+    const http = new StubSafeFetch();
     const moduleRef = await testing_1.Test.createTestingModule({
         imports: [cqrs_1.CqrsModule.forRoot(), jwt_1.JwtModule.register({})],
-        controllers: [auth_controller_1.AuthController, organizations_controller_1.OrganizationsController],
+        controllers: [auth_controller_1.AuthController, organizations_controller_1.OrganizationsController, projects_controller_1.ProjectsController],
         providers: [
             { provide: env_1.ENV, useValue: env },
             { provide: clock_port_1.CLOCK, useValue: clock },
@@ -74,10 +106,17 @@ async function createTestApp() {
             { provide: ports_2.ORGANIZATION_REPOSITORY, useValue: repositories.organizations },
             { provide: ports_2.MEMBERSHIP_REPOSITORY, useValue: repositories.memberships },
             { provide: ports_2.INVITATION_REPOSITORY, useValue: repositories.invitations },
+            { provide: ports_3.PROJECT_REPOSITORY, useValue: repositories.projects },
+            { provide: ports_4.SPEC_REPOSITORY, useValue: repositories.specs },
+            { provide: safe_fetch_1.SAFE_FETCH, useValue: http },
             ...auth_module_1.AUTH_COMMAND_HANDLERS,
             ...auth_module_1.AUTH_QUERY_HANDLERS,
             ...iam_module_1.IAM_COMMAND_HANDLERS,
             ...iam_module_1.IAM_QUERY_HANDLERS,
+            ...projects_module_1.PROJECT_COMMAND_HANDLERS,
+            ...projects_module_1.PROJECT_QUERY_HANDLERS,
+            ...specs_module_1.SPEC_COMMAND_HANDLERS,
+            ...specs_module_1.SPEC_QUERY_HANDLERS,
             // The global guard and filter are registered exactly as `AppModule` does, because half of
             // what these tests check is that the wiring protects what it should. Throttling is left
             // out: it is the one piece whose behaviour is a rate, and asserting it here would make
@@ -89,8 +128,11 @@ async function createTestApp() {
     }).compile();
     const app = moduleRef.createNestApplication({ logger: false });
     app.use((0, cookie_parser_1.default)());
+    // Set through the same call `main.ts` uses, against the same constant. If the two drifted, a
+    // contract that imports in production would fail here — or, worse, the other way round.
+    app.useBodyParser("json", { limit: body_limits_1.MAX_JSON_BODY });
     app.useGlobalPipes(new common_1.ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true, errorHttpStatusCode: common_1.HttpStatus.UNPROCESSABLE_ENTITY }));
     await app.init();
-    return { app, clock, env, repositories, close: () => app.close() };
+    return { app, clock, env, repositories, http, close: () => app.close() };
 }
 //# sourceMappingURL=test-app.js.map

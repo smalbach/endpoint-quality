@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { Logger, ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
+import type { NestExpressApplication } from "@nestjs/platform-express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
@@ -8,13 +9,17 @@ import helmet from "helmet";
 import { AppModule } from "./app.module";
 import { ENV, type Env } from "./shared/config/env";
 import { HttpStatus } from "@nestjs/common";
+import { MAX_JSON_BODY } from "./shared/http/body-limits";
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
   const env = app.get<Env>(ENV);
 
   app.use(helmet());
   app.use(cookieParser());
+  // Express defaults to 100 KB, which is smaller than a real OpenAPI document: Digital
+  // Catalog's is 118 KB. Raised to the figure the DTO validates against so the two agree.
+  app.useBodyParser("json", { limit: MAX_JSON_BODY });
   app.enableCors({ origin: env.CORS_ORIGINS.split(",").map((origin) => origin.trim()), credentials: true });
 
   app.useGlobalPipes(

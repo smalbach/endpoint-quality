@@ -36,6 +36,8 @@ const TITLE_BY_STATUS = {
     404: "Recurso no encontrado",
     409: "Conflicto",
     422: "Entidad no procesable",
+    413: "Cuerpo demasiado grande",
+    415: "Tipo de contenido no soportado",
     429: "Demasiadas solicitudes",
     500: "Error interno",
 };
@@ -83,6 +85,19 @@ let ProblemDetailsFilter = ProblemDetailsFilter_1 = class ProblemDetailsFilter {
                 ...(messages.length ? { errors: messages.map(namedField) } : {}),
             };
         }
+        // `body-parser` rejects an oversized body with a plain Error carrying `status`, not with a
+        // Nest HttpException, so without this branch "your document is too large" arrives as an
+        // internal error and the caller has no way to know what to do about it.
+        if (isHttpishError(exception)) {
+            const status = exception.status;
+            return {
+                type: `https://endpoint-quality.dev/problems/${status}`,
+                title: TITLE_BY_STATUS[status] ?? "Error",
+                status,
+                detail: status === 413 ? "El cuerpo de la solicitud supera el tamaño máximo" : exception.message,
+                instance,
+            };
+        }
         return {
             type: "https://endpoint-quality.dev/problems/internal",
             title: TITLE_BY_STATUS[500],
@@ -96,6 +111,14 @@ exports.ProblemDetailsFilter = ProblemDetailsFilter;
 exports.ProblemDetailsFilter = ProblemDetailsFilter = ProblemDetailsFilter_1 = __decorate([
     (0, common_1.Catch)()
 ], ProblemDetailsFilter);
+/** An error from Express middleware: a plain `Error` with a numeric `status`, which is how
+ * `body-parser` reports a payload that is too large or a body that is not valid JSON. */
+function isHttpishError(exception) {
+    if (!(exception instanceof Error))
+        return false;
+    const status = exception.status;
+    return typeof status === "number" && status >= 400 && status < 500;
+}
 /** `class-validator` prefixes its message with the property name; that prefix is the field. */
 function namedField(message) {
     const [first] = message.split(" ");

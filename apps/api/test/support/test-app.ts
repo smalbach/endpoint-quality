@@ -21,6 +21,9 @@ import { JwtModule } from "@nestjs/jwt";
 import { Test } from "@nestjs/testing";
 import type { INestApplication } from "@nestjs/common";
 import cookieParser from "cookie-parser";
+import type { NestExpressApplication } from "@nestjs/platform-express";
+
+import { MAX_JSON_BODY } from "@/shared/http/body-limits";
 
 import { ENV, type Env, loadEnv } from "@/shared/config/env";
 import { CLOCK, FixedClock } from "@/shared/clock/clock.port";
@@ -35,14 +38,45 @@ import { AUTH_COMMAND_HANDLERS, AUTH_QUERY_HANDLERS } from "@/modules/auth/auth.
 import { INVITATION_REPOSITORY, MEMBERSHIP_REPOSITORY, ORGANIZATION_REPOSITORY } from "@/modules/iam/domain/ports";
 import { OrganizationsController } from "@/modules/iam/presentation/organizations.controller";
 import { IAM_COMMAND_HANDLERS, IAM_QUERY_HANDLERS } from "@/modules/iam/iam.module";
+import { PROJECT_REPOSITORY } from "@/modules/projects/domain/ports";
+import { ProjectsController } from "@/modules/projects/presentation/projects.controller";
+import { PROJECT_COMMAND_HANDLERS, PROJECT_QUERY_HANDLERS } from "@/modules/projects/projects.module";
+import { SPEC_REPOSITORY } from "@/modules/specs/domain/ports";
+import { SPEC_COMMAND_HANDLERS, SPEC_QUERY_HANDLERS } from "@/modules/specs/specs.module";
+import { SAFE_FETCH, type SafeFetchPort, type SafeFetchResult } from "@/shared/http/safe-fetch";
 import {
   InMemoryApiTokenRepository,
   InMemoryInvitationRepository,
   InMemoryMembershipRepository,
   InMemoryOrganizationRepository,
   InMemoryRefreshTokenRepository,
+  InMemoryProjectRepository,
+  InMemorySpecRepository,
   InMemoryUserRepository,
 } from "./in-memory-repositories";
+
+/**
+ * A stand-in for the network.
+ *
+ * The SSRF guard has its own suite against a real loopback server; here what matters is that the
+ * import command asks for a URL and gets a document back. Registering responses by URL keeps the
+ * HTTP tests from depending on anything being reachable.
+ */
+export class StubSafeFetch implements SafeFetchPort {
+  readonly responses = new Map<string, { status: number; body: string }>();
+  readonly requested: string[] = [];
+
+  reply(url: string, body: string, status = 200) {
+    this.responses.set(url, { status, body });
+  }
+
+  async get(url: string): Promise<SafeFetchResult> {
+    this.requested.push(url);
+    const stored = this.responses.get(url);
+    if (!stored) throw new Error(`El destino ${url} está bloqueado: sin respuesta registrada en la prueba`);
+    return { status: stored.status, headers: { "content-type": "application/yaml" }, body: stored.body, finalUrl: url, durationMs: 1 };
+  }
+}
 
 export const TEST_ENV: NodeJS.ProcessEnv = {
   NODE_ENV: "test",
@@ -64,7 +98,10 @@ export type TestContext = {
     organizations: InMemoryOrganizationRepository;
     memberships: InMemoryMembershipRepository;
     invitations: InMemoryInvitationRepository;
+    projects: InMemoryProjectRepository;
+    specs: InMemorySpecRepository;
   };
+  http: StubSafeFetch;
   close(): Promise<void>;
 };
 
@@ -78,11 +115,14 @@ export async function createTestApp(): Promise<TestContext> {
     organizations: new InMemoryOrganizationRepository(),
     memberships: new InMemoryMembershipRepository(),
     invitations: new InMemoryInvitationRepository(),
+    projects: new InMemoryProjectRepository(),
+    specs: new InMemorySpecRepository(),
   };
+  const http = new StubSafeFetch();
 
   const moduleRef = await Test.createTestingModule({
     imports: [CqrsModule.forRoot(), JwtModule.register({})],
-    controllers: [AuthController, OrganizationsController],
+    controllers: [AuthController, OrganizationsController, ProjectsController],
     providers: [
       { provide: ENV, useValue: env },
       { provide: CLOCK, useValue: clock },
@@ -94,10 +134,17 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: ORGANIZATION_REPOSITORY, useValue: repositories.organizations },
       { provide: MEMBERSHIP_REPOSITORY, useValue: repositories.memberships },
       { provide: INVITATION_REPOSITORY, useValue: repositories.invitations },
+      { provide: PROJECT_REPOSITORY, useValue: repositories.projects },
+      { provide: SPEC_REPOSITORY, useValue: repositories.specs },
+      { provide: SAFE_FETCH, useValue: http },
       ...AUTH_COMMAND_HANDLERS,
       ...AUTH_QUERY_HANDLERS,
       ...IAM_COMMAND_HANDLERS,
       ...IAM_QUERY_HANDLERS,
+      ...PROJECT_COMMAND_HANDLERS,
+      ...PROJECT_QUERY_HANDLERS,
+      ...SPEC_COMMAND_HANDLERS,
+      ...SPEC_QUERY_HANDLERS,
       // The global guard and filter are registered exactly as `AppModule` does, because half of
       // what these tests check is that the wiring protects what it should. Throttling is left
       // out: it is the one piece whose behaviour is a rate, and asserting it here would make
@@ -108,12 +155,15 @@ export async function createTestApp(): Promise<TestContext> {
     ],
   }).compile();
 
-  const app = moduleRef.createNestApplication({ logger: false });
+  const app = moduleRef.createNestApplication<NestExpressApplication>({ logger: false });
   app.use(cookieParser());
+  // Set through the same call `main.ts` uses, against the same constant. If the two drifted, a
+  // contract that imports in production would fail here — or, worse, the other way round.
+  app.useBodyParser("json", { limit: MAX_JSON_BODY });
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true, errorHttpStatusCode: HttpStatus.UNPROCESSABLE_ENTITY }),
   );
   await app.init();
 
-  return { app, clock, env, repositories, close: () => app.close() };
+  return { app, clock, env, repositories, http, close: () => app.close() };
 }

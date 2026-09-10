@@ -9,6 +9,8 @@ import { CLOCK, SystemClock } from "./shared/clock/clock.port";
 import { ProblemDetailsFilter } from "./shared/errors/problem-details.filter";
 import { AuthModule } from "./modules/auth/auth.module";
 import { IamModule } from "./modules/iam/iam.module";
+import { ProjectsModule } from "./modules/projects/projects.module";
+import { SpecsModule } from "./modules/specs/specs.module";
 import { AuthGuard } from "./modules/auth/infrastructure/guards/auth.guard";
 import { HealthController } from "./shared/health.controller";
 
@@ -27,6 +29,8 @@ import { HealthController } from "./shared/health.controller";
     ThrottlerModule.forRoot([{ name: "default", ttl: 60_000, limit: 120 }]),
     AuthModule,
     IamModule,
+    ProjectsModule,
+    SpecsModule,
   ],
   controllers: [HealthController],
   providers: [

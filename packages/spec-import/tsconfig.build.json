@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // The package is authored as ESM with explicit `.ts` specifiers, which is what lets Node run
+    // its own tests with no build step. `apps/api` is CommonJS, as Nest expects. Rather than
+    // forcing one of the two to change shape, the build emits CJS and
+    // `rewriteRelativeImportExtensions` turns `./parse.ts` into `./parse.js` on the way out.
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "rewriteRelativeImportExtensions": true,
+    "verbatimModuleSyntax": false,
+    "declaration": true,
+    "noEmit": false,
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*.ts"]
+}

@@ -107,3 +107,78 @@ Cuando no hay base alcanzable se saltan imprimiendo el motivo, nunca en silencio
   API y para CI; antes de exponerlo a usuarios finales hace falta el envío real.
 - `SECRETS_KEY` y `AesGcmSecretCipher` existen y están probados, pero nada los usa todavía: son
   para las credenciales de destino de P3.
+
+---
+
+## P2 — El contrato como dato · cerrada
+
+**Alcance**: `packages/spec-import` (OpenAPI 3.0/3.1 → operaciones, drift, huella); módulos
+`projects` y `specs` con importación por URL, upload e inline, versionado, activación y
+comprobación de drift; el guard SSRF que la importación por URL exige.
+
+**Evidencia**
+
+    packages/spec-import $ node --experimental-strip-types --test test/*.test.ts
+    ℹ tests 35   ℹ pass 35   ℹ fail 0
+
+    apps/api $ pnpm test
+    ℹ tests 115  ℹ pass 115  ℹ fail 0
+
+    apps/api $ EQ_TEST_DATABASE_URL=… pnpm test:db
+    ℹ tests 13   ℹ pass 13   ℹ fail 0
+
+**El criterio de aceptación, cumplido dos veces.** `spec-import/test/parity.test.ts` lee
+`bundled.yaml` y reproduce `contract-operations.ts` campo por campo: 46 operaciones, mismo orden,
+mismos parámetros compartidos, mismos estados. Y `apps/api/test/http/projects.test.ts` lo repite
+**a través de la API**, importando el documento real por HTTP hacia un proyecto. El generador
+`scripts/gen_dashboard_endpoints.py` queda formalmente redundante; se retira en P7.
+
+**Tres fallos que encontraron los tests, no una revisión a ojo**
+
+1. **Ordenación dependiente del locale.** Usaba `localeCompare`, que trata `{` como puntuación:
+   `/v1/products/{product_id}` salía antes que `/v1/products/bulk`, mientras que Python compara
+   por codepoint. Más allá de la paridad, significaba que **el orden de ejecución de una corrida
+   dependía del locale de la máquina que importó el contrato**.
+2. **El tope de cuerpo de Express.** El DTO anunciaba 8 MB; Express parsea 100 KB por defecto y
+   el contrato de Digital Catalog pesa 118 KB. El límite declarado era mentira, y el fallo salía
+   como **500 en vez de 413** porque `body-parser` lanza un `Error` con `status`, no una
+   `HttpException`. Corregidos ambos: una constante compartida por `main.ts`, el harness de test
+   y el DTO, y una rama en el filtro para los 4xx de middleware.
+3. **Choque entre `operationId` y clave primaria.** `ImportedOperation.id` es el nombre que el
+   contrato da a la operación; la fila también tiene un `id`. Al guardar, el UUID pisaba al
+   `operationId` — y `diffOperations` empareja versiones **por `id`**, así que el drift habría
+   comparado dos juegos de UUID recién generados y reportado *todas* las operaciones como
+   eliminadas y vueltas a añadir en cada importación. La clave de la fila pasa a llamarse
+   `rowId`.
+
+**El guard SSRF llega en P2, no en P4.** Importar un contrato por URL ya es el servidor pidiendo
+una dirección que escribe un cliente. Sin guard, "importa el contrato desde esta URL" es un campo
+de formulario que lee `http://169.254.169.254/latest/meta-data/` — credenciales de la instancia,
+sin autenticación. Cubierto por 20 tests, incluidos los que corren contra un servidor real:
+redirección hacia el endpoint de metadatos, bucle de redirecciones, `::ffff:169.254.169.254`,
+respuesta sin fin y timeout. `ALLOW_PRIVATE_TARGETS` sigue en `false` por defecto; existe porque
+apuntar a `http://localhost:8100` desde un portátil es el uso normal en self-hosted.
+
+**Decisiones que conviene conocer**
+
+- **Los problemas de importación se recogen, no se lanzan.** Una operación sin `operationId` no
+  puede impedir que las otras 45 se importen. Los `error` paran la importación; los `warning` no.
+- **Los mismos bytes resuelven a la misma versión.** Reimportar un documento sin cambios devuelve
+  la fila existente, que es lo que permite que un drift check programado no engorde la tabla.
+- **Se guarda el documento crudo, no solo las operaciones.** La validación de schema durante una
+  corrida lo lee, y un contrato que cambia mientras la matriz lo recorre es justo el fallo que la
+  herramienta existe para detectar: no puede ser además su modo de funcionamiento.
+- **Una referencia `$ref` a otro fichero se reporta, no se resuelve.** Ir a buscarla convertiría
+  la importación de una spec en un falsificador de peticiones apuntando a nuestra propia red.
+- **Un id de otro proyecto es 404, nunca 403.** Un 403 confirmaría que el id existe, que es un
+  oráculo entre clientes.
+
+**Deuda que P2 deja anotada**
+
+- Las cabeceras para un contrato tras autenticación se envían pero **no se persisten**: son una
+  credencial y no hay clave con la que cifrarlas hasta P3. Mejor no guardarlas que guardarlas en
+  claro.
+- La deuda ESM/CJS de P1 se resolvió: `spec-import` se escribe como ESM con especificadores
+  `.ts` y emite CommonJS con `rewriteRelativeImportExtensions`. `runner-core` necesitará lo mismo
+  en P4.
+- El drift check es bajo demanda. Programarlo (y avisar) es post-P7.

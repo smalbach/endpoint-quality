@@ -93,4 +93,93 @@ export class ApiTokenEntity {
   @Column({ type: "timestamptz", nullable: true }) revokedAt: Date | null;
 }
 
-export const ENTITIES = [UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity];
+
+/**
+ * A project: one contract, its environments, and everything configured around them.
+ *
+ * `archivedAt` rather than a delete. A project owns runs, and runs are the evidence somebody
+ * produced on a date — deleting the project to tidy a list would destroy the history that made
+ * the tool worth having.
+ */
+@Entity({ name: "projects" })
+export class ProjectEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") organizationId: string;
+  @Column({ type: "varchar", length: 200 }) name: string;
+  /** Unique **per organization**, not globally: two customers may both have a project called
+   * `catalog`, and forcing a global namespace would leak that the other one exists. */
+  @Column({ type: "varchar", length: 80 }) slug: string;
+  @Column({ type: "text", default: "" }) description: string;
+  @Column("uuid") createdBy: string;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz", nullable: true }) archivedAt: Date | null;
+  /** The version the runs use. Null until the first import succeeds. */
+  @Column({ type: "uuid", nullable: true }) activeSpecVersionId: string | null;
+}
+
+/** Where a contract comes from, so a re-import needs no arguments and a drift check can run on
+ * a schedule. */
+@Entity({ name: "spec_sources" })
+export class SpecSourceEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  /** `url`, `upload` or `inline`. */
+  @Column({ type: "varchar", length: 20 }) kind: string;
+  @Column({ type: "text", default: "" }) location: string;
+  /** Credentials for a contract behind auth, encrypted. Never returned by any query. */
+  @Column({ type: "text", nullable: true }) headersCiphertext: string | null;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+}
+
+/**
+ * One import, frozen.
+ *
+ * The raw document is kept, not just the operations parsed out of it: schema validation during a
+ * run reads the document itself, and a contract that changes under a running matrix is the exact
+ * failure this tool exists to detect — it cannot also be its mode of operation.
+ */
+@Entity({ name: "spec_versions" })
+export class SpecVersionEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Column({ type: "uuid", nullable: true }) sourceId: string | null;
+  /** SHA-256 of the raw bytes. Two imports of an unchanged document share it, which is how a
+   * scheduled drift check stays cheap. */
+  @Index() @Column({ type: "varchar", length: 64 }) hash: string;
+  @Column({ type: "text" }) raw: string;
+  @Column({ type: "varchar", length: 20 }) format: string;
+  @Column({ type: "varchar", length: 20 }) openapiVersion: string;
+  @Column({ type: "varchar", length: 200 }) title: string;
+  @Column({ type: "varchar", length: 50 }) contractVersion: string;
+  @Column({ type: "int" }) operationCount: number;
+  @Column({ type: "jsonb" }) problems: unknown;
+  @Column("uuid") importedBy: string;
+  @Column({ type: "timestamptz" }) importedAt: Date;
+}
+
+/**
+ * The flattened operation table of one imported version.
+ *
+ * Rows rather than a JSON blob on the version, because the operation list is queried, filtered
+ * by tag and joined against per-operation configuration. It replaces the generated
+ * `contract-operations.ts` that used to be compiled into the dashboard's bundle.
+ */
+@Entity({ name: "spec_operations" })
+export class SpecOperationEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") specVersionId: string;
+  @Column({ type: "varchar", length: 200 }) operationId: string;
+  @Column({ type: "varchar", length: 10 }) method: string;
+  @Column({ type: "text" }) path: string;
+  @Column({ type: "text", default: "" }) summary: string;
+  @Column({ type: "varchar", length: 120, default: "" }) tag: string;
+  @Column({ type: "jsonb" }) statuses: number[];
+  @Column({ type: "jsonb" }) parameters: string[];
+  @Column({ type: "jsonb" }) security: string[];
+  @Column({ type: "boolean", default: false }) derivedId: boolean;
+  /** The document order, so "contrato" ordering survives a round trip through the database
+   * instead of depending on whatever order Postgres returns rows in. */
+  @Column({ type: "int" }) position: number;
+}
+
+export const ENTITIES = [UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity, ProjectEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity];

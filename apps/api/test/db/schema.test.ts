@@ -50,18 +50,30 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
       `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name <> 'migrations'`,
     );
     const tables = rows.map((row) => row.table_name).sort();
-    assert.deepEqual(tables, ["api_tokens", "invitations", "memberships", "organizations", "refresh_tokens", "users"]);
+    assert.deepEqual(tables, [
+      "api_tokens", "invitations", "memberships", "organizations", "projects",
+      "refresh_tokens", "spec_operations", "spec_sources", "spec_versions", "users",
+    ]);
   });
 
-  test("son reversibles: down deja el esquema vacío y up lo reconstruye", async () => {
+  test("son reversibles: cada down deshace su up y up lo reconstruye", async () => {
     // A migration nobody has ever reverted is a migration that cannot be reverted, and that is
-    // discovered during the incident rather than before it.
+    // discovered during the incident rather than before it. Both are undone, in order, because
+    // the second adds a foreign key into a table the first creates — reverting only the last
+    // would leave a constraint pointing at a table about to disappear.
+    const exists = async (table: string) =>
+      ((await dataSource!.query(`SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=$1`, [table])) as unknown[]).length;
+
     await dataSource!.undoLastMigration();
-    const empty: unknown[] = await dataSource!.query(`SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name='users'`);
-    assert.equal(empty.length, 0);
+    assert.equal(await exists("spec_versions"), 0);
+    assert.equal(await exists("users"), 1, "revertir la segunda migración no debe tocar la primera");
+
+    await dataSource!.undoLastMigration();
+    assert.equal(await exists("users"), 0);
+
     await dataSource!.runMigrations();
-    const back: unknown[] = await dataSource!.query(`SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name='users'`);
-    assert.equal(back.length, 1);
+    assert.equal(await exists("users"), 1);
+    assert.equal(await exists("spec_operations"), 1);
   });
 
   test("correr las migraciones dos veces no hace nada la segunda", async () => {
@@ -135,12 +147,76 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
     await assert.rejects(insert(), /duplicate key|unique/i);
   });
 
+  test("dos proyectos de una organización no pueden compartir slug, pero sí de organizaciones distintas", async () => {
+    // Unique per organization. A global namespace would let one customer discover another exists
+    // by the suffix their project silently receives.
+    const [userId, orgA, orgB] = [randomUUID(), randomUUID(), randomUUID()];
+    await insertUser(userId, `slug-${userId}@example.com`);
+    await insertOrganization(orgA, `a-${orgA.slice(0, 8)}`);
+    await insertOrganization(orgB, `b-${orgB.slice(0, 8)}`);
+    const insertProject = (organizationId: string) =>
+      dataSource!.query(`INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', 'catalog', $3, now())`, [randomUUID(), organizationId, userId]);
+
+    await insertProject(orgA);
+    await assert.rejects(insertProject(orgA), /duplicate key|unique/i);
+    await insertProject(orgB);
+  });
+
+  test("borrar una versión deja el proyecto en pie sin contrato activo", async () => {
+    // SET NULL and not CASCADE: removing a snapshot must not delete the project and everything
+    // configured under it.
+    const [userId, organizationId, projectId, versionId] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    await insertUser(userId, `ver-${userId}@example.com`);
+    await insertOrganization(organizationId, `v-${organizationId.slice(0, 8)}`);
+    await dataSource!.query(`INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`, [projectId, organizationId, `p-${projectId.slice(0, 8)}`, userId]);
+    await dataSource!.query(
+      `INSERT INTO spec_versions (id, "projectId", hash, raw, format, "openapiVersion", title, "contractVersion", "operationCount", problems, "importedBy", "importedAt")
+       VALUES ($1, $2, $3, 'x', 'yaml', '3.1.0', 't', '1', 0, '[]'::jsonb, $4, now())`,
+      [versionId, projectId, randomUUID().replace(/-/g, ""), userId],
+    );
+    await dataSource!.query(`UPDATE projects SET "activeSpecVersionId" = $1 WHERE id = $2`, [versionId, projectId]);
+
+    await dataSource!.query(`DELETE FROM spec_versions WHERE id = $1`, [versionId]);
+    const [project]: { activeSpecVersionId: string | null }[] = await dataSource!.query(`SELECT "activeSpecVersionId" FROM projects WHERE id = $1`, [projectId]);
+    assert.equal(project.activeSpecVersionId, null);
+  });
+
+  test("borrar una versión se lleva sus operaciones", async () => {
+    const [userId, organizationId, projectId, versionId] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    await insertUser(userId, `ops-${userId}@example.com`);
+    await insertOrganization(organizationId, `o-${organizationId.slice(0, 8)}`);
+    await dataSource!.query(`INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`, [projectId, organizationId, `q-${projectId.slice(0, 8)}`, userId]);
+    await dataSource!.query(
+      `INSERT INTO spec_versions (id, "projectId", hash, raw, format, "openapiVersion", title, "contractVersion", "operationCount", problems, "importedBy", "importedAt")
+       VALUES ($1, $2, $3, 'x', 'yaml', '3.1.0', 't', '1', 1, '[]'::jsonb, $4, now())`,
+      [versionId, projectId, randomUUID().replace(/-/g, ""), userId],
+    );
+    const insertOperation = () =>
+      dataSource!.query(
+        `INSERT INTO spec_operations (id, "specVersionId", "operationId", method, path, statuses, parameters, security, position)
+         VALUES ($1, $2, 'listThings', 'GET', '/things', '[200]'::jsonb, '[]'::jsonb, '[]'::jsonb, 0)`,
+        [randomUUID(), versionId],
+      );
+    await insertOperation();
+    // Two operations under one id in the same version would share configuration silently.
+    await assert.rejects(insertOperation(), /duplicate key|unique/i);
+
+    await dataSource!.query(`DELETE FROM spec_versions WHERE id = $1`, [versionId]);
+    const left: unknown[] = await dataSource!.query(`SELECT 1 FROM spec_operations WHERE "specVersionId" = $1`, [versionId]);
+    assert.equal(left.length, 0);
+  });
+
   test("los índices que sostienen cada comprobación de autorización existen", async () => {
     // Every request resolves "what is this user's role here", so this lookup is as hot as the
     // primary key.
-    const rows: { indexname: string }[] = await dataSource!.query(`SELECT indexname FROM pg_indexes WHERE tablename IN ('memberships','refresh_tokens','api_tokens')`);
+    const rows: { indexname: string }[] = await dataSource!.query(`SELECT indexname FROM pg_indexes WHERE tablename IN ('memberships','refresh_tokens','api_tokens','projects','spec_versions','spec_operations')`);
     const names = rows.map((row) => row.indexname);
-    for (const expected of ["ix_memberships_user", "ix_refresh_tokens_session", "ux_refresh_tokens_hash", "ux_api_tokens_hash"]) {
+    for (const expected of [
+      "ix_memberships_user", "ix_refresh_tokens_session", "ux_refresh_tokens_hash", "ux_api_tokens_hash",
+      // A re-import looks the document up by hash before parsing it; without this index a
+      // scheduled drift check scans every version the project ever had.
+      "ux_projects_org_slug", "ux_spec_versions_project_hash", "ix_spec_operations_version",
+    ]) {
       assert.ok(names.includes(expected), `falta el índice ${expected}`);
     }
   });

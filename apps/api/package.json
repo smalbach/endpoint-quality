@@ -16,6 +16,7 @@
     "pretest": "tsc -p tsconfig.test.json && tsc-alias -p tsconfig.test.json"
   },
   "dependencies": {
+    "@eq/spec-import": "workspace:^",
     "@nestjs/common": "^11.1.6",
     "@nestjs/core": "^11.1.6",
     "@nestjs/cqrs": "^11.0.3",

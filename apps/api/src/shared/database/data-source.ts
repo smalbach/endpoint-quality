@@ -7,8 +7,11 @@
 import { DataSource } from "typeorm";
 import { ENTITIES } from "./entities";
 import { InitialSchema1700000000000 } from "./migrations/1700000000000-InitialSchema";
+import { ProjectsAndSpecs1700000001000 } from "./migrations/1700000001000-ProjectsAndSpecs";
 
-export const MIGRATIONS = [InitialSchema1700000000000];
+// Ordered. TypeORM runs them by the timestamp in the class name, and the second one adds a
+// foreign key into a table the first creates.
+export const MIGRATIONS = [InitialSchema1700000000000, ProjectsAndSpecs1700000001000];
 
 export function buildDataSourceOptions(databaseUrl: string) {
   return {

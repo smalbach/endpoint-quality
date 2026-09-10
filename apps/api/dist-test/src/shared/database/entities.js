@@ -9,7 +9,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ENTITIES = exports.ApiTokenEntity = exports.RefreshTokenEntity = exports.InvitationEntity = exports.MembershipEntity = exports.OrganizationEntity = exports.UserEntity = void 0;
+exports.ENTITIES = exports.SpecOperationEntity = exports.SpecVersionEntity = exports.SpecSourceEntity = exports.ProjectEntity = exports.ApiTokenEntity = exports.RefreshTokenEntity = exports.InvitationEntity = exports.MembershipEntity = exports.OrganizationEntity = exports.UserEntity = void 0;
 /**
  * The tables, as TypeORM entities.
  *
@@ -293,5 +293,266 @@ __decorate([
 exports.ApiTokenEntity = ApiTokenEntity = __decorate([
     (0, typeorm_1.Entity)({ name: "api_tokens" })
 ], ApiTokenEntity);
-exports.ENTITIES = [UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity];
+/**
+ * A project: one contract, its environments, and everything configured around them.
+ *
+ * `archivedAt` rather than a delete. A project owns runs, and runs are the evidence somebody
+ * produced on a date — deleting the project to tidy a list would destroy the history that made
+ * the tool worth having.
+ */
+let ProjectEntity = class ProjectEntity {
+    id;
+    organizationId;
+    name;
+    /** Unique **per organization**, not globally: two customers may both have a project called
+     * `catalog`, and forcing a global namespace would leak that the other one exists. */
+    slug;
+    description;
+    createdBy;
+    createdAt;
+    archivedAt;
+    /** The version the runs use. Null until the first import succeeds. */
+    activeSpecVersionId;
+};
+exports.ProjectEntity = ProjectEntity;
+__decorate([
+    (0, typeorm_1.PrimaryColumn)("uuid"),
+    __metadata("design:type", String)
+], ProjectEntity.prototype, "id", void 0);
+__decorate([
+    (0, typeorm_1.Index)(),
+    (0, typeorm_1.Column)("uuid"),
+    __metadata("design:type", String)
+], ProjectEntity.prototype, "organizationId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 200 }),
+    __metadata("design:type", String)
+], ProjectEntity.prototype, "name", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 80 }),
+    __metadata("design:type", String)
+], ProjectEntity.prototype, "slug", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "text", default: "" }),
+    __metadata("design:type", String)
+], ProjectEntity.prototype, "description", void 0);
+__decorate([
+    (0, typeorm_1.Column)("uuid"),
+    __metadata("design:type", String)
+], ProjectEntity.prototype, "createdBy", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "timestamptz" }),
+    __metadata("design:type", Date)
+], ProjectEntity.prototype, "createdAt", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "timestamptz", nullable: true }),
+    __metadata("design:type", Object)
+], ProjectEntity.prototype, "archivedAt", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "uuid", nullable: true }),
+    __metadata("design:type", Object)
+], ProjectEntity.prototype, "activeSpecVersionId", void 0);
+exports.ProjectEntity = ProjectEntity = __decorate([
+    (0, typeorm_1.Entity)({ name: "projects" })
+], ProjectEntity);
+/** Where a contract comes from, so a re-import needs no arguments and a drift check can run on
+ * a schedule. */
+let SpecSourceEntity = class SpecSourceEntity {
+    id;
+    projectId;
+    /** `url`, `upload` or `inline`. */
+    kind;
+    location;
+    /** Credentials for a contract behind auth, encrypted. Never returned by any query. */
+    headersCiphertext;
+    createdAt;
+};
+exports.SpecSourceEntity = SpecSourceEntity;
+__decorate([
+    (0, typeorm_1.PrimaryColumn)("uuid"),
+    __metadata("design:type", String)
+], SpecSourceEntity.prototype, "id", void 0);
+__decorate([
+    (0, typeorm_1.Index)(),
+    (0, typeorm_1.Column)("uuid"),
+    __metadata("design:type", String)
+], SpecSourceEntity.prototype, "projectId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 20 }),
+    __metadata("design:type", String)
+], SpecSourceEntity.prototype, "kind", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "text", default: "" }),
+    __metadata("design:type", String)
+], SpecSourceEntity.prototype, "location", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "text", nullable: true }),
+    __metadata("design:type", Object)
+], SpecSourceEntity.prototype, "headersCiphertext", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "timestamptz" }),
+    __metadata("design:type", Date)
+], SpecSourceEntity.prototype, "createdAt", void 0);
+exports.SpecSourceEntity = SpecSourceEntity = __decorate([
+    (0, typeorm_1.Entity)({ name: "spec_sources" })
+], SpecSourceEntity);
+/**
+ * One import, frozen.
+ *
+ * The raw document is kept, not just the operations parsed out of it: schema validation during a
+ * run reads the document itself, and a contract that changes under a running matrix is the exact
+ * failure this tool exists to detect — it cannot also be its mode of operation.
+ */
+let SpecVersionEntity = class SpecVersionEntity {
+    id;
+    projectId;
+    sourceId;
+    /** SHA-256 of the raw bytes. Two imports of an unchanged document share it, which is how a
+     * scheduled drift check stays cheap. */
+    hash;
+    raw;
+    format;
+    openapiVersion;
+    title;
+    contractVersion;
+    operationCount;
+    problems;
+    importedBy;
+    importedAt;
+};
+exports.SpecVersionEntity = SpecVersionEntity;
+__decorate([
+    (0, typeorm_1.PrimaryColumn)("uuid"),
+    __metadata("design:type", String)
+], SpecVersionEntity.prototype, "id", void 0);
+__decorate([
+    (0, typeorm_1.Index)(),
+    (0, typeorm_1.Column)("uuid"),
+    __metadata("design:type", String)
+], SpecVersionEntity.prototype, "projectId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "uuid", nullable: true }),
+    __metadata("design:type", Object)
+], SpecVersionEntity.prototype, "sourceId", void 0);
+__decorate([
+    (0, typeorm_1.Index)(),
+    (0, typeorm_1.Column)({ type: "varchar", length: 64 }),
+    __metadata("design:type", String)
+], SpecVersionEntity.prototype, "hash", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "text" }),
+    __metadata("design:type", String)
+], SpecVersionEntity.prototype, "raw", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 20 }),
+    __metadata("design:type", String)
+], SpecVersionEntity.prototype, "format", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 20 }),
+    __metadata("design:type", String)
+], SpecVersionEntity.prototype, "openapiVersion", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 200 }),
+    __metadata("design:type", String)
+], SpecVersionEntity.prototype, "title", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 50 }),
+    __metadata("design:type", String)
+], SpecVersionEntity.prototype, "contractVersion", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "int" }),
+    __metadata("design:type", Number)
+], SpecVersionEntity.prototype, "operationCount", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "jsonb" }),
+    __metadata("design:type", Object)
+], SpecVersionEntity.prototype, "problems", void 0);
+__decorate([
+    (0, typeorm_1.Column)("uuid"),
+    __metadata("design:type", String)
+], SpecVersionEntity.prototype, "importedBy", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "timestamptz" }),
+    __metadata("design:type", Date)
+], SpecVersionEntity.prototype, "importedAt", void 0);
+exports.SpecVersionEntity = SpecVersionEntity = __decorate([
+    (0, typeorm_1.Entity)({ name: "spec_versions" })
+], SpecVersionEntity);
+/**
+ * The flattened operation table of one imported version.
+ *
+ * Rows rather than a JSON blob on the version, because the operation list is queried, filtered
+ * by tag and joined against per-operation configuration. It replaces the generated
+ * `contract-operations.ts` that used to be compiled into the dashboard's bundle.
+ */
+let SpecOperationEntity = class SpecOperationEntity {
+    id;
+    specVersionId;
+    operationId;
+    method;
+    path;
+    summary;
+    tag;
+    statuses;
+    parameters;
+    security;
+    derivedId;
+    /** The document order, so "contrato" ordering survives a round trip through the database
+     * instead of depending on whatever order Postgres returns rows in. */
+    position;
+};
+exports.SpecOperationEntity = SpecOperationEntity;
+__decorate([
+    (0, typeorm_1.PrimaryColumn)("uuid"),
+    __metadata("design:type", String)
+], SpecOperationEntity.prototype, "id", void 0);
+__decorate([
+    (0, typeorm_1.Index)(),
+    (0, typeorm_1.Column)("uuid"),
+    __metadata("design:type", String)
+], SpecOperationEntity.prototype, "specVersionId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 200 }),
+    __metadata("design:type", String)
+], SpecOperationEntity.prototype, "operationId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 10 }),
+    __metadata("design:type", String)
+], SpecOperationEntity.prototype, "method", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "text" }),
+    __metadata("design:type", String)
+], SpecOperationEntity.prototype, "path", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "text", default: "" }),
+    __metadata("design:type", String)
+], SpecOperationEntity.prototype, "summary", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", length: 120, default: "" }),
+    __metadata("design:type", String)
+], SpecOperationEntity.prototype, "tag", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "jsonb" }),
+    __metadata("design:type", Array)
+], SpecOperationEntity.prototype, "statuses", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "jsonb" }),
+    __metadata("design:type", Array)
+], SpecOperationEntity.prototype, "parameters", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "jsonb" }),
+    __metadata("design:type", Array)
+], SpecOperationEntity.prototype, "security", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "boolean", default: false }),
+    __metadata("design:type", Boolean)
+], SpecOperationEntity.prototype, "derivedId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "int" }),
+    __metadata("design:type", Number)
+], SpecOperationEntity.prototype, "position", void 0);
+exports.SpecOperationEntity = SpecOperationEntity = __decorate([
+    (0, typeorm_1.Entity)({ name: "spec_operations" })
+], SpecOperationEntity);
+exports.ENTITIES = [UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity, ProjectEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity];
 //# sourceMappingURL=entities.js.map
