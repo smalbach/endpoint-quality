@@ -158,6 +158,69 @@ describe("la matriz reconstruida desde filas", { skip: READY ? false : REASON },
   });
 });
 
+/**
+ * The README of the coupled dashboard published a coverage table, counted by hand:
+ *
+ * | Status          | Declared | With a case |
+ * |-----------------|----------|-------------|
+ * | 200 · 201 · 204 | 46       | 46          |
+ * | 401 · 403       | 90       | 90          |
+ * | 404             | 33       | 33          |
+ * | 422             | 21       | 21          |
+ * | 409             | 5        | 5           |
+ * | 503             | 1        | 0           |
+ *
+ * 196 declared, 195 with a case. This is the same table, computed — and it is the P6 acceptance
+ * criterion that says the coverage report reproduces the README's count. It matters beyond the
+ * cut: the hand-written number was true the day somebody counted it and had no way of staying
+ * true, so a contract that grew a new operation quietly made the README wrong.
+ */
+describe("la cobertura reproduce el conteo del dashboard acoplado", { skip: READY ? false : REASON }, () => {
+  const band = (coverage: { byStatus: { status: number; declared: number; covered: number }[] }, ...statuses: number[]) =>
+    statuses.reduce(
+      (sum, status) => {
+        const row = coverage.byStatus.find((entry) => entry.status === status);
+        return { declared: sum.declared + (row?.declared ?? 0), covered: sum.covered + (row?.covered ?? 0) };
+      },
+      { declared: 0, covered: 0 },
+    );
+
+  test("196 respuestas declaradas, 195 con caso", async () => {
+    const response = await api().get(`${base}/coverage`).set(as(owner));
+    assert.equal(response.status, 200);
+    assert.equal(response.body.totals.operations, 46);
+    assert.equal(response.body.totals.declaredResponses, 196);
+    assert.equal(response.body.totals.covered, 195);
+    assert.equal(response.body.totals.uncovered, 1);
+  });
+
+  test("la tabla por banda de estado coincide fila por fila", async () => {
+    const coverage = (await api().get(`${base}/coverage`).set(as(owner))).body;
+    assert.deepEqual(band(coverage, 200, 201, 204), { declared: 46, covered: 46 });
+    assert.deepEqual(band(coverage, 401, 403), { declared: 90, covered: 90 });
+    assert.deepEqual(band(coverage, 404), { declared: 33, covered: 33 });
+    assert.deepEqual(band(coverage, 422), { declared: 21, covered: 21 });
+    assert.deepEqual(band(coverage, 409), { declared: 5, covered: 5 });
+    assert.deepEqual(band(coverage, 503), { declared: 1, covered: 0 });
+  });
+
+  test("el único hueco es el 503 de /health, y se dice cuál es", async () => {
+    // A total is a number to feel good about. The list is what somebody can act on — and this
+    // particular gap is a decision, not an oversight: reaching it means taking a dependency down.
+    const coverage = (await api().get(`${base}/coverage`).set(as(owner))).body;
+    assert.deepEqual(coverage.gaps, [{ operationId: "healthCheck", method: "GET", path: "/health", tag: "Health", status: 503 }]);
+  });
+
+  test("el conteo de casos es el mismo que el de la matriz", async () => {
+    // Two queries over the same rows and the same engine. If they ever disagree, one of them is
+    // reading something the other is not, and neither number can be trusted.
+    const coverage = (await api().get(`${base}/coverage`).set(as(owner))).body;
+    const scenarios = (await api().get(`${base}/scenarios`).set(as(owner))).body;
+    assert.equal(coverage.totals.cases, scenarios.totals.cases);
+    assert.equal(coverage.totals.cases, 311);
+  });
+});
+
 describe("el entorno decide qué se ejecuta esta noche", { skip: READY ? false : REASON }, () => {
   let readOnly: string;
 

@@ -19,6 +19,7 @@ import { TypeOrmConfigRepository } from "@/modules/config/infrastructure/persist
 import { ResetConfigSectionHandler, UpsertConfigSectionHandler } from "@/modules/config/application/commands/upsert-config-section";
 import { GetProjectConfigHandler } from "@/modules/config/application/queries/get-project-config";
 import { GetScenariosHandler } from "@/modules/config/application/queries/get-scenarios";
+import { GetCoverageHandler } from "@/modules/config/application/queries/get-coverage";
 import { EnvironmentsController } from "./presentation/environments.controller";
 
 export const ENVIRONMENT_COMMAND_HANDLERS = [
@@ -26,7 +27,7 @@ export const ENVIRONMENT_COMMAND_HANDLERS = [
   UpsertCredentialHandler, DeleteCredentialHandler,
   UpsertConfigSectionHandler, ResetConfigSectionHandler,
 ];
-export const ENVIRONMENT_QUERY_HANDLERS = [ListEnvironmentsHandler, GetProjectConfigHandler, GetScenariosHandler];
+export const ENVIRONMENT_QUERY_HANDLERS = [ListEnvironmentsHandler, GetProjectConfigHandler, GetScenariosHandler, GetCoverageHandler];
 export const ENVIRONMENT_ADAPTERS = [
   { provide: ENVIRONMENT_REPOSITORY, useClass: TypeOrmEnvironmentRepository },
   { provide: CONFIG_REPOSITORY, useClass: TypeOrmConfigRepository },

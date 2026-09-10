@@ -17,7 +17,7 @@ import { Observable, concat, from, map, takeWhile } from "rxjs";
 import { CurrentUser, OrgRoleGuard, RequireRole, type Principal } from "@/modules/auth/infrastructure/guards/auth.guard";
 import { StartRunCommand } from "../application/commands/start-run";
 import { CancelRunCommand } from "../application/commands/cancel-run";
-import { GetRunCaseQuery, GetRunQuery, ListRunsQuery, type RunView } from "../application/queries/get-run";
+import { GetRunCaseQuery, GetRunQuery, GetRunReportQuery, ListRunsQuery, type RunView } from "../application/queries/get-run";
 import { RunProgressStream } from "../infrastructure/run-progress.stream";
 import { StartRunDto } from "./dto/runs.dto";
 
@@ -53,6 +53,20 @@ export class RunsController {
   @RequireRole("viewer")
   async get(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string, @Param("runId") runId: string) {
     return this.queryBus.execute(new GetRunQuery(organizationId, projectId, runId));
+  }
+
+  /**
+   * The run as a report: every case with its assertions, no response bodies.
+   *
+   * Outside the throttler for the same reason the stream is. Reading a finished run is one
+   * request; what the limit is there to stop is a client that asks 311 times, which is exactly
+   * what this exists to make unnecessary.
+   */
+  @SkipThrottle()
+  @Get(":runId/report")
+  @RequireRole("viewer")
+  async report(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string, @Param("runId") runId: string) {
+    return this.queryBus.execute(new GetRunReportQuery(organizationId, projectId, runId));
   }
 
   @Get(":runId/cases/:caseId")

@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { AssertionRow, Badge, Button, Card, Empty, Json } from "@/components/ui";
 import { cn, methodStyle } from "@/lib/format";
-import type { Environment, OperationScenarios, ScenariosView, ScenarioView } from "@/lib/types";
+import type { CoverageView, Environment, OperationScenarios, ScenariosView, ScenarioView } from "@/lib/types";
 
 /**
  * The screen the coupled dashboard was, rebuilt on data.
@@ -41,6 +41,19 @@ export function MatrixPage() {
     queryKey: ["scenarios", projectId, environmentId, order],
     enabled: Boolean(organization && projectId),
     queryFn: () => api<ScenariosView>(`${base}/scenarios?order=${order}${environmentId ? `&environmentId=${environmentId}` : ""}`),
+    retry: false,
+  });
+
+  /**
+   * Coverage is asked for without an environment, on purpose: it is a property of the contract and
+   * the configuration. A read-only target blocks the write cases it would run, and folding that
+   * into the number would report "the contract is untested" when somebody merely picked a safe
+   * target to run against tonight.
+   */
+  const coverage = useQuery({
+    queryKey: ["coverage", projectId],
+    enabled: Boolean(organization && projectId),
+    queryFn: () => api<CoverageView>(`${base}/coverage`),
     retry: false,
   });
 
@@ -125,6 +138,17 @@ export function MatrixPage() {
               </p>
               {scenarios.data?.totals.blocked ? (
                 <p className="text-amber-600">{scenarios.data.totals.blocked} no se ejecutarán en este entorno</p>
+              ) : null}
+              {coverage.data ? (
+                <p
+                  className={coverage.data.totals.uncovered ? "text-amber-600" : "text-emerald-600"}
+                  // The gaps are named in the tooltip rather than only counted: "one response has
+                  // no case" is a number, "the 503 of GET /health has no case" is a decision
+                  // somebody can look at and either accept or fix.
+                  title={coverage.data.gaps.length ? coverage.data.gaps.map((gap) => `${gap.status} · ${gap.method} ${gap.path}`).join("\n") : "todas las respuestas declaradas tienen caso"}
+                >
+                  {coverage.data.totals.covered}/{coverage.data.totals.declaredResponses} respuestas del contrato con caso
+                </p>
               ) : null}
             </div>
             {canRun && (

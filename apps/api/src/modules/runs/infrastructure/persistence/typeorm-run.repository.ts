@@ -45,6 +45,19 @@ export class TypeOrmRunRepository implements RunRepositoryPort {
   async listSteps(runCaseId: string): Promise<RunStep[]> {
     return (await this.steps.find({ where: { runCaseId }, order: { index: "ASC" } })).map((row) => ({ ...row }));
   }
+  /** Joined on the case rather than filtered by a list of case ids: a 311-case run would put 311
+   * parameters in an `IN`, which is a limit worth not discovering later. */
+  async listStepsForRun(runId: string): Promise<RunStep[]> {
+    return (
+      await this.steps
+        .createQueryBuilder("s")
+        .innerJoin(RunCaseEntity, "c", "c.id = s.runCaseId")
+        .where("c.runId = :runId", { runId })
+        .orderBy("c.position", "ASC")
+        .addOrderBy("s.index", "ASC")
+        .getMany()
+    ).map((row) => ({ ...row }));
+  }
 
   /**
    * Counted in SQL, from the case rows.

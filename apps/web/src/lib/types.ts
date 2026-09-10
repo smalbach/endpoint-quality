@@ -71,6 +71,17 @@ export type ScenariosView = {
   totals: { operations: number; cases: number; runnable: number; blocked: number };
 };
 
+/** What the matrix reaches of what the contract declares. `gaps` is the part worth showing: a
+ * declared response with no case is a run that comes back green having never tried. */
+export type CoverageGap = { operationId: string; method: string; path: string; tag: string; status: number };
+export type CoverageView = {
+  specVersionId: string;
+  contractVersion: string;
+  totals: { operations: number; declaredResponses: number; covered: number; uncovered: number; cases: number };
+  byStatus: { status: number; declared: number; covered: number }[];
+  gaps: CoverageGap[];
+};
+
 export type RunTotals = { cases: number; completed: number; passed: number; failed: number; skipped: number };
 export type CaseStatus = "queued" | "running" | "passed" | "failed" | "skipped";
 

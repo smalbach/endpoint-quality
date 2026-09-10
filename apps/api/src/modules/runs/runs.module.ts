@@ -18,11 +18,11 @@ import { RunOrchestrator } from "./infrastructure/run-orchestrator";
 import { RunCaseProjector, RunFinishedProjector, RunProgressStream, RunStartedProjector } from "./infrastructure/run-progress.stream";
 import { StartRunHandler } from "./application/commands/start-run";
 import { CancelRunHandler } from "./application/commands/cancel-run";
-import { GetRunCaseHandler, GetRunHandler, ListRunsHandler } from "./application/queries/get-run";
+import { GetRunCaseHandler, GetRunHandler, GetRunReportHandler, ListRunsHandler } from "./application/queries/get-run";
 import { RunsController } from "./presentation/runs.controller";
 
 export const RUN_COMMAND_HANDLERS = [StartRunHandler, CancelRunHandler];
-export const RUN_QUERY_HANDLERS = [ListRunsHandler, GetRunHandler, GetRunCaseHandler];
+export const RUN_QUERY_HANDLERS = [ListRunsHandler, GetRunHandler, GetRunCaseHandler, GetRunReportHandler];
 export const RUN_PROJECTORS = [RunStartedProjector, RunCaseProjector, RunFinishedProjector];
 
 /**

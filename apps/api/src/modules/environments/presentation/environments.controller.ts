@@ -17,6 +17,7 @@ import { ListEnvironmentsQuery } from "../application/queries/list-environments"
 import { UpsertConfigSectionCommand, ResetConfigSectionCommand } from "@/modules/config/application/commands/upsert-config-section";
 import { GetProjectConfigQuery } from "@/modules/config/application/queries/get-project-config";
 import { GetScenariosQuery } from "@/modules/config/application/queries/get-scenarios";
+import { GetCoverageQuery } from "@/modules/config/application/queries/get-coverage";
 import { CredentialDto, EnvironmentDto } from "./dto/environments.dto";
 import type { CredentialRole } from "../domain/model";
 
@@ -117,6 +118,19 @@ export class EnvironmentsController {
     @Param("section") section: string,
   ): Promise<void> {
     await this.commandBus.execute(new ResetConfigSectionCommand(organizationId, projectId, section));
+  }
+
+  /**
+   * What the matrix reaches of what the contract declares, and what it misses.
+   *
+   * No environment: coverage is a property of the contract and the configuration. A read-only
+   * target blocks the write cases it would run, and calling those uncovered would report "the
+   * contract is untested" when what happened is that somebody picked a safe target.
+   */
+  @Get("coverage")
+  @RequireRole("viewer")
+  async coverage(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string) {
+    return this.queryBus.execute(new GetCoverageQuery(organizationId, projectId));
   }
 
   @Get("scenarios")

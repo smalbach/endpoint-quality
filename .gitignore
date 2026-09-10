@@ -1,5 +1,8 @@
 node_modules/
 dist/
+# La suite de la API se compila a dist-test/ antes de correr. Se coló en un commit de P5
+# porque el patrón de arriba solo casa `dist/`.
+dist-test/
 build/
 coverage/
 .turbo/
@@ -8,3 +11,6 @@ coverage/
 .env.*
 !.env.example
 .DS_Store
+
+# Los ficheros de veredictos del corte de paridad: evidencia de una ejecución, no fuente.
+.parity-cut/

@@ -435,3 +435,125 @@ sus cuatro aserciones — incluida `1 muestra: 2 ms (una medición no es un p95)
   es donde se encuentran cuando haya un segundo consumidor; con un cliente, la indirección no se
   paga sola.
 - Sin editores visuales de configuración, sin gestión de miembros en la interfaz y sin `/settings/org`.
+
+---
+
+## P6 — Corte de paridad · cerrada
+
+**Alcance**: correr el proyecto Digital Catalog migrado contra el backend E2E real y comparar
+veredicto contra veredicto, caso por caso, con el ejecutor del dashboard acoplado. Reproducir el
+conteo de cobertura del README acoplado.
+
+### Cómo se compara un veredicto con un veredicto
+
+Las fases anteriores compararon *listas de casos*. Esto compara *resultados*, que es lo único que
+prueba que el producto juzga igual. Para eso hacía falta un oráculo ejecutable:
+
+- `tools/parity-cut/legacy/route.ts` es una copia **byte a byte** de
+  `app/api/run/route.ts` — la lógica de veredicto entera: status, envelope, content type, JSON
+  Schema, presupuesto de latencia. Solo se reescriben dos imports, y `next/server` apunta a un
+  shim de quince líneas que devuelve un `Response` de verdad, para poder llamar al handler como
+  una función sin instalar Next en un arnés de comparación.
+- `tools/parity-cut/legacy/orchestrate.ts` es el `runScenario` del componente React, que **no** se
+  podía copiar porque era un closure sobre estado de React. Su cabecera enumera las tres ediciones
+  aplicadas — quitar los `setResults`, llamar a `POST` directamente, y convertir el estado del
+  componente en parámetros — y ninguna rama cambia.
+- el lado del producto va **por la API pública** con una sesión real: entorno apuntando al
+  destino, credenciales guardadas, `POST /runs`, esperar, leer. Nada toca la base de datos. Un
+  atajo aquí probaría la paridad de una función interna, no la del producto.
+
+Cada lado corre contra una base **recién reiniciada**. La matriz escribe, el dashboard acoplado
+limpia detrás de sí *para poder repetirse*, y "para poder" no es "demostradamente lo hace": una
+fila que sobreviva convierte el `POST` del segundo lado en un 409 sobre una UNIQUE, y eso se
+reportaría como fallo del desacoplamiento sin serlo.
+
+### Evidencia
+
+    $ EQ_EMAIL=… EQ_PASSWORD=… scripts/parity-cut.sh
+
+    Corte de paridad sin --auth contra http://127.0.0.1:8100
+      casos legacy    214      casos producto  214
+      verdes legacy   116      verdes producto 116
+    Paridad: idéntica, caso por caso.
+
+    Corte de paridad con --auth contra http://127.0.0.1:8100
+      casos legacy    311      casos producto  311
+      verdes legacy   134      verdes producto 144
+    Veredictos que no coinciden (10) …
+
+    Aislando la causa: legacy con una sola credencial en auth:default
+      verdes legacy   144      verdes producto 144
+    Paridad: idéntica, caso por caso.
+
+### La única divergencia, y por qué el producto tiene razón
+
+Los diez desacuerdos van todos en la misma dirección —legacy en rojo, producto en verde— y todos
+sobre las escrituras, que son las únicas operaciones que el backend implementa de verdad. Una sola
+causa, en el dashboard acoplado:
+
+    credentialsFor(scenario)  // auth: "default"
+      if (token)  credentials.Authorization = `Bearer ${token}`;
+      if (apiKey) credentials["X-API-Key"] = apiKey;    // ← las dos a la vez
+
+Comprobado contra el backend con `--auth`:
+
+    DELETE /v1/stores/999999  con Bearer                 → 404
+    DELETE /v1/stores/999999  con Bearer + X-API-Key     → 401
+      "This operation only accepts an OAuth2 bearer token, not an API key."
+
+Es D-29 vista desde el otro lado. Una operación que no declara `ApiKeyAuth` responde 401 a la
+presencia de una clave por muy bueno que sea el bearer — así que **rellenar el campo de API key,
+que los casos 403 y D-29 exigen rellenar, pone en rojo toda la matriz de escritura por un motivo
+ajeno al endpoint**. Es exactamente la clase de falso rojo que este producto existe para no
+producir: `auth: "default"` significa "la credencial que este caso presenta", en singular.
+
+El producto manda solo la credencial `primary`. Para demostrar que los diez son *un* defecto y no
+diez regresiones, el snapshot lleva un `singleCredential` que neutraliza únicamente eso; con él la
+paridad es idéntica en los 311. El guion lo ejecuta solo cuando la segunda pasada difiere, y falla
+si quedan diferencias que esa causa no explique.
+
+### Cobertura, ya no contada a mano
+
+El README acoplado publicaba una tabla mantenida a mano: 196 respuestas declaradas, 195 con caso,
+el hueco siendo el 503 de `/health`. Era verdad el día que alguien la contó y no tenía forma de
+seguir siéndolo. Ahora es `GET /coverage`, calculada desde las mismas filas y el mismo motor que
+`GET /scenarios`, y `apps/api/test/http/config.test.ts` reproduce la tabla banda por banda:
+
+    200·201·204  46/46      401·403  90/90      404  33/33
+    422          21/21      409        5/5      503   0/1
+
+    totales: 46 operaciones · 196 declaradas · 195 con caso · 1 hueco
+
+El hueco se **nombra**, no solo se cuenta: `{ healthCheck, GET /health, 503 }`. Un total es un
+número con el que sentirse bien; la lista es sobre lo que alguien puede decidir. La medida es
+deliberadamente tosca —una respuesta está cubierta si algún caso espera ese status en esa
+operación— y dice que el caso existe, no que sea bueno. Lo que sí atrapa es el fallo que se
+esconde: un 409 que el contrato declara, que nadie provoca nunca, y una corrida que vuelve verde
+sin haberlo intentado. Se mide **sin entorno**, porque la cobertura es propiedad del contrato y de
+la configuración: un destino de solo lectura bloquea sus escrituras, y contarlas como no cubiertas
+diría "el contrato está sin probar" cuando lo que pasó es que alguien eligió un destino seguro.
+
+### Lo que el corte cambió del producto
+
+Dos cosas, y ninguna era del arnés:
+
+1. **`GET /runs/:runId/report`**. Leer una corrida entera existía solo caso a caso, y esa vista
+   lleva todos los cuerpos de respuesta; pedirla 311 veces contra un límite de 120 por minuto es
+   un 429 —lo fue— y, sin límite, decenas de megabytes. El informe trae cada caso con sus
+   aserciones y ningún cuerpo: una corrida de 311 casos son unos cientos de kilobytes. Es lo que
+   un trabajo de CI lee, que es justo lo que P7 promete. Con dos pruebas: que trae todos los casos
+   con sus aserciones, y que **no** lleva `request`, `expected` ni `actual`, porque si eso vuelve
+   a colarse deja de ser usable de un tirón.
+2. **El sondeo del arnés a 400 ms era de 150 peticiones por minuto**, por encima del propio límite
+   de la API: una corrida larga estrangulaba las peticiones que la vigilaban. Para seguir una
+   corrida en vivo está el stream; un guion que solo quiere el final puede esperar.
+
+**Suites**: runner-core 73 · spec-import 35 · api 165 · api contra Postgres 17 · web 28.
+
+### Deuda que P6 deja anotada
+
+- El corte compara **el veredicto**, no la latencia: los dos lados miden procesos distintos en una
+  máquina compartida y un presupuesto que cambia porque el portátil estaba ocupado es ruido.
+- `tools/parity-cut/legacy/` es la segunda mitad del oráculo y se borra en P7 con el repo original.
+- El defecto D-29 del dashboard acoplado queda documentado aquí y **no se arregla allí**: ese repo
+  se retira en P7 y tocarlo invalidaría el oráculo de esta misma fase.

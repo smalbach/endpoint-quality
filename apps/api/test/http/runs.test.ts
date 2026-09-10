@@ -145,6 +145,32 @@ describe("una corrida completa contra un destino correcto", () => {
     assert.equal(JSON.stringify(detail.body).includes("Bearer "), false);
   });
 
+  test("el informe trae todos los casos con sus aserciones en una sola petición", async () => {
+    // The per-case view is the evidence view and carries whole response bodies; reading a whole
+    // run through it is one request per case, which against the 120-per-minute limit turns a
+    // 311-case matrix into three minutes of pacing. The report is what a CI job reads.
+    const { run } = await runAndWait(fixture.projectBase, { environmentId: fixture.environmentId });
+    const report = await api().get(`${fixture.projectBase}/runs/${run.id}/report`).set(as(owner));
+    assert.equal(report.status, 200);
+    assert.equal(report.body.cases.length, run.totals.cases);
+    assert.equal(report.body.run.id, run.id);
+    // Every executed case brings its assertions along, which is the point: a report whose cases
+    // are empty is a list of green ticks again.
+    const executed = report.body.cases.filter((runCase: { status: string }) => runCase.status !== "skipped");
+    assert.ok(executed.length > 0);
+    assert.equal(executed.every((runCase: { steps: { assertions: unknown[] }[] }) => runCase.steps.length > 0 && runCase.steps.every((step) => step.assertions.length > 0)), true);
+  });
+
+  test("el informe no lleva ningún cuerpo de respuesta", async () => {
+    // That is the whole reason it can be one request. If `actual` ever creeps back in, a 311-case
+    // run goes from a few hundred kilobytes to tens of megabytes and this stops being usable.
+    const { run } = await runAndWait(fixture.projectBase, { environmentId: fixture.environmentId, operationIds: ["listThings"] });
+    const report = await api().get(`${fixture.projectBase}/runs/${run.id}/report`).set(as(owner));
+    const step = report.body.cases[0].steps[0];
+    for (const field of ["request", "expected", "actual"]) assert.equal(field in step, false, `el informe no debe llevar ${field}`);
+    assert.deepEqual(Object.keys(step).sort(), ["assertions", "durationMs", "index", "label", "ok", "purpose"]);
+  });
+
   test("una corrida queda en el historial del proyecto", async () => {
     // The capability the coupled dashboard did not have: there the result lived in useState and
     // died on refresh.

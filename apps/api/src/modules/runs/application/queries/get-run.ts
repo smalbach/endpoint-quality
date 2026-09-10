@@ -70,3 +70,66 @@ export class GetRunCaseHandler implements IQueryHandler<GetRunCaseQuery, RunCase
     return { ...runCase, steps: await this.runs.listSteps(runCase.id) };
   }
 }
+
+/**
+ * The whole run as a report: every case, every assertion, no bodies.
+ *
+ * The two views that already existed cover the two screens — a list to draw progress, one case to
+ * read the evidence — and left the third need unmet. **A run is a result somebody wants to keep**:
+ * compare against last week's, attach to a pull request, fail a pipeline on. Getting that out of
+ * the per-case view is one request per case, which against a 120-per-minute limit turns reading a
+ * 311-case run into three minutes of pacing.
+ *
+ * What is dropped is what makes the per-case view expensive: `request`, `expected` and `actual`
+ * hold whole payloads and whole response bodies. What is kept is the part a report is made of —
+ * which case, which step, which assertions, and the latency. A 311-case run comes out around a
+ * few hundred kilobytes instead of tens of megabytes.
+ */
+export class GetRunReportQuery implements IQuery {
+  constructor(readonly organizationId: string, readonly projectId: string, readonly runId: string) {}
+}
+
+export type ReportAssertion = { label: string; pass: boolean; detail: string };
+export type ReportStep = { index: number; purpose: string; label: string; ok: boolean; durationMs: number; assertions: ReportAssertion[] };
+export type ReportCase = Omit<RunCase, "runId"> & { steps: ReportStep[] };
+export type RunReport = {
+  run: Omit<Run, "plan"> & { plan: Run["plan"] };
+  cases: ReportCase[];
+};
+
+@QueryHandler(GetRunReportQuery)
+export class GetRunReportHandler implements IQueryHandler<GetRunReportQuery, RunReport> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(RUN_REPOSITORY) private readonly runs: RunRepositoryPort,
+  ) {}
+  async execute(query: GetRunReportQuery): Promise<RunReport> {
+    const project = await ownedProject(this.projects, query.organizationId, query.projectId);
+    const run = await this.runs.findById(query.runId);
+    if (!run || run.projectId !== project.id) throw new NotFoundError("La corrida no existe", "run-not-found");
+
+    // One read for the cases and one for every step, then grouped here. The alternative — a query
+    // per case — is the N+1 that made the per-case view unusable as a report in the first place.
+    const [cases, steps] = await Promise.all([this.runs.listCases(run.id), this.runs.listStepsForRun(run.id)]);
+    const byCase = new Map<string, RunStep[]>();
+    for (const step of steps) byCase.set(step.runCaseId, [...(byCase.get(step.runCaseId) ?? []), step]);
+
+    return {
+      run,
+      cases: cases.map(({ runId: _runId, ...runCase }) => ({
+        ...runCase,
+        steps: (byCase.get(runCase.id) ?? []).map((step) => ({
+          index: step.index,
+          purpose: step.purpose,
+          label: step.label,
+          ok: step.ok,
+          durationMs: step.durationMs,
+          // Stored as JSON, so it arrives as `unknown`. Narrowed here rather than trusted: a row
+          // written by an older version with a different shape should come out empty, not
+          // crash the report of a run somebody is waiting on.
+          assertions: Array.isArray(step.assertions) ? (step.assertions as ReportAssertion[]) : [],
+        })),
+      })),
+    };
+  }
+}

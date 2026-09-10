@@ -297,6 +297,12 @@ export class InMemoryRunRepository implements RunRepositoryPort {
   async listSteps(runCaseId: string): Promise<RunStep[]> {
     return [...this.steps.values()].filter((step) => step.runCaseId === runCaseId).sort((a, b) => a.index - b.index);
   }
+  /** Ordered by the case's position and then the step index, as the SQL one is: the report is
+   * read top to bottom and a fake that returned insertion order would hide a wrong ORDER BY. */
+  async listStepsForRun(runId: string): Promise<RunStep[]> {
+    const cases = await this.listCases(runId);
+    return cases.flatMap((runCase) => [...this.steps.values()].filter((step) => step.runCaseId === runCase.id).sort((a, b) => a.index - b.index));
+  }
 
   /** Counted from the case rows, exactly as the SQL repository does. A fake that kept its own
    * counter would let a test pass that the real one fails. */

@@ -13,6 +13,14 @@ export interface RunRepositoryPort {
   saveCase(runCase: RunCase): Promise<void>;
   saveSteps(steps: RunStep[]): Promise<void>;
   listSteps(runCaseId: string): Promise<RunStep[]>;
+  /** Every step of every case of a run, in one read.
+   *
+   * The per-case view exists because a step carries whole response bodies and the progress screen
+   * must not ship a thousand of them to draw a list. A report is the other need: a CI job, or
+   * anyone comparing two runs, wants the assertion labels of all 311 cases and none of the
+   * bodies. Asking for them case by case is 311 requests against a 120-per-minute limit — three
+   * minutes of deliberate pacing to read one run. */
+  listStepsForRun(runId: string): Promise<RunStep[]>;
   /** Recomputed from the case rows rather than incremented in memory: a worker that restarts
    * mid-run must not lose the count, and two workers must not both add one. */
   recomputeTotals(runId: string): Promise<RunTotals>;
