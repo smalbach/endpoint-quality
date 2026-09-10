@@ -1,0 +1,13 @@
+{
+  "name": "endpoint-quality",
+  "private": true,
+  "version": "0.0.0",
+  "engines": { "node": ">=22.13.0" },
+  "packageManager": "pnpm@10.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint"
+  }
+}
