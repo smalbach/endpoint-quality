@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { Badge, Button, Card, Field, inputClass } from "@/components/ui";
+import { SECTION_EDITORS } from "@/components/config-editors";
+import { unchanged } from "@/lib/config-draft";
 import { formatDate } from "@/lib/format";
 import type { ConfigView, ProjectSummary } from "@/lib/types";
 
@@ -21,10 +23,14 @@ const SECTION_HELP: Record<string, string> = {
 /**
  * Importing a contract and editing the eight configuration sections.
  *
- * The editors are JSON textareas validated by the server, not visual forms. That is a deliberate
- * stopping point rather than an omission: a form per section is a week of work, the shapes are
- * still moving, and the API already answers a bad document with the exact field path that is
- * wrong — which is most of what a form would give you.
+ * Six of the eight have a visual editor; the other two keep a JSON textarea, and which two is a
+ * judgement rather than a leftover. `scenarios` and `bodies` hold whole scenario templates and
+ * whole request payloads — arbitrary JSON by definition — and a form over those is a worse JSON
+ * editor than a JSON editor.
+ *
+ * The textarea stays reachable everywhere else too. Somebody who knows the shape should not have
+ * to click through a form to paste a section, and it is the escape hatch for anything an editor
+ * does not model yet.
  */
 export function ConfigPage() {
   const { projectId } = useParams();
@@ -45,6 +51,14 @@ export function ConfigPage() {
     queryFn: () => api<ConfigView>(`${base}/config`),
   });
 
+  /** The contract's operation ids, so `implemented` can be a checklist instead of a list somebody
+   * types from memory. */
+  const operationIds = useQuery({
+    queryKey: ["operation-ids", projectId, project.data?.contract?.versionId],
+    enabled: Boolean(organization && projectId && project.data?.contract),
+    queryFn: async () => (await api<{ operations: { id: string }[] }>(`${base}/operations`)).operations.map((operation) => operation.id),
+  });
+
   return (
     <div className="space-y-4">
       <ImportContract base={base} contract={project.data?.contract ?? null} source={project.data?.source ?? null} disabled={!canEdit} onImported={() => queryClient.invalidateQueries()} />
@@ -57,6 +71,7 @@ export function ConfigPage() {
             section={section}
             data={value}
             disabled={!canEdit}
+            operationIds={operationIds.data ?? []}
             onSaved={() => queryClient.invalidateQueries({ queryKey: ["config", projectId] })}
           />
         ))}
@@ -170,20 +185,29 @@ function SectionEditor({
   section,
   data,
   disabled,
+  operationIds,
   onSaved,
 }: {
   base: string;
   section: string;
   data: { data: unknown; configured: boolean; updatedAt: string | null };
   disabled: boolean;
+  operationIds: string[];
   onSaved: () => void;
 }) {
-  const [draft, setDraft] = useState(() => JSON.stringify(data.data, null, 2));
+  const Editor = SECTION_EDITORS[section];
   const [open, setOpen] = useState(false);
+  const [asJson, setAsJson] = useState(!Editor);
+  const [draft, setDraft] = useState<Record<string, unknown>>(() => (data.data ?? {}) as Record<string, unknown>);
+  const [text, setText] = useState(() => JSON.stringify(data.data, null, 2));
   const [parseError, setParseError] = useState<string | null>(null);
 
   // A section saved elsewhere — or reset — must not leave a stale draft in the box.
-  useEffect(() => setDraft(JSON.stringify(data.data, null, 2)), [data.data]);
+  useEffect(() => {
+    setDraft((data.data ?? {}) as Record<string, unknown>);
+    setText(JSON.stringify(data.data, null, 2));
+    setParseError(null);
+  }, [data.data]);
 
   const save = useMutation({
     mutationFn: (body: unknown) => api<void>(`${base}/config/${section}`, { method: "PUT", body }),
@@ -194,15 +218,37 @@ function SectionEditor({
     onSuccess: onSaved,
   });
 
-  function submit() {
+  /** Switching to JSON shows what the form built, so the two views are never out of step. */
+  function toJson() {
+    setText(JSON.stringify(draft, null, 2));
+    setAsJson(true);
+  }
+
+  /** And switching back only works from a document that parses — a half-typed one has no form
+   * to show. */
+  function toForm() {
     try {
-      const parsed = JSON.parse(draft) as unknown;
+      setDraft(JSON.parse(text) as Record<string, unknown>);
       setParseError(null);
+      setAsJson(false);
+    } catch (error) {
+      setParseError(error instanceof Error ? error.message : "JSON inválido");
+    }
+  }
+
+  function submit() {
+    if (!asJson) return save.mutate(draft);
+    try {
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      setParseError(null);
+      setDraft(parsed);
       save.mutate(parsed);
     } catch (error) {
       setParseError(error instanceof Error ? error.message : "JSON inválido");
     }
   }
+
+  const dirty = asJson ? text !== JSON.stringify(data.data, null, 2) : !unchanged(draft, data.data);
 
   return (
     <Card className="overflow-hidden">
@@ -219,14 +265,29 @@ function SectionEditor({
 
       {open && (
         <div className="border-t border-slate-100 px-4 py-3">
-          <p className="text-[11px] leading-5 text-slate-500">{SECTION_HELP[section]}</p>
-          <textarea
-            className="mt-2 h-64 w-full rounded-lg border border-slate-200 p-3 font-mono text-[11px] outline-none focus:border-slate-900 disabled:bg-slate-50"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            disabled={disabled}
-            spellCheck={false}
-          />
+          <div className="flex items-start gap-3">
+            <p className="flex-1 text-[11px] leading-5 text-slate-500">{SECTION_HELP[section]}</p>
+            {Editor && (
+              <Button variant="ghost" className="h-7 shrink-0 px-2 text-xs" onClick={() => (asJson ? toForm() : toJson())}>
+                {asJson ? "Ver como formulario" : "Ver como JSON"}
+              </Button>
+            )}
+          </div>
+
+          <div className="mt-3">
+            {Editor && !asJson ? (
+              <Editor value={draft} onChange={setDraft} disabled={disabled} operationIds={operationIds} />
+            ) : (
+              <textarea
+                className="h-64 w-full rounded-lg border border-slate-200 p-3 font-mono text-[11px] outline-none focus:border-slate-900 disabled:bg-slate-50"
+                value={text}
+                onChange={(event) => setText(event.target.value)}
+                disabled={disabled}
+                spellCheck={false}
+              />
+            )}
+          </div>
+
           {parseError && <p className="mt-1 text-xs text-rose-700">{parseError}</p>}
           {save.error && (
             <div className="mt-1 text-xs text-rose-700">
@@ -239,7 +300,7 @@ function SectionEditor({
             </div>
           )}
           <div className="mt-2 flex gap-2">
-            <Button disabled={disabled || save.isPending} onClick={submit}>
+            <Button disabled={disabled || save.isPending || !dirty} onClick={submit}>
               Guardar
             </Button>
             {data.configured && (
