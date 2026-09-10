@@ -3,9 +3,12 @@ import { Inject } from "@nestjs/common";
 import { CommandHandler, EventBus, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 import { fingerprint, importSpec, type ImportProblem } from "@eq/spec-import";
 
-import { InvalidInputError } from "@/shared/errors/domain-error";
+import { Logger } from "@nestjs/common";
+
+import { ConflictError, InvalidInputError } from "@/shared/errors/domain-error";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { SAFE_FETCH, type SafeFetchPort } from "@/shared/http/safe-fetch";
+import { SECRET_CIPHER, type SecretCipherPort } from "@/shared/crypto/secret-cipher";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
 import { SPEC_REPOSITORY, type SpecRepositoryPort } from "../../domain/ports";
@@ -20,7 +23,9 @@ export class ImportSpecVersionCommand implements ICommand {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
-    readonly source: SpecSourceInput,
+    /** Undefined re-reads wherever the project read last time, with the credentials it stored
+     * then. A drift check on a schedule is the reason this can be omitted. */
+    readonly source: SpecSourceInput | undefined,
     readonly importedBy: string,
     /** Whether the imported version becomes the one runs use. False imports it for comparison
      * only, which is what a drift check does. */
@@ -65,13 +70,17 @@ export class ImportSpecVersionHandler implements ICommandHandler<ImportSpecVersi
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(SPEC_REPOSITORY) private readonly specs: SpecRepositoryPort,
     @Inject(SAFE_FETCH) private readonly http: SafeFetchPort,
+    @Inject(SECRET_CIPHER) private readonly cipher: SecretCipherPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
     private readonly eventBus: EventBus,
   ) {}
 
+  private readonly logger = new Logger("SpecImport");
+
   async execute(command: ImportSpecVersionCommand): Promise<ImportSpecVersionResult> {
     const project = await ownedProject(this.projects, command.organizationId, command.projectId);
-    const raw = await this.read(command.source);
+    const source = command.source ?? (await this.rememberedSource(project.id));
+    const raw = await this.read(project.id, source);
     if (!raw.trim()) throw new InvalidInputError("El documento está vacío", [{ field: "source", detail: "No se recibió contenido" }]);
 
     const hash = fingerprint(raw);
@@ -99,7 +108,7 @@ export class ImportSpecVersionHandler implements ICommandHandler<ImportSpecVersi
 
     const now = this.clock.now();
     const specVersionId = randomUUID();
-    const sourceId = await this.recordSource(project.id, command.source, now);
+    const sourceId = await this.recordSource(project.id, source, now);
 
     await this.specs.saveVersion(
       {
@@ -132,9 +141,38 @@ export class ImportSpecVersionHandler implements ICommandHandler<ImportSpecVersi
     return { specVersionId, hash, operationCount: parsed.operations.length, problems: parsed.problems, unchanged: false, activated: activate };
   }
 
-  private async read(source: SpecSourceInput): Promise<string> {
+  /**
+   * Where this project read its contract last time.
+   *
+   * Only a URL can be re-read. An inline document or an upload lives in the request that brought
+   * it, and saying so is more useful than fetching an empty location and reporting that the
+   * contract is empty.
+   */
+  private async rememberedSource(projectId: string): Promise<SpecSourceInput> {
+    const stored = await this.specs.findLatestSource(projectId);
+    if (!stored) throw new ConflictError("El proyecto no tiene ninguna fuente guardada: indica de dónde leer el contrato", "no-spec-source");
+    if (stored.kind !== "url" || !stored.location) {
+      throw new ConflictError(
+        `La última importación de este proyecto fue ${stored.kind === "upload" ? "un fichero subido" : "un documento pegado"}, que no se puede volver a leer solo: adjunta el contrato`,
+        "spec-source-not-repeatable",
+      );
+    }
+    return { kind: "url", url: stored.location };
+  }
+
+  /**
+   * The document, fetched with the credentials the project already gave us if the caller did not
+   * bring their own.
+   *
+   * **Only for the exact same location.** Reusing a stored header against a URL the caller just
+   * typed would let anybody with editor rights point the import at their own server and receive
+   * somebody's staging token in the request. The match has to be on the location for the same
+   * project, or nothing is sent.
+   */
+  private async read(projectId: string, source: SpecSourceInput): Promise<string> {
     if (source.kind !== "url") return source.raw;
-    const response = await this.http.get(source.url, { headers: source.headers });
+    const headers = source.headers ?? (await this.storedHeaders(projectId, source.url));
+    const response = await this.http.get(source.url, { headers });
     if (response.status >= 400) {
       throw new InvalidInputError(
         `El contrato respondió ${response.status}`,
@@ -145,19 +183,58 @@ export class ImportSpecVersionHandler implements ICommandHandler<ImportSpecVersi
     return response.body;
   }
 
+  private async storedHeaders(projectId: string, url: string): Promise<Record<string, string> | undefined> {
+    const stored = await this.specs.findSourceByLocation(projectId, "url", url);
+    if (!stored?.headersCiphertext) return undefined;
+    try {
+      return JSON.parse(this.cipher.decrypt(stored.headersCiphertext)) as Record<string, string>;
+    } catch {
+      // A ciphertext that will not open means the key changed. The import is still attempted
+      // without the headers, so it fails on the contract's own 401 with a message about the
+      // contract — which is closer to the truth than a 500 about a cipher.
+      this.logger.warn(`Las cabeceras guardadas de ${url} no se pudieron descifrar: ¿cambió SECRETS_KEY?`);
+      return undefined;
+    }
+  }
+
+  /**
+   * One row per location, not one per import.
+   *
+   * A project re-importing the same URL nightly would otherwise accumulate a source row a night,
+   * each pointing at the same place, and the headers stored against the newest would be the only
+   * ones anybody could find.
+   */
   private async recordSource(projectId: string, source: SpecSourceInput, now: Date): Promise<string> {
-    const id = randomUUID();
+    const location = source.kind === "url" ? source.url : source.kind === "upload" ? source.filename : "";
+    const existing = await this.specs.findSourceByLocation(projectId, source.kind, location);
+    const headers = source.kind === "url" ? source.headers : undefined;
+
+    const id = existing?.id ?? randomUUID();
     await this.specs.saveSource({
       id,
       projectId,
       kind: source.kind,
-      location: source.kind === "url" ? source.url : source.kind === "upload" ? source.filename : "",
-      // Headers for a contract behind auth are a credential. P3 encrypts them with the same
-      // cipher as the target credentials; until there is a key to do it with, they are not
-      // persisted at all rather than persisted in the clear.
-      headersCiphertext: null,
-      createdAt: now,
+      location,
+      // Encrypted with the same cipher as the target credentials — a header carrying a bearer
+      // token is exactly as much of a credential as the token itself. New headers replace the
+      // stored ones; **no headers leaves what was there**, so a drift check that omits them is
+      // not the same thing as an operator revoking them.
+      headersCiphertext: this.encryptHeaders(headers) ?? existing?.headersCiphertext ?? null,
+      createdAt: existing?.createdAt ?? now,
     });
     return id;
+  }
+
+  private encryptHeaders(headers: Record<string, string> | undefined): string | null {
+    if (!headers || !Object.keys(headers).length) return null;
+    try {
+      return this.cipher.encrypt(JSON.stringify(headers));
+    } catch {
+      // No `SECRETS_KEY`. The import still succeeds — refusing it would be failing an operation
+      // the operator asked for because of one we offered — but the headers are not written in
+      // the clear, and the next import will ask for them again.
+      this.logger.warn("SECRETS_KEY no está configurada: las cabeceras del contrato no se guardan y habrá que repetirlas en cada importación");
+      return null;
+    }
   }
 }

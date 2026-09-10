@@ -91,6 +91,12 @@ export class TypeOrmSpecRepository implements SpecRepositoryPort {
   async saveSource(source: SpecSource): Promise<void> {
     await this.sources.save(source);
   }
+  async findSourceByLocation(projectId: string, kind: string, location: string): Promise<SpecSource | null> {
+    return (await this.sources.findOne({ where: { projectId, kind, location } })) ?? null;
+  }
+  async findLatestSource(projectId: string): Promise<SpecSource | null> {
+    return (await this.sources.findOne({ where: { projectId }, order: { createdAt: "DESC" } })) ?? null;
+  }
   async deleteVersion(id: string): Promise<void> {
     await this.versions.delete({ id });
   }

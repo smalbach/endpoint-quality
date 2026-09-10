@@ -15,6 +15,14 @@ export class GetProjectQuery implements IQuery {
 export type ProjectSummary = {
   id: string; name: string; slug: string; description: string; archivedAt: Date | null;
   contract: { versionId: string; title: string; version: string; operationCount: number; importedAt: Date } | null;
+  /**
+   * Where the contract was last read from, and whether a credential is on file for it.
+   *
+   * `headersStored` is a boolean and stays one: the point of storing the header encrypted is
+   * that nothing reads it back out, and a query that returned it would undo that in one line.
+   * What the screen needs is «hay una credencial guardada», not the credential.
+   */
+  source: { kind: string; location: string; headersStored: boolean } | null;
 };
 
 @QueryHandler(ListProjectsQuery)
@@ -48,6 +56,7 @@ async function summarize(project: { id: string; name: string; slug: string; desc
   // `contract: null` is a real state and the UI has to render it: a project exists before its
   // first import, because importing can fail and losing the project with it helps nobody.
   const active = project.activeSpecVersionId ? await specs.findVersionById(project.activeSpecVersionId) : null;
+  const source = await specs.findLatestSource(project.id);
   return {
     id: project.id,
     name: project.name,
@@ -55,5 +64,6 @@ async function summarize(project: { id: string; name: string; slug: string; desc
     description: project.description,
     archivedAt: project.archivedAt,
     contract: active ? { versionId: active.id, title: active.title, version: active.contractVersion, operationCount: active.operationCount, importedAt: active.importedAt } : null,
+    source: source ? { kind: source.kind, location: source.location, headersStored: source.headersCiphertext !== null } : null,
   };
 }

@@ -3,8 +3,6 @@ import { CqrsModule } from "@nestjs/cqrs";
 import { TypeOrmModule } from "@nestjs/typeorm";
 
 import { EnvironmentCredentialEntity, EnvironmentEntity, ProjectConfigEntity } from "@/shared/database/entities";
-import { SECRET_CIPHER } from "@/shared/crypto/secret-cipher";
-import { SecretCipherProvider } from "@/shared/crypto/secret-cipher.provider";
 import { AuthModule } from "@/modules/auth/auth.module";
 import { IamModule } from "@/modules/iam/iam.module";
 import { ProjectsModule } from "@/modules/projects/projects.module";
@@ -31,7 +29,6 @@ export const ENVIRONMENT_QUERY_HANDLERS = [ListEnvironmentsHandler, GetProjectCo
 export const ENVIRONMENT_ADAPTERS = [
   { provide: ENVIRONMENT_REPOSITORY, useClass: TypeOrmEnvironmentRepository },
   { provide: CONFIG_REPOSITORY, useClass: TypeOrmConfigRepository },
-  { provide: SECRET_CIPHER, useClass: SecretCipherProvider },
 ];
 
 /**
@@ -51,6 +48,6 @@ export const ENVIRONMENT_ADAPTERS = [
   ],
   controllers: [EnvironmentsController],
   providers: [...ENVIRONMENT_ADAPTERS, ...ENVIRONMENT_COMMAND_HANDLERS, ...ENVIRONMENT_QUERY_HANDLERS],
-  exports: [ENVIRONMENT_REPOSITORY, CONFIG_REPOSITORY, SECRET_CIPHER],
+  exports: [ENVIRONMENT_REPOSITORY, CONFIG_REPOSITORY],
 })
 export class EnvironmentsModule {}

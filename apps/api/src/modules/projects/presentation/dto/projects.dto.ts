@@ -34,13 +34,26 @@ export class SpecSourceDto {
 
   @IsOptional() @IsString() @MaxLength(MAX_SPEC_BYTES, { message: "el documento supera los 8 MB" }) raw?: string;
   @IsOptional() @IsString() @MaxLength(300) filename?: string;
-  /** Headers for a contract behind authentication. Sent, never stored — P3 adds the encrypted
-   * store for them alongside the target credentials. */
+  /**
+   * Headers for a contract behind authentication.
+   *
+   * Stored encrypted against this source's location, with the same cipher as the target
+   * credentials — a header carrying a bearer token is exactly as much of a credential as the
+   * token. Sending them once is enough: a later import or drift check of the **same URL** reuses
+   * them, which is what lets a drift check run on a schedule with no secret in the request.
+   */
   @IsOptional() @IsObject() headers?: Record<string, string>;
 }
 
 export class ImportSpecDto {
-  @ValidateNested() @Type(() => SpecSourceDto) source: SpecSourceDto;
+  /**
+   * Optional: omitted, the project re-reads wherever it read last time.
+   *
+   * That is the difference between a drift check somebody runs and one that runs on a schedule —
+   * a cron job that has to carry the contract's credentials in its request is a cron job with a
+   * secret in it.
+   */
+  @IsOptional() @ValidateNested() @Type(() => SpecSourceDto) source?: SpecSourceDto;
   /** Absent means activate, which is what importing usually means. A drift check passes false. */
   @IsOptional() @IsBoolean() activate?: boolean;
 }

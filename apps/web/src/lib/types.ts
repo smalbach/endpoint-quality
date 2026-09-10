@@ -22,6 +22,9 @@ export type ProjectSummary = {
   description: string;
   archivedAt: string | null;
   contract: { versionId: string; title: string; version: string; operationCount: number; importedAt: string } | null;
+  /** Dónde se leyó el contrato la última vez. `headersStored` es un booleano y nada más: la
+   * credencial se guarda cifrada precisamente para que ninguna consulta la devuelva. */
+  source: { kind: string; location: string; headersStored: boolean } | null;
 };
 
 export type Environment = {

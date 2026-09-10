@@ -194,6 +194,12 @@ export class InMemorySpecRepository implements SpecRepositoryPort {
   async saveSource(source: SpecSource): Promise<void> {
     this.sources.set(source.id, { ...source });
   }
+  async findSourceByLocation(projectId: string, kind: string, location: string): Promise<SpecSource | null> {
+    return [...this.sources.values()].find((source) => source.projectId === projectId && source.kind === kind && source.location === location) ?? null;
+  }
+  async findLatestSource(projectId: string): Promise<SpecSource | null> {
+    return [...this.sources.values()].filter((source) => source.projectId === projectId).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0] ?? null;
+  }
   async deleteVersion(id: string): Promise<void> {
     this.versions.delete(id);
     this.operations.delete(id);

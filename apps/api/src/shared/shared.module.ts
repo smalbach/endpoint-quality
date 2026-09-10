@@ -1,5 +1,7 @@
 import { Global, Module } from "@nestjs/common";
 import { CLOCK, SystemClock } from "./clock/clock.port";
+import { SECRET_CIPHER } from "./crypto/secret-cipher";
+import { SecretCipherProvider } from "./crypto/secret-cipher.provider";
 
 /**
  * The cross-cutting providers every module needs and none owns.
@@ -13,10 +15,18 @@ import { CLOCK, SystemClock } from "./clock/clock.port";
  * `AppModule`, which is not global, so every handler outside it failed to resolve. The in-memory
  * test harness registers its providers in one flat module, so the suite could not see it: the
  * first thing that did was starting the real process.
+ *
+ * The cipher is here for the same reason. It was registered in `environments`, which owned the
+ * only thing that needed it — until the spec import started storing the headers a contract behind
+ * authentication needs, at which point `specs` would have had to import `environments` to reach
+ * a symbol that has nothing to do with environments.
  */
 @Global()
 @Module({
-  providers: [{ provide: CLOCK, useClass: SystemClock }],
-  exports: [CLOCK],
+  providers: [
+    { provide: CLOCK, useClass: SystemClock },
+    { provide: SECRET_CIPHER, useClass: SecretCipherProvider },
+  ],
+  exports: [CLOCK, SECRET_CIPHER],
 })
 export class SharedModule {}

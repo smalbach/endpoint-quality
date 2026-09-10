@@ -83,13 +83,21 @@ import {
  * place where the SSRF policy is decided.
  */
 export class StubSafeFetch implements SafeFetchPort {
-  readonly responses = new Map<string, { status: number; body: string }>();
+  readonly responses = new Map<string, { status: number; body: string; requires?: { header: string; value: string } }>();
   readonly requested: string[] = [];
+  /** What was sent, headers included. `requested` keeps only the URLs, and a credential that
+   * travels in a header is invisible in a list of URLs. */
+  readonly calls: { url: string; headers: Record<string, string> }[] = [];
 
   constructor(private readonly policy: SafeFetchPolicy) {}
 
   reply(url: string, body: string, status = 200) {
     this.responses.set(url, { status, body });
+  }
+
+  /** A contract behind authentication: 401 unless the header arrives with the expected value. */
+  replyBehindAuth(url: string, body: string, header: string, value: string) {
+    this.responses.set(url, { status: 200, body, requires: { header: header.toLowerCase(), value } });
   }
 
   async get(url: string, options: { headers?: Record<string, string> } = {}): Promise<SafeFetchResult> {
@@ -98,9 +106,15 @@ export class StubSafeFetch implements SafeFetchPort {
 
   async request(url: string, options: SafeRequestOptions): Promise<SafeFetchResult> {
     this.requested.push(url);
+    const headers = Object.fromEntries(Object.entries(options.headers ?? {}).map(([name, value]) => [name.toLowerCase(), value]));
+    this.calls.push({ url, headers });
     const stored = this.responses.get(url);
     if (stored) {
-      return { status: stored.status, headers: { "content-type": "application/yaml" }, body: stored.body, finalUrl: url, durationMs: 1 };
+      const reply = { headers: { "content-type": "application/yaml" }, finalUrl: url, durationMs: 1 };
+      if (stored.requires && headers[stored.requires.header] !== stored.requires.value) {
+        return { ...reply, status: 401, body: "no autorizado" };
+      }
+      return { ...reply, status: stored.status, body: stored.body };
     }
     return safeFetch(url, this.policy, options);
   }

@@ -9,7 +9,9 @@ import { SPEC_REPOSITORY, type SpecRepositoryPort } from "../../domain/ports";
 import { ImportSpecVersionCommand, type ImportSpecVersionResult, type SpecSourceInput } from "./import-spec-version";
 
 export class CheckSpecDriftCommand implements ICommand {
-  constructor(readonly organizationId: string, readonly projectId: string, readonly source: SpecSourceInput, readonly checkedBy: string) {}
+  /** `source` may be omitted: the import falls back to wherever the project read last time, with
+   * the credentials it stored then. A scheduled drift check carries no secret because of it. */
+  constructor(readonly organizationId: string, readonly projectId: string, readonly source: SpecSourceInput | undefined, readonly checkedBy: string) {}
 }
 
 export type SpecDriftResult = SpecDrift & {

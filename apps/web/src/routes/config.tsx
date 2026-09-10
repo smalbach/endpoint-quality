@@ -47,7 +47,7 @@ export function ConfigPage() {
 
   return (
     <div className="space-y-4">
-      <ImportContract base={base} contract={project.data?.contract ?? null} disabled={!canEdit} onImported={() => queryClient.invalidateQueries()} />
+      <ImportContract base={base} contract={project.data?.contract ?? null} source={project.data?.source ?? null} disabled={!canEdit} onImported={() => queryClient.invalidateQueries()} />
 
       {config.data &&
         Object.entries(config.data.sections).map(([section, value]) => (
@@ -67,24 +67,32 @@ export function ConfigPage() {
 function ImportContract({
   base,
   contract,
+  source,
   disabled,
   onImported,
 }: {
   base: string;
   contract: ProjectSummary["contract"];
+  source: ProjectSummary["source"];
   disabled: boolean;
   onImported: () => void;
 }) {
   const [url, setUrl] = useState("");
   const [raw, setRaw] = useState("");
+  const [header, setHeader] = useState("");
 
   const importSpec = useMutation({
-    mutationFn: (source: unknown) => api<{ operationCount: number; unchanged: boolean }>(`${base}/spec-versions`, { method: "POST", body: { source } }),
+    // `source` sin definir relee donde se leyó la última vez, con la credencial que se guardó
+    // entonces. Es lo que hace que volver a leer no exija reescribir el token.
+    mutationFn: (next: unknown) => api<{ operationCount: number; unchanged: boolean }>(`${base}/spec-versions`, { method: "POST", body: next ? { source: next } : {} }),
     onSuccess: () => {
       setRaw("");
+      setHeader("");
       onImported();
     },
   });
+
+  const remembered = source?.kind === "url" ? source : null;
 
   return (
     <Card className="p-4">
@@ -97,12 +105,34 @@ function ImportContract({
         <p className="mt-1 text-xs text-amber-600">Todavía no hay contrato. Sin él no hay matriz.</p>
       )}
 
+      {remembered && (
+        <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          <p className="truncate">
+            Última lectura desde <span className="font-mono">{remembered.location}</span>
+            {remembered.headersStored ? " · con una credencial guardada" : ""}
+          </p>
+          <Button className="mt-2" disabled={disabled || importSpec.isPending} onClick={() => importSpec.mutate(undefined)}>
+            Volver a leerlo de ahí
+          </Button>
+        </div>
+      )}
+
       <div className="mt-4 grid gap-4 md:grid-cols-2">
         <div>
           <Field label="Desde una URL" hint="Se comprueba la dirección resuelta antes de pedirla, y se vuelve a comprobar en cada redirección.">
             <input className={inputClass} value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://api.example.com/openapi.json" disabled={disabled} />
           </Field>
-          <Button className="mt-2" disabled={disabled || !url || importSpec.isPending} onClick={() => importSpec.mutate({ kind: "url", url })}>
+          <Field
+            label="Authorization (si el contrato está detrás de login)"
+            hint="Se guarda cifrada contra esa dirección y no vuelve a salir. Basta con escribirla una vez: las siguientes lecturas la reutilizan."
+          >
+            <input className={inputClass} value={header} onChange={(event) => setHeader(event.target.value)} placeholder="Bearer …" disabled={disabled} />
+          </Field>
+          <Button
+            className="mt-2"
+            disabled={disabled || !url || importSpec.isPending}
+            onClick={() => importSpec.mutate({ kind: "url", url, ...(header.trim() ? { headers: { Authorization: header.trim() } } : {}) })}
+          >
             Importar desde la URL
           </Button>
         </div>

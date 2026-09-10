@@ -37,7 +37,10 @@ function actorId(principal: Principal): string {
  * express on its own — `kind: "url"` with no `url` is valid against every field rule and
  * meaningless as a whole.
  */
-function toSource(dto: SpecSourceDto): SpecSourceInput {
+/** Undefined when the caller did not say where to read from: the handler falls back to the
+ * source the project already has. */
+function toSource(dto: SpecSourceDto | undefined): SpecSourceInput | undefined {
+  if (!dto) return undefined;
   if (dto.kind === "url") {
     if (!dto.url) throw new InvalidInputError("Falta la URL del contrato", [{ field: "source.url", detail: "Requerida cuando kind es url" }]);
     return { kind: "url", url: dto.url, ...(dto.headers ? { headers: dto.headers } : {}) };

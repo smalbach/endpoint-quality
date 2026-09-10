@@ -311,6 +311,90 @@ describe("drift del contrato", () => {
   });
 });
 
+/**
+ * A contract behind authentication, and what the project remembers about it.
+ *
+ * Before this the headers were sent and thrown away, so every re-import and every drift check
+ * needed somebody to type the credential again — which meant a scheduled drift check either did
+ * not exist or carried a bearer token in its request body.
+ */
+describe("un contrato detrás de autenticación", () => {
+  const url = "https://privado.example.com/openapi.yaml";
+  let secured: string;
+
+  before(async () => {
+    const created = await api().post(`/orgs/${owner.organizationId}/projects`).set(as(owner)).send({ name: "Privado" });
+    secured = created.body.projectId;
+    context.http.replyBehindAuth(url, tinySpec, "Authorization", "Bearer secreto-del-contrato");
+  });
+
+  const importSpec = (body: object) => api().post(`/orgs/${owner.organizationId}/projects/${secured}/spec-versions`).set(as(owner)).send(body);
+
+  test("sin cabeceras no se puede leer, y el error habla del contrato", async () => {
+    const response = await importSpec({ source: { kind: "url", url } });
+    assert.equal(response.status, 422);
+    assert.match(response.body.type, /spec-unreachable$/);
+    assert.match(response.body.errors[0].detail, /401/);
+  });
+
+  test("con cabeceras se importa, y la siguiente vez ya no hacen falta", async () => {
+    assert.equal((await importSpec({ source: { kind: "url", url, headers: { Authorization: "Bearer secreto-del-contrato" } } })).status, 201);
+
+    // La segunda importación no las lleva y funciona igual: es lo que permite un drift check
+    // programado sin un secreto dentro de la petición.
+    const repeat = await importSpec({ source: { kind: "url", url } });
+    assert.equal(repeat.status, 201);
+    assert.equal(repeat.body.unchanged, true);
+    assert.equal(context.http.calls.at(-1)?.headers.authorization, "Bearer secreto-del-contrato");
+  });
+
+  test("se guardan cifradas y no salen por ninguna consulta", async () => {
+    const stored = [...context.repositories.specs.sources.values()].find((source) => source.location === url);
+    assert.ok(stored?.headersCiphertext, "la cabecera tiene que quedar guardada");
+    assert.doesNotMatch(stored.headersCiphertext, /secreto-del-contrato/, "cifrada, no en claro");
+    // El proyecto se puede leer entero sin que aparezca.
+    const project = JSON.stringify((await api().get(`/orgs/${owner.organizationId}/projects/${secured}`).set(as(owner))).body);
+    assert.doesNotMatch(project, /secreto-del-contrato|headersCiphertext/);
+  });
+
+  test("una URL distinta no hereda la credencial de otra", async () => {
+    // Si no, cualquiera con permiso de editor apunta la importación a su propio servidor y recibe
+    // el token de staging de otro en la petición.
+    const ajena = "https://atacante.example.com/openapi.yaml";
+    context.http.reply(ajena, tinySpec);
+    await importSpec({ source: { kind: "url", url: ajena } });
+    assert.deepEqual(context.http.calls.at(-1)?.headers, {}, "no se manda nada guardado contra otra dirección");
+  });
+
+  test("una sola fila por origen, no una por importación", async () => {
+    // Si no, un proyecto que reimporta cada noche acumula una fila por noche apuntando al mismo
+    // sitio, y las cabeceras guardadas contra la última son las únicas que alguien encuentra.
+    const rows = [...context.repositories.specs.sources.values()].filter((source) => source.projectId === secured && source.location === url);
+    assert.equal(rows.length, 1);
+  });
+
+  test("sin decir de dónde, el proyecto relee donde leyó la última vez", async () => {
+    const drift = await api().post(`/orgs/${owner.organizationId}/projects/${secured}/spec-drift-check`).set(as(owner)).send({});
+    assert.equal(drift.status, 200, JSON.stringify(drift.body));
+    assert.equal(drift.body.unchanged, true);
+  });
+
+  test("y un proyecto cuya última fuente fue un pegado lo dice en vez de leer la nada", async () => {
+    const created = await api().post(`/orgs/${owner.organizationId}/projects`).set(as(owner)).send({ name: "Pegado" });
+    await api().post(`/orgs/${owner.organizationId}/projects/${created.body.projectId}/spec-versions`).set(as(owner)).send({ source: { kind: "inline", raw: tinySpec } });
+    const response = await api().post(`/orgs/${owner.organizationId}/projects/${created.body.projectId}/spec-drift-check`).set(as(owner)).send({});
+    assert.equal(response.status, 409);
+    assert.match(response.body.type, /spec-source-not-repeatable$/);
+  });
+
+  test("un proyecto sin ninguna fuente pide que le digan de dónde leer", async () => {
+    const created = await api().post(`/orgs/${owner.organizationId}/projects`).set(as(owner)).send({ name: "Vacío" });
+    const response = await api().post(`/orgs/${owner.organizationId}/projects/${created.body.projectId}/spec-versions`).set(as(owner)).send({});
+    assert.equal(response.status, 409);
+    assert.match(response.body.type, /no-spec-source$/);
+  });
+});
+
 describe("el contrato real de Digital Catalog", { skip: HAS_REAL_SPEC ? false : `sin ${SPEC_PATH}` }, () => {
   test("se importa por la API y produce las 46 operaciones", async () => {
     // The criterion of this phase. The same document the coupled dashboard had compiled into
