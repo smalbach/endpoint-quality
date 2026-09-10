@@ -140,6 +140,12 @@ Lo que un contrato nunca dice, y sí pone el proyecto:
 La configuración siempre gana sobre lo derivado: un schema dice qué es estructuralmente válido, un
 proyecto sabe qué es aceptable. `examples/sample-api/config.json` es un ejemplo entero y corto.
 
+Seis de las ocho secciones se editan con formulario en la interfaz —`implemented` es una lista de
+comprobación contra las operaciones del contrato, y las reglas de presupuesto y de envelope se
+ordenan con flechas, porque casan a la primera y el orden decide cuál gana—. `scenarios` y `bodies`
+se quedan en JSON a propósito: guardan plantillas de caso y payloads enteros, y un formulario sobre
+JSON arbitrario es un peor editor de JSON. El textarea sigue a un clic en todas.
+
 ## Su propio contrato
 
 La API publica el suyo en `/openapi.json`, **con los errores que responde y con lo que llevan
@@ -165,6 +171,8 @@ es una decisión y no un caso automático.
       runner-core     Dominio puro: generación de escenarios, plan de ejecución,
                       presupuestos, validación JSON Schema. Sin framework.
       spec-import     OpenAPI 3.0/3.1 → Operation[]
+      contracts       Lo que contesta la API, declarado una vez. Solo tipos, sin
+                      runtime: `Date` en el servidor, `string` en el cable.
     docker            Dockerfiles y compose; compose.demo.yml añade la muestra
     examples/
       sample-api      El destino de la demostración, con su fallo a propósito

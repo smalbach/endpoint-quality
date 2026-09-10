@@ -663,10 +663,10 @@ colgar un flujo de borrado, y el 202 es el arranque asíncrono de una corrida.
   nada. Además `gen_dashboard_endpoints.py` vive en otro repositorio y su `make dashboard-check`
   depende de él: retirarlo es una decisión sobre el build de otro proyecto. Queda como el último
   paso, cuando se decida jubilar el dashboard acoplado.
-- La deuda anterior sigue en pie: el stream SSE es por proceso —varias instancias necesitan un relé
-  por pub/sub—, no hay política de retención de `run_steps`, las cabeceras de auth del origen del
-  contrato no persisten, los tipos de la API en el front están a mano, y no hay editores visuales
-  de configuración ni gestión de miembros.
+- ~~La deuda anterior sigue en pie: el stream SSE es por proceso, no hay política de retención de
+  `run_steps`, las cabeceras de auth del origen del contrato no persisten, los tipos de la API en
+  el front están a mano, y no hay editores visuales de configuración ni gestión de miembros.~~
+  Cerrada abajo, en «Cerrar la deuda».
 - **Los cuerpos de petición no se derivan del contrato.** Un proyecto nuevo apuntado a un contrato
   que declara su `requestBody` sigue necesitando una sección `bodies` escrita a mano para que las
   escrituras no salgan todas en 422. La demostración lo enseña —esa configuración está en
@@ -787,3 +787,97 @@ campos y `UpdateEnvironmentDto` ninguno; otra llama a la API y comprueba que res
 `{}` es 422 nombrando ambos campos, y un `PATCH` con solo una bandera deja el nombre donde estaba.
 
 Suites: runner-core 95 · spec-import 35 · api **177** · api/Postgres 17 · web 32.
+
+## Cerrar la deuda
+
+Seis cosas anotadas en su momento como «lo siguiente». Están hechas, y lo que sigue es qué se
+aprendió de cada una, que casi nunca fue lo que decía la nota.
+
+### Un `pattern` es el contrato hablando
+
+Un campo con `pattern: "^[A-Z]{3}-\\d{4}$"` recibía `"ejemplo"`. La nota decía «se podría
+satisfacer una expresión regular sencilla»; lo cierto es más fuerte: es el único sitio donde «no
+adivinar más allá del documento» no aplica, porque el patrón *es* el documento, y mandar otra cosa
+es escribir uno mismo el 422 que luego se reporta.
+
+`exampleFromPattern` cubre literales, clases, rangos, escapes, grupos, alternancia y repetición
+contada. Lo que no cubre lo **abandona en vez de aproximarlo** —un valor que parece cumplir una
+regla y no la cumple manda a alguien a mirar el endpoint— y todo lo que genera se comprueba contra
+el `RegExp` de verdad antes de usarse, así que el módulo puede equivocarse pero no puede colar un
+valor incorrecto.
+
+### La tabla que no tenía techo
+
+`run_steps` era la única parte del sistema sin límite. Lo que hizo la política tratable fue notar
+que las dos mitades de una fila pesan distinto: los cuerpos son casi todo el tamaño, y la lista de
+aserciones son unos cientos de bytes y son lo que hace que una corrida de marzo siga contestando
+«esto estaba en verde, y esto falló». De ahí dos plazos y no uno.
+
+`prunedAt` y no un objeto vacío, porque un `actual` nulo porque nadie contestó es un timeout y uno
+nulo porque se retiró seis meses después es una petición completa. La interfaz lo dice con todas
+las letras; sin eso una corrida vieja se lee como una pared de timeouts.
+
+Sin cron y sin lock: el barrido es idempotente, así que dos instancias barriendo a la vez gastan
+una consulta. Las pruebas contra Postgres **instancian el repositorio de verdad** en vez de
+reescribir su SQL, que es la única forma de que no pasen mientras el repositorio está mal.
+
+### Un contrato detrás de login
+
+La columna cifrada existía desde la primera migración y siempre se escribía null. Guardar las
+cabeceras es la mitad fácil; la mitad que importa es **contra qué se reutilizan**: solo contra la
+misma dirección, o cualquiera con permiso de editor apunta la importación a su propio servidor y
+recibe el token de staging de otro en la petición.
+
+Con eso, `source` pasa a ser opcional: omitirlo relee donde el proyecto leyó la última vez. Un
+drift check programado deja de necesitar un secreto dentro de su petición, que era el motivo real
+por el que no existía.
+
+### El progreso cruza instancias
+
+`QUEUE_DRIVER=redis` ya decía «hay más de un proceso», así que el relé usa el mismo interruptor: la
+corrida la ejecuta quien cogió el trabajo y la mira quien haya caído en otra instancia, y eso
+coincidía por suerte.
+
+Pub/sub y no un stream, a propósito: el progreso no vale nada tarde y el registro duradero es la
+base de datos. Local primero y relé después, para que un broker lento no se meta en el camino de
+ejecutar un caso. Y lo que llega de fuera no se retransmite, que es lo que impide que dos
+instancias se reenvíen el mismo evento sin parar.
+
+### Una sola declaración de lo que contesta la API
+
+La nota decía «tipos a mano en el front». El fallo concreto fue peor y ya había ocurrido: cuando
+`run_steps` aprendió a que le retiren los cuerpos, la API empezó a contestar `request: null` y el
+navegador siguió con un tipo que decía que estaba siempre. **Un compilador no puede cazar una
+mentira que le contaron dos veces.**
+
+`@eq/contracts`, solo tipos, escritos una vez sobre un parámetro de fecha —`Date` en el servidor,
+`string` en el cable— porque es lo único en lo que los dos lados difieren de verdad. La causa de
+fondo, sin embargo, estaba en el dominio: `RunStep` llevaba `unknown` en sus tres payloads, y
+`unknown` es asignable a cualquier cosa. El casteo vive ahora en el repositorio, que es la frontera
+con `jsonb`, y una sola vez.
+
+### La interfaz que faltaba
+
+`/settings/org` con personas, invitaciones y credenciales de servicio; y seis de las ocho secciones
+de configuración con formulario. Cuáles seis es un juicio: `scenarios` y `bodies` guardan
+plantillas y payloads enteros —JSON arbitrario por definición— y un formulario sobre eso es un peor
+editor de JSON que un editor de JSON. El textarea sigue a un clic en todas.
+
+Dos cosas que los editores cuidan y que un formulario ingenuo se salta: **el orden es dato** —las
+reglas casan a la primera, así que las flechas deciden cuál gana— y **un opcional vacío no es un
+opcional ausente**: `pathSuffix: ""` casa con toda ruta que acabe en nada, que son todas, y el
+schema lo acepta.
+
+Probarlo en el navegador encontró un fallo que ninguna prueba tenía: `useOrganization` devolvía
+`organizations[0]`, y aceptar una invitación deja a alguien en dos organizaciones —darse de alta
+también funda una propia— así que el invitado aterrizaba en la suya, vacía, y la invitación parecía
+no haber hecho nada. Verificado ahora de punta a punta contra la demo.
+
+### Lo que no se cerró, y por qué
+
+- **Publicar imágenes** necesita un registro y unas credenciales que son de quien despliega.
+- **Retirar el oráculo** sigue siendo una decisión sobre el build de otro repositorio.
+- **El `signUp` intermitente** no se ha vuelto a ver en decenas de corridas completas de la suite.
+  No se declara arreglado: no se ha reproducido, que no es lo mismo.
+
+Suites: runner-core **104** · spec-import 35 · api **195** · api/Postgres **21** · web **48**.
