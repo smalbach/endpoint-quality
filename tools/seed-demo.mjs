@@ -124,23 +124,26 @@ async function main() {
   const coverage = await call("GET", `${base}/coverage`);
   console.log(`cobertura     ${coverage.totals.covered}/${coverage.totals.declaredResponses} respuestas declaradas con caso · ${coverage.totals.cases} casos`);
 
+  // A token is shown once and stored hashed, so on a second `up` there is nothing to print. The
+  // first version simply skipped this whole block when `demo-ci` already existed — and a returning
+  // reader got no token, **no run, and nothing happening**, which reads as a broken deployment
+  // rather than as an idempotent one.
+  //
+  // So the old one is revoked and a new one issued. That would be the wrong call for a real
+  // credential; for a demo token whose entire purpose is to be read off this screen it is the only
+  // behaviour that makes the second `up` the same experience as the first.
   const tokens = await call("GET", `/orgs/${organization.id}/tokens`);
-  let serviceToken = null;
-  if (!tokens.some((candidate) => candidate.name === "demo-ci")) {
-    // Returned once and never again — it is stored hashed. Printing it here is the whole point:
-    // the next thing the reader does is paste it into `eq-run`.
-    serviceToken = (await call("POST", `/orgs/${organization.id}/tokens`, { name: "demo-ci" })).token;
-  }
+  const previous = tokens.find((candidate) => candidate.name === "demo-ci");
+  if (previous) await call("DELETE", `/orgs/${organization.id}/tokens/${previous.id}`);
+  const serviceToken = (await call("POST", `/orgs/${organization.id}/tokens`, { name: "demo-ci" })).token;
 
   console.log(`\n  Interfaz    ${process.env.EQ_WEB ?? "http://localhost:8080"}`);
   console.log(`  Entrar con  ${EMAIL} / ${PASSWORD}`);
-  if (serviceToken) {
-    console.log(`\n  Token de servicio para CI (no se vuelve a mostrar):\n    ${serviceToken}`);
-    console.log(`\n    EQ_API=${API} EQ_TOKEN=${serviceToken} \\`);
-    console.log(`      node tools/eq-run.mjs --project "${PROJECT_NAME}" --environment ${ENVIRONMENT_NAME}`);
-  }
+  console.log(`\n  Token de servicio para CI${previous ? " (el anterior queda revocado)" : ""}:\n    ${serviceToken}`);
+  console.log(`\n    EQ_API=${API} EQ_TOKEN=${serviceToken} \\`);
+  console.log(`      node tools/eq-run.mjs --project "${PROJECT_NAME}" --environment ${ENVIRONMENT_NAME}`);
 
-  if (RUN && serviceToken) {
+  if (RUN) {
     console.log(`\n  Ejecutando la matriz una vez, por el mismo camino que usa una pipeline:\n`);
     const script = join(HERE, "eq-run.mjs");
     const child = spawn(process.execPath, [script, "--project", PROJECT_NAME, "--environment", ENVIRONMENT_NAME], {

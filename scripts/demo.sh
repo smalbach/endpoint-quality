@@ -49,7 +49,10 @@ echo "sembrando la demostración…"
 echo
 # En primer plano y sin `-d`: la salida del seed —la cuenta, el token de servicio, la corrida y
 # sus rojos— es lo que hay que leer.
-"${COMPOSE[@]}" run --rm --no-deps seed || true
+#
+# `--build` porque el seed corre desde su imagen, no desde el árbol de ficheros. Sin esto, editar
+# `tools/seed-demo.mjs` y volver a lanzar la demostración ejecuta la versión anterior, en silencio.
+"${COMPOSE[@]}" run --rm --no-deps --build seed || true
 
 cat <<EOF
 
