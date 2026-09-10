@@ -111,14 +111,17 @@ async function main() {
 
   const environments = await call("GET", `${base}/environments`);
   const environment = environments.find((candidate) => candidate.name === ENVIRONMENT_NAME);
-  const environmentId = environment?.id ?? (await call("POST", `${base}/environments`, {
-    name: ENVIRONMENT_NAME,
-    baseUrl: TARGET,
-    // Writes on, because the sample API is disposable and in memory — and because the case this
-    // demo exists to show is a DELETE that lies. Neither flag is ever on by default.
-    writesAllowed: true,
-    authEnforced: false,
-  })).environmentId;
+  // Created for its effect: the run below asks for it by name. Nothing here needs its id.
+  if (!environment) {
+    await call("POST", `${base}/environments`, {
+      name: ENVIRONMENT_NAME,
+      baseUrl: TARGET,
+      // Writes on, because the sample API is disposable and in memory — and because the case this
+      // demo exists to show is a DELETE that lies. Neither flag is ever on by default.
+      writesAllowed: true,
+      authEnforced: false,
+    });
+  }
   console.log(`entorno       ${ENVIRONMENT_NAME} → ${TARGET}`);
 
   const coverage = await call("GET", `${base}/coverage`);

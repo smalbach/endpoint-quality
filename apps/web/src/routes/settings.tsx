@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError } from "@/lib/api";
+import { api, type ApiError } from "@/lib/api";
 import { useAuth, useCan, useOrganization } from "@/lib/auth";
 import { canChangeRole, canRemove, ROLES } from "@/lib/roles";
 import { Badge, Button, Card, Empty, Field, inputClass } from "@/components/ui";
@@ -55,7 +55,7 @@ function Members({ organizationId, actorRole }: { organizationId: string; actorR
     // `reload` and not only `invalidate`: changing your own role changes what the whole app may
     // render, and the session's copy of it is what every other screen reads.
     onSuccess: async () => {
-      invalidate();
+      void invalidate();
       await reload();
     },
   });
@@ -63,7 +63,7 @@ function Members({ organizationId, actorRole }: { organizationId: string; actorR
   const remove = useMutation({
     mutationFn: (userId: string) => api(`${base}/members/${userId}`, { method: "DELETE" }),
     onSuccess: async () => {
-      invalidate();
+      void invalidate();
       await reload();
     },
   });
@@ -199,7 +199,7 @@ function Tokens({ organizationId }: { organizationId: string }) {
     mutationFn: () => api<{ token: string }>(base, { method: "POST", body: { name } }),
     onSuccess: () => {
       setName("");
-      invalidate();
+      void invalidate();
     },
   });
   const revoke = useMutation({ mutationFn: (id: string) => api(`${base}/${id}`, { method: "DELETE" }), onSuccess: invalidate });

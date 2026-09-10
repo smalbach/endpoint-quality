@@ -12,7 +12,7 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import { AddressInfo } from "node:net";
+import { type AddressInfo } from "node:net";
 
 import { BlockedTargetError, isBlockedAddress, resolveTarget, safeFetch, type SafeFetchPolicy } from "@/shared/http/safe-fetch";
 

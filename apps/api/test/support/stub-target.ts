@@ -9,6 +9,7 @@
  * The faults are switched per instance rather than per request, so a test says "an API that
  * drops fields" and then runs the whole matrix against it.
  */
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -115,7 +116,7 @@ export class StubTarget {
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
   }
 
-  private async handle(request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse): Promise<void> {
+  private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? "/", "http://stub");
     const method = request.method ?? "GET";
     const authorization = request.headers.authorization;
@@ -181,7 +182,7 @@ export class StubTarget {
   }
 }
 
-async function readJson(request: import("node:http").IncomingMessage): Promise<Record<string, unknown> | null> {
+async function readJson(request: IncomingMessage): Promise<Record<string, unknown> | null> {
   const chunks: Buffer[] = [];
   for await (const chunk of request) chunks.push(chunk as Buffer);
   const raw = Buffer.concat(chunks).toString("utf8");

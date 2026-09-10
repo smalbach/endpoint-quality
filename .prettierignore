@@ -1,0 +1,5 @@
+# Build output and vendored artefacts. Nothing here is written by hand.
+**/dist
+**/dist-test
+pnpm-lock.yaml
+.parity-cut

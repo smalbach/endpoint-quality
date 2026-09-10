@@ -49,7 +49,7 @@ export function LoginPage({ mode }: { mode: "login" | "register" }) {
         selectOrganization(accepted.organizationId);
         await reload();
       }
-      navigate("/", { replace: true });
+      void navigate("/", { replace: true });
     } catch (caught) {
       setError(caught as Error);
     } finally {

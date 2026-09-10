@@ -4,7 +4,6 @@ import { Inject } from "@nestjs/common";
 import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
 
 import { USER_REPOSITORY, type UserRepositoryPort } from "@/modules/auth/domain/ports";
-import type { Role } from "../../domain/model";
 import { INVITATION_REPOSITORY, MEMBERSHIP_REPOSITORY, type InvitationRepositoryPort, type MembershipRepositoryPort } from "../../domain/ports";
 
 export class ListMembersQuery implements IQuery {

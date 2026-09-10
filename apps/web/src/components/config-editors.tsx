@@ -21,7 +21,7 @@
 import { useState, type ReactNode } from "react";
 
 import { compact, HTTP_METHODS, move, removeAt, replaceAt, slugId, type HttpMethod } from "@/lib/config-draft";
-import { Button, inputClass } from "@/components/ui";
+import { Button } from "@/components/ui";
 
 type Draft = Record<string, unknown>;
 type EditorProps = { value: Draft; onChange: (next: Draft) => void; disabled: boolean; operationIds: string[] };

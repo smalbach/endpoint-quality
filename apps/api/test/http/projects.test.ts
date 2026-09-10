@@ -275,7 +275,7 @@ describe("drift del contrato", () => {
     // This is the capability the coupled dashboard structurally could not have: with the
     // operation table compiled into the bundle, "the contract changed" and "the contract is
     // fine" produced identical output — a green matrix.
-    const shrunk = tinySpec.replace(/  \/posts\/\{slug\}:[\s\S]*$/, "");
+    const shrunk = tinySpec.replace(/ {2}\/posts\/\{slug\}:[\s\S]*$/, "");
     const before = (await api().get(`/orgs/${owner.organizationId}/projects/${projectId}`).set(as(owner))).body.contract.versionId;
 
     const response = await api()
