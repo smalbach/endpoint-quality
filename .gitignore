@@ -14,3 +14,6 @@ coverage/
 
 # Los ficheros de veredictos del corte de paridad: evidencia de una ejecución, no fuente.
 .parity-cut/
+
+# Los secretos que scripts/demo.sh genera para el compose.
+docker/.env

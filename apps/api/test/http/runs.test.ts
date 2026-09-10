@@ -220,10 +220,18 @@ describe("un 200 no es un test que pasa", () => {
     const fixture = await projectAgainst({ softDelete: true });
     const { run } = await runAndWait(fixture.projectBase, { environmentId: fixture.environmentId, operationIds: ["deleteThing"] });
 
-    // `delete-read` passes: the API did answer 204. `deleted-read` is the one that looks at what
-    // the resource *is* afterwards.
-    assert.equal(caseOf(run, "deleteThing", "delete-read").status, "passed");
+    // **Both.** This assertion used to say `delete-read` passed, on the grounds that the API did
+    // answer 204 — which made the name of the case a promise it did not keep and left it checking
+    // exactly the thing a soft delete gets right. A `204` says the request was accepted; only a
+    // read afterwards says the row is gone, and that is what `delete-read` is for.
+    assert.equal(caseOf(run, "deleteThing", "delete-read").status, "failed");
     assert.equal(caseOf(run, "deleteThing", "deleted-read").status, "failed");
+
+    // And the failure is in the read-back, not in the DELETE: pointing at the wrong step would
+    // send somebody to fix an endpoint that is answering correctly.
+    const detail = await api().get(`${fixture.projectBase}/runs/${run.id}/cases/${caseOf(run, "deleteThing", "delete-read").id}`).set(as(owner));
+    const steps = detail.body.steps as { purpose: string; request: { method: string }; ok: boolean }[];
+    assert.deepEqual(steps.map((step) => `${step.purpose}:${step.request.method}:${step.ok}`), ["prepare:POST:true", "act:DELETE:true", "verify:GET:false"]);
     await fixture.target.stop();
   });
 

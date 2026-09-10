@@ -27,7 +27,7 @@ import { LoginUserCommand, type SessionTokens } from "../application/commands/lo
 import { RefreshSessionCommand } from "../application/commands/refresh-session";
 import { LogoutUserCommand } from "../application/commands/logout-user";
 import { ChangePasswordCommand } from "../application/commands/change-password";
-import { GetCurrentUserQuery, type CurrentUserView } from "../application/queries/get-current-user";
+import { GetAuthContextQuery, GetCurrentUserQuery, type AuthContextView, type CurrentUserView } from "../application/queries/get-current-user";
 import { CurrentUser, Public, type Principal } from "../infrastructure/guards/auth.guard";
 import { ChangePasswordDto, LoginDto, LogoutDto, RefreshDto, RegisterDto } from "./dto/auth.dto";
 
@@ -95,6 +95,18 @@ export class AuthController {
   async me(@CurrentUser() principal: Principal): Promise<CurrentUserView> {
     if (principal.kind !== "user") throw new UnauthenticatedError("Un token de servicio no representa a una persona");
     return this.queryBus.execute(new GetCurrentUserQuery(principal.userId));
+  }
+
+  /**
+   * The same question as `/auth/me`, asked in a way a service token can answer.
+   *
+   * `/auth/me` is about a person and stays that way. This is about *where the caller can act*,
+   * which is what a client actually needs to build a URL — and a token that cannot find out its
+   * own organization is a credential that works and cannot be used.
+   */
+  @Get("context")
+  async context(@CurrentUser() principal: Principal): Promise<AuthContextView> {
+    return this.queryBus.execute(new GetAuthContextQuery(principal));
   }
 
   private respondWithSession(session: SessionTokens, response: Response) {

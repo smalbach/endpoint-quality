@@ -18,7 +18,7 @@ import { LogoutUserHandler } from "./application/commands/logout-user";
 import { ChangePasswordHandler } from "./application/commands/change-password";
 import { IssueApiTokenHandler } from "./application/commands/issue-api-token";
 import { RevokeApiTokenHandler } from "./application/commands/revoke-api-token";
-import { GetCurrentUserHandler } from "./application/queries/get-current-user";
+import { GetAuthContextHandler, GetCurrentUserHandler } from "./application/queries/get-current-user";
 import { ListApiTokensHandler } from "./application/queries/list-api-tokens";
 import { AuthController } from "./presentation/auth.controller";
 
@@ -26,7 +26,7 @@ export const AUTH_COMMAND_HANDLERS = [
   RegisterUserHandler, LoginUserHandler, RefreshSessionHandler, LogoutUserHandler,
   ChangePasswordHandler, IssueApiTokenHandler, RevokeApiTokenHandler,
 ];
-export const AUTH_QUERY_HANDLERS = [GetCurrentUserHandler, ListApiTokensHandler];
+export const AUTH_QUERY_HANDLERS = [GetCurrentUserHandler, GetAuthContextHandler, ListApiTokensHandler];
 
 /**
  * The ports are bound to Postgres adapters *here*, and only here. Every test that needs

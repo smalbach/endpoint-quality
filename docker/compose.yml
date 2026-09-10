@@ -13,7 +13,9 @@ services:
       POSTGRES_USER: eq
       POSTGRES_PASSWORD: eq
       POSTGRES_DB: endpoint_quality
-    ports: ["5432:5432"]
+    # Publicado para poder mirar la base con psql. Un puerto ocupado es lo más común que hay en
+    # una máquina de desarrollo, así que todos los de aquí se pueden mover sin editar el fichero.
+    ports: ["${EQ_POSTGRES_PORT:-5432}:5432"]
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
@@ -28,12 +30,30 @@ services:
   redis:
     image: redis:7-alpine
     profiles: ["redis"]
-    ports: ["6379:6379"]
+    ports: ["${EQ_REDIS_PORT:-6379}:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 3s
       timeout: 3s
       retries: 20
+
+  # El esquema, como paso propio y con su propio código de salida.
+  #
+  # No `migrationsRun` al arrancar: eso ata "el esquema cambió" a "un proceso arrancó", cada
+  # réplica de un despliegue lo intentaría, la API atendería peticiones con el DDL a medias, y una
+  # migración que falla parecería un crash loop en vez de una migración fallida. Aquí `api` espera
+  # a que termine bien, y si no termina bien no arranca nadie.
+  migrate:
+    build:
+      context: ..
+      dockerfile: docker/api.Dockerfile
+    command: ["node", "apps/api/dist/migrate.js"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://eq:eq@postgres:5432/endpoint_quality
 
   api:
     build:
@@ -42,6 +62,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       NODE_ENV: production
       PORT: 3001
@@ -56,15 +78,22 @@ services:
       # El motor hace peticiones a URLs que escribe el usuario. En un despliegue alojado esto
       # tiene que seguir en false o la API alcanza la red interna: ver docs/decoupling-plan.md §4.8.
       ALLOW_PRIVATE_TARGETS: ${ALLOW_PRIVATE_TARGETS:-false}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
-    ports: ["3001:3001"]
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:${EQ_WEB_PORT:-8080}}
+    ports: ["${EQ_API_PORT:-3001}:3001"]
+    healthcheck:
+      # `web` hace proxy de `/api/` contra esto, y el seed de la demo lo espera. Sin healthcheck,
+      # `depends_on` solo dice "el contenedor arrancó", que no es lo mismo que "responde".
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   web:
     build:
       context: ..
       dockerfile: docker/web.Dockerfile
     depends_on: [api]
-    ports: ["8080:8080"]
+    ports: ["${EQ_WEB_PORT:-8080}:8080"]
 
 volumes:
   postgres-data:

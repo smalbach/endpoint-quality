@@ -1,0 +1,58 @@
+# La demostración: el producto más algo que verificar.
+#
+#     docker compose -f docker/compose.yml -f docker/compose.demo.yml up
+#
+# Es un fichero aparte y no un perfil porque **cambia un valor de seguridad del servicio `api`**, y
+# un perfil no puede hacer eso. El motor pide URLs que escribe quien usa el producto, así que en un
+# despliegue alojado `ALLOW_PRIVATE_TARGETS` tiene que quedarse en `false` o la API alcanza la red
+# interna de quien la hospeda: metadatos de la nube, bases de datos, paneles. Aquí el destino es un
+# contenedor de al lado, con un nombre DNS privado, así que la demo no funciona sin abrirlo.
+#
+# Separarlo hace que quien despliegue de verdad no lo arrastre sin querer, y que quien lea este
+# fichero vea exactamente qué está aflojando y por qué.
+name: endpoint-quality
+
+services:
+  # El destino. Publica su OpenAPI y **lleva un fallo a propósito**: el borrado es blando y la
+  # lectura por id se olvidó del flag, así que el DELETE responde el 204 que declara y sigue
+  # sirviendo la fila. Una suite que comprueba códigos de estado lo da por bueno.
+  sample-api:
+    build:
+      context: ..
+      dockerfile: docker/sample-api.Dockerfile
+    environment:
+      PORT: 9000
+      # La URL con la que el propio servicio se nombra en `servers` y en `links.self`. Tiene que
+      # ser la que ve la API, no la que ve el navegador.
+      PUBLIC_URL: http://sample-api:9000
+    # Publicado también hacia fuera para poder curiosearlo a mano. 9100 y no 9000: en un portátil
+    # de desarrollo el 9000 suele tenerlo php-fpm.
+    ports: ["${EQ_SAMPLE_PORT:-9100}:9000"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    environment:
+      # Solo para la demo. Ver la cabecera de este fichero.
+      ALLOW_PRIVATE_TARGETS: "true"
+
+  # Crea la cuenta, el proyecto, la configuración y el entorno, y lanza la matriz una vez por el
+  # mismo camino que usaría una pipeline. Idempotente: un segundo `up` reutiliza lo que hay.
+  seed:
+    build:
+      context: ..
+      dockerfile: docker/api.Dockerfile
+    command: ["node", "tools/seed-demo.mjs"]
+    restart: "no"
+    depends_on:
+      api:
+        condition: service_healthy
+      sample-api:
+        condition: service_healthy
+    environment:
+      EQ_API: http://api:3001
+      EQ_TARGET: http://sample-api:9000
+      EQ_WEB: http://localhost:${EQ_WEB_PORT:-8080}
