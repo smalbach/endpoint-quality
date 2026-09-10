@@ -212,6 +212,40 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
     await insertProject(orgB);
   });
 
+  test("dos pruebas de un proyecto no pueden llamarse igual, y borrarlo se las lleva", async () => {
+    const [userId, organizationId, projectId] = [randomUUID(), randomUUID(), randomUUID()];
+    await insertUser(userId, `wf-${userId}@example.com`);
+    await insertOrganization(organizationId, `w-${organizationId.slice(0, 8)}`);
+    await dataSource!.query(
+      `INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`,
+      [projectId, organizationId, `w-${projectId.slice(0, 8)}`, userId],
+    );
+    const insertTemplate = () =>
+      dataSource!.query(
+        `INSERT INTO request_templates (id, "projectId", name, "operationId", "expectedStatus", "createdAt", "updatedAt", "updatedBy")
+         VALUES ($1, $2, 'Crear', 'createThing', 201, now(), now(), $3)`,
+        [randomUUID(), projectId, userId],
+      );
+    await insertTemplate();
+    // The name is how a step reads in a failed case; two of them would make it ambiguous exactly
+    // where somebody is trying to understand a red result.
+    await assert.rejects(insertTemplate(), /duplicate key|unique/i);
+
+    await dataSource!.query(
+      `INSERT INTO workflows (id, "projectId", name, definition, "createdAt", "updatedAt", "updatedBy")
+       VALUES ($1, $2, 'Crear y consultar', '{"steps":[]}'::jsonb, now(), now(), $3)`,
+      [randomUUID(), projectId, userId],
+    );
+
+    await dataSource!.query(`DELETE FROM projects WHERE id = $1`, [projectId]);
+    const templates: unknown[] = await dataSource!.query(`SELECT 1 FROM request_templates WHERE "projectId" = $1`, [
+      projectId,
+    ]);
+    const flows: unknown[] = await dataSource!.query(`SELECT 1 FROM workflows WHERE "projectId" = $1`, [projectId]);
+    assert.equal(templates.length, 0);
+    assert.equal(flows.length, 0);
+  });
+
   test("borrar una versión deja el proyecto en pie sin contrato activo", async () => {
     // SET NULL and not CASCADE: removing a snapshot must not delete the project and everything
     // configured under it.
