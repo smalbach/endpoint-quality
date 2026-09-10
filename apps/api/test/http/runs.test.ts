@@ -1272,3 +1272,188 @@ describe("condición, espera y bucle de un paso", () => {
     await flow.target.stop();
   });
 });
+
+/**
+ * Un flujo por fila de datos, y varios flujos como una sola corrida.
+ *
+ * Las dos cosas que convierten un flujo en una suite: recorrerlo con cuarenta filas en vez de con
+ * una, y encadenar los nueve que alguien ejecuta a mano antes de una entrega para que dejen un
+ * solo veredicto en el historial.
+ */
+describe("conjuntos de datos y suites", () => {
+  async function projectWithFlows() {
+    const fixture = await projectAgainst({});
+    const send = async (path: string, body: Record<string, unknown>) => {
+      const response = await api().post(`${fixture.projectBase}/${path}`).set(as(owner)).send(body);
+      return response;
+    };
+    const create = await send("request-templates", {
+      name: "Crear",
+      operationId: "createThing",
+      expectedStatus: 201,
+      body: { name: "{{dataset.nombre}}", size: 7 },
+    });
+    const list = await send("request-templates", { name: "Listar", operationId: "listThings", expectedStatus: 200 });
+    const creates = await send("workflows", {
+      name: "Crear cosas",
+      definition: { steps: [{ id: "crear", requestTemplateId: create.body.requestTemplateId }] },
+    });
+    const lists = await send("workflows", {
+      name: "Listar cosas",
+      definition: { steps: [{ id: "listar", requestTemplateId: list.body.requestTemplateId }] },
+    });
+    assert.equal(creates.status, 201, JSON.stringify(creates.body));
+    assert.equal(lists.status, 201, JSON.stringify(lists.body));
+    return { ...fixture, send, creates: creates.body.workflowId as string, lists: lists.body.workflowId as string };
+  }
+
+  test("una fila de datos es un recorrido entero del flujo", async () => {
+    const project = await projectWithFlows();
+    const dataset = await project.send(`workflows/${project.creates}/datasets`, {
+      name: "catálogo",
+      rows: [{ nombre: "primera" }, { nombre: "segunda" }],
+    });
+    assert.equal(dataset.status, 201, JSON.stringify(dataset.body));
+
+    const { run } = await runAndWait(project.projectBase, {
+      environmentId: project.environmentId,
+      workflowId: project.creates,
+      datasetId: dataset.body.datasetId,
+    });
+    assert.equal(run.cases.length, 2);
+    assert.deepEqual(
+      (run.cases as { scenarioId: string }[]).map((item) => item.scenarioId.split(":").at(-1)),
+      ["crear@0", "crear@1"],
+    );
+
+    // Cada fila gasta lo suyo: si no, un conjunto de datos sería cuarenta veces la misma petición.
+    const first = await api().get(`${project.projectBase}/runs/${run.id}/cases/${run.cases[0].id}`).set(as(owner));
+    const second = await api().get(`${project.projectBase}/runs/${run.id}/cases/${run.cases[1].id}`).set(as(owner));
+    assert.equal(first.body.steps[0].request.body.name, "primera");
+    assert.equal(second.body.steps[0].request.body.name, "segunda");
+    await project.target.stop();
+  });
+
+  test("un conjunto de datos de otro flujo se rechaza al lanzar la corrida", async () => {
+    const project = await projectWithFlows();
+    const dataset = await project.send(`workflows/${project.lists}/datasets`, {
+      name: "otro",
+      rows: [{ nombre: "x" }],
+    });
+    const response = await api().post(`${project.projectBase}/runs`).set(as(owner)).send({
+      environmentId: project.environmentId,
+      workflowId: project.creates,
+      datasetId: dataset.body.datasetId,
+    });
+    // Sus columnas las gastan los pasos de otro flujo: cada fila sustituiría nada.
+    assert.equal(response.status, 422);
+    assert.ok(response.body.errors.some((error: { field: string }) => error.field === "datasetId"));
+    await project.target.stop();
+  });
+
+  test("un conjunto sin filas no llega a encolarse", async () => {
+    const project = await projectWithFlows();
+    const dataset = await project.send(`workflows/${project.creates}/datasets`, { name: "vacío", rows: [] });
+    const response = await api()
+      .post(`${project.projectBase}/runs`)
+      .set(as(owner))
+      .send({ environmentId: project.environmentId, workflowId: project.creates, datasetId: dataset.body.datasetId });
+    assert.equal(response.status, 422);
+    await project.target.stop();
+  });
+
+  test("una columna que no es un nombre de variable se rechaza al guardarla", async () => {
+    const project = await projectWithFlows();
+    const response = await project.send(`workflows/${project.creates}/datasets`, {
+      name: "malo",
+      rows: [{ "precio total": "9" }],
+    });
+    // `{{dataset.precio total}}` no es un token que el motor vaya a sustituir nunca, así que
+    // aceptarlo solo movería el descubrimiento a mitad de corrida.
+    assert.equal(response.status, 422, JSON.stringify(response.body));
+    await project.target.stop();
+  });
+
+  test("una suite recorre sus flujos en orden y deja un solo veredicto", async () => {
+    const project = await projectWithFlows();
+    const suite = await project.send("suites", {
+      name: "antes de entregar",
+      workflowIds: [project.lists, project.creates],
+    });
+    assert.equal(suite.status, 201, JSON.stringify(suite.body));
+
+    const { run } = await runAndWait(project.projectBase, {
+      environmentId: project.environmentId,
+      suiteId: suite.body.suiteId,
+    });
+    assert.equal(run.cases.length, 2);
+    // El orden es el contenido: una suite existe porque esos flujos van en esa secuencia.
+    assert.deepEqual(
+      (run.cases as { scenarioId: string }[]).map((item) => item.scenarioId.split(":").at(-1)),
+      ["listar", "crear"],
+    );
+    await project.target.stop();
+  });
+
+  test("una corrida ejecuta un flujo o una suite, no las dos cosas", async () => {
+    const project = await projectWithFlows();
+    const suite = await project.send("suites", { name: "s", workflowIds: [project.lists] });
+    const response = await api()
+      .post(`${project.projectBase}/runs`)
+      .set(as(owner))
+      .send({ environmentId: project.environmentId, workflowId: project.creates, suiteId: suite.body.suiteId });
+    assert.equal(response.status, 422);
+    await project.target.stop();
+  });
+
+  test("borrar un flujo que una suite nombra es 409", async () => {
+    const project = await projectWithFlows();
+    await project.send("suites", { name: "usa el flujo", workflowIds: [project.creates] });
+    const response = await api().delete(`${project.projectBase}/workflows/${project.creates}`).set(as(owner));
+    // Una referencia es una decisión de alguien, y quitarla en su nombre cambia lo que ejecuta la
+    // suite sin decirlo.
+    assert.equal(response.status, 409);
+    await project.target.stop();
+  });
+
+  test("una suite no puede nombrar un flujo que no existe ni repetir uno", async () => {
+    const project = await projectWithFlows();
+    const missing = await project.send("suites", {
+      name: "inexistente",
+      workflowIds: ["11111111-1111-4111-8111-111111111111"],
+    });
+    assert.equal(missing.status, 422);
+    const twice = await project.send("suites", {
+      name: "repetida",
+      workflowIds: [project.creates, project.creates],
+    });
+    assert.equal(twice.status, 422);
+    await project.target.stop();
+  });
+
+  test("la lista no trae las filas, y el conjunto sí cuando se pide", async () => {
+    const project = await projectWithFlows();
+    const dataset = await project.send(`workflows/${project.creates}/datasets`, {
+      name: "catálogo",
+      rows: [{ nombre: "primera" }, { nombre: "segunda" }],
+    });
+
+    const listed = await api().get(`${project.projectBase}/workflows`).set(as(owner));
+    // Quinientas filas de nueve columnas en la carga que dibuja una página es una descarga que
+    // nadie pidió: la lista dice cuántas hay y cómo se llaman las columnas.
+    assert.deepEqual(listed.body.datasets, [
+      {
+        id: dataset.body.datasetId,
+        workflowId: project.creates,
+        name: "catálogo",
+        columns: ["nombre"],
+        rowCount: 2,
+        updatedAt: listed.body.datasets[0].updatedAt,
+      },
+    ]);
+
+    const rows = await api().get(`${project.projectBase}/datasets/${dataset.body.datasetId}`).set(as(owner));
+    assert.deepEqual(rows.body.rows, [{ nombre: "primera" }, { nombre: "segunda" }]);
+    await project.target.stop();
+  });
+});

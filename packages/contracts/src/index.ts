@@ -210,9 +210,40 @@ export type WorkflowViewOf<T> = {
 };
 
 /** Both lists together: a node cannot be drawn without the request its step names. */
+/**
+ * A dataset as the list shows it: what it is called, what its columns are, and how many rows.
+ *
+ * **Without the rows.** Five hundred rows of nine columns in the payload that draws a page is a
+ * download nobody asked for, and the list is not where they are read — they arrive with the
+ * dataset when somebody opens it.
+ */
+export type DatasetViewOf<T> = {
+  id: string;
+  workflowId: string;
+  name: string;
+  /** Every name any row uses, sorted. What `{{dataset.x}}` can name. */
+  columns: string[];
+  rowCount: number;
+  updatedAt: T;
+};
+
+/** The rows themselves, asked for on purpose. */
+export type DatasetRowsView = { id: string; name: string; rows: Record<string, string>[] };
+
+/** An ordered list of flows run as one, with one verdict in the history. */
+export type SuiteViewOf<T> = {
+  id: string;
+  name: string;
+  description: string | null;
+  workflowIds: string[];
+  updatedAt: T;
+};
+
 export type WorkflowsViewOf<T> = {
   requestTemplates: RequestTemplateViewOf<T>[];
   workflows: WorkflowViewOf<T>[];
+  datasets: DatasetViewOf<T>[];
+  suites: SuiteViewOf<T>[];
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -370,6 +401,8 @@ export type Environment = EnvironmentSummaryOf<string>;
 export type RequestTemplateView = RequestTemplateViewOf<string>;
 export type WorkflowView = WorkflowViewOf<string>;
 export type WorkflowsView = WorkflowsViewOf<string>;
+export type DatasetView = DatasetViewOf<string>;
+export type SuiteView = SuiteViewOf<string>;
 export type ConfigSectionView = ConfigSectionViewOf<string>;
 export type ConfigView = ConfigViewOf<string>;
 export type RunCase = RunCaseOf<string>;

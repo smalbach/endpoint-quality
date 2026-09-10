@@ -3,8 +3,13 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import type { ScenarioAuth, WorkflowDocument } from "@eq/runner-core";
 
-import { RequestTemplateEntity, WorkflowEntity } from "@/shared/database/entities";
-import type { RequestTemplateRow, WorkflowRow } from "../../domain/model";
+import {
+  RequestTemplateEntity,
+  WorkflowDatasetEntity,
+  WorkflowEntity,
+  WorkflowSuiteEntity,
+} from "@/shared/database/entities";
+import type { DatasetRow, RequestTemplateRow, SuiteRow, WorkflowRow } from "../../domain/model";
 import type { WorkflowRepositoryPort } from "../../domain/ports";
 
 /**
@@ -29,6 +34,8 @@ export class TypeOrmWorkflowRepository implements WorkflowRepositoryPort {
   constructor(
     @InjectRepository(RequestTemplateEntity) private readonly templates: Repository<RequestTemplateEntity>,
     @InjectRepository(WorkflowEntity) private readonly workflows: Repository<WorkflowEntity>,
+    @InjectRepository(WorkflowDatasetEntity) private readonly datasets: Repository<WorkflowDatasetEntity>,
+    @InjectRepository(WorkflowSuiteEntity) private readonly suites: Repository<WorkflowSuiteEntity>,
   ) {}
 
   async listTemplates(projectId: string): Promise<RequestTemplateRow[]> {
@@ -83,5 +90,52 @@ export class TypeOrmWorkflowRepository implements WorkflowRepositoryPort {
   }
   async deleteWorkflow(projectId: string, workflowId: string): Promise<void> {
     await this.workflows.delete({ id: workflowId, projectId });
+  }
+
+  async isWorkflowReferenced(projectId: string, workflowId: string): Promise<boolean> {
+    // `?` is the containment operator over the `jsonb` array of ids, so the check is one indexless
+    // scan of a table with a handful of rows rather than every suite loaded into memory.
+    const found = await this.suites
+      .createQueryBuilder("suite")
+      .where("suite.projectId = :projectId", { projectId })
+      .andWhere(`suite."workflowIds" ? :workflowId`, { workflowId })
+      .getCount();
+    return found > 0;
+  }
+
+  async listDatasets(projectId: string): Promise<DatasetRow[]> {
+    return (await this.datasets.find({ where: { projectId }, order: { name: "ASC" } })).map((row) => ({ ...row }));
+  }
+  async findDataset(projectId: string, datasetId: string): Promise<DatasetRow | null> {
+    const row = await this.datasets.findOne({ where: { id: datasetId, projectId } });
+    return row ? { ...row } : null;
+  }
+  async findDatasetByName(workflowId: string, name: string): Promise<DatasetRow | null> {
+    const row = await this.datasets.findOne({ where: { workflowId, name } });
+    return row ? { ...row } : null;
+  }
+  async saveDataset(row: DatasetRow): Promise<void> {
+    await this.datasets.save(row);
+  }
+  async deleteDataset(projectId: string, datasetId: string): Promise<void> {
+    await this.datasets.delete({ id: datasetId, projectId });
+  }
+
+  async listSuites(projectId: string): Promise<SuiteRow[]> {
+    return (await this.suites.find({ where: { projectId }, order: { name: "ASC" } })).map((row) => ({ ...row }));
+  }
+  async findSuite(projectId: string, suiteId: string): Promise<SuiteRow | null> {
+    const row = await this.suites.findOne({ where: { id: suiteId, projectId } });
+    return row ? { ...row } : null;
+  }
+  async findSuiteByName(projectId: string, name: string): Promise<SuiteRow | null> {
+    const row = await this.suites.findOne({ where: { projectId, name } });
+    return row ? { ...row } : null;
+  }
+  async saveSuite(row: SuiteRow): Promise<void> {
+    await this.suites.save(row);
+  }
+  async deleteSuite(projectId: string, suiteId: string): Promise<void> {
+    await this.suites.delete({ id: suiteId, projectId });
   }
 }

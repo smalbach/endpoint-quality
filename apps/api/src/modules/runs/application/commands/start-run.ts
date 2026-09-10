@@ -57,6 +57,19 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
     // Checked here and not when the worker picks the job up: a flow that does not exist is a
     // mistake in the request, and answering it with a queued run that later lands in `error` puts
     // the message minutes away from the click that caused it.
+    if (command.input.workflowId && command.input.suiteId) {
+      throw new InvalidInputError("Una corrida ejecuta un flujo o una suite, no las dos cosas", [
+        { field: "suiteId", detail: "Quita uno de los dos" },
+      ]);
+    }
+    if (command.input.datasetId && !command.input.workflowId) {
+      // A dataset's columns are spent by the steps of one flow. Without the flow there is nothing
+      // to walk once per row, and accepting it would queue a run that means nothing.
+      throw new InvalidInputError("Un conjunto de datos necesita el flujo que lo recorre", [
+        { field: "datasetId", detail: "Indica también workflowId" },
+      ]);
+    }
+
     if (command.input.workflowId) {
       const workflow = await this.workflows.findWorkflow(project.id, command.input.workflowId);
       if (!workflow) {
@@ -64,6 +77,43 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
           "El flujo no existe",
           [{ field: "workflowId", detail: "No hay ningún flujo con ese id en este proyecto" }],
           "workflow-not-found",
+        );
+      }
+      if (command.input.datasetId) {
+        const dataset = await this.workflows.findDataset(project.id, command.input.datasetId);
+        // Belonging to the flow and not merely to the project: a dataset written for another flow
+        // has columns these steps never name, so every row would substitute nothing.
+        if (!dataset || dataset.workflowId !== workflow.id) {
+          throw new InvalidInputError(
+            "El conjunto de datos no es de este flujo",
+            [{ field: "datasetId", detail: "No hay ningún conjunto con ese id en este flujo" }],
+            "dataset-not-found",
+          );
+        }
+        if (dataset.rows.length === 0) {
+          throw new InvalidInputError(
+            "El conjunto de datos no tiene filas",
+            [{ field: "datasetId", detail: "Una corrida sin filas no ejecutaría nada" }],
+            "dataset-empty",
+          );
+        }
+      }
+    }
+
+    if (command.input.suiteId) {
+      const suite = await this.workflows.findSuite(project.id, command.input.suiteId);
+      if (!suite) {
+        throw new InvalidInputError(
+          "La suite no existe",
+          [{ field: "suiteId", detail: "No hay ninguna suite con ese id en este proyecto" }],
+          "suite-not-found",
+        );
+      }
+      if (suite.workflowIds.length === 0) {
+        throw new InvalidInputError(
+          "La suite no tiene flujos",
+          [{ field: "suiteId", detail: "Una suite vacía no ejecutaría nada" }],
+          "suite-empty",
         );
       }
     }
@@ -84,6 +134,8 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
       samples,
       delayMs,
       ...(command.input.workflowId ? { workflowId: command.input.workflowId } : {}),
+      ...(command.input.datasetId ? { datasetId: command.input.datasetId } : {}),
+      ...(command.input.suiteId ? { suiteId: command.input.suiteId } : {}),
     };
 
     const run: Run = {

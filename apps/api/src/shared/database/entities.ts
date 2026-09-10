@@ -383,6 +383,48 @@ export class WorkflowEntity {
   @Column("uuid") updatedBy: string;
 }
 
+/**
+ * A table of values a flow is run once per row of.
+ *
+ * Rows in a `jsonb` array rather than a table of cells: the unit of change is the whole table —
+ * somebody pastes a CSV and replaces it — and a cell has no identity anybody refers to. Attached
+ * to one flow because a dataset's columns only mean anything next to the steps that spend them:
+ * the same `{{dataset.sku}}` in another flow would be a coincidence, not reuse.
+ */
+@Entity({ name: "workflow_datasets" })
+export class WorkflowDatasetEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Index() @Column("uuid") workflowId: string;
+  @Column({ type: "varchar", length: 120 }) name: string;
+  /** Name to value, per row. Text only: a variable is what goes into a URL or a body. */
+  @Column({ type: "jsonb", default: () => "'[]'::jsonb" }) rows: Record<string, string>[];
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) updatedAt: Date;
+  @Column("uuid") updatedBy: string;
+}
+
+/**
+ * An ordered list of flows run as one.
+ *
+ * The list is a `jsonb` array and not a join table for the same reason `definition` is one
+ * document: what changes is the order, all of it at once, and a join table with a sort column
+ * makes «reorder» a set of updates that can half-apply. What it costs is the cascade — deleting a
+ * flow a suite names is a 409 here rather than a silent removal — which is the answer this product
+ * gives everywhere else a reference exists.
+ */
+@Entity({ name: "workflow_suites" })
+export class WorkflowSuiteEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Column({ type: "varchar", length: 120 }) name: string;
+  @Column({ type: "text", nullable: true }) description: string | null;
+  @Column({ type: "jsonb", default: () => "'[]'::jsonb" }) workflowIds: string[];
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) updatedAt: Date;
+  @Column("uuid") updatedBy: string;
+}
+
 // The line breaks group these by module, which is information a formatter cannot know and
 // one-per-line would lose.
 // prettier-ignore
@@ -390,6 +432,6 @@ export const ENTITIES = [
   UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity,
   ProjectEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity,
   EnvironmentEntity, EnvironmentCredentialEntity, ProjectConfigEntity,
-  RequestTemplateEntity, WorkflowEntity,
+  RequestTemplateEntity, WorkflowEntity, WorkflowDatasetEntity, WorkflowSuiteEntity,
   RunEntity, RunCaseEntity, RunStepEntity,
 ];

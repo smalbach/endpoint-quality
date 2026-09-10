@@ -53,9 +53,13 @@ import {
 } from "@/modules/projects/presentation/dto/projects.dto";
 import { StartRunDto } from "@/modules/runs/presentation/dto/runs.dto";
 import {
+  CreateDatasetDto,
   CreateRequestTemplateDto,
+  CreateSuiteDto,
   CreateWorkflowDto,
+  UpdateDatasetDto,
   UpdateRequestTemplateDto,
+  UpdateSuiteDto,
   UpdateWorkflowDto,
 } from "@/modules/workflows/presentation/dto/workflows.dto";
 
@@ -90,6 +94,10 @@ const DTOS = [
   UpdateRequestTemplateDto,
   CreateWorkflowDto,
   UpdateWorkflowDto,
+  CreateDatasetDto,
+  UpdateDatasetDto,
+  CreateSuiteDto,
+  UpdateSuiteDto,
   StartRunDto,
 ];
 

@@ -158,16 +158,21 @@ export class RunOrchestrator {
     run: Run,
     context: { config: ProjectConfig; resolved: ResolvedOperation[]; target: ExecutionTarget; authEnabled: boolean },
   ): Promise<void> {
-    if (run.plan.workflowId) {
+    if (run.plan.workflowId || run.plan.suiteId) {
       // Read with the project id, so a flow that belongs to another tenant is indistinguishable
-      // from one that does not exist. `StartRunHandler` already refused this at 422; getting here
-      // means the flow was deleted between queueing and executing.
-      const workflow = await this.workflows.findWorkflow(run.projectId, run.plan.workflowId);
-      if (!workflow) throw new Error(`El flujo "${run.plan.workflowId}" ya no existe`);
+      // from one that does not exist. `StartRunHandler` already refused these at 422; getting here
+      // means the row was deleted between queueing and executing.
+      const ids = run.plan.suiteId ? await this.suiteFlows(run) : [run.plan.workflowId as string];
+      const flows: WorkflowRow[] = [];
+      for (const id of ids) {
+        const workflow = await this.workflows.findWorkflow(run.projectId, id);
+        if (!workflow) throw new Error(`El flujo "${id}" ya no existe`);
+        flows.push(workflow);
+      }
       const templates = new Map(
         (await this.workflows.listTemplates(run.projectId)).map((template) => [template.id, template]),
       );
-      await this.walkWorkflow(run, context, workflow, templates);
+      await this.walkFlows(run, context, flows, templates, await this.datasetRows(run));
       return;
     }
     const queue = buildQueue(context.resolved, context.config, {
@@ -313,18 +318,94 @@ export class RunOrchestrator {
    * rather than attempted, because «create failed, therefore read failed» is one finding reported
    * twice.
    */
-  private async walkWorkflow(
+  /** The flows a suite names, in its order. The order is the content: a suite exists because those
+   * flows have to run in that sequence. */
+  private async suiteFlows(run: Run): Promise<string[]> {
+    const suite = await this.workflows.findSuite(run.projectId, run.plan.suiteId as string);
+    if (!suite) throw new Error(`La suite "${run.plan.suiteId}" ya no existe`);
+    return suite.workflowIds;
+  }
+
+  /** The rows the flow is walked once per. `[null]` is «once, with no dataset», which keeps the
+   * ordinary run and the data-driven one the same loop rather than two that can drift. */
+  private async datasetRows(run: Run): Promise<(Record<string, string> | null)[]> {
+    if (!run.plan.datasetId) return [null];
+    const dataset = await this.workflows.findDataset(run.projectId, run.plan.datasetId);
+    if (!dataset) throw new Error(`El conjunto de datos "${run.plan.datasetId}" ya no existe`);
+    return dataset.rows;
+  }
+
+  /**
+   * Every flow of the run, once per row of data, as one run with one verdict.
+   *
+   * The nesting is rows on the outside and flows on the inside, and that is a decision about
+   * **what is shared with what**. A row is an independent walk: the variables are reset to the
+   * environment's before it starts, so row 7 cannot pass because row 6 captured an id. The flows
+   * *within* a row share them on purpose — a suite whose first flow logs in and whose next eight
+   * spend the session is the reason suites exist, and isolating them would break exactly that.
+   */
+  private async walkFlows(
     run: Run,
     context: { config: ProjectConfig; resolved: ResolvedOperation[]; target: ExecutionTarget; authEnabled: boolean },
+    flows: WorkflowRow[],
+    templates: Map<string, RequestTemplateRow>,
+    rows: (Record<string, string> | null)[],
+  ): Promise<void> {
+    let position = 0;
+    const passes = rows.flatMap((row, rowIndex) =>
+      flows.map((flow) => {
+        // The suffix only appears when there is more than one row: `…:crear@0` on a run with no
+        // dataset would be noise in every report that shows a scenario id.
+        const items = this.prepareWorkflow(
+          run,
+          flow,
+          templates,
+          context.resolved,
+          rows.length > 1 ? `@${rowIndex}` : "",
+          position,
+        );
+        position += items.length;
+        return { row, rowIndex, items };
+      }),
+    );
+
+    await this.runs.saveCases(passes.flatMap((pass) => pass.items.map((item) => item.runCase)));
+    await this.runs.updateStatus(run.id, "running", this.clock.now());
+    // A lower bound rather than a count: a step that loops adds cases while the run is walking,
+    // and the totals a follower shows are recomputed from the rows on every event anyway.
+    this.eventBus.publish(new RunStartedEvent(run.projectId, run.id, position));
+
+    const base = { ...context.target.variables };
+    let cancelled = false;
+    let walkedRow = -1;
+    for (const pass of passes) {
+      if (cancelled) break;
+      if (pass.rowIndex !== walkedRow) {
+        walkedRow = pass.rowIndex;
+        // Rebuilt in place rather than reassigned: the executor holds this exact object.
+        for (const key of Object.keys(context.target.variables)) delete context.target.variables[key];
+        Object.assign(context.target.variables, base, datasetBindings(pass.row));
+      }
+      cancelled = await this.walkPrepared(run, context, pass.items);
+    }
+
+    await this.finish(run, cancelled);
+  }
+
+  private prepareWorkflow(
+    run: Run,
     workflow: WorkflowRow,
     templates: Map<string, RequestTemplateRow>,
-  ): Promise<void> {
+    resolved: ResolvedOperation[],
+    suffix: string,
+    offset: number,
+  ) {
     const ordered = orderWorkflowSteps(workflow.definition, `El flujo "${workflow.name}"`);
-    const prepared = ordered.map((step, position) => {
+    return ordered.map((step, position) => {
       const template = templates.get(step.requestTemplateId);
       if (!template)
         throw new Error(`El paso "${step.id}" referencia la prueba inexistente "${step.requestTemplateId}"`);
-      const operation = context.resolved.find((candidate) => candidate.id === template.operationId);
+      const operation = resolved.find((candidate) => candidate.id === template.operationId);
       if (!operation) {
         throw new Error(`La prueba "${template.name}" referencia la operación inexistente "${template.operationId}"`);
       }
@@ -336,22 +417,25 @@ export class RunOrchestrator {
           id: randomUUID(),
           runId: run.id,
           operationId: operation.id,
-          scenarioId: `workflow:${workflow.id}:${step.id}`,
+          scenarioId: `workflow:${workflow.id}:${step.id}${suffix}`,
           method: operation.method,
           path: operation.path,
           status: "queued" as const,
-          position,
+          position: offset + position,
           durationMs: null,
           startedAt: null,
           finishedAt: null,
         } satisfies RunCase,
       };
     });
+  }
 
-    await this.runs.saveCases(prepared.map((item) => item.runCase));
-    await this.runs.updateStatus(run.id, "running", this.clock.now());
-    this.eventBus.publish(new RunStartedEvent(run.projectId, run.id, prepared.length));
-
+  /** One walk of one graph. Returns whether the run was cancelled while it was walking. */
+  private async walkPrepared(
+    run: Run,
+    context: { config: ProjectConfig; resolved: ResolvedOperation[]; target: ExecutionTarget; authEnabled: boolean },
+    prepared: ReturnType<RunOrchestrator["prepareWorkflow"]>,
+  ): Promise<boolean> {
     const passed = new Map<string, boolean>();
     // The last answer of each step, which is what a condition judges and a loop walks. Kept for
     // the duration of one run and never beyond it: two runs of the same flow must not be able to
@@ -518,7 +602,7 @@ export class RunOrchestrator {
       }
     }
 
-    await this.finish(run, cancelled);
+    return cancelled;
   }
 
   /** Progress, per case, so a follower sees it happening instead of a result at the end. */
@@ -538,6 +622,24 @@ export class RunOrchestrator {
 
 /** A saved request, as the engine wants it. The row keeps `null` for absent; the engine wants the
  * key gone, which is what `exactOptionalPropertyTypes` is there to keep honest. */
+/**
+ * One row of a dataset, as variables.
+ *
+ * Published twice, under `dataset.sku` and under `sku`, for the same reason the environment's are:
+ * the prefixed name says where the value came from, and in a flow of nine steps that is the
+ * difference between reading a template and guessing at it. The bare name is what a flow written
+ * before the dataset existed already spends.
+ */
+function datasetBindings(row: Record<string, string> | null): Record<string, string> {
+  if (!row) return {};
+  return Object.fromEntries(
+    Object.entries(row).flatMap(([name, value]) => [
+      [name, value],
+      [`dataset.${name}`, value],
+    ]),
+  );
+}
+
 function scenarioFor(template: RequestTemplateRow): TestScenario {
   return {
     id: template.id,

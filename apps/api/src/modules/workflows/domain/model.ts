@@ -35,3 +35,44 @@ export type WorkflowRow = {
   updatedAt: Date;
   updatedBy: string;
 };
+
+/**
+ * A table of values a flow is run once per row of.
+ *
+ * What turns «crear un producto» into «crear estos cuarenta», which is the difference between a
+ * smoke test and a suite. The columns reach the steps as `{{dataset.nombre}}`, so a flow written
+ * against one row works against a thousand without being edited.
+ *
+ * Attached to a flow rather than to the project: a dataset's columns only mean anything next to
+ * the steps that spend them, and the same column name in another flow would be a coincidence
+ * rather than reuse.
+ */
+export type DatasetRow = {
+  id: string;
+  projectId: string;
+  workflowId: string;
+  name: string;
+  /** Name to value, per row. Text only, because a variable is what goes into a URL or a body. */
+  rows: Record<string, string>[];
+  createdAt: Date;
+  updatedAt: Date;
+  updatedBy: string;
+};
+
+/**
+ * An ordered list of flows run as one, with one verdict.
+ *
+ * The nine flows somebody runs by hand before a release, in the order they have to run in, as a
+ * single row in the history. Without it «¿estaba todo verde?» is nine answers somebody has to
+ * remember to collect.
+ */
+export type SuiteRow = {
+  id: string;
+  projectId: string;
+  name: string;
+  description: string | null;
+  workflowIds: string[];
+  createdAt: Date;
+  updatedAt: Date;
+  updatedBy: string;
+};

@@ -1,4 +1,17 @@
-import { IsIn, IsInt, IsObject, IsOptional, IsString, Max, MaxLength, Min, MinLength } from "class-validator";
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsIn,
+  IsInt,
+  IsObject,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+} from "class-validator";
 import type { ScenarioAuth, WorkflowDocument } from "@eq/runner-core";
 
 const AUTH = ["default", "none", "insufficient", "api-key"];
@@ -45,4 +58,30 @@ export class UpdateWorkflowDto {
   /** The whole graph. There is no route that edits one node: a half-written document whose halves
    * reference each other is the state this shape exists to make impossible. */
   @IsOptional() @IsObject() definition?: WorkflowDocument;
+}
+
+/** Same division of labour as the rest of this file: the shape here, the rules about column names
+ * and row counts in the engine's schema, checked inside the command. */
+export class CreateDatasetDto {
+  @IsString() @MinLength(1) @MaxLength(120) name: string;
+  @IsOptional() @IsArray() rows?: Record<string, string>[];
+}
+
+export class UpdateDatasetDto {
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(120) name?: string;
+  @IsOptional() @IsArray() rows?: Record<string, string>[];
+}
+
+export class CreateSuiteDto {
+  @IsString() @MinLength(1) @MaxLength(120) name: string;
+  @IsOptional() @IsString() @MaxLength(500) description?: string | null;
+  /** Capped because a suite is a sequence somebody reads, and one flow of it failing has to be
+   * findable. Fifty is already a long release checklist. */
+  @IsOptional() @IsArray() @ArrayMaxSize(50) @IsUUID("4", { each: true }) workflowIds?: string[];
+}
+
+export class UpdateSuiteDto {
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(120) name?: string;
+  @IsOptional() @IsString() @MaxLength(500) description?: string | null;
+  @IsOptional() @IsArray() @ArrayMaxSize(50) @IsUUID("4", { each: true }) workflowIds?: string[];
 }

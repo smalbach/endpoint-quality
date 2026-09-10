@@ -30,7 +30,7 @@ import type { Credential, CredentialRole, Environment } from "@/modules/environm
 import type { EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
 import type { ConfigRepositoryPort, ConfigRow } from "@/modules/config/domain/ports";
 import type { ConfigSection } from "@eq/runner-core";
-import type { RequestTemplateRow, WorkflowRow } from "@/modules/workflows/domain/model";
+import type { DatasetRow, RequestTemplateRow, SuiteRow, WorkflowRow } from "@/modules/workflows/domain/model";
 import type { WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
 import type { CaseStatus, Run, RunCase, RunStatus, RunStep, RunTotals } from "@/modules/runs/domain/model";
 import type { RunRepositoryPort } from "@/modules/runs/domain/ports";
@@ -416,6 +416,8 @@ export class InMemoryRunRepository implements RunRepositoryPort {
 export class InMemoryWorkflowRepository implements WorkflowRepositoryPort {
   private readonly templates = new Map<string, RequestTemplateRow>();
   private readonly workflows = new Map<string, WorkflowRow>();
+  private readonly datasets = new Map<string, DatasetRow>();
+  private readonly suites = new Map<string, SuiteRow>();
 
   async listTemplates(projectId: string): Promise<RequestTemplateRow[]> {
     return [...this.templates.values()]
@@ -461,6 +463,56 @@ export class InMemoryWorkflowRepository implements WorkflowRepositoryPort {
   }
   async deleteWorkflow(projectId: string, workflowId: string): Promise<void> {
     const row = this.workflows.get(workflowId);
-    if (row?.projectId === projectId) this.workflows.delete(workflowId);
+    if (row?.projectId === projectId) {
+      this.workflows.delete(workflowId);
+      // The cascade the migration gives the real table: a dataset for a flow that no longer
+      // exists is rows nothing can ever spend.
+      for (const [id, dataset] of this.datasets) if (dataset.workflowId === workflowId) this.datasets.delete(id);
+    }
+  }
+  async isWorkflowReferenced(projectId: string, workflowId: string): Promise<boolean> {
+    return [...this.suites.values()].some(
+      (suite) => suite.projectId === projectId && suite.workflowIds.includes(workflowId),
+    );
+  }
+
+  async listDatasets(projectId: string): Promise<DatasetRow[]> {
+    return [...this.datasets.values()]
+      .filter((row) => row.projectId === projectId)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+  async findDataset(projectId: string, datasetId: string): Promise<DatasetRow | null> {
+    const row = this.datasets.get(datasetId);
+    return row && row.projectId === projectId ? row : null;
+  }
+  async findDatasetByName(workflowId: string, name: string): Promise<DatasetRow | null> {
+    return [...this.datasets.values()].find((row) => row.workflowId === workflowId && row.name === name) ?? null;
+  }
+  async saveDataset(row: DatasetRow): Promise<void> {
+    this.datasets.set(row.id, { ...row, rows: row.rows.map((entry) => ({ ...entry })) });
+  }
+  async deleteDataset(projectId: string, datasetId: string): Promise<void> {
+    const row = this.datasets.get(datasetId);
+    if (row?.projectId === projectId) this.datasets.delete(datasetId);
+  }
+
+  async listSuites(projectId: string): Promise<SuiteRow[]> {
+    return [...this.suites.values()]
+      .filter((row) => row.projectId === projectId)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+  async findSuite(projectId: string, suiteId: string): Promise<SuiteRow | null> {
+    const row = this.suites.get(suiteId);
+    return row && row.projectId === projectId ? row : null;
+  }
+  async findSuiteByName(projectId: string, name: string): Promise<SuiteRow | null> {
+    return [...this.suites.values()].find((row) => row.projectId === projectId && row.name === name) ?? null;
+  }
+  async saveSuite(row: SuiteRow): Promise<void> {
+    this.suites.set(row.id, { ...row, workflowIds: [...row.workflowIds] });
+  }
+  async deleteSuite(projectId: string, suiteId: string): Promise<void> {
+    const row = this.suites.get(suiteId);
+    if (row?.projectId === projectId) this.suites.delete(suiteId);
   }
 }

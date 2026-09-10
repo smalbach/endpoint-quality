@@ -106,6 +106,20 @@ export const workflowStepSchema = z.object({
   position: z.object({ x: z.number().finite(), y: z.number().finite() }).optional(),
 });
 
+/**
+ * The rows of a dataset.
+ *
+ * Text only, and the keys have to be variable names, because that is exactly what a row becomes:
+ * `{{dataset.sku}}` substituted into a path or a body. A column called `total price` could never be
+ * spent, so accepting it would only postpone the discovery to the middle of a run.
+ *
+ * The ceilings are the run's, not the storage's. Five hundred rows of a nine-step flow is four and
+ * a half thousand cases; a dataset that wants more is asking for something a test suite is not.
+ */
+export const datasetRowsSchema = z
+  .array(z.record(z.string().regex(VARIABLE_NAME, "nombre de columna inválido"), z.string().max(10_000)))
+  .max(500);
+
 export const workflowDocumentSchema = z
   .object({ steps: z.array(workflowStepSchema) })
   .superRefine((document, context) => {
@@ -191,3 +205,5 @@ export const safeParseWorkflowDocument = (data: unknown): ParseResult =>
 
 export const safeParseRequestTemplate = (data: unknown): ParseResult =>
   report(requestTemplateBodySchema.safeParse(data), "requestTemplate");
+
+export const safeParseDatasetRows = (data: unknown): ParseResult => report(datasetRowsSchema.safeParse(data), "rows");

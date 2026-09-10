@@ -18,7 +18,17 @@ import { addStep, problemsWith, type OperationSummary } from "@/lib/workflow-dra
 import { WorkflowCanvas } from "@/components/workflow-canvas";
 import { WorkflowInspector } from "@/components/workflow-inspector";
 import { TemplateLibrary, type NewTemplate } from "@/components/template-library";
-import type { Environment, RequestTemplateView, WorkflowStepView, WorkflowView, WorkflowsView } from "@/lib/types";
+import { DatasetsPanel } from "@/components/datasets-panel";
+import { SuitesPanel } from "@/components/suites-panel";
+import type {
+  DatasetRowsView,
+  Environment,
+  RequestTemplateView,
+  SuiteView,
+  WorkflowStepView,
+  WorkflowView,
+  WorkflowsView,
+} from "@/lib/types";
 
 const message = (error: unknown) => (error as Error | null)?.message ?? null;
 
@@ -38,6 +48,7 @@ export function WorkflowsPage() {
   const [json, setJson] = useState("");
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [environmentId, setEnvironmentId] = useState("");
+  const [datasetId, setDatasetId] = useState("");
 
   const enabled = Boolean(organization && projectId);
   const workflows = useQuery({
@@ -136,8 +147,54 @@ export function WorkflowsPage() {
 
   const run = useMutation({
     mutationFn: () =>
-      api<{ runId: string }>(`${base}/runs`, { method: "POST", body: { environmentId, workflowId: draft?.id } }),
+      api<{ runId: string }>(`${base}/runs`, {
+        method: "POST",
+        body: { environmentId, workflowId: draft?.id, ...(datasetId ? { datasetId } : {}) },
+      }),
     onSuccess: ({ runId }) => void navigate(`/p/${projectId}/runs/${runId}`),
+  });
+
+  const runSuite = useMutation({
+    mutationFn: (suiteId: string) =>
+      api<{ runId: string }>(`${base}/runs`, { method: "POST", body: { environmentId, suiteId } }),
+    onSuccess: ({ runId }) => void navigate(`/p/${projectId}/runs/${runId}`),
+  });
+
+  const createDataset = useMutation({
+    mutationFn: (name: string) =>
+      api<{ datasetId: string }>(`${base}/workflows/${draft?.id}/datasets`, {
+        method: "POST",
+        body: { name, rows: [] },
+      }),
+    onSuccess: invalidate,
+  });
+  const saveDataset = useMutation({
+    mutationFn: ({ id, rows }: { id: string; rows: Record<string, string>[] }) =>
+      api<void>(`${base}/datasets/${id}`, { method: "PUT", body: { rows } }),
+    onSuccess: invalidate,
+  });
+  const deleteDataset = useMutation({
+    mutationFn: (id: string) => api<void>(`${base}/datasets/${id}`, { method: "DELETE" }),
+    onSuccess: async (_result, id) => {
+      // A run cannot walk what is no longer there, and leaving it selected would fail at the
+      // click rather than here.
+      if (datasetId === id) setDatasetId("");
+      await invalidate();
+    },
+  });
+
+  const createSuite = useMutation({
+    mutationFn: (name: string) => api<{ suiteId: string }>(`${base}/suites`, { method: "POST", body: { name } }),
+    onSuccess: invalidate,
+  });
+  const saveSuite = useMutation({
+    mutationFn: (suite: SuiteView) =>
+      api<void>(`${base}/suites/${suite.id}`, { method: "PUT", body: { workflowIds: suite.workflowIds } }),
+    onSuccess: invalidate,
+  });
+  const deleteSuite = useMutation({
+    mutationFn: (suiteId: string) => api<void>(`${base}/suites/${suiteId}`, { method: "DELETE" }),
+    onSuccess: invalidate,
   });
 
   function setSteps(next: WorkflowStepView[]) {
@@ -264,6 +321,19 @@ export function WorkflowsPage() {
               ))}
             </div>
             <div className="mt-4 border-t border-slate-100 pt-3">
+              <SuitesPanel
+                suites={workflows.data?.suites ?? []}
+                workflows={workflows.data?.workflows ?? []}
+                canEdit={canEdit}
+                running={runSuite.isPending || !environmentId}
+                onCreate={(name) => createSuite.mutate(name)}
+                onChange={(suite) => saveSuite.mutate(suite)}
+                onDelete={(suiteId) => deleteSuite.mutate(suiteId)}
+                onRun={(suiteId) => runSuite.mutate(suiteId)}
+              />
+            </div>
+
+            <div className="mt-4 border-t border-slate-100 pt-3">
               <TemplateLibrary
                 templates={templates}
                 operations={operations.data?.operations ?? []}
@@ -309,6 +379,18 @@ export function WorkflowsPage() {
                 onRun={() => run.mutate()}
                 onDelete={() => deleteWorkflow.mutate(draft.id)}
                 running={run.isPending}
+              />
+            )}
+            {draft && (
+              <DatasetsPanel
+                datasets={(workflows.data?.datasets ?? []).filter((dataset) => dataset.workflowId === draft.id)}
+                selectedId={datasetId}
+                canEdit={canEdit}
+                onSelect={setDatasetId}
+                onCreate={(name) => createDataset.mutate(name)}
+                onSave={(id, rows) => saveDataset.mutate({ id, rows })}
+                onDelete={(id) => deleteDataset.mutate(id)}
+                loadRows={async (id) => (await api<DatasetRowsView>(`${base}/datasets/${id}`)).rows}
               />
             )}
           </Card>

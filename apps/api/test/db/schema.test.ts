@@ -74,6 +74,8 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
       "spec_sources",
       "spec_versions",
       "users",
+      "workflow_datasets",
+      "workflow_suites",
       "workflows",
     ]);
   });

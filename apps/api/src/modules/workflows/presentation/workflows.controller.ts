@@ -27,10 +27,21 @@ import {
   UpdateWorkflowCommand,
 } from "../application/commands/manage-workflow";
 import { ListWorkflowsQuery } from "../application/queries/list-workflows";
+import { GetDatasetQuery } from "../application/queries/get-dataset";
 import {
+  CreateDatasetCommand,
+  DeleteDatasetCommand,
+  UpdateDatasetCommand,
+} from "../application/commands/manage-dataset";
+import { CreateSuiteCommand, DeleteSuiteCommand, UpdateSuiteCommand } from "../application/commands/manage-suite";
+import {
+  CreateDatasetDto,
   CreateRequestTemplateDto,
+  CreateSuiteDto,
   CreateWorkflowDto,
+  UpdateDatasetDto,
   UpdateRequestTemplateDto,
+  UpdateSuiteDto,
   UpdateWorkflowDto,
 } from "./dto/workflows.dto";
 
@@ -127,5 +138,96 @@ export class WorkflowsController {
     @Param("workflowId") workflowId: string,
   ): Promise<void> {
     await this.commandBus.execute(new DeleteWorkflowCommand(organizationId, projectId, workflowId));
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Los datos que un flujo recorre, y las suites que lo agrupan con otros
+  // ---------------------------------------------------------------------------------------------
+
+  /** The rows, which the list deliberately does not carry. */
+  @Get("datasets/:datasetId")
+  @RequireRole("viewer")
+  async dataset(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("datasetId") datasetId: string,
+  ) {
+    return this.queryBus.execute(new GetDatasetQuery(organizationId, projectId, datasetId));
+  }
+
+  @Post("workflows/:workflowId/datasets")
+  @RequireRole("editor")
+  async createDataset(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("workflowId") workflowId: string,
+    @Body() body: CreateDatasetDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.commandBus.execute(
+      new CreateDatasetCommand(organizationId, projectId, workflowId, body, actorId(principal)),
+    );
+  }
+
+  /** `PUT` for the same reason the graph is: a pasted table replaces the one that was there. */
+  @Put("datasets/:datasetId")
+  @RequireRole("editor")
+  @HttpCode(204)
+  async updateDataset(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("datasetId") datasetId: string,
+    @Body() body: UpdateDatasetDto,
+    @CurrentUser() principal: Principal,
+  ): Promise<void> {
+    await this.commandBus.execute(
+      new UpdateDatasetCommand(organizationId, projectId, datasetId, body, actorId(principal)),
+    );
+  }
+
+  @Delete("datasets/:datasetId")
+  @RequireRole("editor")
+  @HttpCode(204)
+  async deleteDataset(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("datasetId") datasetId: string,
+  ): Promise<void> {
+    await this.commandBus.execute(new DeleteDatasetCommand(organizationId, projectId, datasetId));
+  }
+
+  @Post("suites")
+  @RequireRole("editor")
+  async createSuite(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Body() body: CreateSuiteDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.commandBus.execute(new CreateSuiteCommand(organizationId, projectId, body, actorId(principal)));
+  }
+
+  @Put("suites/:suiteId")
+  @RequireRole("editor")
+  @HttpCode(204)
+  async updateSuite(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("suiteId") suiteId: string,
+    @Body() body: UpdateSuiteDto,
+    @CurrentUser() principal: Principal,
+  ): Promise<void> {
+    await this.commandBus.execute(new UpdateSuiteCommand(organizationId, projectId, suiteId, body, actorId(principal)));
+  }
+
+  @Delete("suites/:suiteId")
+  @RequireRole("editor")
+  @HttpCode(204)
+  async deleteSuite(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("suiteId") suiteId: string,
+  ): Promise<void> {
+    await this.commandBus.execute(new DeleteSuiteCommand(organizationId, projectId, suiteId));
   }
 }

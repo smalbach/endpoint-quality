@@ -17,6 +17,12 @@ export type RunPlan = {
   delayMs: number;
   /** When set, the run executes this project-defined graph instead of the generated matrix. */
   workflowId?: string;
+  /** With a `workflowId`, the flow is walked once per row of this dataset, and the row's columns
+   * are spendable as `{{dataset.name}}`. */
+  datasetId?: string;
+  /** When set, the run walks every flow of the suite in order. Exclusive with `workflowId`: a run
+   * executes the matrix, one flow, or a list of them, and «both» has no meaning. */
+  suiteId?: string;
 };
 
 export type Run = {

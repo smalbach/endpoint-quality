@@ -2,7 +2,12 @@ import { Module, forwardRef } from "@nestjs/common";
 import { CqrsModule } from "@nestjs/cqrs";
 import { TypeOrmModule } from "@nestjs/typeorm";
 
-import { RequestTemplateEntity, WorkflowEntity } from "@/shared/database/entities";
+import {
+  RequestTemplateEntity,
+  WorkflowDatasetEntity,
+  WorkflowEntity,
+  WorkflowSuiteEntity,
+} from "@/shared/database/entities";
 import { AuthModule } from "@/modules/auth/auth.module";
 import { IamModule } from "@/modules/iam/iam.module";
 import { ProjectsModule } from "@/modules/projects/projects.module";
@@ -18,7 +23,14 @@ import {
   DeleteWorkflowHandler,
   UpdateWorkflowHandler,
 } from "./application/commands/manage-workflow";
+import {
+  CreateDatasetHandler,
+  DeleteDatasetHandler,
+  UpdateDatasetHandler,
+} from "./application/commands/manage-dataset";
+import { CreateSuiteHandler, DeleteSuiteHandler, UpdateSuiteHandler } from "./application/commands/manage-suite";
 import { ListWorkflowsHandler } from "./application/queries/list-workflows";
+import { GetDatasetHandler } from "./application/queries/get-dataset";
 import { WorkflowsController } from "./presentation/workflows.controller";
 
 export const WORKFLOW_COMMAND_HANDLERS = [
@@ -28,8 +40,14 @@ export const WORKFLOW_COMMAND_HANDLERS = [
   CreateWorkflowHandler,
   UpdateWorkflowHandler,
   DeleteWorkflowHandler,
+  CreateDatasetHandler,
+  UpdateDatasetHandler,
+  DeleteDatasetHandler,
+  CreateSuiteHandler,
+  UpdateSuiteHandler,
+  DeleteSuiteHandler,
 ];
-export const WORKFLOW_QUERY_HANDLERS = [ListWorkflowsHandler];
+export const WORKFLOW_QUERY_HANDLERS = [ListWorkflowsHandler, GetDatasetHandler];
 export const WORKFLOW_ADAPTERS = [{ provide: WORKFLOW_REPOSITORY, useClass: TypeOrmWorkflowRepository }];
 
 @Module({
@@ -37,7 +55,7 @@ export const WORKFLOW_ADAPTERS = [{ provide: WORKFLOW_REPOSITORY, useClass: Type
     CqrsModule,
     AuthModule,
     IamModule,
-    TypeOrmModule.forFeature([RequestTemplateEntity, WorkflowEntity]),
+    TypeOrmModule.forFeature([RequestTemplateEntity, WorkflowEntity, WorkflowDatasetEntity, WorkflowSuiteEntity]),
     forwardRef(() => ProjectsModule),
   ],
   controllers: [WorkflowsController],

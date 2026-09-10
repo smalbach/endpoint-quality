@@ -19,4 +19,8 @@ export class StartRunDto {
   /** A row's id, so it is a uuid. When present the run executes that graph instead of the
    * generated matrix. */
   @IsOptional() @IsUUID() workflowId?: string;
+  /** Walks the flow once per row. Meaningless without `workflowId`, and refused as such. */
+  @IsOptional() @IsUUID() datasetId?: string;
+  /** Walks every flow of the suite, in order, as one run. Exclusive with `workflowId`. */
+  @IsOptional() @IsUUID() suiteId?: string;
 }

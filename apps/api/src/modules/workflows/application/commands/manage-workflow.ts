@@ -181,6 +181,12 @@ export class DeleteWorkflowHandler implements ICommandHandler<DeleteWorkflowComm
       command.projectId,
       command.workflowId,
     );
+    // The same answer this product gives for a template a flow uses: a reference is a decision
+    // somebody made, and removing it on their behalf changes what a suite runs without saying so.
+    if (await this.workflows.isWorkflowReferenced(command.projectId, workflow.id))
+      throw new ConflictError("Alguna suite usa este flujo", "workflow-in-use");
+    // Its datasets go with it, by the cascade in the migration: a table of values for a flow that
+    // no longer exists is rows nothing can ever spend.
     await this.workflows.deleteWorkflow(command.projectId, workflow.id);
   }
 }

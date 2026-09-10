@@ -1,4 +1,4 @@
-import type { RequestTemplateRow, WorkflowRow } from "./model";
+import type { DatasetRow, RequestTemplateRow, SuiteRow, WorkflowRow } from "./model";
 
 export const WORKFLOW_REPOSITORY = Symbol("WORKFLOW_REPOSITORY");
 
@@ -23,4 +23,19 @@ export interface WorkflowRepositoryPort {
   findWorkflowByName(projectId: string, name: string): Promise<WorkflowRow | null>;
   saveWorkflow(row: WorkflowRow): Promise<void>;
   deleteWorkflow(projectId: string, workflowId: string): Promise<void>;
+  /** Whether any suite of this project names the flow. Deleting one that is named is a 409, the
+   * same answer this product gives everywhere else a reference exists. */
+  isWorkflowReferenced(projectId: string, workflowId: string): Promise<boolean>;
+
+  listDatasets(projectId: string): Promise<DatasetRow[]>;
+  findDataset(projectId: string, datasetId: string): Promise<DatasetRow | null>;
+  findDatasetByName(workflowId: string, name: string): Promise<DatasetRow | null>;
+  saveDataset(row: DatasetRow): Promise<void>;
+  deleteDataset(projectId: string, datasetId: string): Promise<void>;
+
+  listSuites(projectId: string): Promise<SuiteRow[]>;
+  findSuite(projectId: string, suiteId: string): Promise<SuiteRow | null>;
+  findSuiteByName(projectId: string, name: string): Promise<SuiteRow | null>;
+  saveSuite(row: SuiteRow): Promise<void>;
+  deleteSuite(projectId: string, suiteId: string): Promise<void>;
 }
