@@ -38,6 +38,8 @@ export type {
   RunView,
   ScenarioView,
   ScenariosView,
+  StepCheckView,
+  StepRetryView,
   WorkflowCaptureView,
   WorkflowStepView,
   WorkflowView,

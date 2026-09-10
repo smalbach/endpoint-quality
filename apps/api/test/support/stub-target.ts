@@ -29,6 +29,9 @@ export type StubFaults = {
   plainErrors?: boolean;
   /** Rejects everything without a credential, and 403 for the read-only token. */
   enforcesAuth?: boolean;
+  /** Answers 503 to the first N writes and then behaves. A target that is cold, rate-limited or
+   * behind a queue that has not caught up — the only failure a retry is honest about. */
+  flakyWrites?: number;
 };
 
 const SPEC = {
@@ -118,6 +121,7 @@ export class StubTarget {
   private server!: Server;
   private things = new Map<string, Record<string, unknown>>();
   private nextId = 100;
+  private flakedWrites = 0;
   readonly requests: { method: string; path: string; authorization: string | undefined }[] = [];
 
   constructor(private readonly faults: StubFaults = {}) {}
@@ -182,6 +186,10 @@ export class StubTarget {
 
     if (url.pathname === "/things" && method === "POST") {
       if (this.faults.notImplemented) return send(405);
+      if (this.flakedWrites < (this.faults.flakyWrites ?? 0)) {
+        this.flakedWrites += 1;
+        return problem(503, "No disponible todavía");
+      }
       const body = await readJson(request);
       if (!body || Object.keys(body).length === 0) return problem(422, "Entidad no procesable");
       const id = String(this.nextId++);

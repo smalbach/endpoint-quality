@@ -7,6 +7,7 @@
  * referenced by several flows, and «delete it» has to be answerable by a query.
  */
 import { valueAtPath, type RuntimeVariables } from "./variables.ts";
+import type { StepCheck } from "./checks.ts";
 import type { ScenarioAuth } from "./types.ts";
 
 /**
@@ -31,12 +32,56 @@ export type WorkflowCapture = {
   path: string;
 };
 
+/**
+ * What to do when a step does not pass.
+ *
+ * `skip-dependents` is the default and the honest one: «create failed, therefore read failed» is
+ * one finding reported twice, so what depends on a failure is not attempted.
+ *
+ * `continue` is for the step whose failure the rest of the flow does not actually depend on — a
+ * cleanup that 404s because there was nothing to clean, a metrics call nobody reads. The case is
+ * still red; what changes is that its dependents run anyway.
+ *
+ * `stop` ends the flow there. For the step that leaves the target in a state the remaining ones
+ * would report nonsense against: with no session, every later 401 is one fact restated.
+ */
+export const STEP_ON_ERROR = ["skip-dependents", "continue", "stop"] as const;
+export type StepOnError = (typeof STEP_ON_ERROR)[number];
+
+/**
+ * Repeating a step that failed.
+ *
+ * Off unless asked for, and deliberately awkward to switch on for everything: **a retry is a
+ * claim that the failure was not real**, and a suite that retries by default reports a flaky
+ * target as a healthy one. It exists because some failures genuinely are not — a cold start, a
+ * rate limiter, a queue that has not caught up — and re-running the whole suite by hand to find
+ * out is worse.
+ *
+ * `onStatus` is the guard that keeps it honest: with it, only the answers listed are retried, so a
+ * 500 can be retried while a 422 — which will never stop being a 422 — is reported the first time.
+ * **A step that writes and is retried without `onStatus` will write twice.**
+ */
+export type StepRetry = {
+  /** Extra attempts after the first. `2` means up to three requests in total. */
+  attempts: number;
+  /** Wait before the first retry. */
+  delayMs: number;
+  /** Multiplies the wait after each attempt. `1` keeps it constant. */
+  backoff?: number;
+  /** Only retry these response statuses. Empty or absent retries any failure. */
+  onStatus?: number[];
+};
+
 export type WorkflowStep = {
   id: string;
   requestTemplateId: string;
   /** The visual editor stores graph edges explicitly. Empty means this is a start node. */
   dependsOn?: string[];
   captures?: WorkflowCapture[];
+  /** What this step's author claims about the response, beyond what the contract already says. */
+  checks?: StepCheck[];
+  retry?: StepRetry;
+  onError?: StepOnError;
   /** Where the node sits on the canvas. **The engine never reads it** — it is stored beside the
    * step and not in a table of its own because a node and its coordinates are created, moved and
    * deleted together, and two places is one more way to orphan one. */

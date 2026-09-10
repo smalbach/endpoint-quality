@@ -11,6 +11,7 @@ export * from "./request-path.ts";
 export * from "./example.ts";
 export * from "./pattern.ts";
 export * from "./assertions.ts";
+export * from "./checks.ts";
 export * from "./flow.ts";
 export * from "./variables.ts";
 export * from "./workflows.ts";

@@ -22,6 +22,7 @@ import {
   planFlow,
   responseSchema,
   budgetFor,
+  holds,
   type ActualResponse,
   type Assertion,
   type ProjectConfig,
@@ -211,7 +212,7 @@ export class CaseExecutor {
 
     return {
       request: step,
-      ok: verdict.ok && assertions.every((assertion) => assertion.pass),
+      ok: verdict.ok && holds(assertions),
       assertions,
       actual,
       latency: { samples, budgetMs: budget?.ms ?? null },

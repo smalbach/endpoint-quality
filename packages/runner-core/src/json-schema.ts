@@ -118,3 +118,52 @@ export function responseSchema(
     Record<string, unknown> | undefined;
   return media?.schema ? dereference(media.schema, spec) : undefined;
 }
+
+/**
+ * The fields the API returned that its own document does not declare.
+ *
+ * The opposite direction of validation, and the one nobody checks: a missing required field is a
+ * broken response, but an *extra* one is a contract that has moved without the document moving
+ * with it. The consumer that starts depending on it is depending on something nobody promised, and
+ * the day it disappears the breakage looks like it came from nowhere.
+ *
+ * It is not an error and is never reported as one — `additionalProperties: false` is what turns
+ * «undeclared» into «forbidden», and that is the schema's call, made in the schema. What this
+ * returns is a warning's worth of information: the paths, so an operator can look at them.
+ *
+ * A schema that declares no `properties` at all says nothing about its object, so it produces
+ * nothing: reporting every field of a free-form object as drift is noise, not a finding.
+ */
+export function undeclaredPaths(value: unknown, schema: unknown, path = "$", found: string[] = []): string[] {
+  if (!schema || typeof schema !== "object") return found;
+  const rule = schema as Record<string, unknown>;
+  // `allOf` composes the declaration: a field declared by any branch is declared.
+  const branches = [rule, ...((rule.allOf as unknown[]) ?? [])].filter(
+    (branch): branch is Record<string, unknown> => Boolean(branch) && typeof branch === "object",
+  );
+
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const declared = Object.assign({}, ...branches.map((branch) => (branch.properties ?? {}) as object)) as Record<
+      string,
+      unknown
+    >;
+    // `anyOf`/`oneOf` mean the shape is one of several and this validator does not know which, so
+    // it declines to guess rather than calling every field of the other branches undeclared.
+    const ambiguous = branches.some((branch) => Array.isArray(branch.anyOf) || Array.isArray(branch.oneOf));
+    if (Object.keys(declared).length && !ambiguous) {
+      for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+        if (key in declared) undeclaredPaths(child, declared[key], `${path}.${key}`, found);
+        else found.push(`${path}.${key}`);
+      }
+    }
+  }
+
+  if (Array.isArray(value)) {
+    const items = branches.find((branch) => branch.items)?.items;
+    // Only the first element. A list of two hundred rows that all drifted the same way is one
+    // finding, and reporting it two hundred times buries everything else in the run.
+    if (items && value.length) undeclaredPaths(value[0], items, `${path}[0]`, found);
+  }
+
+  return found;
+}

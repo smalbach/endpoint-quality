@@ -27,11 +27,14 @@ import {
   dereference,
   resolveOperations,
   applyCaptures,
+  evaluateChecks,
+  holds,
   orderWorkflowSteps,
   type Operation,
   type ProjectConfig,
   type ResolvedOperation,
   type TestScenario,
+  type WorkflowStep,
 } from "@eq/runner-core";
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
@@ -47,7 +50,7 @@ import type { RequestTemplateRow, WorkflowRow } from "@/modules/workflows/domain
 import { SECRET_CIPHER, type SecretCipherPort } from "@/shared/crypto/secret-cipher";
 import { caseStatusFor, verdictFor, type Run, type RunCase, type RunStep } from "../domain/model";
 import { RUN_QUEUE, RUN_REPOSITORY, type RunQueuePort, type RunRepositoryPort } from "../domain/ports";
-import { CaseExecutor, type ExecutedStep, type ExecutionTarget } from "./case-executor";
+import { CaseExecutor, type ExecutedCase, type ExecutedStep, type ExecutionTarget } from "./case-executor";
 import { RunCaseFinishedEvent, RunFinishedEvent, RunStartedEvent } from "../application/events/run.events";
 
 @Injectable()
@@ -229,6 +232,56 @@ export class RunOrchestrator {
   }
 
   /**
+   * One step, its own checks, and the retries its author asked for.
+   *
+   * The checks run **inside** the retry loop, which is the point of having both: «the list
+   * eventually contains the id I just created» is a claim about a target that is eventually
+   * consistent, and a retry is the only way to state it. Judging the response and then deciding
+   * whether to repeat is therefore one operation, not two.
+   *
+   * A retry that ends in a pass leaves a warning behind. It has to: the run's verdict is that the
+   * endpoint works, and «it worked on the third try» is a different fact about the target that
+   * would otherwise disappear into a green tick. It does not fail the case — the author asked for
+   * the retries — and it is on the report where somebody can see the pattern across runs.
+   */
+  private async attempt(step: WorkflowStep, execute: () => Promise<ExecutedCase>): Promise<ExecutedCase> {
+    const retry = step.retry;
+    const attempts = Math.max(0, retry?.attempts ?? 0) + 1;
+    let wait = retry?.delayMs ?? 0;
+    let executed = await this.withChecks(step, await execute());
+
+    for (let attempt = 2; attempt <= attempts && !executed.ok; attempt += 1) {
+      // `onStatus` is what keeps a retry honest: a 500 may be worth repeating, a 422 never stops
+      // being a 422. With no list, any failure is retried, which is the blunt version the author
+      // opted into.
+      const status = executed.steps.at(-1)?.actual?.status;
+      if (retry?.onStatus?.length && (status === undefined || !retry.onStatus.includes(status))) break;
+      if (wait > 0) await delay(wait);
+      wait = Math.round(wait * (retry?.backoff ?? 1));
+      executed = await this.withChecks(step, await execute());
+      if (executed.ok) {
+        const last = executed.steps.at(-1);
+        last?.assertions.push({
+          label: "Reintentado",
+          pass: false,
+          severity: "warning",
+          detail: `Pasó en el intento ${attempt} de ${attempts}`,
+        });
+      }
+    }
+    return executed;
+  }
+
+  /** The author's own claims about the response, added to the ones derived from the contract. */
+  private async withChecks(step: WorkflowStep, executed: ExecutedCase): Promise<ExecutedCase> {
+    const last = executed.steps.at(-1);
+    if (!step.checks?.length || !last?.actual) return executed;
+    last.assertions.push(...evaluateChecks(step.checks, { response: last.actual, durationMs: last.durationMs }));
+    last.ok = holds(last.assertions);
+    return { ...executed, ok: executed.steps.every((item) => item.ok) };
+  }
+
+  /**
    * A user-authored graph instead of the generated matrix.
    *
    * Each step becomes an ordinary `RunCase`, so a flow is read, streamed and reported like any
@@ -276,7 +329,11 @@ export class RunOrchestrator {
     this.eventBus.publish(new RunStartedEvent(run.projectId, run.id, prepared.length));
 
     const passed = new Map<string, boolean>();
+    // What a failed step lets through. `continue` is the step whose failure the rest does not
+    // actually depend on — a cleanup that 404s because there was nothing to clean.
+    const permissive = new Set(prepared.filter((item) => item.step.onError === "continue").map((item) => item.step.id));
     let cancelled = false;
+    let stopped = false;
     for (const [index, item] of prepared.entries()) {
       if (await this.queue.isCancelled(run.id)) {
         cancelled = true;
@@ -285,7 +342,7 @@ export class RunOrchestrator {
       if (index > 0 && run.plan.delayMs > 0) await delay(run.plan.delayMs);
 
       const startedAt = this.clock.now();
-      if ((item.step.dependsOn ?? []).some((id) => passed.get(id) !== true)) {
+      if ((item.step.dependsOn ?? []).some((id) => passed.get(id) !== true && !permissive.has(id))) {
         const skipped: RunCase = {
           ...item.runCase,
           status: "skipped",
@@ -300,18 +357,23 @@ export class RunOrchestrator {
       }
 
       await this.runs.saveCase({ ...item.runCase, status: "running", startedAt });
-      const executed = await this.executor.run({
-        operation: item.operation,
-        scenario: scenarioFor(item.template),
-        operations: context.resolved,
-        config: context.config,
-        target: context.target,
-        samples: run.plan.samples,
-      });
+      const executed = await this.attempt(item.step, () =>
+        this.executor.run({
+          operation: item.operation,
+          scenario: scenarioFor(item.template),
+          operations: context.resolved,
+          config: context.config,
+          target: context.target,
+          samples: run.plan.samples,
+        }),
+      );
 
       // The capture is an assertion of its own, on the step that was supposed to yield the value.
       // Writing it into the variables without saying so would make the next case fail for a reason
       // recorded nowhere.
+      //
+      // After the retries and not inside them: a capture writes into the run's variables, and
+      // doing that once per attempt would leave the value of a discarded attempt behind.
       const last = executed.steps.at(-1);
       if (last?.actual && item.step.captures?.length) {
         const capture = applyCaptures(item.step.captures, last.actual, context.target.variables);
@@ -321,7 +383,7 @@ export class RunOrchestrator {
           pass: ok,
           detail: ok ? capture.captured.join(", ") : `No se encontraron: ${capture.missing.join(", ")}`,
         });
-        last.ok = last.ok && ok;
+        last.ok = last.ok && holds(last.assertions);
         executed.ok = executed.steps.every((step) => step.ok);
       }
 
@@ -337,6 +399,25 @@ export class RunOrchestrator {
       passed.set(item.step.id, status === "passed");
       await this.runs.saveCase(finished);
       await this.announce(run, finished);
+
+      // `stop` is for the step whose failure makes everything after it report something other than
+      // what it is testing: with no session, every later 401 is the same fact restated. The rest
+      // are marked skipped rather than left queued — a case with no verdict is not a result.
+      if (status !== "passed" && item.step.onError === "stop") {
+        stopped = true;
+        break;
+      }
+    }
+
+    if (stopped) {
+      const done = new Set(passed.keys());
+      for (const item of prepared) {
+        if (done.has(item.step.id)) continue;
+        const at = this.clock.now();
+        const skipped: RunCase = { ...item.runCase, status: "skipped", startedAt: at, finishedAt: at, durationMs: 0 };
+        await this.runs.saveCase(skipped);
+        await this.announce(run, skipped);
+      }
     }
 
     await this.finish(run, cancelled);

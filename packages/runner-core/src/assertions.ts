@@ -11,9 +11,9 @@
  * passes only when every one of them that *applies* holds. The ones that do not apply produce
  * nothing at all rather than a green tick — a tick that asserts nothing is what this replaced.
  */
-import type { Assertion, Budget } from "./types.ts";
+import { holds, type Assertion, type Budget } from "./types.ts";
 import { latencyAssertion } from "./budgets.ts";
-import { validateJson } from "./json-schema.ts";
+import { undeclaredPaths, validateJson } from "./json-schema.ts";
 
 export type ActualResponse = {
   status: number;
@@ -108,6 +108,21 @@ export function evaluateResponse(input: EvaluateInput): Evaluation {
     });
   }
 
+  // Drift, and only when the schema otherwise held: over a response that already failed
+  // validation, «además trae campos no declarados» is noise on top of the real finding. Reported
+  // as a warning because it does not make the endpoint wrong — it makes its document stale, which
+  // is a different conversation with a different person.
+  if (!notImplemented && schemaValid === true) {
+    const undeclared = undeclaredPaths(actual.body, input.schema);
+    if (undeclared.length)
+      assertions.push({
+        label: "Campos no declarados",
+        pass: false,
+        severity: "warning",
+        detail: `La respuesta trae ${undeclared.length} campo(s) que el contrato no declara: ${undeclared.slice(0, 5).join(", ")}${undeclared.length > 5 ? "…" : ""}`,
+      });
+  }
+
   // No published budget means no assertion at all. The RFP sets no target for the writes, and a
   // green tick over a threshold nobody published is exactly what this replaced.
   const latency = notImplemented ? null : latencyAssertion(input.budget, input.latencySamples);
@@ -121,7 +136,7 @@ export function evaluateResponse(input: EvaluateInput): Evaluation {
     // The verdict is unchanged by writing it this way — with a declared schema the envelope is now
     // in the list, and without one `schemaPass` already *is* `envelopeMatches` — so this is
     // visibility, not leniency.
-    ok: assertions.every((assertion) => assertion.pass),
+    ok: holds(assertions),
     assertions,
     notImplemented,
   };

@@ -886,3 +886,216 @@ describe("retención de corridas", () => {
     assert.equal(await context.repositories.runs.findCase(runCase.id), null);
   });
 });
+
+/**
+ * Lo que un paso afirma por su cuenta, y qué hace su fallo con el resto del flujo.
+ *
+ * La matriz generada comprueba lo que se le puede exigir a un contrato. Estas son la otra clase de
+ * afirmación —«esta lista no está vacía», «responde en menos de 300 ms»— que ningún documento
+ * OpenAPI expresa, más las dos decisiones que las acompañan: repetir un paso que falló, y decidir
+ * si su fallo detiene lo que venía detrás.
+ */
+describe("comprobaciones, reintentos y política de error de un paso", () => {
+  /** Un proyecto con dos peticiones guardadas y un flujo cuyos pasos los define cada prueba. */
+  async function flowWith(
+    steps: (templates: { create: string; list: string }) => Record<string, unknown>[],
+    faults: StubFaults = {},
+  ) {
+    const fixture = await projectAgainst(faults);
+    const create = await api()
+      .post(`${fixture.projectBase}/request-templates`)
+      .set(as(owner))
+      .send({ name: "Crear", operationId: "createThing", expectedStatus: 201, body: { name: "x", size: 7 } });
+    assert.equal(create.status, 201, JSON.stringify(create.body));
+    const list = await api()
+      .post(`${fixture.projectBase}/request-templates`)
+      .set(as(owner))
+      .send({ name: "Listar", operationId: "listThings", expectedStatus: 200 });
+    assert.equal(list.status, 201, JSON.stringify(list.body));
+
+    const workflow = await api()
+      .post(`${fixture.projectBase}/workflows`)
+      .set(as(owner))
+      .send({
+        name: "Con comprobaciones",
+        definition: { steps: steps({ create: create.body.requestTemplateId, list: list.body.requestTemplateId }) },
+      });
+    assert.equal(workflow.status, 201, JSON.stringify(workflow.body));
+    return { ...fixture, workflowId: workflow.body.workflowId as string };
+  }
+
+  const assertionsOf = async (projectBase: string, runId: string, caseId: string) => {
+    const detail = await api().get(`${projectBase}/runs/${runId}/cases/${caseId}`).set(as(owner));
+    return (
+      detail.body.steps as { assertions: { label: string; pass: boolean; detail: string; severity?: string }[] }[]
+    ).flatMap((step) => step.assertions);
+  };
+
+  test("una comprobación que pasa deja constancia, igual que una que falla", async () => {
+    const flow = await flowWith(({ list }) => [
+      {
+        id: "listar",
+        requestTemplateId: list,
+        checks: [
+          { source: "body", path: "data", operator: "is_array" },
+          { label: "hay diez cosas", source: "body", path: "data", operator: "has_length", value: 10 },
+        ],
+      },
+    ]);
+    const { runId, run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    const assertions = await assertionsOf(flow.projectBase, runId, run.cases[0].id);
+    // La que pasa también está: una comprobación que desaparece cuando acierta es una
+    // comprobación que nadie puede decir que se ejecutó.
+    assert.equal(assertions.find((entry) => entry.label === "body.data es una lista")?.pass, true);
+    assert.equal(assertions.find((entry) => entry.label === "hay diez cosas")?.pass, false);
+    assert.equal(run.cases[0].status, "failed");
+    await flow.target.stop();
+  });
+
+  test("un aviso queda escrito y no pone el caso en rojo", async () => {
+    const flow = await flowWith(({ list }) => [
+      {
+        id: "listar",
+        requestTemplateId: list,
+        checks: [
+          {
+            label: "cien cosas",
+            source: "body",
+            path: "data",
+            operator: "has_length",
+            value: 100,
+            severity: "warning",
+          },
+        ],
+      },
+    ]);
+    const { runId, run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    assert.equal(run.cases[0].status, "passed");
+    const assertions = await assertionsOf(flow.projectBase, runId, run.cases[0].id);
+    const warning = assertions.find((entry) => entry.label === "cien cosas");
+    assert.equal(warning?.pass, false);
+    assert.equal(warning?.severity, "warning");
+    await flow.target.stop();
+  });
+
+  test("un destino que arranca frío se reintenta, y el informe dice que hizo falta", async () => {
+    const flow = await flowWith(
+      ({ create }) => [{ id: "crear", requestTemplateId: create, retry: { attempts: 2, delayMs: 0, onStatus: [503] } }],
+      { flakyWrites: 2 },
+    );
+    const { runId, run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    assert.equal(run.cases[0].status, "passed");
+    const assertions = await assertionsOf(flow.projectBase, runId, run.cases[0].id);
+    // Que el endpoint funcione y que hicieran falta tres intentos son dos hechos distintos sobre
+    // el destino. El segundo desaparecería dentro de un tic verde.
+    const retried = assertions.find((entry) => entry.label === "Reintentado");
+    assert.equal(retried?.severity, "warning");
+    assert.match(retried?.detail ?? "", /intento 3 de 3/);
+    await flow.target.stop();
+  });
+
+  test("onStatus impide reintentar lo que nunca va a cambiar", async () => {
+    // El fallo es una comprobación, no un 503: con `onStatus` acotado a 503 no se repite, que es
+    // justo lo que evita que una suite reintente un 422 tres veces y tarde el triple.
+    const flow = await flowWith(({ list }) => [
+      {
+        id: "listar",
+        requestTemplateId: list,
+        checks: [{ label: "imposible", source: "body", path: "data", operator: "has_length", value: 99 }],
+        retry: { attempts: 3, delayMs: 0, onStatus: [503] },
+      },
+    ]);
+    const { runId, run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    assert.equal(run.cases[0].status, "failed");
+    const assertions = await assertionsOf(flow.projectBase, runId, run.cases[0].id);
+    assert.equal(
+      assertions.filter((entry) => entry.label === "imposible").length,
+      1,
+      "se evaluó una sola vez: no se reintentó",
+    );
+    await flow.target.stop();
+  });
+
+  test("con «continuar», lo que dependía de un paso fallido se ejecuta igual", async () => {
+    const flow = await flowWith(({ create, list }) => [
+      {
+        id: "crear",
+        requestTemplateId: create,
+        onError: "continue",
+        checks: [{ label: "imposible", source: "status", operator: "equals", value: 999 }],
+      },
+      { id: "listar", requestTemplateId: list, dependsOn: ["crear"] },
+    ]);
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    assert.equal(run.cases[0].status, "failed");
+    // Sin `continue` esto sería «saltado»: «crear falló, luego listar falló» es un hallazgo
+    // contado dos veces. Con él, el autor dice que el resto no dependía de verdad.
+    assert.equal(run.cases[1].status, "passed");
+    await flow.target.stop();
+  });
+
+  test("con «detener», lo que venía detrás queda saltado y no encolado", async () => {
+    const flow = await flowWith(({ create, list }) => [
+      {
+        id: "crear",
+        requestTemplateId: create,
+        onError: "stop",
+        checks: [{ label: "imposible", source: "status", operator: "equals", value: 999 }],
+      },
+      { id: "listar", requestTemplateId: list },
+    ]);
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    assert.equal(run.cases[0].status, "failed");
+    // Saltado y no encolado: un caso sin veredicto no es un resultado, y una corrida terminada
+    // que deja filas en «queued» no cuadra con sus propios totales.
+    assert.equal(run.cases[1].status, "skipped");
+    await flow.target.stop();
+  });
+
+  test("una comprobación mal escrita se rechaza al guardar el flujo, no a mitad de corrida", async () => {
+    const fixture = await projectAgainst({});
+    const list = await api()
+      .post(`${fixture.projectBase}/request-templates`)
+      .set(as(owner))
+      .send({ name: "Listar", operationId: "listThings", expectedStatus: 200 });
+    const response = await api()
+      .post(`${fixture.projectBase}/workflows`)
+      .set(as(owner))
+      .send({
+        name: "Rota",
+        definition: {
+          steps: [
+            {
+              id: "listar",
+              requestTemplateId: list.body.requestTemplateId,
+              checks: [{ source: "body", path: "data", operator: "matches", value: "(" }],
+            },
+          ],
+        },
+      });
+    assert.equal(response.status, 422);
+    assert.ok(
+      response.body.errors.some((error: { detail: string }) => error.detail.includes("expresión regular")),
+      JSON.stringify(response.body.errors),
+    );
+    await fixture.target.stop();
+  });
+});

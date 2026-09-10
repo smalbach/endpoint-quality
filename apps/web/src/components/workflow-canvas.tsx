@@ -26,6 +26,7 @@ type StepNodeData = {
   path: string;
   expectedStatus: number;
   captures: number;
+  checks: number;
 };
 
 function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
@@ -44,7 +45,9 @@ function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
       <p className="mt-2 truncate font-mono text-[10px] text-slate-500">{data.path}</p>
       <div className="mt-2 flex justify-between text-[10px] text-slate-400">
         <span>espera {data.expectedStatus}</span>
-        <span>{data.captures} capturas</span>
+        <span>
+          {data.captures} capturas{data.checks > 0 && ` · ${data.checks} comprob.`}
+        </span>
       </div>
       <Handle type="source" position={Position.Right} />
     </div>

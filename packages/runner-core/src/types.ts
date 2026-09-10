@@ -59,4 +59,22 @@ export type TestScenario = {
 
 export type Budget = { ms: number; label: string; source: string };
 
-export type Assertion = { label: string; pass: boolean; detail: string };
+/**
+ * One claim about a response, and whether it held.
+ *
+ * `severity` is absent on almost all of them, and absent means «error»: a claim that does not hold
+ * fails the case. The exception is drift — a field the API returned that its own document does not
+ * declare. That is worth saying and is not a broken endpoint, so it is reported as a warning and
+ * counted by {@link holds}, which is the one place that decides what «passed» means.
+ */
+export type Assertion = { label: string; pass: boolean; detail: string; severity?: "error" | "warning" };
+
+/**
+ * Whether a list of assertions amounts to a pass.
+ *
+ * A single function rather than `.every((assertion) => assertion.pass)` written in four places,
+ * because the four had to agree the day one of them learned about warnings — and the failure mode
+ * of them not agreeing is a case reported green in one screen and red in another.
+ */
+export const holds = (assertions: Assertion[]): boolean =>
+  assertions.every((assertion) => assertion.pass || assertion.severity === "warning");

@@ -2,9 +2,38 @@ import { Button, Field, inputClass } from "@/components/ui";
 import { JsonObjectField } from "@/components/json-object-field";
 import { removeStep, replaceStep } from "@/lib/workflow-draft";
 import type { OperationSummary } from "@/lib/workflow-draft";
-import type { Environment, RequestTemplateView, WorkflowStepView, WorkflowView } from "@/lib/types";
+import type { Environment, RequestTemplateView, StepCheckView, WorkflowStepView, WorkflowView } from "@/lib/types";
 
 const AUTH = ["default", "none", "insufficient", "api-key"];
+
+/** The same lists the engine validates against, written here because the contract package emits
+ * no runtime. A value the engine does not know is a 422 on save, which is where it belongs. */
+const CHECK_SOURCES: StepCheckView["source"][] = ["status", "body", "header", "durationMs"];
+const CHECK_OPERATORS = [
+  "equals",
+  "not_equals",
+  "contains",
+  "not_contains",
+  "greater_than",
+  "less_than",
+  "exists",
+  "not_exists",
+  "matches",
+  "is_array",
+  "is_not_empty",
+  "has_length",
+];
+/** The operators that judge the value on its own, so the form hides the second field for them. */
+const WITHOUT_OPERAND = ["exists", "not_exists", "is_array", "is_not_empty"];
+const ON_ERROR: { value: NonNullable<WorkflowStepView["onError"]>; label: string; hint: string }[] = [
+  {
+    value: "skip-dependents",
+    label: "Saltar lo que dependa",
+    hint: "«creó mal, luego leyó mal» es un hallazgo contado dos veces",
+  },
+  { value: "continue", label: "Continuar igual", hint: "para el paso del que el resto no depende de verdad" },
+  { value: "stop", label: "Detener el flujo", hint: "cuando sin este paso todo lo demás informa de otra cosa" },
+];
 
 /** The panel on the right: the flow itself, the selected node, and the button that runs it. */
 export function WorkflowInspector({
@@ -258,17 +287,252 @@ function StepInspector({
         ))}
       </div>
       {canEdit && (
+        <Button
+          variant="ghost"
+          className="mt-2 h-8 text-xs"
+          onClick={() => editCaptures([...captures, { variable: "", from: "body", path: "" }])}
+        >
+          + Captura
+        </Button>
+      )}
+
+      <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />
+      <FailureEditor step={step} canEdit={canEdit} onChange={onChange} />
+
+      {canEdit && (
+        <Button variant="danger" className="mt-4 h-8 w-full text-xs" onClick={onRemove}>
+          Eliminar paso
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * What this step's author claims, beyond what the contract already says.
+ *
+ * The matrix asserts the things a document can be held to. These are the ones no document
+ * expresses — «esta lista no está vacía», «responde en menos de 300 ms» — and they are written
+ * rather than derived, which is why they live on the step and travel with it.
+ */
+function ChecksEditor({
+  step,
+  canEdit,
+  onChange,
+}: {
+  step: WorkflowStepView;
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+}) {
+  const checks = step.checks ?? [];
+  const edit = (next: StepCheckView[]) => onChange({ ...step, checks: next.length ? next : undefined });
+  const patch = (index: number, change: Partial<StepCheckView>) =>
+    edit(checks.map((item, position) => (position === index ? { ...item, ...change } : item)));
+
+  return (
+    <div className="mt-4 border-t border-slate-100 pt-3">
+      <p className="text-xs font-semibold text-slate-800">Comprobaciones</p>
+      <p className="mt-1 text-[11px] leading-5 text-slate-500">
+        Lo que el contrato no dice: que la lista trae algo, que el total cuadra, que responde a tiempo. Un{" "}
+        <span className="font-medium">aviso</span> queda escrito y no pone el caso en rojo.
+      </p>
+      <div className="mt-2 space-y-2">
+        {checks.map((check, index) => (
+          <div key={index} className="rounded-lg border border-slate-200 p-2">
+            <div className="grid grid-cols-[5.5rem_1fr] gap-2">
+              <select
+                aria-label="Origen"
+                className={inputClass}
+                value={check.source}
+                disabled={!canEdit}
+                onChange={(event) => patch(index, { source: event.target.value as StepCheckView["source"] })}
+              >
+                {CHECK_SOURCES.map((source) => (
+                  <option key={source} value={source}>
+                    {source}
+                  </option>
+                ))}
+              </select>
+              <input
+                aria-label="Ruta o cabecera"
+                className={inputClass}
+                value={check.path ?? ""}
+                placeholder={check.source === "header" ? "X-Total-Count" : "data.0.id"}
+                disabled={!canEdit || check.source === "status" || check.source === "durationMs"}
+                onChange={(event) => patch(index, { path: event.target.value })}
+              />
+            </div>
+            <div className="mt-2 grid grid-cols-[8rem_1fr] gap-2">
+              <select
+                aria-label="Operador"
+                className={inputClass}
+                value={check.operator}
+                disabled={!canEdit}
+                onChange={(event) => patch(index, { operator: event.target.value })}
+              >
+                {CHECK_OPERATORS.map((operator) => (
+                  <option key={operator} value={operator}>
+                    {operator}
+                  </option>
+                ))}
+              </select>
+              {!WITHOUT_OPERAND.includes(check.operator) && (
+                <input
+                  aria-label="Valor esperado"
+                  className={inputClass}
+                  value={check.value === undefined ? "" : String(check.value)}
+                  placeholder="200"
+                  disabled={!canEdit}
+                  onChange={(event) => patch(index, { value: event.target.value })}
+                />
+              )}
+            </div>
+            <div className="mt-2 flex items-center justify-between">
+              <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={check.severity === "warning"}
+                  disabled={!canEdit}
+                  onChange={(event) => patch(index, { severity: event.target.checked ? "warning" : undefined })}
+                />
+                Solo aviso
+              </label>
+              {canEdit && (
+                <button
+                  className="text-[10px] text-rose-600"
+                  onClick={() => edit(checks.filter((_item, position) => position !== index))}
+                >
+                  Eliminar
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      {canEdit && (
+        <Button
+          variant="ghost"
+          className="mt-2 h-8 text-xs"
+          onClick={() => edit([...checks, { source: "status", operator: "equals", value: "200" }])}
+        >
+          + Comprobación
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Qué pasa cuando este paso no pasa.
+ *
+ * El reintento está apagado por defecto y cuesta un clic encenderlo a propósito: **repetir un paso
+ * es afirmar que el fallo no era real**, y una suite que reintenta por defecto informa de un
+ * destino inestable como si estuviera sano. El aviso sobre las escrituras no es decorativo: sin
+ * acotar por estado, un POST reintentado escribe una vez por intento.
+ */
+function FailureEditor({
+  step,
+  canEdit,
+  onChange,
+}: {
+  step: WorkflowStepView;
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+}) {
+  const retry = step.retry;
+  const writes = (value: string): number[] =>
+    value
+      .split(/[\s,]+/)
+      .map((item) => Number(item))
+      .filter((item) => Number.isInteger(item) && item >= 100 && item <= 599);
+
+  return (
+    <div className="mt-4 border-t border-slate-100 pt-3">
+      <Field label="Si este paso falla">
+        <select
+          className={inputClass}
+          value={step.onError ?? "skip-dependents"}
+          disabled={!canEdit}
+          onChange={(event) => onChange({ ...step, onError: event.target.value as WorkflowStepView["onError"] })}
+        >
+          {ON_ERROR.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <p className="text-[11px] leading-5 text-slate-500">
+        {ON_ERROR.find((option) => option.value === (step.onError ?? "skip-dependents"))?.hint}
+      </p>
+
+      <label className="mt-3 flex items-center gap-1.5 text-[11px] font-semibold text-slate-700">
+        <input
+          type="checkbox"
+          checked={Boolean(retry)}
+          disabled={!canEdit}
+          onChange={(event) =>
+            onChange({ ...step, retry: event.target.checked ? { attempts: 2, delayMs: 500, backoff: 2 } : undefined })
+          }
+        />
+        Reintentar
+      </label>
+      {retry && (
         <>
-          <Button
-            variant="ghost"
-            className="mt-2 h-8 text-xs"
-            onClick={() => editCaptures([...captures, { variable: "", from: "body", path: "" }])}
-          >
-            + Captura
-          </Button>
-          <Button variant="danger" className="mt-4 h-8 w-full text-xs" onClick={onRemove}>
-            Eliminar paso
-          </Button>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            <Field label="Intentos">
+              <input
+                className={inputClass}
+                type="number"
+                min={0}
+                max={5}
+                value={retry.attempts}
+                disabled={!canEdit}
+                onChange={(event) => onChange({ ...step, retry: { ...retry, attempts: Number(event.target.value) } })}
+              />
+            </Field>
+            <Field label="Espera (ms)">
+              <input
+                className={inputClass}
+                type="number"
+                min={0}
+                max={30000}
+                value={retry.delayMs}
+                disabled={!canEdit}
+                onChange={(event) => onChange({ ...step, retry: { ...retry, delayMs: Number(event.target.value) } })}
+              />
+            </Field>
+            <Field label="Factor">
+              <input
+                className={inputClass}
+                type="number"
+                min={1}
+                max={10}
+                step={0.5}
+                value={retry.backoff ?? 1}
+                disabled={!canEdit}
+                onChange={(event) => onChange({ ...step, retry: { ...retry, backoff: Number(event.target.value) } })}
+              />
+            </Field>
+          </div>
+          <Field label="Solo estos estados" hint="Vacío reintenta cualquier fallo.">
+            <input
+              className={`${inputClass} font-mono text-xs`}
+              value={(retry.onStatus ?? []).join(", ")}
+              placeholder="502, 503, 504"
+              disabled={!canEdit}
+              onChange={(event) => {
+                const statuses = writes(event.target.value);
+                onChange({
+                  ...step,
+                  retry: { ...retry, ...(statuses.length ? { onStatus: statuses } : { onStatus: undefined }) },
+                });
+              }}
+            />
+          </Field>
+          <p className="text-[11px] leading-5 text-amber-700">
+            Un paso que escribe y se reintenta sin acotar por estado escribe una vez por intento.
+          </p>
         </>
       )}
     </div>

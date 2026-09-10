@@ -148,11 +148,29 @@ export type EnvironmentSummaryOf<T> = {
 /** A value read out of one response and published as a variable the next requests can spend. */
 export type WorkflowCaptureView = { variable: string; from: "body" | "header"; path: string };
 
+/** A claim the author of a step wrote by hand, on top of the ones derived from the contract. */
+export type StepCheckView = {
+  label?: string;
+  source: "status" | "body" | "header" | "durationMs";
+  path?: string;
+  operator: string;
+  value?: unknown;
+  severity?: "error" | "warning";
+};
+
+/** Repeating a step that failed. `onStatus` restricts it to the answers worth repeating; without
+ * it any failure is retried, and a step that writes will write once per attempt. */
+export type StepRetryView = { attempts: number; delayMs: number; backoff?: number; onStatus?: number[] };
+
 export type WorkflowStepView = {
   id: string;
   requestTemplateId: string;
   dependsOn?: string[];
   captures?: WorkflowCaptureView[];
+  checks?: StepCheckView[];
+  retry?: StepRetryView;
+  /** What a failure does to the rest of the flow. Absent means `skip-dependents`. */
+  onError?: "skip-dependents" | "continue" | "stop";
   /** Where the node sits on the canvas. The engine never reads it; the editor would lose the
    * layout on every reload without it. */
   position?: { x: number; y: number };
@@ -189,7 +207,16 @@ export type WorkflowsViewOf<T> = {
 // The matrix
 // ---------------------------------------------------------------------------------------------
 
-export type Assertion = { label: string; pass: boolean; detail: string };
+/**
+ * One claim about a response, as the browser reads it.
+ *
+ * `severity` is absent on almost all of them and absent means «error»: it failed, so the case
+ * failed. A `warning` is a claim that did not hold and is not a broken endpoint — a field the API
+ * returned that its own document does not declare, or a step that only passed on the third try.
+ * Those are worth showing and must not turn a case red, so anything counting failures has to read
+ * this field.
+ */
+export type Assertion = { label: string; pass: boolean; detail: string; severity?: "error" | "warning" };
 
 export type ScenarioView = {
   id: string;

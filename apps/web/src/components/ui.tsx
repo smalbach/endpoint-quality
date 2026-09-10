@@ -96,16 +96,35 @@ export function Json({ value, empty = "Sin contenido" }: { value: unknown; empty
 
 /** An assertion, shown as what it claims and whether it held. The detail is always visible:
  * "Schema OpenAPI ✗" without the reason is a red tick nobody can act on. */
-export function AssertionRow({ label, pass, detail }: { label: string; pass: boolean; detail: string }) {
+/**
+ * One assertion, and three outcomes rather than two.
+ *
+ * A warning is a claim that did not hold and did not make the case red — a field the API returned
+ * that its own document does not declare, a step that only passed on the third try. Drawing it in
+ * the same red as a failure would say the case failed, and drawing it green would hide it; amber,
+ * with its own mark, is the only reading of the row that matches the verdict above it.
+ */
+export function AssertionRow({
+  label,
+  pass,
+  detail,
+  severity,
+}: {
+  label: string;
+  pass: boolean;
+  detail: string;
+  severity?: "error" | "warning";
+}) {
+  const warned = !pass && severity === "warning";
   return (
     <div className="flex items-start gap-2 border-b border-slate-100 py-2 last:border-b-0">
       <span
         className={cn(
           "mt-0.5 grid size-4 shrink-0 place-items-center rounded-full text-[10px] font-bold text-white",
-          pass ? "bg-emerald-500" : "bg-rose-500",
+          pass ? "bg-emerald-500" : warned ? "bg-amber-500" : "bg-rose-500",
         )}
       >
-        {pass ? "✓" : "✗"}
+        {pass ? "✓" : warned ? "!" : "✗"}
       </span>
       <div className="min-w-0">
         <p className="text-xs font-medium text-slate-800">{label}</p>

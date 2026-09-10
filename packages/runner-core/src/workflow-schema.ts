@@ -13,6 +13,8 @@ import { z } from "zod";
 
 import { scenarioAuthSchema } from "./schema.ts";
 import { VARIABLE_NAME } from "./variables.ts";
+import { CHECK_OPERATORS, CHECK_SOURCES } from "./checks.ts";
+import { STEP_ON_ERROR } from "./workflows.ts";
 
 const jsonValue: z.ZodType<unknown> = z.lazy(() =>
   z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(jsonValue), z.record(z.string(), jsonValue)]),
@@ -35,12 +37,60 @@ export const workflowCaptureSchema = z.object({
   path: z.string().min(1),
 });
 
+/** Which operators judge the value on its own, and so take no right-hand side. */
+const WITHOUT_OPERAND = ["exists", "not_exists", "is_array", "is_not_empty"];
+
+export const stepCheckSchema = z
+  .object({
+    label: z.string().max(120).optional(),
+    source: z.enum(CHECK_SOURCES),
+    path: z.string().max(500).optional(),
+    operator: z.enum(CHECK_OPERATORS),
+    value: jsonValue.optional(),
+    severity: z.enum(["error", "warning"]).optional(),
+  })
+  .superRefine((check, context) => {
+    // A header check with no name is not a check. A body one without a path is: it judges the
+    // whole body, which is what `is_not_empty` over a list endpoint means.
+    if (check.source === "header" && !check.path?.trim()) {
+      context.addIssue({ code: "custom", message: "una comprobación de cabecera necesita su nombre", path: ["path"] });
+    }
+    if (!WITHOUT_OPERAND.includes(check.operator) && check.value === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: `el operador ${check.operator} necesita un valor con el que comparar`,
+        path: ["value"],
+      });
+    }
+    if (check.operator === "matches") {
+      try {
+        new RegExp(String(check.value));
+      } catch {
+        // Caught at write time rather than mid-run: a bad regex would otherwise fail one step of
+        // one case, reported as if the target had done something.
+        context.addIssue({ code: "custom", message: "la expresión regular no es válida", path: ["value"] });
+      }
+    }
+  });
+
+/** Capped low on purpose: `attempts` multiplies the wall clock of every run that contains the
+ * step, and a flow that needs twenty tries is reporting something other than a flaky network. */
+export const stepRetrySchema = z.object({
+  attempts: z.number().int().min(0).max(5),
+  delayMs: z.number().int().min(0).max(30_000),
+  backoff: z.number().min(1).max(10).optional(),
+  onStatus: z.array(z.number().int().min(100).max(599)).max(20).optional(),
+});
+
 export const workflowStepSchema = z.object({
   // Capped because it travels inside `run_cases.scenarioId`, which is a `varchar(200)`.
   id: z.string().min(1).max(60),
   requestTemplateId: z.string().uuid(),
   dependsOn: z.array(z.string()).optional(),
   captures: z.array(workflowCaptureSchema).optional(),
+  checks: z.array(stepCheckSchema).max(50).optional(),
+  retry: stepRetrySchema.optional(),
+  onError: z.enum(STEP_ON_ERROR).optional(),
   position: z.object({ x: z.number().finite(), y: z.number().finite() }).optional(),
 });
 
