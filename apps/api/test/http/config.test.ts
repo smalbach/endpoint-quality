@@ -420,6 +420,24 @@ describe("credenciales del destino", () => {
     assert.equal(await context.repositories.environments.findCredential(created.body.environmentId, "primary"), null);
   });
 
+  test("crear un entorno exige nombre y URL; modificarlo no exige nada", async () => {
+    // El 422 sale ahora del pipe, no del handler, que es lo que hace que el contrato publicado
+    // pueda decir la verdad sobre esta operación. `errors` sigue nombrando los dos campos.
+    const empty = await api().post(`${base}/environments`).set(as(owner)).send({});
+    assert.equal(empty.status, 422);
+    // Un campo por cada validador que falla, así que se comparan los campos nombrados, no cuántos.
+    const fields = [...new Set(empty.body.errors.map((error: { field: string }) => error.field))].sort();
+    assert.deepEqual(fields, ["baseUrl", "name"]);
+
+    // Y un PATCH que solo cambia una bandera no reenvía el nombre: es lo que costaba compartir DTO.
+    const created = await api().post(`${base}/environments`).set(as(owner)).send({ name: "parcial", baseUrl: "https://p.example.com" });
+    assert.equal(created.status, 201);
+    assert.equal((await api().patch(`${base}/environments/${created.body.environmentId}`).set(as(owner)).send({ writesAllowed: true })).status, 204);
+    const listed = (await api().get(`${base}/environments`).set(as(owner))).body.find((entry: { id: string }) => entry.id === created.body.environmentId);
+    assert.equal(listed.name, "parcial", "el nombre que no se mandó sigue donde estaba");
+    assert.equal(listed.writesAllowed, true);
+  });
+
   test("una URL base que no es http(s) se rechaza al escribirla", async () => {
     const response = await api().post(`${base}/environments`).set(as(owner)).send({ name: "mala", baseUrl: "file:///etc/passwd" });
     assert.equal(response.status, 422);

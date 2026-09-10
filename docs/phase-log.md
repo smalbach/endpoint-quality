@@ -754,9 +754,36 @@ lleva dentro, que es lo que hace que la lista de DTOs no se pueda olvidar.
 
 ### Deuda
 
-- `EnvironmentDto` declara **todos** sus campos opcionales porque lo comparten el POST y el PATCH,
-  así que el documento dice ahora, con razón, que crear un entorno no exige nada. El 422 de un
-  `name` que falta sale del handler y no del pipe. Separar los dos DTOs es la corrección.
+- ~~`EnvironmentDto` declara **todos** sus campos opcionales porque lo comparten el POST y el
+  PATCH~~ — corregido abajo.
 - Los formatos que `exampleFromSchema` no conoce caen al marcador genérico. Es correcto —inventar
   un valor para una regla que no entiende metería en el contrato una afirmación que nada respalda—
   pero un `pattern` con una expresión regular sencilla sí se podría satisfacer.
+
+## Un DTO por petición, no por recurso
+
+`EnvironmentDto` era una sola clase para crear y para modificar, y compartirla obligaba a marcar
+**todos** sus campos como `@IsOptional()`: un `PATCH` que solo enciende `writesAllowed` no puede
+verse forzado a reenviar el nombre.
+
+Eso no se notaba hasta que el contrato pasó a derivarse de esos mismos validadores. Entonces el
+documento empezó a decir que `POST /environments` no exige nada — que `{}` es una forma válida de
+crear un entorno. No lo es: el handler responde 422 nombrando `name`. **El documento describía una
+API que no existe**, que es exactamente el fallo que este producto busca en los demás.
+
+`CreateEnvironmentDto` exige `name` y `baseUrl`; `UpdateEnvironmentDto` no exige nada, que es lo
+que un update parcial *es*. El 422 sale ahora del pipe, donde se decide por la forma de la
+petición y no por lógica de negocio tres capas más abajo. El handler conserva sus comprobaciones:
+un command bus se alcanza desde sitios donde ningún `ValidationPipe` corre, y el invariante es del
+dominio, no de HTTP.
+
+La regla de la URL no se duplicó. `normalizeBaseUrl` sigue siendo el único sitio que decide qué es
+una URL base válida; un `@IsUrl()` en el DTO sería una segunda definición libre de discrepar con la
+primera —y de hecho discreparía, porque `isURL` rechaza por defecto `http://127.0.0.1:8100`, que es
+el destino de las pruebas.
+
+Dos pruebas nuevas: una lee el documento y comprueba que `CreateEnvironmentDto` exige los dos
+campos y `UpdateEnvironmentDto` ninguno; otra llama a la API y comprueba que responde eso mismo —
+`{}` es 422 nombrando ambos campos, y un `PATCH` con solo una bandera deja el nombre donde estaba.
+
+Suites: runner-core 95 · spec-import 35 · api **177** · api/Postgres 17 · web 32.

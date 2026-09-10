@@ -137,6 +137,17 @@ describe("el contrato que publica esta API", () => {
     assert.ok(Object.keys(importSpec.properties?.source.properties ?? {}).length > 0, "el DTO anidado no se resolvió");
   });
 
+  test("crear y modificar un entorno no piden lo mismo, y el documento lo dice", async () => {
+    // Los dos compartían clase, así que todo campo tenía que ser opcional para que un PATCH que
+    // solo cambia `writesAllowed` no obligara a reenviar el nombre. El documento acababa diciendo
+    // que crear un entorno no exige nada: que `{}` sirve. No sirve, y el 422 salía del handler.
+    const create = document.components?.schemas?.CreateEnvironmentDto as { required?: string[] };
+    assert.deepEqual(create.required, ["name", "baseUrl"]);
+    const update = document.components?.schemas?.UpdateEnvironmentDto as { required?: string[] };
+    assert.equal(update.required, undefined, "un PATCH parcial no exige ningún campo, y eso es correcto");
+    // Que la API responda lo que aquí promete se comprueba autenticado, en config.test.ts.
+  });
+
   test("un 401 real tiene la forma que el documento promete", async () => {
     // The document is only worth something if the body matches. This is the same check the
     // product runs against everybody else.

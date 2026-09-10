@@ -26,7 +26,7 @@ import { getMetadataStorage } from "class-validator";
 import type { OpenAPIObject } from "@nestjs/swagger";
 
 import { ChangePasswordDto, CreateApiTokenDto, LoginDto, LogoutDto, RefreshDto, RegisterDto } from "@/modules/auth/presentation/dto/auth.dto";
-import { CredentialDto, EnvironmentDto } from "@/modules/environments/presentation/dto/environments.dto";
+import { CreateEnvironmentDto, CredentialDto, UpdateEnvironmentDto } from "@/modules/environments/presentation/dto/environments.dto";
 import { AcceptInvitationDto, ChangeRoleDto, CreateOrganizationDto, InviteMemberDto } from "@/modules/iam/presentation/dto/iam.dto";
 import { ArchiveProjectDto, CreateProjectDto, ImportSpecDto, SpecSourceDto, UpdateProjectDto } from "@/modules/projects/presentation/dto/projects.dto";
 import { StartRunDto } from "@/modules/runs/presentation/dto/runs.dto";
@@ -55,7 +55,8 @@ const DTOS = [
   ArchiveProjectDto,
   SpecSourceDto,
   ImportSpecDto,
-  EnvironmentDto,
+  CreateEnvironmentDto,
+  UpdateEnvironmentDto,
   CredentialDto,
   StartRunDto,
 ];

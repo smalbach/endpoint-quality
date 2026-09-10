@@ -18,7 +18,7 @@ import { UpsertConfigSectionCommand, ResetConfigSectionCommand } from "@/modules
 import { GetProjectConfigQuery } from "@/modules/config/application/queries/get-project-config";
 import { GetScenariosQuery } from "@/modules/config/application/queries/get-scenarios";
 import { GetCoverageQuery } from "@/modules/config/application/queries/get-coverage";
-import { CredentialDto, EnvironmentDto } from "./dto/environments.dto";
+import { CreateEnvironmentDto, CredentialDto, UpdateEnvironmentDto } from "./dto/environments.dto";
 import type { CredentialRole } from "../domain/model";
 
 const actorId = (principal: Principal): string => (principal.kind === "user" ? principal.userId : principal.tokenId);
@@ -36,7 +36,7 @@ export class EnvironmentsController {
 
   @Post("environments")
   @RequireRole("editor")
-  async create(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string, @Body() body: EnvironmentDto) {
+  async create(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string, @Body() body: CreateEnvironmentDto) {
     return this.commandBus.execute(new CreateEnvironmentCommand(organizationId, projectId, body));
   }
 
@@ -47,7 +47,7 @@ export class EnvironmentsController {
     @Param("organizationId") organizationId: string,
     @Param("projectId") projectId: string,
     @Param("environmentId") environmentId: string,
-    @Body() body: EnvironmentDto,
+    @Body() body: UpdateEnvironmentDto,
   ): Promise<void> {
     await this.commandBus.execute(new UpdateEnvironmentCommand(organizationId, projectId, environmentId, body));
   }
