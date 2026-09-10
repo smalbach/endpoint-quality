@@ -1,0 +1,6 @@
+# Reformateos masivos que no cambian comportamiento. `git blame` los salta con:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# (GitHub lo lee solo.)
+
+# style: el ancho de línea deja de ser una opinión
+d40230326bf36412f46ff08adced543d0df4a6c7
