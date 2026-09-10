@@ -18,7 +18,12 @@ import { InProcessRelay } from "./infrastructure/progress/in-process-relay";
 import { RedisProgressRelay } from "./infrastructure/progress/redis-relay";
 import { CaseExecutor } from "./infrastructure/case-executor";
 import { RunOrchestrator } from "./infrastructure/run-orchestrator";
-import { RunCaseProjector, RunFinishedProjector, RunProgressStream, RunStartedProjector } from "./infrastructure/run-progress.stream";
+import {
+  RunCaseProjector,
+  RunFinishedProjector,
+  RunProgressStream,
+  RunStartedProjector,
+} from "./infrastructure/run-progress.stream";
 import { RetentionScheduler } from "./infrastructure/retention.scheduler";
 import { StartRunHandler } from "./application/commands/start-run";
 import { CancelRunHandler } from "./application/commands/cancel-run";
@@ -40,7 +45,10 @@ export const RUN_PROJECTORS = [RunStartedProjector, RunCaseProjector, RunFinishe
 export const RUN_QUEUE_PROVIDER = {
   provide: RUN_QUEUE,
   inject: [ENV],
-  useFactory: (env: Env) => (env.QUEUE_DRIVER === "redis" ? new RedisRunQueue(env.REDIS_URL ?? "redis://localhost:6379") : new InMemoryRunQueue()),
+  useFactory: (env: Env) =>
+    env.QUEUE_DRIVER === "redis"
+      ? new RedisRunQueue(env.REDIS_URL ?? "redis://localhost:6379")
+      : new InMemoryRunQueue(),
 };
 
 /**
@@ -52,7 +60,10 @@ export const RUN_QUEUE_PROVIDER = {
 export const PROGRESS_RELAY_PROVIDER = {
   provide: PROGRESS_RELAY,
   inject: [ENV],
-  useFactory: (env: Env) => (env.QUEUE_DRIVER === "redis" ? new RedisProgressRelay(env.REDIS_URL ?? "redis://localhost:6379") : new InProcessRelay()),
+  useFactory: (env: Env) =>
+    env.QUEUE_DRIVER === "redis"
+      ? new RedisProgressRelay(env.REDIS_URL ?? "redis://localhost:6379")
+      : new InProcessRelay(),
 };
 
 @Module({

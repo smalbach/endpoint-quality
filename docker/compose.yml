@@ -85,7 +85,13 @@ services:
     healthcheck:
       # `web` hace proxy de `/api/` contra esto, y el seed de la demo lo espera. Sin healthcheck,
       # `depends_on` solo dice "el contenedor arrancó", que no es lo mismo que "responde".
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
       interval: 3s
       timeout: 3s
       retries: 20

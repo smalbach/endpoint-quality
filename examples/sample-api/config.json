@@ -36,16 +36,21 @@
   },
   "envelope": {
     "bodies": {
-    "bodyTemplates": {
-      "createWidget": {
-        "conflictBody": { "name": "Widget de muestra", "colour": "azul", "stock": 1 }
+      "bodyTemplates": {
+        "createWidget": {
+          "conflictBody": { "name": "Widget de muestra", "colour": "azul", "stock": 1 }
+        }
       }
-    }
-  },
-  "envelope": {
+    },
+    "envelope": {
       "rules": [
         { "id": "sin-cuerpo", "match": { "methods": ["DELETE"] }, "shape": "No body" },
-        { "_comment": "Sin esta regla /health sale en rojo con el motivo escrito: cumple su schema y no tiene la forma { data }. Es el mensaje que dice dónde está la perilla.", "id": "salud", "match": { "operationId": "healthCheck" }, "shape": "{ status, checks }" }
+        {
+          "_comment": "Sin esta regla /health sale en rojo con el motivo escrito: cumple su schema y no tiene la forma { data }. Es el mensaje que dice dónde está la perilla.",
+          "id": "salud",
+          "match": { "operationId": "healthCheck" },
+          "shape": "{ status, checks }"
+        }
       ],
       "fallbackShape": "{ data }",
       "errorShape": "ProblemDetails"
@@ -53,8 +58,20 @@
   },
   "budgets": {
     "budgets": [
-      { "id": "lecturas", "methods": ["GET"], "thresholdMs": 300, "label": "300 ms", "source": "Presupuesto de ejemplo" },
-      { "id": "escrituras", "methods": ["POST", "PATCH", "DELETE"], "thresholdMs": 600, "label": "600 ms", "source": "Presupuesto de ejemplo" }
+      {
+        "id": "lecturas",
+        "methods": ["GET"],
+        "thresholdMs": 300,
+        "label": "300 ms",
+        "source": "Presupuesto de ejemplo"
+      },
+      {
+        "id": "escrituras",
+        "methods": ["POST", "PATCH", "DELETE"],
+        "thresholdMs": 600,
+        "label": "600 ms",
+        "source": "Presupuesto de ejemplo"
+      }
     ]
   },
   "implemented": {

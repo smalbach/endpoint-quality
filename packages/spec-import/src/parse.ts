@@ -132,7 +132,9 @@ export function deriveOperationId(method: string, path: string): string {
 
 function securitySchemes(node: unknown): string[] | undefined {
   if (!Array.isArray(node)) return undefined;
-  return node.flatMap((requirement) => (requirement && typeof requirement === "object" ? Object.keys(requirement) : []));
+  return node.flatMap((requirement) =>
+    requirement && typeof requirement === "object" ? Object.keys(requirement) : [],
+  );
 }
 
 /**
@@ -146,19 +148,34 @@ export function importSpec(raw: string): ImportedSpec {
   const document = parseDocument(raw);
   const problems: ImportProblem[] = [];
 
-  const openapiVersion = typeof document.openapi === "string" ? document.openapi : typeof document.swagger === "string" ? document.swagger : "";
-  if (!openapiVersion) problems.push({ severity: "error", pointer: "#/openapi", message: "El documento no declara una versión de OpenAPI" });
+  const openapiVersion =
+    typeof document.openapi === "string"
+      ? document.openapi
+      : typeof document.swagger === "string"
+        ? document.swagger
+        : "";
+  if (!openapiVersion)
+    problems.push({
+      severity: "error",
+      pointer: "#/openapi",
+      message: "El documento no declara una versión de OpenAPI",
+    });
   else if (openapiVersion.startsWith("2.")) {
     // Swagger 2.0 is a different document shape, not an older spelling of the same one:
     // `definitions` instead of `components`, `produces` instead of media types. Reading it with
     // this parser would silently produce an operation table with no schemas attached.
-    problems.push({ severity: "error", pointer: "#/swagger", message: "Swagger 2.0 no está soportado: convierte el documento a OpenAPI 3.x" });
+    problems.push({
+      severity: "error",
+      pointer: "#/swagger",
+      message: "Swagger 2.0 no está soportado: convierte el documento a OpenAPI 3.x",
+    });
   }
 
   const info = (document.info ?? {}) as Record<string, unknown>;
   const defaultSecurity = securitySchemes(document.security) ?? [];
   const paths = (document.paths ?? {}) as Record<string, unknown>;
-  if (!document.paths) problems.push({ severity: "warning", pointer: "#/paths", message: "El documento no declara rutas" });
+  if (!document.paths)
+    problems.push({ severity: "warning", pointer: "#/paths", message: "El documento no declara rutas" });
 
   const operations: ImportedOperation[] = [];
   const seenIds = new Map<string, string>();
@@ -183,7 +200,11 @@ export function importSpec(raw: string): ImportedSpec {
       const declaredId = typeof operation.operationId === "string" ? operation.operationId.trim() : "";
       const id = declaredId || deriveOperationId(method, path);
       if (!declaredId) {
-        problems.push({ severity: "warning", pointer, message: `Sin operationId; se derivó "${id}" a partir del método y la ruta` });
+        problems.push({
+          severity: "warning",
+          pointer,
+          message: `Sin operationId; se derivó "${id}" a partir del método y la ruta`,
+        });
       }
       const previous = seenIds.get(id);
       if (previous) {
@@ -202,10 +223,16 @@ export function importSpec(raw: string): ImportedSpec {
       if (statuses.length === 0) {
         // Every generated case asserts a declared status. An operation with none produces no
         // cases at all, which looks like coverage rather than absence unless it is reported.
-        problems.push({ severity: "warning", pointer, message: "No declara ningún código de estado numérico; no generará casos" });
+        problems.push({
+          severity: "warning",
+          pointer,
+          message: "No declara ningún código de estado numérico; no generará casos",
+        });
       }
 
-      const tags = Array.isArray(operation.tags) ? operation.tags.filter((tag): tag is string => typeof tag === "string") : [];
+      const tags = Array.isArray(operation.tags)
+        ? operation.tags.filter((tag): tag is string => typeof tag === "string")
+        : [];
 
       operations.push({
         id,
@@ -286,13 +313,19 @@ function dereference(node: unknown, root: Record<string, unknown>, seen: Set<str
   if (typeof record.$ref === "string") {
     if (!record.$ref.startsWith("#/") || seen.has(record.$ref)) return {};
     let target: unknown = root;
-    for (const part of record.$ref.slice(2).split("/")) target = (target as Record<string, unknown> | undefined)?.[decodePointerSegment(part)];
+    for (const part of record.$ref.slice(2).split("/"))
+      target = (target as Record<string, unknown> | undefined)?.[decodePointerSegment(part)];
     return dereference(target, root, new Set(seen).add(record.$ref));
   }
   return Object.fromEntries(Object.entries(record).map(([key, value]) => [key, dereference(value, root, seen)]));
 }
 
-function parameterNames(node: unknown, root: Record<string, unknown>, pointer: string, problems: ImportProblem[]): string[] {
+function parameterNames(
+  node: unknown,
+  root: Record<string, unknown>,
+  pointer: string,
+  problems: ImportProblem[],
+): string[] {
   if (!Array.isArray(node)) return [];
   const names: string[] = [];
   for (const [index, entry] of node.entries()) {
@@ -300,7 +333,11 @@ function parameterNames(node: unknown, root: Record<string, unknown>, pointer: s
     if (!parameter || typeof parameter.name !== "string") {
       // Usually an unbundled `$ref` to a neighbouring file. Reported rather than skipped in
       // silence: a lost path parameter turns every case over that endpoint into a wrong URL.
-      problems.push({ severity: "warning", pointer: `${pointer}/${index}`, message: "Parámetro no resoluble; ¿el documento está sin empaquetar?" });
+      problems.push({
+        severity: "warning",
+        pointer: `${pointer}/${index}`,
+        message: "Parámetro no resoluble; ¿el documento está sin empaquetar?",
+      });
       continue;
     }
     names.push(parameter.name);

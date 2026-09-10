@@ -14,10 +14,21 @@ import { CommandBus, QueryBus } from "@nestjs/cqrs";
 import { SkipThrottle } from "@nestjs/throttler";
 import { Observable, concat, from, map, takeWhile } from "rxjs";
 
-import { CurrentUser, OrgRoleGuard, RequireRole, type Principal } from "@/modules/auth/infrastructure/guards/auth.guard";
+import {
+  CurrentUser,
+  OrgRoleGuard,
+  RequireRole,
+  type Principal,
+} from "@/modules/auth/infrastructure/guards/auth.guard";
 import { StartRunCommand } from "../application/commands/start-run";
 import { CancelRunCommand } from "../application/commands/cancel-run";
-import { GetRunCaseQuery, GetRunQuery, GetRunReportQuery, ListRunsQuery, type RunView } from "../application/queries/get-run";
+import {
+  GetRunCaseQuery,
+  GetRunQuery,
+  GetRunReportQuery,
+  ListRunsQuery,
+  type RunView,
+} from "../application/queries/get-run";
 import { RunProgressStream } from "../infrastructure/run-progress.stream";
 import { StartRunDto } from "./dto/runs.dto";
 
@@ -32,7 +43,11 @@ export class RunsController {
 
   @Get()
   @RequireRole("viewer")
-  async list(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string, @Query("limit") limit?: string) {
+  async list(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Query("limit") limit?: string,
+  ) {
     return this.queryBus.execute(new ListRunsQuery(organizationId, projectId, Number(limit) || 25));
   }
 
@@ -45,13 +60,20 @@ export class RunsController {
     @Body() body: StartRunDto,
     @CurrentUser() principal: Principal,
   ) {
-    const triggeredBy = principal.kind === "user" ? { kind: "user" as const, id: principal.userId } : { kind: "api-token" as const, id: principal.tokenId };
+    const triggeredBy =
+      principal.kind === "user"
+        ? { kind: "user" as const, id: principal.userId }
+        : { kind: "api-token" as const, id: principal.tokenId };
     return this.commandBus.execute(new StartRunCommand(organizationId, projectId, body, triggeredBy));
   }
 
   @Get(":runId")
   @RequireRole("viewer")
-  async get(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string, @Param("runId") runId: string) {
+  async get(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("runId") runId: string,
+  ) {
     return this.queryBus.execute(new GetRunQuery(organizationId, projectId, runId));
   }
 
@@ -65,7 +87,11 @@ export class RunsController {
   @SkipThrottle()
   @Get(":runId/report")
   @RequireRole("viewer")
-  async report(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string, @Param("runId") runId: string) {
+  async report(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("runId") runId: string,
+  ) {
     return this.queryBus.execute(new GetRunReportQuery(organizationId, projectId, runId));
   }
 
@@ -117,9 +143,9 @@ export class RunsController {
     // `from` and not `startWith`: the query returns a promise, and putting it straight into the
     // stream sends the *promise* — which serialises as `{}` and reaches the client as a snapshot
     // with zero totals while the case rows say otherwise. It has to be resolved first.
-    const snapshot = from(this.queryBus.execute<GetRunQuery, RunView>(new GetRunQuery(organizationId, projectId, runId))).pipe(
-      map((run) => ({ type: "snapshot", payload: { totals: run.totals } })),
-    );
+    const snapshot = from(
+      this.queryBus.execute<GetRunQuery, RunView>(new GetRunQuery(organizationId, projectId, runId)),
+    ).pipe(map((run) => ({ type: "snapshot", payload: { totals: run.totals } })));
 
     return concat(snapshot, this.progress.forRun(runId)).pipe(
       map((event) => ({ type: event.type, data: event.payload })),

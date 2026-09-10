@@ -21,7 +21,12 @@ import { randomBytes, scrypt, timingSafeEqual, type ScryptOptions } from "node:c
  * options object — the cost parameters would be dropped and every digest computed at Node's
  * defaults. Wrapped by hand so the parameters are actually applied.
  */
-function scryptAsync(password: string | Buffer, salt: string | Buffer, keylen: number, options: ScryptOptions): Promise<Buffer> {
+function scryptAsync(
+  password: string | Buffer,
+  salt: string | Buffer,
+  keylen: number,
+  options: ScryptOptions,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     scrypt(password, salt, keylen, options, (error, derived) => (error ? reject(error) : resolve(derived)));
   });
@@ -45,12 +50,12 @@ const MAX_MEMORY = 256 * 1024 * 1024;
 export class ScryptPasswordHasher implements PasswordHasherPort {
   async hash(plain: string): Promise<string> {
     const salt = randomBytes(16);
-    const derived = (await scryptAsync(plain.normalize("NFKC"), salt, KEY_LENGTH, {
+    const derived = await scryptAsync(plain.normalize("NFKC"), salt, KEY_LENGTH, {
       N: COST,
       r: BLOCK_SIZE,
       p: PARALLELISM,
       maxmem: MAX_MEMORY,
-    }));
+    });
     return `scrypt$${COST}$${BLOCK_SIZE}$${PARALLELISM}$${salt.toString("base64")}$${derived.toString("base64")}`;
   }
 
@@ -58,12 +63,12 @@ export class ScryptPasswordHasher implements PasswordHasherPort {
     const [scheme, cost, blockSize, parallelism, salt, expected] = digest.split("$");
     if (scheme !== "scrypt" || !salt || !expected) return false;
     const expectedBytes = Buffer.from(expected, "base64");
-    const derived = (await scryptAsync(plain.normalize("NFKC"), Buffer.from(salt, "base64"), expectedBytes.length, {
+    const derived = await scryptAsync(plain.normalize("NFKC"), Buffer.from(salt, "base64"), expectedBytes.length, {
       N: Number(cost),
       r: Number(blockSize),
       p: Number(parallelism),
       maxmem: MAX_MEMORY,
-    }));
+    });
     return derived.length === expectedBytes.length && timingSafeEqual(derived, expectedBytes);
   }
 }
@@ -87,19 +92,24 @@ export async function decoyDigest(hasher: PasswordHasherPort): Promise<string> {
 export class FastTestPasswordHasher implements PasswordHasherPort {
   async hash(plain: string): Promise<string> {
     const salt = randomBytes(8);
-    const derived = (await scryptAsync(plain.normalize("NFKC"), salt, KEY_LENGTH, { N: 2 ** 12, r: 8, p: 1, maxmem: MAX_MEMORY }));
+    const derived = await scryptAsync(plain.normalize("NFKC"), salt, KEY_LENGTH, {
+      N: 2 ** 12,
+      r: 8,
+      p: 1,
+      maxmem: MAX_MEMORY,
+    });
     return `scrypt$4096$8$1$${salt.toString("base64")}$${derived.toString("base64")}`;
   }
   async verify(plain: string, digest: string): Promise<boolean> {
     const [scheme, cost, blockSize, parallelism, salt, expected] = digest.split("$");
     if (scheme !== "scrypt" || !salt || !expected) return false;
     const expectedBytes = Buffer.from(expected, "base64");
-    const derived = (await scryptAsync(plain.normalize("NFKC"), Buffer.from(salt, "base64"), expectedBytes.length, {
+    const derived = await scryptAsync(plain.normalize("NFKC"), Buffer.from(salt, "base64"), expectedBytes.length, {
       N: Number(cost),
       r: Number(blockSize),
       p: Number(parallelism),
       maxmem: MAX_MEMORY,
-    }));
+    });
     return derived.length === expectedBytes.length && timingSafeEqual(derived, expectedBytes);
   }
 }

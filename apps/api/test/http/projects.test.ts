@@ -15,7 +15,8 @@ import request from "supertest";
 
 import { createTestApp, type TestContext } from "../support/test-app";
 
-const SPEC_PATH = "/Users/smalbach/Documents/GiProjectos/geronimo-martings/digital-catalog-back-end/docs/openapi/bundled.yaml";
+const SPEC_PATH =
+  "/Users/smalbach/Documents/GiProjectos/geronimo-martings/digital-catalog-back-end/docs/openapi/bundled.yaml";
 const HAS_REAL_SPEC = existsSync(SPEC_PATH);
 
 const tinySpec = `
@@ -41,14 +42,20 @@ const api = () => request(context.app.getHttpServer());
 type Actor = { userId: string; organizationId: string; token: string };
 async function signUp(email: string): Promise<Actor> {
   const password = "una-contraseña-larga";
-  const registered = await api().post("/auth/register").send({ email, password, name: email.split("@")[0] });
+  const registered = await api()
+    .post("/auth/register")
+    .send({ email, password, name: email.split("@")[0] });
   const session = await api().post("/auth/login").send({ email, password });
   // Asserted rather than trusted. When login fails the token is `undefined`, every later request
   // goes out as `Bearer undefined`, and the suite reports a 401 on whatever line happens to be
   // next — which describes the symptom and hides the cause.
   assert.equal(session.status, 200, `no se pudo iniciar sesión como ${email}: ${JSON.stringify(session.body)}`);
   assert.ok(session.body.accessToken, `el login de ${email} no devolvió token`);
-  return { userId: registered.body.userId, organizationId: registered.body.organizationId, token: session.body.accessToken };
+  return {
+    userId: registered.body.userId,
+    organizationId: registered.body.organizationId,
+    token: session.body.accessToken,
+  };
 }
 const as = (actor: Actor) => ({ Authorization: `Bearer ${actor.token}` });
 
@@ -60,7 +67,10 @@ before(async () => {
   context = await createTestApp();
   owner = await signUp("owner@example.com");
   outsider = await signUp("outsider@example.com");
-  const created = await api().post(`/orgs/${owner.organizationId}/projects`).set(as(owner)).send({ name: "Digital Catalog" });
+  const created = await api()
+    .post(`/orgs/${owner.organizationId}/projects`)
+    .set(as(owner))
+    .send({ name: "Digital Catalog" });
   projectId = created.body.projectId;
 });
 after(async () => {
@@ -83,20 +93,29 @@ describe("proyectos", () => {
   });
 
   test("dos proyectos con el mismo nombre reciben slugs distintos", async () => {
-    const second = await api().post(`/orgs/${owner.organizationId}/projects`).set(as(owner)).send({ name: "Digital Catalog" });
+    const second = await api()
+      .post(`/orgs/${owner.organizationId}/projects`)
+      .set(as(owner))
+      .send({ name: "Digital Catalog" });
     assert.equal(second.body.slug, "digital-catalog-2");
   });
 
   test("otra organización puede llamar el mismo proyecto igual", async () => {
     // Slugs are unique per organization, not globally: a global namespace would let one customer
     // discover that another exists by the suffix they get.
-    const theirs = await api().post(`/orgs/${outsider.organizationId}/projects`).set(as(outsider)).send({ name: "Digital Catalog" });
+    const theirs = await api()
+      .post(`/orgs/${outsider.organizationId}/projects`)
+      .set(as(outsider))
+      .send({ name: "Digital Catalog" });
     assert.equal(theirs.body.slug, "digital-catalog");
   });
 
   test("renombrar no cambia el slug", async () => {
     // The slug is in URLs the team has bookmarked and in whatever CI job launches their runs.
-    await api().patch(`/orgs/${owner.organizationId}/projects/${projectId}`).set(as(owner)).send({ name: "Catálogo Digital" });
+    await api()
+      .patch(`/orgs/${owner.organizationId}/projects/${projectId}`)
+      .set(as(owner))
+      .send({ name: "Catálogo Digital" });
     const response = await api().get(`/orgs/${owner.organizationId}/projects/${projectId}`).set(as(owner));
     assert.equal(response.body.name, "Catálogo Digital");
     assert.equal(response.body.slug, "digital-catalog");
@@ -104,18 +123,40 @@ describe("proyectos", () => {
 
   test("archivar lo saca del listado sin borrar nada", async () => {
     const extra = await api().post(`/orgs/${owner.organizationId}/projects`).set(as(owner)).send({ name: "Temporal" });
-    assert.equal((await api().patch(`/orgs/${owner.organizationId}/projects/${extra.body.projectId}/archived`).set(as(owner)).send({ archived: true })).status, 204);
+    assert.equal(
+      (
+        await api()
+          .patch(`/orgs/${owner.organizationId}/projects/${extra.body.projectId}/archived`)
+          .set(as(owner))
+          .send({ archived: true })
+      ).status,
+      204,
+    );
 
     const visible = await api().get(`/orgs/${owner.organizationId}/projects`).set(as(owner));
-    assert.equal(visible.body.some((project: { id: string }) => project.id === extra.body.projectId), false);
+    assert.equal(
+      visible.body.some((project: { id: string }) => project.id === extra.body.projectId),
+      false,
+    );
     const all = await api().get(`/orgs/${owner.organizationId}/projects?includeArchived=true`).set(as(owner));
-    assert.equal(all.body.some((project: { id: string }) => project.id === extra.body.projectId), true);
+    assert.equal(
+      all.body.some((project: { id: string }) => project.id === extra.body.projectId),
+      true,
+    );
   });
 
   test("un editor no puede archivar", async () => {
     const editor = await signUp("editor@example.com");
-    await context.repositories.memberships.save({ organizationId: owner.organizationId, userId: editor.userId, role: "editor", createdAt: new Date() });
-    const response = await api().patch(`/orgs/${owner.organizationId}/projects/${projectId}/archived`).set(as(editor)).send({ archived: true });
+    await context.repositories.memberships.save({
+      organizationId: owner.organizationId,
+      userId: editor.userId,
+      role: "editor",
+      createdAt: new Date(),
+    });
+    const response = await api()
+      .patch(`/orgs/${owner.organizationId}/projects/${projectId}/archived`)
+      .set(as(editor))
+      .send({ archived: true });
     assert.equal(response.status, 403);
   });
 });
@@ -161,7 +202,10 @@ describe("importación de un contrato", () => {
   test("las operaciones quedan consultables con sus parámetros compartidos", async () => {
     const response = await api().get(`/orgs/${owner.organizationId}/projects/${projectId}/operations`).set(as(owner));
     assert.equal(response.status, 200);
-    assert.deepEqual(response.body.operations.map((operation: { id: string }) => operation.id), ["listPosts", "getPost"]);
+    assert.deepEqual(
+      response.body.operations.map((operation: { id: string }) => operation.id),
+      ["listPosts", "getPost"],
+    );
     const detail = response.body.operations.find((operation: { id: string }) => operation.id === "getPost");
     assert.deepEqual(detail.parameters, ["slug"]);
   });
@@ -219,7 +263,9 @@ describe("importación de un contrato", () => {
 
   test("el listado de versiones no incluye el documento crudo", async () => {
     // Ten versions of a 120 KB contract is 1.2 MB the browser has no use for.
-    const response = await api().get(`/orgs/${owner.organizationId}/projects/${projectId}/spec-versions`).set(as(owner));
+    const response = await api()
+      .get(`/orgs/${owner.organizationId}/projects/${projectId}/spec-versions`)
+      .set(as(owner));
     assert.equal(response.status, 200);
     assert.ok(response.body.versions.length > 0);
     assert.equal("raw" in response.body.versions[0], false);
@@ -251,8 +297,16 @@ describe("importación de un contrato", () => {
 
   test("un viewer puede leer operaciones pero no importar", async () => {
     const viewer = await signUp("viewer-projects@example.com");
-    await context.repositories.memberships.save({ organizationId: owner.organizationId, userId: viewer.userId, role: "viewer", createdAt: new Date() });
-    assert.equal((await api().get(`/orgs/${owner.organizationId}/projects/${projectId}/operations`).set(as(viewer))).status, 200);
+    await context.repositories.memberships.save({
+      organizationId: owner.organizationId,
+      userId: viewer.userId,
+      role: "viewer",
+      createdAt: new Date(),
+    });
+    assert.equal(
+      (await api().get(`/orgs/${owner.organizationId}/projects/${projectId}/operations`).set(as(viewer))).status,
+      200,
+    );
     const attempt = await api()
       .post(`/orgs/${owner.organizationId}/projects/${projectId}/spec-versions`)
       .set(as(viewer))
@@ -276,7 +330,8 @@ describe("drift del contrato", () => {
     // operation table compiled into the bundle, "the contract changed" and "the contract is
     // fine" produced identical output — a green matrix.
     const shrunk = tinySpec.replace(/ {2}\/posts\/\{slug\}:[\s\S]*$/, "");
-    const before = (await api().get(`/orgs/${owner.organizationId}/projects/${projectId}`).set(as(owner))).body.contract.versionId;
+    const before = (await api().get(`/orgs/${owner.organizationId}/projects/${projectId}`).set(as(owner))).body.contract
+      .versionId;
 
     const response = await api()
       .post(`/orgs/${owner.organizationId}/projects/${projectId}/spec-drift-check`)
@@ -287,23 +342,36 @@ describe("drift del contrato", () => {
     assert.equal(response.body.breaking.length, 1);
     assert.equal(response.body.breaking[0].id, "getPost");
 
-    const after = (await api().get(`/orgs/${owner.organizationId}/projects/${projectId}`).set(as(owner))).body.contract.versionId;
+    const after = (await api().get(`/orgs/${owner.organizationId}/projects/${projectId}`).set(as(owner))).body.contract
+      .versionId;
     assert.equal(after, before, "un drift check no debe cambiar el contrato activo");
   });
 
   test("volver a una versión anterior es un solo comando", async () => {
     // When v1.9 turns the matrix red, the first question is whether the API broke or the
     // contract moved. Switching the active version answers it without a re-import.
-    const versions = (await api().get(`/orgs/${owner.organizationId}/projects/${projectId}/spec-versions`).set(as(owner))).body;
+    const versions = (
+      await api().get(`/orgs/${owner.organizationId}/projects/${projectId}/spec-versions`).set(as(owner))
+    ).body;
     const target = versions.versions.find((version: { id: string }) => version.id !== versions.active);
-    assert.equal((await api().post(`/orgs/${owner.organizationId}/projects/${projectId}/spec-versions/${target.id}/activate`).set(as(owner))).status, 204);
-    const now = (await api().get(`/orgs/${owner.organizationId}/projects/${projectId}/spec-versions`).set(as(owner))).body;
+    assert.equal(
+      (
+        await api()
+          .post(`/orgs/${owner.organizationId}/projects/${projectId}/spec-versions/${target.id}/activate`)
+          .set(as(owner))
+      ).status,
+      204,
+    );
+    const now = (await api().get(`/orgs/${owner.organizationId}/projects/${projectId}/spec-versions`).set(as(owner)))
+      .body;
     assert.equal(now.active, target.id);
   });
 
   test("activar una versión de otro proyecto es 404", async () => {
     const other = await api().post(`/orgs/${owner.organizationId}/projects`).set(as(owner)).send({ name: "Otro" });
-    const versions = (await api().get(`/orgs/${owner.organizationId}/projects/${projectId}/spec-versions`).set(as(owner))).body;
+    const versions = (
+      await api().get(`/orgs/${owner.organizationId}/projects/${projectId}/spec-versions`).set(as(owner))
+    ).body;
     const response = await api()
       .post(`/orgs/${owner.organizationId}/projects/${other.body.projectId}/spec-versions/${versions.active}/activate`)
       .set(as(owner));
@@ -328,7 +396,8 @@ describe("un contrato detrás de autenticación", () => {
     context.http.replyBehindAuth(url, tinySpec, "Authorization", "Bearer secreto-del-contrato");
   });
 
-  const importSpec = (body: object) => api().post(`/orgs/${owner.organizationId}/projects/${secured}/spec-versions`).set(as(owner)).send(body);
+  const importSpec = (body: object) =>
+    api().post(`/orgs/${owner.organizationId}/projects/${secured}/spec-versions`).set(as(owner)).send(body);
 
   test("sin cabeceras no se puede leer, y el error habla del contrato", async () => {
     const response = await importSpec({ source: { kind: "url", url } });
@@ -338,7 +407,11 @@ describe("un contrato detrás de autenticación", () => {
   });
 
   test("con cabeceras se importa, y la siguiente vez ya no hacen falta", async () => {
-    assert.equal((await importSpec({ source: { kind: "url", url, headers: { Authorization: "Bearer secreto-del-contrato" } } })).status, 201);
+    assert.equal(
+      (await importSpec({ source: { kind: "url", url, headers: { Authorization: "Bearer secreto-del-contrato" } } }))
+        .status,
+      201,
+    );
 
     // La segunda importación no las lleva y funciona igual: es lo que permite un drift check
     // programado sin un secreto dentro de la petición.
@@ -353,7 +426,9 @@ describe("un contrato detrás de autenticación", () => {
     assert.ok(stored?.headersCiphertext, "la cabecera tiene que quedar guardada");
     assert.doesNotMatch(stored.headersCiphertext, /secreto-del-contrato/, "cifrada, no en claro");
     // El proyecto se puede leer entero sin que aparezca.
-    const project = JSON.stringify((await api().get(`/orgs/${owner.organizationId}/projects/${secured}`).set(as(owner))).body);
+    const project = JSON.stringify(
+      (await api().get(`/orgs/${owner.organizationId}/projects/${secured}`).set(as(owner))).body,
+    );
     assert.doesNotMatch(project, /secreto-del-contrato|headersCiphertext/);
   });
 
@@ -369,27 +444,41 @@ describe("un contrato detrás de autenticación", () => {
   test("una sola fila por origen, no una por importación", async () => {
     // Si no, un proyecto que reimporta cada noche acumula una fila por noche apuntando al mismo
     // sitio, y las cabeceras guardadas contra la última son las únicas que alguien encuentra.
-    const rows = [...context.repositories.specs.sources.values()].filter((source) => source.projectId === secured && source.location === url);
+    const rows = [...context.repositories.specs.sources.values()].filter(
+      (source) => source.projectId === secured && source.location === url,
+    );
     assert.equal(rows.length, 1);
   });
 
   test("sin decir de dónde, el proyecto relee donde leyó la última vez", async () => {
-    const drift = await api().post(`/orgs/${owner.organizationId}/projects/${secured}/spec-drift-check`).set(as(owner)).send({});
+    const drift = await api()
+      .post(`/orgs/${owner.organizationId}/projects/${secured}/spec-drift-check`)
+      .set(as(owner))
+      .send({});
     assert.equal(drift.status, 200, JSON.stringify(drift.body));
     assert.equal(drift.body.unchanged, true);
   });
 
   test("y un proyecto cuya última fuente fue un pegado lo dice en vez de leer la nada", async () => {
     const created = await api().post(`/orgs/${owner.organizationId}/projects`).set(as(owner)).send({ name: "Pegado" });
-    await api().post(`/orgs/${owner.organizationId}/projects/${created.body.projectId}/spec-versions`).set(as(owner)).send({ source: { kind: "inline", raw: tinySpec } });
-    const response = await api().post(`/orgs/${owner.organizationId}/projects/${created.body.projectId}/spec-drift-check`).set(as(owner)).send({});
+    await api()
+      .post(`/orgs/${owner.organizationId}/projects/${created.body.projectId}/spec-versions`)
+      .set(as(owner))
+      .send({ source: { kind: "inline", raw: tinySpec } });
+    const response = await api()
+      .post(`/orgs/${owner.organizationId}/projects/${created.body.projectId}/spec-drift-check`)
+      .set(as(owner))
+      .send({});
     assert.equal(response.status, 409);
     assert.match(response.body.type, /spec-source-not-repeatable$/);
   });
 
   test("un proyecto sin ninguna fuente pide que le digan de dónde leer", async () => {
     const created = await api().post(`/orgs/${owner.organizationId}/projects`).set(as(owner)).send({ name: "Vacío" });
-    const response = await api().post(`/orgs/${owner.organizationId}/projects/${created.body.projectId}/spec-versions`).set(as(owner)).send({});
+    const response = await api()
+      .post(`/orgs/${owner.organizationId}/projects/${created.body.projectId}/spec-versions`)
+      .set(as(owner))
+      .send({});
     assert.equal(response.status, 409);
     assert.match(response.body.type, /no-spec-source$/);
   });
@@ -409,9 +498,20 @@ describe("el contrato real de Digital Catalog", { skip: HAS_REAL_SPEC ? false : 
     assert.equal(response.body.operationCount, 46);
     assert.deepEqual(response.body.problems, [], "el contrato del cliente no debería producir avisos");
 
-    const operations = await api().get(`/orgs/${owner.organizationId}/projects/${project.body.projectId}/operations`).set(as(owner));
+    const operations = await api()
+      .get(`/orgs/${owner.organizationId}/projects/${project.body.projectId}/operations`)
+      .set(as(owner));
     assert.equal(operations.body.operations.length, 46);
     assert.equal(operations.body.contractVersion, "1.8.0");
-    assert.deepEqual(operations.body.tags.sort(), ["Categories", "Health", "Prices", "Product Categories", "Product Projections", "Products", "Store Assortments", "Stores"]);
+    assert.deepEqual(operations.body.tags.sort(), [
+      "Categories",
+      "Health",
+      "Prices",
+      "Product Categories",
+      "Product Projections",
+      "Products",
+      "Store Assortments",
+      "Stores",
+    ]);
   });
 });

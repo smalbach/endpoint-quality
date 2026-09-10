@@ -4,10 +4,19 @@ import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqr
 import { InvalidInputError, UnauthenticatedError } from "@/shared/errors/domain-error";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { PASSWORD_HASHER, type PasswordHasherPort } from "@/shared/crypto/password-hasher";
-import { REFRESH_TOKEN_REPOSITORY, USER_REPOSITORY, type RefreshTokenRepositoryPort, type UserRepositoryPort } from "../../domain/ports";
+import {
+  REFRESH_TOKEN_REPOSITORY,
+  USER_REPOSITORY,
+  type RefreshTokenRepositoryPort,
+  type UserRepositoryPort,
+} from "../../domain/ports";
 
 export class ChangePasswordCommand implements ICommand {
-  constructor(readonly userId: string, readonly currentPassword: string, readonly newPassword: string) {}
+  constructor(
+    readonly userId: string,
+    readonly currentPassword: string,
+    readonly newPassword: string,
+  ) {}
 }
 
 /**
@@ -33,7 +42,9 @@ export class ChangePasswordHandler implements ICommandHandler<ChangePasswordComm
       throw new UnauthenticatedError("La contraseña actual no es correcta");
     }
     if (command.newPassword.length < 12) {
-      throw new InvalidInputError("La contraseña es demasiado corta", [{ field: "newPassword", detail: "Debe tener al menos 12 caracteres" }]);
+      throw new InvalidInputError("La contraseña es demasiado corta", [
+        { field: "newPassword", detail: "Debe tener al menos 12 caracteres" },
+      ]);
     }
     await this.users.save({ ...user, passwordDigest: await this.passwords.hash(command.newPassword) });
     await this.refreshTokens.revokeAllForUser(user.id, this.clock.now());

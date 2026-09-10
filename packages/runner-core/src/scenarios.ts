@@ -37,7 +37,8 @@ export function resolveOperation(operation: Operation, config: ProjectConfig): R
    * there is no conflict case, exactly as before.
    */
   const derived = template.body ? undefined : exampleFromSchema(operation.requestSchema);
-  const body = template.body ?? (derived && typeof derived === "object" ? (derived as Record<string, unknown>) : undefined);
+  const body =
+    template.body ?? (derived && typeof derived === "object" ? (derived as Record<string, unknown>) : undefined);
   return {
     ...operation,
     implemented: config.implemented === null ? true : config.implemented.includes(operation.id),
@@ -85,7 +86,13 @@ function isListOperation(operation: Operation, config: ProjectConfig): boolean {
  */
 function listScenarios(operation: ResolvedOperation, config: ProjectConfig): TestScenario[] {
   const scenarios: TestScenario[] = [
-    { id: "default", name: config.text.listDefaultName, description: config.text.listDefaultDescription, expectedStatus: 200, flow: "request" },
+    {
+      id: "default",
+      name: config.text.listDefaultName,
+      description: config.text.listDefaultDescription,
+      expectedStatus: 200,
+      flow: "request",
+    },
   ];
   const queries = queryParameters(operation);
   for (const parameter of queries) {
@@ -126,7 +133,11 @@ function authScenarios(operation: ResolvedOperation, config: ProjectConfig): Tes
     scenarios.push({
       id: rule.id,
       name: rule.name ?? defaults.name,
-      description: interpolate(rule.description ?? defaults.description, { scope, method: operation.method, path: operation.path }),
+      description: interpolate(rule.description ?? defaults.description, {
+        scope,
+        method: operation.method,
+        path: operation.path,
+      }),
       expectedStatus: rule.expectedStatus,
       flow: "request",
       auth: rule.credential,
@@ -138,7 +149,8 @@ function authScenarios(operation: ResolvedOperation, config: ProjectConfig): Tes
 
 function defaultAuthText(credential: string, config: ProjectConfig): { name: string; description: string } {
   if (credential === "none") return { name: config.text.authNoneName, description: config.text.authNoneDescription };
-  if (credential === "insufficient") return { name: config.text.authInsufficientName, description: config.text.authInsufficientDescription };
+  if (credential === "insufficient")
+    return { name: config.text.authInsufficientName, description: config.text.authInsufficientDescription };
   return { name: config.text.authApiKeyName, description: config.text.authApiKeyDescription };
 }
 
@@ -148,7 +160,9 @@ function writeEdgeScenarios(operation: ResolvedOperation, config: ProjectConfig)
   const scenarios: TestScenario[] = [];
   const names = pathParameters(operation);
   const missing = Object.fromEntries(names.map((name) => [name, config.missingIdValue]));
-  const present = Object.fromEntries(names.map((name) => [name, config.pathDefaults[name] ?? config.fallbackPathValue]));
+  const present = Object.fromEntries(
+    names.map((name) => [name, config.pathDefaults[name] ?? config.fallbackPathValue]),
+  );
 
   if (operation.statuses.includes(404) && names.length) {
     scenarios.push({
@@ -165,7 +179,8 @@ function writeEdgeScenarios(operation: ResolvedOperation, config: ProjectConfig)
     scenarios.push({
       id: "invalid-body",
       name: config.text.invalidBodyName,
-      description: operation.method === "PUT" ? config.text.invalidBodyPutDescription : config.text.invalidBodyPatchDescription,
+      description:
+        operation.method === "PUT" ? config.text.invalidBodyPutDescription : config.text.invalidBodyPatchDescription,
       expectedStatus: 422,
       parameters: present,
       body: {},
@@ -194,10 +209,19 @@ function functionalScenarios(operation: ResolvedOperation, config: ProjectConfig
 
   if (operation.method === "GET") {
     const names = pathParameters(operation);
-    const present = Object.fromEntries(names.map((name) => [name, config.pathDefaults[name] ?? config.fallbackPathValue]));
+    const present = Object.fromEntries(
+      names.map((name) => [name, config.pathDefaults[name] ?? config.fallbackPathValue]),
+    );
     const missing = Object.fromEntries(names.map((name) => [name, config.missingIdValue]));
     return [
-      { id: "found", name: config.text.getFoundName, description: config.text.getFoundDescription, expectedStatus: 200, parameters: present, flow: "request" },
+      {
+        id: "found",
+        name: config.text.getFoundName,
+        description: config.text.getFoundDescription,
+        expectedStatus: 200,
+        parameters: present,
+        flow: "request",
+      },
       // **Only when there is an identifier to make missing, and only when 404 is declared.**
       //
       // Without the first condition a parameterless GET — `/health` is the one every contract
@@ -210,7 +234,16 @@ function functionalScenarios(operation: ResolvedOperation, config: ProjectConfig
       // The second condition is the rule the list scenarios already followed: asserting a status
       // the contract never promised tests the document, not the API.
       ...(names.length && operation.statuses.includes(404)
-        ? [{ id: "not-found", name: config.text.getNotFoundName, description: config.text.getNotFoundDescription, expectedStatus: 404, parameters: missing, flow: "request" } as TestScenario]
+        ? [
+            {
+              id: "not-found",
+              name: config.text.getNotFoundName,
+              description: config.text.getNotFoundDescription,
+              expectedStatus: 404,
+              parameters: missing,
+              flow: "request",
+            } as TestScenario,
+          ]
         : []),
       ...extra,
     ];
@@ -228,19 +261,58 @@ function functionalScenarios(operation: ResolvedOperation, config: ProjectConfig
         body,
         flow: (bulk ? "bulk-read" : "create-read") as ScenarioFlow,
       },
-      { id: "invalid-body", name: config.text.invalidBodyName, description: config.text.invalidBodyPostDescription, expectedStatus: 422, body: {}, flow: "request" },
+      {
+        id: "invalid-body",
+        name: config.text.invalidBodyName,
+        description: config.text.invalidBodyPostDescription,
+        expectedStatus: 422,
+        body: {},
+        flow: "request",
+      },
       ...extra,
     ];
   }
   if (operation.method === "PUT") {
-    return [{ id: "replace-read", name: config.text.replaceReadName, description: config.text.replaceReadDescription, expectedStatus: 200, body: operation.replaceBody ?? body, flow: "replace-read" }, ...extra];
+    return [
+      {
+        id: "replace-read",
+        name: config.text.replaceReadName,
+        description: config.text.replaceReadDescription,
+        expectedStatus: 200,
+        body: operation.replaceBody ?? body,
+        flow: "replace-read",
+      },
+      ...extra,
+    ];
   }
   if (operation.method === "PATCH") {
-    return [{ id: "patch-read", name: config.text.patchReadName, description: config.text.patchReadDescription, expectedStatus: 200, body, flow: "patch-read" }, ...extra];
+    return [
+      {
+        id: "patch-read",
+        name: config.text.patchReadName,
+        description: config.text.patchReadDescription,
+        expectedStatus: 200,
+        body,
+        flow: "patch-read",
+      },
+      ...extra,
+    ];
   }
   return [
-    { id: "delete-read", name: config.text.deleteReadName, description: config.text.deleteReadDescription, expectedStatus: 204, flow: "delete-read" },
-    { id: "deleted-read", name: config.text.deletedReadName, description: config.text.deletedReadDescription, expectedStatus: 404, flow: "deleted-read" },
+    {
+      id: "delete-read",
+      name: config.text.deleteReadName,
+      description: config.text.deleteReadDescription,
+      expectedStatus: 204,
+      flow: "delete-read",
+    },
+    {
+      id: "deleted-read",
+      name: config.text.deletedReadName,
+      description: config.text.deletedReadDescription,
+      expectedStatus: 404,
+      flow: "deleted-read",
+    },
     ...extra,
   ];
 }
@@ -253,7 +325,11 @@ function functionalScenarios(operation: ResolvedOperation, config: ProjectConfig
  * other's verdict.
  */
 export function scenariosFor(operation: ResolvedOperation, config: ProjectConfig): TestScenario[] {
-  const all = [...functionalScenarios(operation, config), ...writeEdgeScenarios(operation, config), ...authScenarios(operation, config)];
+  const all = [
+    ...functionalScenarios(operation, config),
+    ...writeEdgeScenarios(operation, config),
+    ...authScenarios(operation, config),
+  ];
   return all.filter((scenario, index) => all.findIndex((other) => other.id === scenario.id) === index);
 }
 
@@ -264,6 +340,12 @@ export function scenariosFor(operation: ResolvedOperation, config: ProjectConfig
  * that grants every scope to everyone, all of them fail for a reason that has nothing to do
  * with the endpoint — which is worse than not running them.
  */
-export function runnableScenarios(operation: ResolvedOperation, config: ProjectConfig, authEnabled: boolean): TestScenario[] {
-  return scenariosFor(operation, config).filter((scenario) => authEnabled || !scenario.auth || scenario.auth === "default");
+export function runnableScenarios(
+  operation: ResolvedOperation,
+  config: ProjectConfig,
+  authEnabled: boolean,
+): TestScenario[] {
+  return scenariosFor(operation, config).filter(
+    (scenario) => authEnabled || !scenario.auth || scenario.auth === "default",
+  );
 }

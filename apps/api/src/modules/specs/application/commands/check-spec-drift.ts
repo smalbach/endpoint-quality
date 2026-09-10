@@ -11,7 +11,12 @@ import { ImportSpecVersionCommand, type ImportSpecVersionResult, type SpecSource
 export class CheckSpecDriftCommand implements ICommand {
   /** `source` may be omitted: the import falls back to wherever the project read last time, with
    * the credentials it stored then. A scheduled drift check carries no secret because of it. */
-  constructor(readonly organizationId: string, readonly projectId: string, readonly source: SpecSourceInput | undefined, readonly checkedBy: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly source: SpecSourceInput | undefined,
+    readonly checkedBy: string,
+  ) {}
 }
 
 export type SpecDriftResult = SpecDrift & {
@@ -41,7 +46,8 @@ export class CheckSpecDriftHandler implements ICommandHandler<CheckSpecDriftComm
 
   async execute(command: CheckSpecDriftCommand): Promise<SpecDriftResult> {
     const project = await ownedProject(this.projects, command.organizationId, command.projectId);
-    if (!project.activeSpecVersionId) throw new ConflictError("El proyecto no tiene contrato activo con el que comparar", "no-active-spec");
+    if (!project.activeSpecVersionId)
+      throw new ConflictError("El proyecto no tiene contrato activo con el que comparar", "no-active-spec");
 
     const active = await this.specs.findVersionById(project.activeSpecVersionId);
     if (!active) throw new NotFoundError("La versión activa no existe", "spec-version-not-found");
@@ -51,10 +57,25 @@ export class CheckSpecDriftHandler implements ICommandHandler<CheckSpecDriftComm
     );
 
     if (imported.specVersionId === active.id) {
-      return { changes: [], breaking: [], uncovered: [], unchanged: true, activeVersionId: active.id, candidateVersionId: active.id };
+      return {
+        changes: [],
+        breaking: [],
+        uncovered: [],
+        unchanged: true,
+        activeVersionId: active.id,
+        candidateVersionId: active.id,
+      };
     }
 
-    const [before, after] = await Promise.all([this.specs.listOperations(active.id), this.specs.listOperations(imported.specVersionId)]);
-    return { ...diffOperations(before, after), unchanged: false, activeVersionId: active.id, candidateVersionId: imported.specVersionId };
+    const [before, after] = await Promise.all([
+      this.specs.listOperations(active.id),
+      this.specs.listOperations(imported.specVersionId),
+    ]);
+    return {
+      ...diffOperations(before, after),
+      unchanged: false,
+      activeVersionId: active.id,
+      candidateVersionId: imported.specVersionId,
+    };
   }
 }

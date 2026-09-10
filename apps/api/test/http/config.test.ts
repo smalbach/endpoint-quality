@@ -24,7 +24,8 @@ import request from "supertest";
 import { createTestApp, type TestContext } from "../support/test-app";
 import sections from "../fixtures/digital-catalog-sections.json";
 
-const SPEC_PATH = "/Users/smalbach/Documents/GiProjectos/geronimo-martings/digital-catalog-back-end/docs/openapi/bundled.yaml";
+const SPEC_PATH =
+  "/Users/smalbach/Documents/GiProjectos/geronimo-martings/digital-catalog-back-end/docs/openapi/bundled.yaml";
 /**
  * Walks up to the workspace root instead of counting `../` segments.
  *
@@ -53,14 +54,20 @@ const api = () => request(context.app.getHttpServer());
 type Actor = { userId: string; organizationId: string; token: string };
 async function signUp(email: string): Promise<Actor> {
   const password = "una-contraseña-larga";
-  const registered = await api().post("/auth/register").send({ email, password, name: email.split("@")[0] });
+  const registered = await api()
+    .post("/auth/register")
+    .send({ email, password, name: email.split("@")[0] });
   const session = await api().post("/auth/login").send({ email, password });
   // Asserted rather than trusted. When login fails the token is `undefined`, every later request
   // goes out as `Bearer undefined`, and the suite reports a 401 on whatever line happens to be
   // next — which describes the symptom and hides the cause.
   assert.equal(session.status, 200, `no se pudo iniciar sesión como ${email}: ${JSON.stringify(session.body)}`);
   assert.ok(session.body.accessToken, `el login de ${email} no devolvió token`);
-  return { userId: registered.body.userId, organizationId: registered.body.organizationId, token: session.body.accessToken };
+  return {
+    userId: registered.body.userId,
+    organizationId: registered.body.organizationId,
+    token: session.body.accessToken,
+  };
 }
 const as = (actor: Actor) => ({ Authorization: `Bearer ${actor.token}` });
 
@@ -76,12 +83,18 @@ before(async () => {
   base = `/orgs/${owner.organizationId}/projects/${projectId}`;
 
   if (READY) {
-    await api().post(`${base}/spec-versions`).set(as(owner)).send({ source: { kind: "upload", filename: "bundled.yaml", raw: readFileSync(SPEC_PATH, "utf8") } });
+    await api()
+      .post(`${base}/spec-versions`)
+      .set(as(owner))
+      .send({ source: { kind: "upload", filename: "bundled.yaml", raw: readFileSync(SPEC_PATH, "utf8") } });
     // Written through the public endpoint, section by section, exactly as an operator would.
     // Seeding the repository directly would test the engine and skip the half of the chain this
     // phase actually added.
     for (const [section, data] of Object.entries(sections)) {
-      const response = await api().put(`${base}/config/${section}`).set(as(owner)).send(data as object);
+      const response = await api()
+        .put(`${base}/config/${section}`)
+        .set(as(owner))
+        .send(data as object);
       assert.equal(response.status, 204, `la sección ${section} no se aceptó: ${JSON.stringify(response.body)}`);
     }
   }
@@ -103,7 +116,12 @@ describe("la matriz reconstruida desde filas", { skip: READY ? false : REASON },
 
   test("cada operación produce exactamente los mismos casos, en el mismo orden", async () => {
     const response = await api().get(`${base}/scenarios`).set(as(owner));
-    const built = new Map(response.body.operations.map((operation: { id: string; scenarios: { id: string }[] }) => [operation.id, operation.scenarios.map((scenario) => scenario.id)]));
+    const built = new Map(
+      response.body.operations.map((operation: { id: string; scenarios: { id: string }[] }) => [
+        operation.id,
+        operation.scenarios.map((scenario) => scenario.id),
+      ]),
+    );
     for (const expected of golden.operations) {
       assert.deepEqual(
         built.get(expected.id),
@@ -117,9 +135,21 @@ describe("la matriz reconstruida desde filas", { skip: READY ? false : REASON },
     // Not just the case ids: a matrix with the right names and the wrong expected status would
     // pass the check above and assert the wrong thing on every run.
     const response = await api().get(`${base}/scenarios`).set(as(owner));
-    const built = new Map(response.body.operations.map((operation: { id: string; scenarios: unknown[] }) => [operation.id, operation.scenarios]));
+    const built = new Map(
+      response.body.operations.map((operation: { id: string; scenarios: unknown[] }) => [
+        operation.id,
+        operation.scenarios,
+      ]),
+    );
     for (const expected of golden.operations) {
-      const actual = built.get(expected.id) as { id: string; name: string; description: string; expectedStatus: number; requestPath: string; budget: unknown }[];
+      const actual = built.get(expected.id) as {
+        id: string;
+        name: string;
+        description: string;
+        expectedStatus: number;
+        requestPath: string;
+        budget: unknown;
+      }[];
       for (const [index, scenario] of expected.scenarios.entries()) {
         assert.deepEqual(
           {
@@ -130,7 +160,14 @@ describe("la matriz reconstruida desde filas", { skip: READY ? false : REASON },
             requestPath: actual[index].requestPath,
             budget: actual[index].budget,
           },
-          { id: scenario.id, name: scenario.name, description: scenario.description, expectedStatus: scenario.expectedStatus, requestPath: scenario.requestPath, budget: scenario.budget },
+          {
+            id: scenario.id,
+            name: scenario.name,
+            description: scenario.description,
+            expectedStatus: scenario.expectedStatus,
+            requestPath: scenario.requestPath,
+            budget: scenario.budget,
+          },
           `divergencia en ${expected.id}:${scenario.id}`,
         );
       }
@@ -139,13 +176,17 @@ describe("la matriz reconstruida desde filas", { skip: READY ? false : REASON },
 
   test("la cola de ejecución en modo seguro es la misma, caso por caso", async () => {
     const response = await api().get(`${base}/scenarios?order=safe`).set(as(owner));
-    const queue = response.body.queue.map((item: { operationId: string; scenarioId: string }) => `${item.operationId}:${item.scenarioId}`);
+    const queue = response.body.queue.map(
+      (item: { operationId: string; scenarioId: string }) => `${item.operationId}:${item.scenarioId}`,
+    );
     assert.deepEqual(queue, golden.queues["safe:auth"]);
   });
 
   test("y en modo contrato también", async () => {
     const response = await api().get(`${base}/scenarios?order=contract`).set(as(owner));
-    const queue = response.body.queue.map((item: { operationId: string; scenarioId: string }) => `${item.operationId}:${item.scenarioId}`);
+    const queue = response.body.queue.map(
+      (item: { operationId: string; scenarioId: string }) => `${item.operationId}:${item.scenarioId}`,
+    );
     assert.deepEqual(queue, golden.queues["contract:auth"]);
   });
 
@@ -176,7 +217,10 @@ describe("la matriz reconstruida desde filas", { skip: READY ? false : REASON },
  * true, so a contract that grew a new operation quietly made the README wrong.
  */
 describe("la cobertura reproduce el conteo del dashboard acoplado", { skip: READY ? false : REASON }, () => {
-  const band = (coverage: { byStatus: { status: number; declared: number; covered: number }[] }, ...statuses: number[]) =>
+  const band = (
+    coverage: { byStatus: { status: number; declared: number; covered: number }[] },
+    ...statuses: number[]
+  ) =>
     statuses.reduce(
       (sum, status) => {
         const row = coverage.byStatus.find((entry) => entry.status === status);
@@ -208,7 +252,9 @@ describe("la cobertura reproduce el conteo del dashboard acoplado", { skip: READ
     // A total is a number to feel good about. The list is what somebody can act on — and this
     // particular gap is a decision, not an oversight: reaching it means taking a dependency down.
     const coverage = (await api().get(`${base}/coverage`).set(as(owner))).body;
-    assert.deepEqual(coverage.gaps, [{ operationId: "healthCheck", method: "GET", path: "/health", tag: "Health", status: 503 }]);
+    assert.deepEqual(coverage.gaps, [
+      { operationId: "healthCheck", method: "GET", path: "/health", tag: "Health", status: 503 },
+    ]);
   });
 
   test("el conteo de casos es el mismo que el de la matriz", async () => {
@@ -225,7 +271,10 @@ describe("el entorno decide qué se ejecuta esta noche", { skip: READY ? false :
   let readOnly: string;
 
   before(async () => {
-    const created = await api().post(`${base}/environments`).set(as(owner)).send({ name: "produccion", baseUrl: "https://api.example.com/" });
+    const created = await api()
+      .post(`${base}/environments`)
+      .set(as(owner))
+      .send({ name: "produccion", baseUrl: "https://api.example.com/" });
     readOnly = created.body.environmentId;
   });
 
@@ -243,7 +292,9 @@ describe("el entorno decide qué se ejecuta esta noche", { skip: READY ? false :
 
   test("sin escrituras permitidas, los casos no idempotentes quedan bloqueados con motivo", async () => {
     const response = await api().get(`${base}/scenarios?environmentId=${readOnly}`).set(as(owner));
-    const writes = response.body.operations.filter((operation: { method: string }) => !["GET", "HEAD", "OPTIONS"].includes(operation.method));
+    const writes = response.body.operations.filter(
+      (operation: { method: string }) => !["GET", "HEAD", "OPTIONS"].includes(operation.method),
+    );
     assert.ok(writes.length > 0);
     for (const operation of writes) {
       for (const scenario of operation.scenarios) {
@@ -266,8 +317,9 @@ describe("el entorno decide qué se ejecuta esta noche", { skip: READY ? false :
     // Against a backend that grants every scope to everyone they would fail for a reason that
     // has nothing to do with the endpoint, which is worse than not running them.
     const response = await api().get(`${base}/scenarios?environmentId=${readOnly}`).set(as(owner));
-    const authCases = response.body.operations.flatMap((operation: { scenarios: { id: string; runnable: boolean; blockedReason?: string }[] }) =>
-      operation.scenarios.filter((scenario) => scenario.id.startsWith("auth-")),
+    const authCases = response.body.operations.flatMap(
+      (operation: { scenarios: { id: string; runnable: boolean; blockedReason?: string }[] }) =>
+        operation.scenarios.filter((scenario) => scenario.id.startsWith("auth-")),
     );
     assert.ok(authCases.length > 0);
     assert.ok(authCases.every((scenario: { runnable: boolean }) => !scenario.runnable));
@@ -275,7 +327,10 @@ describe("el entorno decide qué se ejecuta esta noche", { skip: READY ? false :
   });
 
   test("con ambos interruptores encendidos, todo el contrato es ejecutable", async () => {
-    const created = await api().post(`${base}/environments`).set(as(owner)).send({ name: "e2e", baseUrl: "http://127.0.0.1:8100", writesAllowed: true, authEnforced: true });
+    const created = await api()
+      .post(`${base}/environments`)
+      .set(as(owner))
+      .send({ name: "e2e", baseUrl: "http://127.0.0.1:8100", writesAllowed: true, authEnforced: true });
     const response = await api().get(`${base}/scenarios?environmentId=${created.body.environmentId}`).set(as(owner));
     assert.equal(response.body.totals.blocked, 0);
     assert.equal(response.body.totals.runnable, 311);
@@ -289,9 +344,15 @@ describe("configuración", () => {
     // to know an EAN nobody told it about.
     const fresh = await api().post(`/orgs/${owner.organizationId}/projects`).set(as(owner)).send({ name: "Nuevo" });
     const freshBase = `/orgs/${owner.organizationId}/projects/${fresh.body.projectId}`;
-    await api().post(`${freshBase}/spec-versions`).set(as(owner)).send({
-      source: { kind: "inline", raw: 'openapi: 3.1.0\ninfo: { title: T, version: "1" }\npaths:\n  /things:\n    get:\n      operationId: listThings\n      responses: { "200": {}, "401": {} }\n' },
-    });
+    await api()
+      .post(`${freshBase}/spec-versions`)
+      .set(as(owner))
+      .send({
+        source: {
+          kind: "inline",
+          raw: 'openapi: 3.1.0\ninfo: { title: T, version: "1" }\npaths:\n  /things:\n    get:\n      operationId: listThings\n      responses: { "200": {}, "401": {} }\n',
+        },
+      });
 
     const response = await api().get(`${freshBase}/scenarios`).set(as(owner));
     assert.equal(response.status, 200);
@@ -303,8 +364,13 @@ describe("configuración", () => {
 
   test("el proyecto sin contrato responde 409 y no una matriz vacía", async () => {
     // An empty matrix reads as full coverage of nothing; a 409 says what is missing.
-    const bare = await api().post(`/orgs/${owner.organizationId}/projects`).set(as(owner)).send({ name: "Sin contrato" });
-    const response = await api().get(`/orgs/${owner.organizationId}/projects/${bare.body.projectId}/scenarios`).set(as(owner));
+    const bare = await api()
+      .post(`/orgs/${owner.organizationId}/projects`)
+      .set(as(owner))
+      .send({ name: "Sin contrato" });
+    const response = await api()
+      .get(`/orgs/${owner.organizationId}/projects/${bare.body.projectId}/scenarios`)
+      .set(as(owner));
     assert.equal(response.status, 409);
     assert.match(response.body.type, /no-active-spec$/);
   });
@@ -319,7 +385,10 @@ describe("configuración", () => {
   });
 
   test("una sección inválida es 422 y nombra el campo", async () => {
-    const response = await api().put(`${base}/config/budgets`).set(as(owner)).send({ budgets: [{ id: "x", thresholdMs: -1, label: "", source: "" }] });
+    const response = await api()
+      .put(`${base}/config/budgets`)
+      .set(as(owner))
+      .send({ budgets: [{ id: "x", thresholdMs: -1, label: "", source: "" }] });
     assert.equal(response.status, 422);
     assert.match(response.body.type, /config-invalid$/);
     assert.ok(response.body.errors.some((error: { field: string }) => error.field.startsWith("budgets.0")));
@@ -342,7 +411,12 @@ describe("configuración", () => {
 
   test("un viewer lee la configuración pero no la escribe", async () => {
     const viewer = await signUp("config-viewer@example.com");
-    await context.repositories.memberships.save({ organizationId: owner.organizationId, userId: viewer.userId, role: "viewer", createdAt: new Date() });
+    await context.repositories.memberships.save({
+      organizationId: owner.organizationId,
+      userId: viewer.userId,
+      role: "viewer",
+      createdAt: new Date(),
+    });
     assert.equal((await api().get(`${base}/config`).set(as(viewer))).status, 200);
     assert.equal((await api().put(`${base}/config/budgets`).set(as(viewer)).send({ budgets: [] })).status, 403);
   });
@@ -352,7 +426,10 @@ describe("credenciales del destino", () => {
   let environmentId: string;
 
   before(async () => {
-    const created = await api().post(`${base}/environments`).set(as(owner)).send({ name: "credenciales", baseUrl: "https://staging.example.com" });
+    const created = await api()
+      .post(`${base}/environments`)
+      .set(as(owner))
+      .send({ name: "credenciales", baseUrl: "https://staging.example.com" });
     environmentId = created.body.environmentId;
   });
 
@@ -382,10 +459,16 @@ describe("credenciales del destino", () => {
   test("un segundo guardado con el mismo rol reemplaza, no duplica", async () => {
     // The generator asks for "the insufficient one"; two rows answering to that would make which
     // token a 403 case sends depend on row order.
-    await api().put(`${base}/environments/${environmentId}/credentials`).set(as(owner)).send({ name: "admin", role: "primary", kind: "bearer", secret: "otro" });
+    await api()
+      .put(`${base}/environments/${environmentId}/credentials`)
+      .set(as(owner))
+      .send({ name: "admin", role: "primary", kind: "bearer", secret: "otro" });
     const listed = await api().get(`${base}/environments`).set(as(owner));
     const environment = listed.body.find((item: { id: string }) => item.id === environmentId);
-    assert.equal(environment.credentials.filter((credential: { role: string }) => credential.role === "primary").length, 1);
+    assert.equal(
+      environment.credentials.filter((credential: { role: string }) => credential.role === "primary").length,
+      1,
+    );
   });
 
   test("una API key sin nombre de cabecera se rechaza", async () => {
@@ -402,19 +485,38 @@ describe("credenciales del destino", () => {
   test("un editor no puede guardar credenciales de destino", async () => {
     // One of the two acts in this product that can affect a system outside it.
     const editor = await signUp("cred-editor@example.com");
-    await context.repositories.memberships.save({ organizationId: owner.organizationId, userId: editor.userId, role: "editor", createdAt: new Date() });
+    await context.repositories.memberships.save({
+      organizationId: owner.organizationId,
+      userId: editor.userId,
+      role: "editor",
+      createdAt: new Date(),
+    });
     const response = await api()
       .put(`${base}/environments/${environmentId}/credentials`)
       .set(as(editor))
       .send({ name: "x", role: "primary", kind: "bearer", secret: "y" });
     assert.equal(response.status, 403);
     // But the same editor curates the matrix all day.
-    assert.equal((await api().post(`${base}/environments`).set(as(editor)).send({ name: "otra", baseUrl: "https://x.example.com" })).status, 201);
+    assert.equal(
+      (
+        await api()
+          .post(`${base}/environments`)
+          .set(as(editor))
+          .send({ name: "otra", baseUrl: "https://x.example.com" })
+      ).status,
+      201,
+    );
   });
 
   test("borrar el entorno se lleva sus credenciales", async () => {
-    const created = await api().post(`${base}/environments`).set(as(owner)).send({ name: "efimero", baseUrl: "https://e.example.com" });
-    await api().put(`${base}/environments/${created.body.environmentId}/credentials`).set(as(owner)).send({ name: "t", role: "primary", kind: "bearer", secret: "s" });
+    const created = await api()
+      .post(`${base}/environments`)
+      .set(as(owner))
+      .send({ name: "efimero", baseUrl: "https://e.example.com" });
+    await api()
+      .put(`${base}/environments/${created.body.environmentId}/credentials`)
+      .set(as(owner))
+      .send({ name: "t", role: "primary", kind: "bearer", secret: "s" });
     assert.equal((await api().delete(`${base}/environments/${created.body.environmentId}`).set(as(owner))).status, 204);
     // Credentials left behind would be a set of secrets nothing can reach to revoke.
     assert.equal(await context.repositories.environments.findCredential(created.body.environmentId, "primary"), null);
@@ -430,16 +532,32 @@ describe("credenciales del destino", () => {
     assert.deepEqual(fields, ["baseUrl", "name"]);
 
     // Y un PATCH que solo cambia una bandera no reenvía el nombre: es lo que costaba compartir DTO.
-    const created = await api().post(`${base}/environments`).set(as(owner)).send({ name: "parcial", baseUrl: "https://p.example.com" });
+    const created = await api()
+      .post(`${base}/environments`)
+      .set(as(owner))
+      .send({ name: "parcial", baseUrl: "https://p.example.com" });
     assert.equal(created.status, 201);
-    assert.equal((await api().patch(`${base}/environments/${created.body.environmentId}`).set(as(owner)).send({ writesAllowed: true })).status, 204);
-    const listed = (await api().get(`${base}/environments`).set(as(owner))).body.find((entry: { id: string }) => entry.id === created.body.environmentId);
+    assert.equal(
+      (
+        await api()
+          .patch(`${base}/environments/${created.body.environmentId}`)
+          .set(as(owner))
+          .send({ writesAllowed: true })
+      ).status,
+      204,
+    );
+    const listed = (await api().get(`${base}/environments`).set(as(owner))).body.find(
+      (entry: { id: string }) => entry.id === created.body.environmentId,
+    );
     assert.equal(listed.name, "parcial", "el nombre que no se mandó sigue donde estaba");
     assert.equal(listed.writesAllowed, true);
   });
 
   test("una URL base que no es http(s) se rechaza al escribirla", async () => {
-    const response = await api().post(`${base}/environments`).set(as(owner)).send({ name: "mala", baseUrl: "file:///etc/passwd" });
+    const response = await api()
+      .post(`${base}/environments`)
+      .set(as(owner))
+      .send({ name: "mala", baseUrl: "file:///etc/passwd" });
     assert.equal(response.status, 422);
     assert.ok(response.body.errors.some((error: { field: string }) => error.field === "baseUrl"));
   });

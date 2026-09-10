@@ -40,7 +40,10 @@ export class LogoutDto {
 
 export class ChangePasswordDto {
   @IsString() @MaxLength(200) currentPassword: string;
-  @IsString() @MinLength(12, { message: "newPassword debe tener al menos 12 caracteres" }) @MaxLength(200) newPassword: string;
+  @IsString()
+  @MinLength(12, { message: "newPassword debe tener al menos 12 caracteres" })
+  @MaxLength(200)
+  newPassword: string;
 }
 
 export class CreateApiTokenDto {

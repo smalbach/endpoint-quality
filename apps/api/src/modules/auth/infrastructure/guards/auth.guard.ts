@@ -24,7 +24,12 @@ import { hashOpaqueToken } from "@/shared/crypto/opaque-token";
 import { atLeast, type Role } from "@/modules/iam/domain/model";
 import { MEMBERSHIP_REPOSITORY, type MembershipRepositoryPort } from "@/modules/iam/domain/ports";
 import { ACCESS_TOKEN_SERVICE, type AccessTokenServicePort } from "../../domain/access-token";
-import { API_TOKEN_REPOSITORY, USER_REPOSITORY, type ApiTokenRepositoryPort, type UserRepositoryPort } from "../../domain/ports";
+import {
+  API_TOKEN_REPOSITORY,
+  USER_REPOSITORY,
+  type ApiTokenRepositoryPort,
+  type UserRepositoryPort,
+} from "../../domain/ports";
 import { isActive } from "../../domain/model";
 
 export const IS_PUBLIC = "auth:public";
@@ -62,8 +67,9 @@ export const CurrentUser = createParamDecorator((_data: unknown, context: Execut
 });
 
 /** The role the caller holds in the organization this route addresses, resolved by `OrgRoleGuard`. */
-export const CurrentRole = createParamDecorator((_data: unknown, context: ExecutionContext): Role | undefined =>
-  context.switchToHttp().getRequest<AuthenticatedRequest>().membershipRole,
+export const CurrentRole = createParamDecorator(
+  (_data: unknown, context: ExecutionContext): Role | undefined =>
+    context.switchToHttp().getRequest<AuthenticatedRequest>().membershipRole,
 );
 
 @Injectable()
@@ -140,21 +146,25 @@ export class OrgRoleGuard implements CanActivate {
     // yields an array, and comparing that to a stored id would never match while also never
     // failing loudly. Rejected instead.
     const organizationId = request.params?.organizationId;
-    if (typeof organizationId !== "string" || !organizationId) throw new ForbiddenError("La ruta no identifica una organización");
+    if (typeof organizationId !== "string" || !organizationId)
+      throw new ForbiddenError("La ruta no identifica una organización");
 
     if (principal.kind === "api-token") {
       // A CI token acts only inside the organization it was minted for, and at a fixed level:
       // it can launch runs and read, and it cannot manage members or credentials. A token that
       // could invite an owner would turn a leaked CI secret into a full account takeover.
-      if (principal.organizationId !== organizationId) throw new ForbiddenError("Este token no pertenece a la organización");
-      if (!atLeast("editor", required)) throw new ForbiddenError("Un token de servicio no alcanza para esta operación", "api-token-role");
+      if (principal.organizationId !== organizationId)
+        throw new ForbiddenError("Este token no pertenece a la organización");
+      if (!atLeast("editor", required))
+        throw new ForbiddenError("Un token de servicio no alcanza para esta operación", "api-token-role");
       request.membershipRole = "editor";
       return true;
     }
 
     const membership = await this.memberships.find(organizationId, principal.userId);
     if (!membership) throw new ForbiddenError("No perteneces a esta organización");
-    if (!atLeast(membership.role, required)) throw new ForbiddenError(`Esta operación requiere el rol ${required}`, "insufficient-role");
+    if (!atLeast(membership.role, required))
+      throw new ForbiddenError(`Esta operación requiere el rol ${required}`, "insufficient-role");
 
     request.membershipRole = membership.role;
     return true;

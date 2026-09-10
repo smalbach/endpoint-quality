@@ -8,7 +8,11 @@ import { isFinished } from "../../domain/model";
 import { RUN_QUEUE, RUN_REPOSITORY, type RunQueuePort, type RunRepositoryPort } from "../../domain/ports";
 
 export class CancelRunCommand implements ICommand {
-  constructor(readonly organizationId: string, readonly projectId: string, readonly runId: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly runId: string,
+  ) {}
 }
 
 /**

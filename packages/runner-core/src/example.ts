@@ -57,7 +57,9 @@ export function exampleFromSchema(schema: unknown, depth = 0): unknown {
   // `oneOf`/`anyOf` is a choice, and the first branch is as good as any — with one exception
   // below, where a branch is plainly the null one.
   if (Array.isArray(rule.allOf) && rule.allOf.length) {
-    const merged = rule.allOf.map((part) => exampleFromSchema(part, depth)).filter((value) => value && typeof value === "object" && !Array.isArray(value));
+    const merged = rule.allOf
+      .map((part) => exampleFromSchema(part, depth))
+      .filter((value) => value && typeof value === "object" && !Array.isArray(value));
     if (merged.length) return Object.assign({}, ...(merged as object[]));
   }
   for (const key of ["oneOf", "anyOf"] as const) {
@@ -171,9 +173,11 @@ function stringExample(rule: Schema): string {
   const pattern = typeof rule.pattern === "string" ? rule.pattern : "";
   const regex = pattern ? safeRegExp(pattern) : undefined;
   if (regex) {
-    if (formatted && regex.test(formatted) && formatted.length >= minimum && formatted.length <= maximum) return formatted;
+    if (formatted && regex.test(formatted) && formatted.length >= minimum && formatted.length <= maximum)
+      return formatted;
     const generated = exampleFromPattern(pattern, minimum);
-    if (generated !== undefined && generated.length >= minimum && generated.length <= maximum && regex.test(generated)) return generated;
+    if (generated !== undefined && generated.length >= minimum && generated.length <= maximum && regex.test(generated))
+      return generated;
     // Neither the format nor the pattern could be honoured. The placeholder below is returned
     // anyway, on purpose: a 422 naming this field is the truth about a contract this cannot
     // satisfy, and it points at the `bodies` section, which can.
@@ -199,7 +203,8 @@ function safeRegExp(pattern: string): RegExp | undefined {
 }
 
 function numberExample(rule: Schema, integer: boolean): number {
-  const exclusive = typeof rule.exclusiveMinimum === "number" ? rule.exclusiveMinimum + (integer ? 1 : 0.01) : undefined;
+  const exclusive =
+    typeof rule.exclusiveMinimum === "number" ? rule.exclusiveMinimum + (integer ? 1 : 0.01) : undefined;
   const minimum = typeof rule.minimum === "number" ? rule.minimum : exclusive;
   const maximum = typeof rule.maximum === "number" ? rule.maximum : undefined;
 

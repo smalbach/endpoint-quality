@@ -10,7 +10,12 @@ import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, UseGuards 
 import { CommandBus, QueryBus } from "@nestjs/cqrs";
 
 import { UnauthenticatedError } from "@/shared/errors/domain-error";
-import { CurrentUser, OrgRoleGuard, RequireRole, type Principal } from "@/modules/auth/infrastructure/guards/auth.guard";
+import {
+  CurrentUser,
+  OrgRoleGuard,
+  RequireRole,
+  type Principal,
+} from "@/modules/auth/infrastructure/guards/auth.guard";
 import { IssueApiTokenCommand } from "@/modules/auth/application/commands/issue-api-token";
 import { RevokeApiTokenCommand } from "@/modules/auth/application/commands/revoke-api-token";
 import { ListApiTokensQuery } from "@/modules/auth/application/queries/list-api-tokens";
@@ -26,14 +31,18 @@ import { AcceptInvitationDto, ChangeRoleDto, CreateOrganizationDto, InviteMember
 /** Only a person creates organizations, accepts invitations or manages members. A CI token that
  * could do any of those turns a leaked build secret into an account takeover. */
 function requireUser(principal: Principal): string {
-  if (principal.kind !== "user") throw new UnauthenticatedError("Esta operación requiere una sesión de usuario", "user-session-required");
+  if (principal.kind !== "user")
+    throw new UnauthenticatedError("Esta operación requiere una sesión de usuario", "user-session-required");
   return principal.userId;
 }
 
 @Controller()
 @UseGuards(OrgRoleGuard)
 export class OrganizationsController {
-  constructor(private readonly commandBus: CommandBus, private readonly queryBus: QueryBus) {}
+  constructor(
+    private readonly commandBus: CommandBus,
+    private readonly queryBus: QueryBus,
+  ) {}
 
   @Post("orgs")
   async create(@Body() body: CreateOrganizationDto, @CurrentUser() principal: Principal) {
@@ -54,8 +63,14 @@ export class OrganizationsController {
 
   @Post("orgs/:organizationId/invitations")
   @RequireRole("admin")
-  async invite(@Param("organizationId") organizationId: string, @Body() body: InviteMemberDto, @CurrentUser() principal: Principal) {
-    return this.commandBus.execute(new InviteMemberCommand(organizationId, body.email, body.role, requireUser(principal)));
+  async invite(
+    @Param("organizationId") organizationId: string,
+    @Body() body: InviteMemberDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.commandBus.execute(
+      new InviteMemberCommand(organizationId, body.email, body.role, requireUser(principal)),
+    );
   }
 
   @Patch("orgs/:organizationId/members/:userId")
@@ -67,7 +82,9 @@ export class OrganizationsController {
     @Body() body: ChangeRoleDto,
     @CurrentUser() principal: Principal,
   ): Promise<void> {
-    await this.commandBus.execute(new ChangeMemberRoleCommand(organizationId, userId, body.role, requireUser(principal)));
+    await this.commandBus.execute(
+      new ChangeMemberRoleCommand(organizationId, userId, body.role, requireUser(principal)),
+    );
   }
 
   // `viewer` and not `admin`: leaving an organization you were invited to must not require the
@@ -75,7 +92,11 @@ export class OrganizationsController {
   @Delete("orgs/:organizationId/members/:userId")
   @RequireRole("viewer")
   @HttpCode(204)
-  async removeMember(@Param("organizationId") organizationId: string, @Param("userId") userId: string, @CurrentUser() principal: Principal): Promise<void> {
+  async removeMember(
+    @Param("organizationId") organizationId: string,
+    @Param("userId") userId: string,
+    @CurrentUser() principal: Principal,
+  ): Promise<void> {
     await this.commandBus.execute(new RemoveMemberCommand(organizationId, userId, requireUser(principal)));
   }
 
@@ -87,7 +108,11 @@ export class OrganizationsController {
 
   @Post("orgs/:organizationId/tokens")
   @RequireRole("admin")
-  async createToken(@Param("organizationId") organizationId: string, @Body() body: CreateApiTokenDto, @CurrentUser() principal: Principal) {
+  async createToken(
+    @Param("organizationId") organizationId: string,
+    @Body() body: CreateApiTokenDto,
+    @CurrentUser() principal: Principal,
+  ) {
     return this.commandBus.execute(new IssueApiTokenCommand(organizationId, body.name, requireUser(principal)));
   }
 

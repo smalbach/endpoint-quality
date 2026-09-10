@@ -56,7 +56,10 @@ describe("el bundle no lleva dentro ningún proyecto", () => {
   test("hay un build que inspeccionar", () => {
     // Skipping here would make every assertion below vacuously true, which is worse than a red
     // build: it would report that the decoupling holds without having looked.
-    expect(files.length, `no hay build en ${DIST}: ejecuta \`pnpm --filter @eq/web build\` antes de esta prueba`).toBeGreaterThan(0);
+    expect(
+      files.length,
+      `no hay build en ${DIST}: ejecuta \`pnpm --filter @eq/web build\` antes de esta prueba`,
+    ).toBeGreaterThan(0);
   });
 
   test.each(FORBIDDEN)("no aparece $needle ($why)", ({ needle }) => {
@@ -68,7 +71,12 @@ describe("el bundle no lleva dentro ningún proyecto", () => {
     // The wording of the generated cases is a resource the server owns. Finding it here would
     // mean the front end had started generating cases of its own, which is how the two would
     // drift into disagreeing about what a run will do.
-    const wordings = ["Listado sin filtros", "Radio geográfico", "Clave natural duplicada", "Crear, eliminar y confirmar"];
+    const wordings = [
+      "Listado sin filtros",
+      "Radio geográfico",
+      "Clave natural duplicada",
+      "Crear, eliminar y confirmar",
+    ];
     for (const wording of wordings) {
       const offenders = files.filter((file) => readFileSync(file, "utf8").includes(wording));
       expect(offenders, `"${wording}" aparece en ${offenders.join(", ")}`).toEqual([]);

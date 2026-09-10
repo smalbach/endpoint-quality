@@ -6,10 +6,20 @@ import { ConflictError, ForbiddenError } from "@/shared/errors/domain-error";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { generateOpaqueToken, hashOpaqueToken } from "@/shared/crypto/opaque-token";
 import { atLeast, type Role } from "../../domain/model";
-import { INVITATION_REPOSITORY, MEMBERSHIP_REPOSITORY, type InvitationRepositoryPort, type MembershipRepositoryPort } from "../../domain/ports";
+import {
+  INVITATION_REPOSITORY,
+  MEMBERSHIP_REPOSITORY,
+  type InvitationRepositoryPort,
+  type MembershipRepositoryPort,
+} from "../../domain/ports";
 
 export class InviteMemberCommand implements ICommand {
-  constructor(readonly organizationId: string, readonly email: string, readonly role: Role, readonly invitedBy: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly email: string,
+    readonly role: Role,
+    readonly invitedBy: string,
+  ) {}
 }
 
 const INVITATION_TTL_DAYS = 7;
@@ -26,7 +36,10 @@ const INVITATION_TTL_DAYS = 7;
  * be recovered from the database by an operator either.
  */
 @CommandHandler(InviteMemberCommand)
-export class InviteMemberHandler implements ICommandHandler<InviteMemberCommand, { invitationId: string; token: string; expiresAt: Date }> {
+export class InviteMemberHandler implements ICommandHandler<
+  InviteMemberCommand,
+  { invitationId: string; token: string; expiresAt: Date }
+> {
   constructor(
     @Inject(INVITATION_REPOSITORY) private readonly invitations: InvitationRepositoryPort,
     @Inject(MEMBERSHIP_REPOSITORY) private readonly memberships: MembershipRepositoryPort,
@@ -36,7 +49,8 @@ export class InviteMemberHandler implements ICommandHandler<InviteMemberCommand,
   async execute(command: InviteMemberCommand) {
     const inviter = await this.memberships.find(command.organizationId, command.invitedBy);
     if (!inviter || !atLeast(inviter.role, "admin")) throw new ForbiddenError("No puedes invitar a esta organización");
-    if (!atLeast(inviter.role, command.role)) throw new ForbiddenError("No puedes invitar con un rol superior al tuyo", "role-escalation");
+    if (!atLeast(inviter.role, command.role))
+      throw new ForbiddenError("No puedes invitar con un rol superior al tuyo", "role-escalation");
 
     const email = command.email.trim().toLowerCase();
     if (await this.invitations.findPending(command.organizationId, email)) {

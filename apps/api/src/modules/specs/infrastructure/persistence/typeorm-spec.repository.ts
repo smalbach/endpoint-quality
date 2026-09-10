@@ -28,7 +28,20 @@ export class TypeOrmSpecRepository implements SpecRepositoryPort {
     const rows = await this.versions.find({
       where: { projectId },
       order: { importedAt: "DESC" },
-      select: ["id", "projectId", "sourceId", "hash", "format", "openapiVersion", "title", "contractVersion", "operationCount", "problems", "importedBy", "importedAt"],
+      select: [
+        "id",
+        "projectId",
+        "sourceId",
+        "hash",
+        "format",
+        "openapiVersion",
+        "title",
+        "contractVersion",
+        "operationCount",
+        "problems",
+        "importedBy",
+        "importedAt",
+      ],
     });
     return rows.map((row) => ({ ...row, problems: (row.problems ?? []) as ImportProblem[] }));
   }

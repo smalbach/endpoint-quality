@@ -7,25 +7,54 @@ import { buildQueue, moveOperation, orderOperations, selectedCases } from "../sr
 import type { Operation } from "../src/types.ts";
 
 const operations: Operation[] = [
-  { id: "deleteThing", method: "DELETE", path: "/things/{id}", summary: "", tag: "T", statuses: [204, 404], parameters: ["id"] },
+  {
+    id: "deleteThing",
+    method: "DELETE",
+    path: "/things/{id}",
+    summary: "",
+    tag: "T",
+    statuses: [204, 404],
+    parameters: ["id"],
+  },
   { id: "listThings", method: "GET", path: "/things", summary: "", tag: "T", statuses: [200], parameters: ["q"] },
   { id: "createThing", method: "POST", path: "/things", summary: "", tag: "T", statuses: [201, 422], parameters: [] },
-  { id: "getThing", method: "GET", path: "/things/{id}", summary: "", tag: "T", statuses: [200, 404], parameters: ["id"] },
+  {
+    id: "getThing",
+    method: "GET",
+    path: "/things/{id}",
+    summary: "",
+    tag: "T",
+    statuses: [200, 404],
+    parameters: ["id"],
+  },
 ];
 
-const config = defineProjectConfig({ parameterSamples: { q: ["a"] }, bodyTemplates: { createThing: { body: { name: "x" } } } });
+const config = defineProjectConfig({
+  parameterSamples: { q: ["a"] },
+  bodyTemplates: { createThing: { body: { name: "x" } } },
+});
 const resolved = resolveOperations(operations, config);
 const ids = (list: { id: string }[]) => list.map((item) => item.id);
 
 test("el modo contrato conserva el orden declarado", () => {
-  assert.deepEqual(ids(orderOperations(resolved, "contract", [])), ["deleteThing", "listThings", "createThing", "getThing"]);
+  assert.deepEqual(ids(orderOperations(resolved, "contract", [])), [
+    "deleteThing",
+    "listThings",
+    "createThing",
+    "getThing",
+  ]);
 });
 
 test("el modo seguro pone las lecturas primero y los deletes al final", () => {
   // Alphabetically the DELETE comes before the GET of the same path, so a delete would be
   // measured before the read that would have shown the endpoint was already broken — and
   // anything it destroys takes the rest of the matrix with it.
-  assert.deepEqual(ids(orderOperations(resolved, "safe", [])), ["listThings", "getThing", "createThing", "deleteThing"]);
+  assert.deepEqual(ids(orderOperations(resolved, "safe", [])), [
+    "listThings",
+    "getThing",
+    "createThing",
+    "deleteThing",
+  ]);
 });
 
 test("dentro del mismo método se conserva el orden del contrato", () => {
@@ -53,12 +82,18 @@ test("una selección vacía de casos vacía el endpoint en vez de correrlo enter
   const listThings = resolved.find((operation) => operation.id === "listThings")!;
   assert.equal(selectedCases(listThings, config, {}, false).length, 2);
   assert.equal(selectedCases(listThings, config, { listThings: [] }, false).length, 0);
-  assert.deepEqual(selectedCases(listThings, config, { listThings: ["default"] }, false).map((scenario) => scenario.id), ["default"]);
+  assert.deepEqual(
+    selectedCases(listThings, config, { listThings: ["default"] }, false).map((scenario) => scenario.id),
+    ["default"],
+  );
 });
 
 test("la cola respeta el subconjunto de operaciones pedido", () => {
   const queue = buildQueue(resolved, config, { mode: "safe", operationIds: ["getThing"], authEnabled: false });
-  assert.deepEqual(queue.map((item) => `${item.operation.id}:${item.scenario.id}`), ["getThing:found", "getThing:not-found"]);
+  assert.deepEqual(
+    queue.map((item) => `${item.operation.id}:${item.scenario.id}`),
+    ["getThing:found", "getThing:not-found"],
+  );
 });
 
 test("sin subconjunto la cola cubre todas las operaciones", () => {

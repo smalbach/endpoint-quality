@@ -28,7 +28,10 @@ import { CONFIG_REPOSITORY, type ConfigRepositoryPort } from "../../domain/ports
 import { assembleProjectConfig } from "./get-project-config";
 
 export class GetCoverageQuery implements IQuery {
-  constructor(readonly organizationId: string, readonly projectId: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+  ) {}
 }
 
 /** Every declared response with no case, named: a total without the list is a number to feel
@@ -46,14 +49,18 @@ export class GetCoverageHandler implements IQueryHandler<GetCoverageQuery, Cover
 
   async execute(query: GetCoverageQuery): Promise<CoverageView> {
     const project = await this.projects.findById(query.projectId);
-    if (!project || project.organizationId !== query.organizationId) throw new NotFoundError("El proyecto no existe", "project-not-found");
-    if (!project.activeSpecVersionId) throw new ConflictError("El proyecto todavía no tiene contrato importado", "no-active-spec");
+    if (!project || project.organizationId !== query.organizationId)
+      throw new NotFoundError("El proyecto no existe", "project-not-found");
+    if (!project.activeSpecVersionId)
+      throw new ConflictError("El proyecto todavía no tiene contrato importado", "no-active-spec");
     const version = await this.specs.findVersionById(project.activeSpecVersionId);
     if (!version) throw new NotFoundError("La versión activa no existe", "spec-version-not-found");
 
     const projectConfig = await assembleProjectConfig(this.config, project.id);
     const stored = await this.specs.listOperations(version.id);
-    const operations: Operation[] = stored.map(({ rowId, specVersionId, position, derivedId, security, ...operation }) => operation);
+    const operations: Operation[] = stored.map(
+      ({ rowId, specVersionId, position, derivedId, security, ...operation }) => operation,
+    );
     const resolved = resolveOperations(operations, projectConfig);
 
     // Measured **without an environment**, and always with the authorization cases in. Coverage is
@@ -68,7 +75,13 @@ export class GetCoverageHandler implements IQueryHandler<GetCoverageQuery, Cover
       const expected = new Set(scenariosFor(operation, projectConfig).map((scenario) => scenario.expectedStatus));
       cases += scenariosFor(operation, projectConfig).length;
       for (const status of operation.statuses) {
-        declared.push({ operationId: operation.id, method: operation.method, path: operation.path, tag: operation.tag, status });
+        declared.push({
+          operationId: operation.id,
+          method: operation.method,
+          path: operation.path,
+          tag: operation.tag,
+          status,
+        });
         if (expected.has(status)) covered.add(`${operation.id}:${status}`);
       }
     }

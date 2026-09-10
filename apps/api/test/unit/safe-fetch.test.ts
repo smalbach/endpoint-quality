@@ -14,9 +14,20 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import { type AddressInfo } from "node:net";
 
-import { BlockedTargetError, isBlockedAddress, resolveTarget, safeFetch, type SafeFetchPolicy } from "@/shared/http/safe-fetch";
+import {
+  BlockedTargetError,
+  isBlockedAddress,
+  resolveTarget,
+  safeFetch,
+  type SafeFetchPolicy,
+} from "@/shared/http/safe-fetch";
 
-const hosted: SafeFetchPolicy = { allowPrivateTargets: false, maxRedirects: 3, timeoutMs: 2_000, maxResponseBytes: 1024 * 64 };
+const hosted: SafeFetchPolicy = {
+  allowPrivateTargets: false,
+  maxRedirects: 3,
+  timeoutMs: 2_000,
+  maxResponseBytes: 1024 * 64,
+};
 const selfHosted: SafeFetchPolicy = { ...hosted, allowPrivateTargets: true };
 
 describe("rangos bloqueados", () => {
@@ -29,7 +40,16 @@ describe("rangos bloqueados", () => {
   });
 
   test("loopback, redes privadas y CGNAT", () => {
-    for (const address of ["127.0.0.1", "127.1.2.3", "10.0.0.5", "172.16.0.1", "172.31.255.254", "192.168.1.1", "100.64.0.1", "0.0.0.0"]) {
+    for (const address of [
+      "127.0.0.1",
+      "127.1.2.3",
+      "10.0.0.5",
+      "172.16.0.1",
+      "172.31.255.254",
+      "192.168.1.1",
+      "100.64.0.1",
+      "0.0.0.0",
+    ]) {
       assert.equal(isBlockedAddress(address).blocked, true, `${address} debería estar bloqueada`);
     }
   });
@@ -176,7 +196,10 @@ describe("contra un servidor real", () => {
   });
 
   test("una cadena larga se corta en el límite configurado", async () => {
-    await assert.rejects(safeFetch(`${origin}/redirect-chain`, { ...selfHosted, maxRedirects: 2 }), /más de 2 redirecciones/);
+    await assert.rejects(
+      safeFetch(`${origin}/redirect-chain`, { ...selfHosted, maxRedirects: 2 }),
+      /más de 2 redirecciones/,
+    );
   });
 
   test("una respuesta enorme se corta en el tope de bytes", async () => {

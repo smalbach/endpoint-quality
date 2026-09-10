@@ -11,16 +11,30 @@ import { buildQueue } from "../../packages/runner-core/test/legacy/execution-pla
 import { LegacyRunner } from "./legacy/orchestrate.ts";
 import { ADMIN_TOKEN, API_KEY, READ_TOKEN } from "./credentials.ts";
 
-export type Verdict = { key: string; operationId: string; scenarioId: string; ok: boolean; steps: number; failedAssertions: string[] };
+export type Verdict = {
+  key: string;
+  operationId: string;
+  scenarioId: string;
+  ok: boolean;
+  steps: number;
+  failedAssertions: string[];
+};
 
-export async function legacyVerdicts(baseUrl: string, authEnabled: boolean, singleCredential: boolean, onCase?: (index: number, total: number, key: string) => void): Promise<Verdict[]> {
+export async function legacyVerdicts(
+  baseUrl: string,
+  authEnabled: boolean,
+  singleCredential: boolean,
+  onCase?: (index: number, total: number, key: string) => void,
+): Promise<Verdict[]> {
   const queue = buildQueue(endpoints, { mode: "safe", customOrder: [], caseSelection: {}, authEnabled });
   const runner = new LegacyRunner(
     endpoints,
     baseUrl,
     // With auth off the dashboard's own guidance is to leave the fields empty: the API grants
     // `catalog:admin` to everyone, and sending a token would test the gateway's absence.
-    authEnabled ? { token: ADMIN_TOKEN, apiKey: API_KEY, readToken: READ_TOKEN, singleCredential } : { token: "", apiKey: "", readToken: "" },
+    authEnabled
+      ? { token: ADMIN_TOKEN, apiKey: API_KEY, readToken: READ_TOKEN, singleCredential }
+      : { token: "", apiKey: "", readToken: "" },
     1,
   );
 
@@ -37,7 +51,9 @@ export async function legacyVerdicts(baseUrl: string, authEnabled: boolean, sing
       steps: result.steps.length,
       // Kept so a disagreement can be read without re-running: "both red" is parity, "red here
       // for the status and red there for the schema" is not.
-      failedAssertions: result.steps.flatMap((step) => step.assertions.filter((assertion) => !assertion.pass).map((assertion) => assertion.label)),
+      failedAssertions: result.steps.flatMap((step) =>
+        step.assertions.filter((assertion) => !assertion.pass).map((assertion) => assertion.label),
+      ),
     });
   }
   return verdicts;

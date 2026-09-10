@@ -62,7 +62,10 @@ export type Credential = {
 
 /** The header a credential travels in. Bearer and Basic imply `Authorization`; an API key is
  * whatever the target calls it, which is why the name is stored. */
-export function credentialHeader(credential: Pick<Credential, "kind" | "headerName">, secret: string): Record<string, string> {
+export function credentialHeader(
+  credential: Pick<Credential, "kind" | "headerName">,
+  secret: string,
+): Record<string, string> {
   if (credential.kind === "bearer") return { Authorization: `Bearer ${secret}` };
   if (credential.kind === "basic") return { Authorization: `Basic ${secret}` };
   return { [credential.headerName || "X-API-Key"]: secret };

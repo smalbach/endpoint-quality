@@ -40,7 +40,8 @@ export function MatrixPage() {
   const scenarios = useQuery({
     queryKey: ["scenarios", projectId, environmentId, order],
     enabled: Boolean(organization && projectId),
-    queryFn: () => api<ScenariosView>(`${base}/scenarios?order=${order}${environmentId ? `&environmentId=${environmentId}` : ""}`),
+    queryFn: () =>
+      api<ScenariosView>(`${base}/scenarios?order=${order}${environmentId ? `&environmentId=${environmentId}` : ""}`),
     retry: false,
   });
 
@@ -67,7 +68,10 @@ export function MatrixPage() {
   });
 
   const operations = scenarios.data?.operations ?? [];
-  const tags = useMemo(() => ["Todos", ...new Set(operations.map((operation) => operation.tag).filter(Boolean))], [operations]);
+  const tags = useMemo(
+    () => ["Todos", ...new Set(operations.map((operation) => operation.tag).filter(Boolean))],
+    [operations],
+  );
   const visible = useMemo(
     () =>
       operations.filter(
@@ -81,7 +85,9 @@ export function MatrixPage() {
   const current = operations.find((operation) => operation.id === selectedOperation) ?? visible[0];
   const currentCase = current?.scenarios.find((scenario) => scenario.id === selectedCase) ?? current?.scenarios[0];
   const selectedCases = selection.length
-    ? operations.filter((operation) => selection.includes(operation.id)).reduce((sum, operation) => sum + operation.scenarios.length, 0)
+    ? operations
+        .filter((operation) => selection.includes(operation.id))
+        .reduce((sum, operation) => sum + operation.scenarios.length, 0)
     : (scenarios.data?.totals.cases ?? 0);
 
   if (scenarios.isLoading) return <p className="text-sm text-slate-500">Cargando la matriz…</p>;
@@ -123,7 +129,11 @@ export function MatrixPage() {
 
             <label className="text-xs text-slate-600">
               Orden
-              <select className="mt-1 block h-9 rounded-lg border border-slate-200 px-2 text-sm" value={order} onChange={(event) => setOrder(event.target.value as "safe" | "contract")}>
+              <select
+                className="mt-1 block h-9 rounded-lg border border-slate-200 px-2 text-sm"
+                value={order}
+                onChange={(event) => setOrder(event.target.value as "safe" | "contract")}
+              >
                 <option value="safe">Lecturas primero</option>
                 <option value="contract">Orden del contrato</option>
               </select>
@@ -133,8 +143,9 @@ export function MatrixPage() {
           <div className="flex items-end gap-3">
             <div className="text-right text-xs text-slate-500">
               <p>
-                <span className="font-mono text-sm text-slate-900">{scenarios.data?.totals.operations}</span> operaciones ·{" "}
-                <span className="font-mono text-sm text-slate-900">{scenarios.data?.totals.cases}</span> casos
+                <span className="font-mono text-sm text-slate-900">{scenarios.data?.totals.operations}</span>{" "}
+                operaciones · <span className="font-mono text-sm text-slate-900">{scenarios.data?.totals.cases}</span>{" "}
+                casos
               </p>
               {scenarios.data?.totals.blocked ? (
                 <p className="text-amber-600">{scenarios.data.totals.blocked} no se ejecutarán en este entorno</p>
@@ -145,14 +156,23 @@ export function MatrixPage() {
                   // The gaps are named in the tooltip rather than only counted: "one response has
                   // no case" is a number, "the 503 of GET /health has no case" is a decision
                   // somebody can look at and either accept or fix.
-                  title={coverage.data.gaps.length ? coverage.data.gaps.map((gap) => `${gap.status} · ${gap.method} ${gap.path}`).join("\n") : "todas las respuestas declaradas tienen caso"}
+                  title={
+                    coverage.data.gaps.length
+                      ? coverage.data.gaps.map((gap) => `${gap.status} · ${gap.method} ${gap.path}`).join("\n")
+                      : "todas las respuestas declaradas tienen caso"
+                  }
                 >
-                  {coverage.data.totals.covered}/{coverage.data.totals.declaredResponses} respuestas del contrato con caso
+                  {coverage.data.totals.covered}/{coverage.data.totals.declaredResponses} respuestas del contrato con
+                  caso
                 </p>
               ) : null}
             </div>
             {canRun && (
-              <Button disabled={!environmentId || start.isPending} onClick={() => start.mutate()} title={environmentId ? undefined : "Elige un entorno para ejecutar"}>
+              <Button
+                disabled={!environmentId || start.isPending}
+                onClick={() => start.mutate()}
+                title={environmentId ? undefined : "Elige un entorno para ejecutar"}
+              >
                 Ejecutar {selection.length ? `${selection.length} operaciones` : "todo"} · {selectedCases} casos
               </Button>
             )}
@@ -160,10 +180,13 @@ export function MatrixPage() {
         </div>
         {order === "safe" && (
           <p className="mt-3 text-[11px] leading-5 text-slate-500">
-            GET, POST, PUT, PATCH y por último DELETE. Un DELETE que borra de más no puede dejar en rojo a los casos que vienen después, porque ya no queda ninguno.
+            GET, POST, PUT, PATCH y por último DELETE. Un DELETE que borra de más no puede dejar en rojo a los casos que
+            vienen después, porque ya no queda ninguno.
           </p>
         )}
-        {start.error && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{(start.error as Error).message}</p>}
+        {start.error && (
+          <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{(start.error as Error).message}</p>
+        )}
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
@@ -175,7 +198,11 @@ export function MatrixPage() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
-            <select className="h-8 rounded-lg border border-slate-200 px-2 text-xs" value={tag} onChange={(event) => setTag(event.target.value)}>
+            <select
+              className="h-8 rounded-lg border border-slate-200 px-2 text-xs"
+              value={tag}
+              onChange={(event) => setTag(event.target.value)}
+            >
               {tags.map((option) => (
                 <option key={option}>{option}</option>
               ))}
@@ -190,7 +217,11 @@ export function MatrixPage() {
                 active={current?.id === operation.id}
                 checked={selection.includes(operation.id)}
                 onToggle={() =>
-                  setSelection((current) => (current.includes(operation.id) ? current.filter((id) => id !== operation.id) : [...current, operation.id]))
+                  setSelection((current) =>
+                    current.includes(operation.id)
+                      ? current.filter((id) => id !== operation.id)
+                      : [...current, operation.id],
+                  )
                 }
                 onSelect={() => {
                   setSelectedOperation(operation.id);
@@ -222,16 +253,31 @@ function OperationRow({
 }) {
   const blocked = operation.scenarios.filter((scenario) => !scenario.runnable).length;
   return (
-    <div className={cn("flex items-center gap-2 border-b border-slate-100 px-3 py-2 last:border-b-0", active && "bg-slate-50")}>
-      <input type="checkbox" checked={checked} onChange={onToggle} className="size-3.5 shrink-0 accent-slate-900" aria-label={`Seleccionar ${operation.id}`} />
+    <div
+      className={cn(
+        "flex items-center gap-2 border-b border-slate-100 px-3 py-2 last:border-b-0",
+        active && "bg-slate-50",
+      )}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onToggle}
+        className="size-3.5 shrink-0 accent-slate-900"
+        aria-label={`Seleccionar ${operation.id}`}
+      />
       <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={onSelect}>
         <Badge className={cn("w-14 shrink-0 justify-center", methodStyle(operation.method))}>{operation.method}</Badge>
         <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-slate-700">{operation.path}</span>
         <span className="shrink-0 text-[10px] text-slate-400">{operation.scenarios.length}</span>
         {/* `implemented` is a fact about the code, not the contract: an operation the API does not
             route yet is pending, not failing. */}
-        {!operation.implemented && <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-500">pendiente</span>}
-        {blocked > 0 && <span className="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-[9px] text-amber-700">{blocked}⃠</span>}
+        {!operation.implemented && (
+          <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-500">pendiente</span>
+        )}
+        {blocked > 0 && (
+          <span className="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-[9px] text-amber-700">{blocked}⃠</span>
+        )}
       </button>
     </div>
   );
@@ -255,7 +301,9 @@ function OperationDetail({
           <span className="ml-auto font-mono text-[10px] text-slate-400">{operation.id}</span>
         </div>
         {operation.summary && <p className="mt-2 text-xs text-slate-500">{operation.summary}</p>}
-        <p className="mt-1 text-[11px] text-slate-400">Envelope esperado: <span className="font-mono">{operation.responseShape}</span></p>
+        <p className="mt-1 text-[11px] text-slate-400">
+          Envelope esperado: <span className="font-mono">{operation.responseShape}</span>
+        </p>
       </div>
 
       <div className="grid gap-0 md:grid-cols-[minmax(0,240px)_minmax(0,1fr)]">
@@ -264,10 +312,20 @@ function OperationDetail({
             <button
               key={item.id}
               onClick={() => onSelectCase(item.id)}
-              className={cn("block w-full border-b border-slate-100 px-3 py-2 text-left last:border-b-0", scenario?.id === item.id && "bg-slate-50")}
+              className={cn(
+                "block w-full border-b border-slate-100 px-3 py-2 text-left last:border-b-0",
+                scenario?.id === item.id && "bg-slate-50",
+              )}
             >
               <span className="flex items-center gap-2">
-                <span className={cn("font-mono text-[10px]", item.expectedStatus < 400 ? "text-emerald-600" : "text-rose-600")}>{item.expectedStatus}</span>
+                <span
+                  className={cn(
+                    "font-mono text-[10px]",
+                    item.expectedStatus < 400 ? "text-emerald-600" : "text-rose-600",
+                  )}
+                >
+                  {item.expectedStatus}
+                </span>
                 <span className="min-w-0 flex-1 truncate text-[11px] text-slate-700">{item.name}</span>
                 {!item.runnable && <span className="text-[10px] text-amber-600">⃠</span>}
               </span>
@@ -286,7 +344,9 @@ function OperationDetail({
               {/* Blocked is not the same as absent: the case is listed, with which of the two
                   switches it is waiting on, because hiding it would make the matrix look smaller
                   than the contract. */}
-              {!scenario.runnable && <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800">{scenario.blockedReason}</p>}
+              {!scenario.runnable && (
+                <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800">{scenario.blockedReason}</p>
+              )}
 
               <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-[11px]">
                 <dt className="text-slate-400">Petición</dt>
@@ -307,7 +367,9 @@ function OperationDetail({
                 <dd className="text-slate-700">
                   {/* No published budget means no assertion, and saying so is more honest than a
                       dash that could be read as "met". */}
-                  {scenario.budget ? `${scenario.budget.label} (${scenario.budget.source})` : "Sin presupuesto publicado: no se afirma nada sobre la latencia"}
+                  {scenario.budget
+                    ? `${scenario.budget.label} (${scenario.budget.source})`
+                    : "Sin presupuesto publicado: no se afirma nada sobre la latencia"}
                 </dd>
               </dl>
 

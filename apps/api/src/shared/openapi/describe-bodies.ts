@@ -25,10 +25,32 @@ import "reflect-metadata";
 import { getMetadataStorage } from "class-validator";
 import type { OpenAPIObject } from "@nestjs/swagger";
 
-import { ChangePasswordDto, CreateApiTokenDto, LoginDto, LogoutDto, RefreshDto, RegisterDto } from "@/modules/auth/presentation/dto/auth.dto";
-import { CreateEnvironmentDto, CredentialDto, UpdateEnvironmentDto } from "@/modules/environments/presentation/dto/environments.dto";
-import { AcceptInvitationDto, ChangeRoleDto, CreateOrganizationDto, InviteMemberDto } from "@/modules/iam/presentation/dto/iam.dto";
-import { ArchiveProjectDto, CreateProjectDto, ImportSpecDto, SpecSourceDto, UpdateProjectDto } from "@/modules/projects/presentation/dto/projects.dto";
+import {
+  ChangePasswordDto,
+  CreateApiTokenDto,
+  LoginDto,
+  LogoutDto,
+  RefreshDto,
+  RegisterDto,
+} from "@/modules/auth/presentation/dto/auth.dto";
+import {
+  CreateEnvironmentDto,
+  CredentialDto,
+  UpdateEnvironmentDto,
+} from "@/modules/environments/presentation/dto/environments.dto";
+import {
+  AcceptInvitationDto,
+  ChangeRoleDto,
+  CreateOrganizationDto,
+  InviteMemberDto,
+} from "@/modules/iam/presentation/dto/iam.dto";
+import {
+  ArchiveProjectDto,
+  CreateProjectDto,
+  ImportSpecDto,
+  SpecSourceDto,
+  UpdateProjectDto,
+} from "@/modules/projects/presentation/dto/projects.dto";
 import { StartRunDto } from "@/modules/runs/presentation/dto/runs.dto";
 
 /**
@@ -105,7 +127,8 @@ export function schemaForClass(target: new () => unknown, seen: Set<unknown> = n
      * was before.
      */
     if (entry.type === "nestedValidation") {
-      const nested = Reflect.getMetadata("design:type", target.prototype as object, name) as (new () => unknown) | undefined;
+      const nested = Reflect.getMetadata("design:type", target.prototype as object, name) as
+        (new () => unknown) | undefined;
       properties[name] ??= {};
       if (nested && typeof nested === "function" && !seen.has(nested)) {
         const schema = schemaForClass(nested, new Set(seen).add(target));

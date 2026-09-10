@@ -228,11 +228,17 @@ function characterClass(cursor: Cursor): string | undefined {
     const character = cursor.source[cursor.index];
     cursor.index += 1;
     // A range: `a-z`. The `-` is a literal when it is the last thing before the `]`.
-    if (cursor.source[cursor.index] === "-" && cursor.source[cursor.index + 1] !== undefined && cursor.source[cursor.index + 1] !== "]") {
+    if (
+      cursor.source[cursor.index] === "-" &&
+      cursor.source[cursor.index + 1] !== undefined &&
+      cursor.source[cursor.index + 1] !== "]"
+    ) {
       const upper = cursor.source[cursor.index + 1];
       cursor.index += 2;
       if (character.charCodeAt(0) > upper.charCodeAt(0)) return undefined;
-      if (negated) for (let code = character.charCodeAt(0); code <= upper.charCodeAt(0); code += 1) excluded.add(String.fromCharCode(code));
+      if (negated)
+        for (let code = character.charCodeAt(0); code <= upper.charCodeAt(0); code += 1)
+          excluded.add(String.fromCharCode(code));
       else allowed.push(character);
       continue;
     }
@@ -255,7 +261,15 @@ function classEscape(cursor: Cursor): string[] | undefined {
   cursor.index += 2;
   const shorthand = SHORTHAND[character];
   if (shorthand) return shorthand;
-  if (character === "d" || character === "w" || character === "s" || character === "D" || character === "W" || character === "S") return undefined;
+  if (
+    character === "d" ||
+    character === "w" ||
+    character === "s" ||
+    character === "D" ||
+    character === "W" ||
+    character === "S"
+  )
+    return undefined;
   return [LITERAL_ESCAPE[character] ?? character];
 }
 

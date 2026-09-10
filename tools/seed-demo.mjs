@@ -45,7 +45,9 @@ async function call(method, path, body, { auth = true } = {}) {
   const parsed = text ? JSON.parse(text) : null;
   if (!response.ok) {
     const fields = parsed?.errors?.map((error) => `\n    ${error.field}: ${error.detail}`).join("") ?? "";
-    const error = new Error(`${method} ${path} → ${response.status}: ${parsed?.detail ?? response.statusText}${fields}`);
+    const error = new Error(
+      `${method} ${path} → ${response.status}: ${parsed?.detail ?? response.statusText}${fields}`,
+    );
     error.status = response.status;
     throw error;
   }
@@ -75,7 +77,12 @@ async function main() {
   // Register, or log in if the account is already there. `register` answering 409 is the second
   // `up`, not an error.
   try {
-    await call("POST", "/auth/register", { email: EMAIL, password: PASSWORD, name: "Demo", organizationName: "Demo" }, { auth: false });
+    await call(
+      "POST",
+      "/auth/register",
+      { email: EMAIL, password: PASSWORD, name: "Demo", organizationName: "Demo" },
+      { auth: false },
+    );
     console.log(`cuenta        creada  ${EMAIL}`);
   } catch (error) {
     if (error.status !== 409) throw error;
@@ -88,15 +95,26 @@ async function main() {
   const organization = me.organizations[0];
   const projects = await call("GET", `/orgs/${organization.id}/projects`);
   const existing = projects.find((project) => project.name === PROJECT_NAME);
-  const projectId = existing?.id ?? (await call("POST", `/orgs/${organization.id}/projects`, { name: PROJECT_NAME, description: "El servicio de muestra que viene con el compose." })).projectId;
+  const projectId =
+    existing?.id ??
+    (
+      await call("POST", `/orgs/${organization.id}/projects`, {
+        name: PROJECT_NAME,
+        description: "El servicio de muestra que viene con el compose.",
+      })
+    ).projectId;
   console.log(`proyecto      ${existing ? "reutilizado" : "creado"}  ${PROJECT_NAME}`);
   const base = `/orgs/${organization.id}/projects/${projectId}`;
 
   // Read from the live document, not from a file in this repo. That is the product's actual
   // workflow, and it is also the only version of this demo that keeps being true when the sample
   // API changes.
-  const imported = await call("POST", `${base}/spec-versions`, { source: { kind: "url", url: `${TARGET}/openapi.json` } });
-  console.log(`contrato      ${imported.operationCount} operaciones · ${imported.unchanged ? "sin cambios" : "importado"}`);
+  const imported = await call("POST", `${base}/spec-versions`, {
+    source: { kind: "url", url: `${TARGET}/openapi.json` },
+  });
+  console.log(
+    `contrato      ${imported.operationCount} operaciones · ${imported.unchanged ? "sin cambios" : "importado"}`,
+  );
 
   // The configuration, section by section, through the same endpoint an operator uses. This is
   // the half of the demo worth reading: a contract says what each operation *answers*, and never
@@ -107,7 +125,11 @@ async function main() {
     if (section.startsWith("_")) continue;
     await call("PUT", `${base}/config/${section}`, data);
   }
-  console.log(`configuración ${Object.keys(configuration).filter((key) => !key.startsWith("_")).join(", ")}`);
+  console.log(
+    `configuración ${Object.keys(configuration)
+      .filter((key) => !key.startsWith("_"))
+      .join(", ")}`,
+  );
 
   const environments = await call("GET", `${base}/environments`);
   const environment = environments.find((candidate) => candidate.name === ENVIRONMENT_NAME);
@@ -125,7 +147,9 @@ async function main() {
   console.log(`entorno       ${ENVIRONMENT_NAME} → ${TARGET}`);
 
   const coverage = await call("GET", `${base}/coverage`);
-  console.log(`cobertura     ${coverage.totals.covered}/${coverage.totals.declaredResponses} respuestas declaradas con caso · ${coverage.totals.cases} casos`);
+  console.log(
+    `cobertura     ${coverage.totals.covered}/${coverage.totals.declaredResponses} respuestas declaradas con caso · ${coverage.totals.cases} casos`,
+  );
 
   // A token is shown once and stored hashed, so on a second `up` there is nothing to print. The
   // first version simply skipped this whole block when `demo-ci` already existed — and a returning

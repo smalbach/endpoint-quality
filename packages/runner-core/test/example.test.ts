@@ -123,7 +123,11 @@ test("allOf se compone y oneOf elige, saltándose la rama nula", () => {
 test("un schema recursivo termina", () => {
   // Una categoría cuyo padre es una categoría es un schema perfectamente normal. La alternativa a
   // parar es no parar.
-  const category: Record<string, unknown> = { type: "object", required: ["nombre"], properties: { nombre: { type: "string" } } };
+  const category: Record<string, unknown> = {
+    type: "object",
+    required: ["nombre"],
+    properties: { nombre: { type: "string" } },
+  };
   (category.properties as Record<string, unknown>).padre = category;
   (category.required as string[]).push("padre");
   const body = exampleFromSchema(category) as Record<string, unknown>;
@@ -133,13 +137,20 @@ test("un schema recursivo termina", () => {
 
 test("nunca devuelve un objeto vacío, que es el caso invalid-body", () => {
   assert.equal(exampleFromSchema({ type: "object", properties: {} }), undefined);
-  assert.equal(exampleFromSchema({ type: "object", properties: { id: { type: "integer", readOnly: true } }, required: ["id"] }), undefined);
+  assert.equal(
+    exampleFromSchema({ type: "object", properties: { id: { type: "integer", readOnly: true } }, required: ["id"] }),
+    undefined,
+  );
   assert.equal(exampleFromSchema(null), undefined);
   assert.equal(exampleFromSchema({}), undefined);
 });
 
 test("es determinista: dos llamadas, el mismo cuerpo", () => {
-  const schema = { type: "object", required: ["nombre", "cantidad"], properties: { nombre: { type: "string" }, cantidad: { type: "integer" } } };
+  const schema = {
+    type: "object",
+    required: ["nombre", "cantidad"],
+    properties: { nombre: { type: "string" }, cantidad: { type: "integer" } },
+  };
   assert.deepEqual(exampleFromSchema(schema), exampleFromSchema(schema));
 });
 
@@ -157,7 +168,9 @@ const createStore: Operation = {
 test("la configuración manda sobre el contrato", () => {
   // A schema says what is structurally valid; a project knows what is acceptable — which store
   // exists, which name is taken. The derived example fills a silence, it does not overrule anyone.
-  const config = defineProjectConfig({ bodyTemplates: { createStore: { body: { name: "Tienda de la configuración" } } } });
+  const config = defineProjectConfig({
+    bodyTemplates: { createStore: { body: { name: "Tienda de la configuración" } } },
+  });
   assert.deepEqual(resolveOperation(createStore, config).body, { name: "Tienda de la configuración" });
 });
 

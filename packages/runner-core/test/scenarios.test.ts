@@ -17,10 +17,42 @@ import { budgetFor } from "../src/budgets.ts";
 import type { Operation } from "../src/types.ts";
 
 const operations: Operation[] = [
-  { id: "listPosts", method: "GET", path: "/posts", summary: "List posts", tag: "Posts", statuses: [200, 401], parameters: ["author", "published", "page"] },
-  { id: "getPost", method: "GET", path: "/posts/{slug}", summary: "Get a post", tag: "Posts", statuses: [200, 404], parameters: ["slug"] },
-  { id: "createPost", method: "POST", path: "/posts", summary: "Create a post", tag: "Posts", statuses: [201, 401, 409, 422], parameters: [] },
-  { id: "deletePost", method: "DELETE", path: "/posts/{slug}", summary: "Delete a post", tag: "Posts", statuses: [204, 401, 403, 404], parameters: ["slug"] },
+  {
+    id: "listPosts",
+    method: "GET",
+    path: "/posts",
+    summary: "List posts",
+    tag: "Posts",
+    statuses: [200, 401],
+    parameters: ["author", "published", "page"],
+  },
+  {
+    id: "getPost",
+    method: "GET",
+    path: "/posts/{slug}",
+    summary: "Get a post",
+    tag: "Posts",
+    statuses: [200, 404],
+    parameters: ["slug"],
+  },
+  {
+    id: "createPost",
+    method: "POST",
+    path: "/posts",
+    summary: "Create a post",
+    tag: "Posts",
+    statuses: [201, 401, 409, 422],
+    parameters: [],
+  },
+  {
+    id: "deletePost",
+    method: "DELETE",
+    path: "/posts/{slug}",
+    summary: "Delete a post",
+    tag: "Posts",
+    statuses: [204, 401, 403, 404],
+    parameters: ["slug"],
+  },
 ];
 
 const blog = defineProjectConfig({
@@ -33,11 +65,18 @@ const blog = defineProjectConfig({
   pathDefaults: { slug: "hello-world" },
   missingIdValue: "does-not-exist",
   bodyTemplates: {
-    createPost: { body: { slug: "new-post", title: "New post" }, conflictBody: { slug: "hello-world", title: "Duplicate" } },
+    createPost: {
+      body: { slug: "new-post", title: "New post" },
+      conflictBody: { slug: "hello-world", title: "Duplicate" },
+    },
   },
   implemented: ["listPosts", "getPost"],
   scopes: { default: "posts:read" },
-  envelope: { rules: [{ id: "delete", match: { methods: ["DELETE"] }, shape: "No body" }], fallbackShape: "{ post }", errorShape: "RFC7807" },
+  envelope: {
+    rules: [{ id: "delete", match: { methods: ["DELETE"] }, shape: "No body" }],
+    fallbackShape: "{ post }",
+    errorShape: "RFC7807",
+  },
 });
 
 const resolved = resolveOperations(operations, blog);
@@ -47,9 +86,12 @@ const caseIds = (id: string) => scenariosFor(byId(id), blog).map((scenario) => s
 test("una colección genera un caso por valor de cada filtro, en aislamiento", () => {
   assert.deepEqual(caseIds("listPosts"), [
     "default",
-    "author-ada", "author-nobody",
-    "published-true", "published-false",
-    "page-1", "page-0",
+    "author-ada",
+    "author-nobody",
+    "published-true",
+    "published-false",
+    "page-1",
+    "page-0",
     "auth-none",
   ]);
 });
@@ -75,9 +117,16 @@ test("el 403 solo se genera donde el contrato lo declara", () => {
 
 test("el 409 necesita que el contrato lo declare y que exista un payload que colisione", () => {
   assert.ok(caseIds("createPost").includes("conflict"));
-  const withoutConflictBody = defineProjectConfig({ ...blog, bodyTemplates: { createPost: { body: { slug: "new-post" } } } });
+  const withoutConflictBody = defineProjectConfig({
+    ...blog,
+    bodyTemplates: { createPost: { body: { slug: "new-post" } } },
+  });
   const operation = resolveOperations(operations, withoutConflictBody).find((item) => item.id === "createPost")!;
-  assert.ok(!scenariosFor(operation, withoutConflictBody).map((scenario) => scenario.id).includes("conflict"));
+  assert.ok(
+    !scenariosFor(operation, withoutConflictBody)
+      .map((scenario) => scenario.id)
+      .includes("conflict"),
+  );
 });
 
 test("los identificadores del proyecto se usan tal cual, sin asumir enteros", () => {
@@ -138,17 +187,39 @@ test("un caso duplicado por id se descarta quedándose con el primero", () => {
  * product exists to remove from somebody's suite.
  */
 test("un GET sin identificador en la ruta no genera un caso not-found", () => {
-  const health: Operation = { id: "healthCheck", method: "GET", path: "/health", summary: "Health", tag: "Health", statuses: [200, 503], parameters: [] };
+  const health: Operation = {
+    id: "healthCheck",
+    method: "GET",
+    path: "/health",
+    summary: "Health",
+    tag: "Health",
+    statuses: [200, 503],
+    parameters: [],
+  };
   const [resolved] = resolveOperations([health], blog);
-  assert.deepEqual(scenariosFor(resolved, blog).map((scenario) => scenario.id), ["found"]);
+  assert.deepEqual(
+    scenariosFor(resolved, blog).map((scenario) => scenario.id),
+    ["found"],
+  );
 });
 
 test("un GET con identificador pero sin 404 declarado tampoco lo genera", () => {
   // The rule the list scenarios already followed. Asserting a status the contract never promised
   // is a test of the document, not of the API.
-  const singleton: Operation = { id: "getSettings", method: "GET", path: "/tenants/{tenant}/settings", summary: "Settings", tag: "Admin", statuses: [200], parameters: ["tenant"] };
+  const singleton: Operation = {
+    id: "getSettings",
+    method: "GET",
+    path: "/tenants/{tenant}/settings",
+    summary: "Settings",
+    tag: "Admin",
+    statuses: [200],
+    parameters: ["tenant"],
+  };
   const [resolved] = resolveOperations([singleton], blog);
-  assert.deepEqual(scenariosFor(resolved, blog).map((scenario) => scenario.id), ["found"]);
+  assert.deepEqual(
+    scenariosFor(resolved, blog).map((scenario) => scenario.id),
+    ["found"],
+  );
 });
 
 test("y con las dos cosas sí lo genera, con el identificador inexistente del proyecto", () => {

@@ -63,15 +63,64 @@ export const digitalCatalogConfig = defineProjectConfig({
   // the queue, so it matches the order the coupled generator emitted them in.
   conditionalScenarios: [
     presets.corruptCursorScenario(),
-    { id: "geo-1km", name: "Radio geográfico · 1 km", description: "Combina latitud, longitud y radio.", expectedStatus: 200, parameters: { lat: "4.6482", lon: "-74.0648", radius_km: "1" }, requiresParameters: ["lat"] },
-    { id: "geo-20km", name: "Radio geográfico · 20 km", description: "Un radio amplio debe alcanzar más tiendas que el de 1 km.", expectedStatus: 200, parameters: { lat: "4.6482", lon: "-74.0648", radius_km: "20" }, requiresParameters: ["lat"] },
-    { id: "geo-default", name: "Radio geográfico por defecto", description: "Envía coordenadas y verifica el radio contractual por defecto.", expectedStatus: 200, parameters: { lat: "4.6482", lon: "-74.0648" }, requiresParameters: ["lat"] },
+    {
+      id: "geo-1km",
+      name: "Radio geográfico · 1 km",
+      description: "Combina latitud, longitud y radio.",
+      expectedStatus: 200,
+      parameters: { lat: "4.6482", lon: "-74.0648", radius_km: "1" },
+      requiresParameters: ["lat"],
+    },
+    {
+      id: "geo-20km",
+      name: "Radio geográfico · 20 km",
+      description: "Un radio amplio debe alcanzar más tiendas que el de 1 km.",
+      expectedStatus: 200,
+      parameters: { lat: "4.6482", lon: "-74.0648", radius_km: "20" },
+      requiresParameters: ["lat"],
+    },
+    {
+      id: "geo-default",
+      name: "Radio geográfico por defecto",
+      description: "Envía coordenadas y verifica el radio contractual por defecto.",
+      expectedStatus: 200,
+      parameters: { lat: "4.6482", lon: "-74.0648" },
+      requiresParameters: ["lat"],
+    },
     // The case that separates a real geographic filter from no filter at all: over the ocean the
     // answer is an empty list, and an ignored filter answers with the whole catalogue instead.
-    { id: "geo-empty", name: "Radio sin tiendas dentro", description: "Coordenadas en mitad del océano: 200 con lista vacía, nunca el catálogo completo.", expectedStatus: 200, parameters: { lat: "0", lon: "0", radius_km: "1" }, requiresParameters: ["lat"] },
-    { id: "geo-incomplete", name: "Coordenadas incompletas", description: "Latitud sin longitud debe rechazarse.", expectedStatus: 422, parameters: { lat: "4.6482" }, requiresParameters: ["lat"] },
-    { id: "geo-radius-alone", name: "radius_km sin coordenadas", description: "Un radio sin lat/lon no es media búsqueda: debe rechazarse.", expectedStatus: 422, parameters: { radius_km: "5" }, requiresParameters: ["lat"] },
-    { id: "store-enabled", name: "Tienda + habilitados", description: "Valida la combinación de filtros store_id e is_enabled.", expectedStatus: 200, parameters: { store_id: "1", is_enabled: "true" }, requiresParameters: ["store_id", "is_enabled"] },
+    {
+      id: "geo-empty",
+      name: "Radio sin tiendas dentro",
+      description: "Coordenadas en mitad del océano: 200 con lista vacía, nunca el catálogo completo.",
+      expectedStatus: 200,
+      parameters: { lat: "0", lon: "0", radius_km: "1" },
+      requiresParameters: ["lat"],
+    },
+    {
+      id: "geo-incomplete",
+      name: "Coordenadas incompletas",
+      description: "Latitud sin longitud debe rechazarse.",
+      expectedStatus: 422,
+      parameters: { lat: "4.6482" },
+      requiresParameters: ["lat"],
+    },
+    {
+      id: "geo-radius-alone",
+      name: "radius_km sin coordenadas",
+      description: "Un radio sin lat/lon no es media búsqueda: debe rechazarse.",
+      expectedStatus: 422,
+      parameters: { radius_km: "5" },
+      requiresParameters: ["lat"],
+    },
+    {
+      id: "store-enabled",
+      name: "Tienda + habilitados",
+      description: "Valida la combinación de filtros store_id e is_enabled.",
+      expectedStatus: 200,
+      parameters: { store_id: "1", is_enabled: "true" },
+      requiresParameters: ["store_id", "is_enabled"],
+    },
   ],
 
   // §1.8 — the seed identifiers a case uses when it wants the resource to exist.
@@ -94,7 +143,13 @@ export const digitalCatalogConfig = defineProjectConfig({
   // operation that stops declaring 403 stops getting the case on the next spec import.
   authRules: [
     { id: "auth-none", credential: "none", expectedStatus: 401, when: { declaredStatus: 401 }, sendBody: true },
-    { id: "auth-insufficient", credential: "insufficient", expectedStatus: 403, when: { declaredStatus: 403 }, sendBody: true },
+    {
+      id: "auth-insufficient",
+      credential: "insufficient",
+      expectedStatus: 403,
+      when: { declaredStatus: 403 },
+      sendBody: true,
+    },
     // D-29: the DELETEs declare no `ApiKeyAuth`, so a valid key is 401 and not 403 — it is not
     // a permission problem, it is a credential the operation does not accept.
     { id: "auth-api-key", credential: "api-key", expectedStatus: 401, when: { methods: ["DELETE"] } },
@@ -111,10 +166,25 @@ export const digitalCatalogConfig = defineProjectConfig({
     // `/health` is a GET that is not the read of a resource: inferring `found` / `not-found`
     // over it produces two cases that mean nothing.
     healthCheck: {
-      functional: [{ id: "healthy", name: "Dependencias disponibles", description: "Espera estado ok o degraded con HTTP 200.", expectedStatus: 200 }],
+      functional: [
+        {
+          id: "healthy",
+          name: "Dependencias disponibles",
+          description: "Espera estado ok o degraded con HTTP 200.",
+          expectedStatus: 200,
+        },
+      ],
     },
     getProductFull: {
-      extraFunctional: [{ id: "store-price", name: "Precio por tienda", description: "Comprueba que el precio de tienda tenga prioridad.", expectedStatus: 200, parameters: { product_id: "1", store_id: "1" } }],
+      extraFunctional: [
+        {
+          id: "store-price",
+          name: "Precio por tienda",
+          description: "Comprueba que el precio de tienda tenga prioridad.",
+          expectedStatus: 200,
+          parameters: { product_id: "1", store_id: "1" },
+        },
+      ],
     },
   },
 
@@ -128,7 +198,14 @@ export const digitalCatalogConfig = defineProjectConfig({
     { id: "bulk", pathSuffix: "/bulk", thresholdMs: 5_000, label: "Bulk de 5.000 registros < 5 s", source: "RFP §6" },
     // The EAN lookup is what the cache exists for and carries its own tighter target. It is only
     // claimed on a warm cache, so a first, cold sample is expected to miss it.
-    { id: "ean", methods: ["GET"], queryMatches: "[?&]ean_sap=", thresholdMs: 50, label: "?ean_sap= p95 con caché caliente < 50 ms", source: "RFP §6" },
+    {
+      id: "ean",
+      methods: ["GET"],
+      queryMatches: "[?&]ean_sap=",
+      thresholdMs: 50,
+      label: "?ean_sap= p95 con caché caliente < 50 ms",
+      source: "RFP §6",
+    },
     { id: "get", methods: ["GET"], thresholdMs: 70, label: "GET p95 < 70 ms", source: "RFP §6" },
   ],
 

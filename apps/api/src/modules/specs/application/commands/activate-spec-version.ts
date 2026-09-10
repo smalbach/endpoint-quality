@@ -7,7 +7,11 @@ import { ownedProject } from "@/modules/projects/application/commands/update-pro
 import { SPEC_REPOSITORY, type SpecRepositoryPort } from "../../domain/ports";
 
 export class ActivateSpecVersionCommand implements ICommand {
-  constructor(readonly organizationId: string, readonly projectId: string, readonly specVersionId: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly specVersionId: string,
+  ) {}
 }
 
 /**
@@ -29,7 +33,8 @@ export class ActivateSpecVersionHandler implements ICommandHandler<ActivateSpecV
     const version = await this.specs.findVersionById(command.specVersionId);
     // Belongs-to-this-project is part of the existence check: a version id from another
     // customer's project must be a 404 here, not a 403 that confirms it is real.
-    if (!version || version.projectId !== project.id) throw new NotFoundError("La versión no existe", "spec-version-not-found");
+    if (!version || version.projectId !== project.id)
+      throw new NotFoundError("La versión no existe", "spec-version-not-found");
     await this.projects.save({ ...project, activeSpecVersionId: version.id });
   }
 }

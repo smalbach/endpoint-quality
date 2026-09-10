@@ -8,10 +8,16 @@ import { SPEC_REPOSITORY, type SpecRepositoryPort } from "@/modules/specs/domain
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "../../domain/ports";
 
 export class ListProjectsQuery implements IQuery {
-  constructor(readonly organizationId: string, readonly includeArchived: boolean) {}
+  constructor(
+    readonly organizationId: string,
+    readonly includeArchived: boolean,
+  ) {}
 }
 export class GetProjectQuery implements IQuery {
-  constructor(readonly organizationId: string, readonly projectId: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+  ) {}
 }
 
 /** The wire shape, with this side's timestamps. Written once in `@eq/contracts`, so the browser
@@ -40,12 +46,23 @@ export class GetProjectHandler implements IQueryHandler<GetProjectQuery, Project
 
   async execute(query: GetProjectQuery): Promise<ProjectSummary> {
     const project = await this.projects.findById(query.projectId);
-    if (!project || project.organizationId !== query.organizationId) throw new NotFoundError("El proyecto no existe", "project-not-found");
+    if (!project || project.organizationId !== query.organizationId)
+      throw new NotFoundError("El proyecto no existe", "project-not-found");
     return summarize(project, this.specs);
   }
 }
 
-async function summarize(project: { id: string; name: string; slug: string; description: string; archivedAt: Date | null; activeSpecVersionId: string | null }, specs: SpecRepositoryPort): Promise<ProjectSummary> {
+async function summarize(
+  project: {
+    id: string;
+    name: string;
+    slug: string;
+    description: string;
+    archivedAt: Date | null;
+    activeSpecVersionId: string | null;
+  },
+  specs: SpecRepositoryPort,
+): Promise<ProjectSummary> {
   // `contract: null` is a real state and the UI has to render it: a project exists before its
   // first import, because importing can fail and losing the project with it helps nobody.
   const active = project.activeSpecVersionId ? await specs.findVersionById(project.activeSpecVersionId) : null;
@@ -56,7 +73,17 @@ async function summarize(project: { id: string; name: string; slug: string; desc
     slug: project.slug,
     description: project.description,
     archivedAt: project.archivedAt,
-    contract: active ? { versionId: active.id, title: active.title, version: active.contractVersion, operationCount: active.operationCount, importedAt: active.importedAt } : null,
-    source: source ? { kind: source.kind, location: source.location, headersStored: source.headersCiphertext !== null } : null,
+    contract: active
+      ? {
+          versionId: active.id,
+          title: active.title,
+          version: active.contractVersion,
+          operationCount: active.operationCount,
+          importedAt: active.importedAt,
+        }
+      : null,
+    source: source
+      ? { kind: source.kind, location: source.location, headersStored: source.headersCiphertext !== null }
+      : null,
   };
 }

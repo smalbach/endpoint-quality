@@ -28,7 +28,8 @@ for (const endpoint of endpoints) {
   const replace = scenariosFor(endpoint).find((scenario) => scenario.id === "replace-read");
   // Stored only when it differs from the plain body: an identical copy would be noise in the
   // configuration and would hide which PUTs actually mutate something.
-  if (replace?.body && JSON.stringify(replace.body) !== JSON.stringify(endpoint.body)) template.replaceBody = replace.body;
+  if (replace?.body && JSON.stringify(replace.body) !== JSON.stringify(endpoint.body))
+    template.replaceBody = replace.body;
   if (Object.keys(template).length) bodyTemplates[endpoint.id] = template;
 }
 

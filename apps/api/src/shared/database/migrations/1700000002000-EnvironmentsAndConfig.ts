@@ -26,7 +26,9 @@ export class EnvironmentsAndConfig1700000002000 implements MigrationInterface {
         "authEnforced" boolean NOT NULL DEFAULT false,
         "createdAt" timestamptz NOT NULL
       )`);
-    await queryRunner.query(`CREATE UNIQUE INDEX "ux_environments_project_name" ON "environments" ("projectId", "name")`);
+    await queryRunner.query(
+      `CREATE UNIQUE INDEX "ux_environments_project_name" ON "environments" ("projectId", "name")`,
+    );
 
     await queryRunner.query(`
       CREATE TABLE "environment_credentials" (
@@ -43,7 +45,9 @@ export class EnvironmentsAndConfig1700000002000 implements MigrationInterface {
       )`);
     // One credential per role per environment: the generator asks for "the insufficient one",
     // and two rows answering to that would make which token a 403 case sends depend on row order.
-    await queryRunner.query(`CREATE UNIQUE INDEX "ux_credentials_environment_role" ON "environment_credentials" ("environmentId", "role")`);
+    await queryRunner.query(
+      `CREATE UNIQUE INDEX "ux_credentials_environment_role" ON "environment_credentials" ("environmentId", "role")`,
+    );
 
     await queryRunner.query(`
       CREATE TABLE "project_config" (

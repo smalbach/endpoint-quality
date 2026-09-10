@@ -6,8 +6,20 @@ import { dereference, responseSchema, validateJson } from "../src/json-schema.ts
 const spec = {
   components: {
     schemas: {
-      Store: { type: "object", required: ["id", "name"], properties: { id: { type: "integer" }, name: { type: "string" }, parent: { $ref: "#/components/schemas/Store" } } },
-      StoreEnvelope: { type: "object", required: ["data"], properties: { data: { $ref: "#/components/schemas/Store" } } },
+      Store: {
+        type: "object",
+        required: ["id", "name"],
+        properties: {
+          id: { type: "integer" },
+          name: { type: "string" },
+          parent: { $ref: "#/components/schemas/Store" },
+        },
+      },
+      StoreEnvelope: {
+        type: "object",
+        required: ["data"],
+        properties: { data: { $ref: "#/components/schemas/Store" } },
+      },
     },
   },
   paths: {
@@ -39,7 +51,10 @@ test("se recogen todos los fallos, no solo el primero", () => {
 });
 
 test("un valor conforme no produce errores", () => {
-  assert.deepEqual(validateJson({ data: { id: 1, name: "Ara" } }, dereference({ $ref: "#/components/schemas/StoreEnvelope" }, spec)), []);
+  assert.deepEqual(
+    validateJson({ data: { id: 1, name: "Ara" } }, dereference({ $ref: "#/components/schemas/StoreEnvelope" }, spec)),
+    [],
+  );
 });
 
 test("integer y number no son lo mismo", () => {
@@ -52,11 +67,17 @@ test("null es un tipo, no la ausencia de valor", () => {
   assert.equal(validateJson(null, { type: "integer" }).length, 1);
   // `meta.total` es un entero para una colección y null para otra: sin esto, la mitad de las
   // respuestas correctas se reportarían como rotas.
-  assert.equal(validateJson({ total: null }, { type: "object", properties: { total: { type: ["integer", "null"] } } }).length, 0);
+  assert.equal(
+    validateJson({ total: null }, { type: "object", properties: { total: { type: ["integer", "null"] } } }).length,
+    0,
+  );
 });
 
 test("un array valida cada elemento y nombra el índice que falla", () => {
-  const errors = validateJson([{ id: 1 }, { id: "dos" }], { type: "array", items: { type: "object", properties: { id: { type: "integer" } } } });
+  const errors = validateJson([{ id: 1 }, { id: "dos" }], {
+    type: "array",
+    items: { type: "object", properties: { id: { type: "integer" } } },
+  });
   assert.equal(errors.length, 1);
   assert.match(errors[0], /^\$\[1\]\.id:/);
 });
@@ -82,7 +103,13 @@ test("una palabra clave desconocida se ignora en vez de inventar un error", () =
 test("el schema declarado se resuelve por operación, método, status y content type", () => {
   const ok = responseSchema(spec, "/v1/stores/{store_id}", "GET", 200) as Record<string, unknown>;
   assert.deepEqual(ok.required, ["data"]);
-  const problem = responseSchema(spec, "/v1/stores/{store_id}", "GET", 404, "application/problem+json; charset=utf-8") as Record<string, unknown>;
+  const problem = responseSchema(
+    spec,
+    "/v1/stores/{store_id}",
+    "GET",
+    404,
+    "application/problem+json; charset=utf-8",
+  ) as Record<string, unknown>;
   assert.deepEqual(problem.required, ["title"]);
 });
 

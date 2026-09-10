@@ -9,23 +9,39 @@ import { ProjectsModule } from "@/modules/projects/projects.module";
 import { SpecsModule } from "@/modules/specs/specs.module";
 import { ENVIRONMENT_REPOSITORY } from "./domain/ports";
 import { TypeOrmEnvironmentRepository } from "./infrastructure/persistence/typeorm-environment.repository";
-import { CreateEnvironmentHandler, DeleteEnvironmentHandler, UpdateEnvironmentHandler } from "./application/commands/manage-environment";
+import {
+  CreateEnvironmentHandler,
+  DeleteEnvironmentHandler,
+  UpdateEnvironmentHandler,
+} from "./application/commands/manage-environment";
 import { DeleteCredentialHandler, UpsertCredentialHandler } from "./application/commands/manage-credential";
 import { ListEnvironmentsHandler } from "./application/queries/list-environments";
 import { CONFIG_REPOSITORY } from "@/modules/config/domain/ports";
 import { TypeOrmConfigRepository } from "@/modules/config/infrastructure/persistence/typeorm-config.repository";
-import { ResetConfigSectionHandler, UpsertConfigSectionHandler } from "@/modules/config/application/commands/upsert-config-section";
+import {
+  ResetConfigSectionHandler,
+  UpsertConfigSectionHandler,
+} from "@/modules/config/application/commands/upsert-config-section";
 import { GetProjectConfigHandler } from "@/modules/config/application/queries/get-project-config";
 import { GetScenariosHandler } from "@/modules/config/application/queries/get-scenarios";
 import { GetCoverageHandler } from "@/modules/config/application/queries/get-coverage";
 import { EnvironmentsController } from "./presentation/environments.controller";
 
 export const ENVIRONMENT_COMMAND_HANDLERS = [
-  CreateEnvironmentHandler, UpdateEnvironmentHandler, DeleteEnvironmentHandler,
-  UpsertCredentialHandler, DeleteCredentialHandler,
-  UpsertConfigSectionHandler, ResetConfigSectionHandler,
+  CreateEnvironmentHandler,
+  UpdateEnvironmentHandler,
+  DeleteEnvironmentHandler,
+  UpsertCredentialHandler,
+  DeleteCredentialHandler,
+  UpsertConfigSectionHandler,
+  ResetConfigSectionHandler,
 ];
-export const ENVIRONMENT_QUERY_HANDLERS = [ListEnvironmentsHandler, GetProjectConfigHandler, GetScenariosHandler, GetCoverageHandler];
+export const ENVIRONMENT_QUERY_HANDLERS = [
+  ListEnvironmentsHandler,
+  GetProjectConfigHandler,
+  GetScenariosHandler,
+  GetCoverageHandler,
+];
 export const ENVIRONMENT_ADAPTERS = [
   { provide: ENVIRONMENT_REPOSITORY, useClass: TypeOrmEnvironmentRepository },
   { provide: CONFIG_REPOSITORY, useClass: TypeOrmConfigRepository },

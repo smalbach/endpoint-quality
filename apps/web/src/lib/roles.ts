@@ -13,7 +13,8 @@ import type { Role } from "./types";
 export const ROLES: Role[] = ["viewer", "editor", "admin", "owner"];
 
 export const rank = (role: Role): number => ROLES.indexOf(role);
-export const atLeast = (role: Role | undefined, needed: Role): boolean => role !== undefined && rank(role) >= rank(needed);
+export const atLeast = (role: Role | undefined, needed: Role): boolean =>
+  role !== undefined && rank(role) >= rank(needed);
 
 /**
  * Whether `actor` may change `target`'s role, and why not when they may not.
@@ -22,16 +23,25 @@ export const atLeast = (role: Role | undefined, needed: Role): boolean => role !
  * can administer, and the way that happens is the only owner demoting themselves — which looks
  * like an ordinary edit right up until it is done.
  */
-export function canChangeRole(actor: Role | undefined, target: { role: Role; isSelf: boolean }, owners: number): string | null {
+export function canChangeRole(
+  actor: Role | undefined,
+  target: { role: Role; isSelf: boolean },
+  owners: number,
+): string | null {
   if (!atLeast(actor, "admin")) return "Hace falta ser admin";
   if (target.role === "owner" && actor !== "owner") return "Solo un owner cambia a otro owner";
-  if (target.isSelf && target.role === "owner" && owners <= 1) return "Eres el único owner: la organización se quedaría sin quien la administre";
+  if (target.isSelf && target.role === "owner" && owners <= 1)
+    return "Eres el único owner: la organización se quedaría sin quien la administre";
   return null;
 }
 
 /** Leaving is not expelling, and the API tells them apart by who the target is. A viewer may
  * always leave; removing somebody else needs admin. */
-export function canRemove(actor: Role | undefined, target: { role: Role; isSelf: boolean }, owners: number): string | null {
+export function canRemove(
+  actor: Role | undefined,
+  target: { role: Role; isSelf: boolean },
+  owners: number,
+): string | null {
   if (target.isSelf) {
     if (target.role === "owner" && owners <= 1) return "Eres el único owner: nombra a otro antes de salir";
     return null;

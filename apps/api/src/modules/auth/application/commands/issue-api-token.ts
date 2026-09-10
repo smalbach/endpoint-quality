@@ -7,7 +7,11 @@ import { generateOpaqueToken, hashOpaqueToken, tokenPreview } from "@/shared/cry
 import { API_TOKEN_REPOSITORY, type ApiTokenRepositoryPort } from "../../domain/ports";
 
 export class IssueApiTokenCommand implements ICommand {
-  constructor(readonly organizationId: string, readonly name: string, readonly createdBy: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly name: string,
+    readonly createdBy: string,
+  ) {}
 }
 
 /**
@@ -19,7 +23,10 @@ export class IssueApiTokenCommand implements ICommand {
  * credentials.
  */
 @CommandHandler(IssueApiTokenCommand)
-export class IssueApiTokenHandler implements ICommandHandler<IssueApiTokenCommand, { id: string; token: string; preview: string }> {
+export class IssueApiTokenHandler implements ICommandHandler<
+  IssueApiTokenCommand,
+  { id: string; token: string; preview: string }
+> {
   constructor(
     @Inject(API_TOKEN_REPOSITORY) private readonly tokens: ApiTokenRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,

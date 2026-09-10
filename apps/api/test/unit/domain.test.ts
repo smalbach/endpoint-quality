@@ -7,7 +7,14 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { atLeast, ROLES, slugify, wouldOrphanOrganization, type Membership, type Role } from "@/modules/iam/domain/model";
+import {
+  atLeast,
+  ROLES,
+  slugify,
+  wouldOrphanOrganization,
+  type Membership,
+  type Role,
+} from "@/modules/iam/domain/model";
 import { normalizeEmail, verifyRefreshToken, type RefreshToken } from "@/modules/auth/domain/model";
 import { ScryptPasswordHasher, FastTestPasswordHasher } from "@/shared/crypto/password-hasher";
 import { generateOpaqueToken, hashOpaqueToken, opaqueTokenMatches, tokenPreview } from "@/shared/crypto/opaque-token";
@@ -37,7 +44,12 @@ describe("la escalera de roles", () => {
 });
 
 describe("la organización no se queda sin dueño", () => {
-  const membership = (userId: string, role: Role): Membership => ({ organizationId: "org", userId, role, createdAt: new Date() });
+  const membership = (userId: string, role: Role): Membership => ({
+    organizationId: "org",
+    userId,
+    role,
+    createdAt: new Date(),
+  });
 
   test("degradar o quitar al único owner deja la organización huérfana", () => {
     const only = [membership("a", "owner"), membership("b", "admin")];
@@ -71,9 +83,15 @@ describe("slug", () => {
 
 describe("refresh token", () => {
   const base: RefreshToken = {
-    id: "t1", userId: "u1", sessionId: "s1", tokenHash: "h",
-    expiresAt: new Date("2026-04-01T00:00:00Z"), createdAt: new Date("2026-03-01T00:00:00Z"),
-    usedAt: null, revokedAt: null, replacedByHash: null,
+    id: "t1",
+    userId: "u1",
+    sessionId: "s1",
+    tokenHash: "h",
+    expiresAt: new Date("2026-04-01T00:00:00Z"),
+    createdAt: new Date("2026-03-01T00:00:00Z"),
+    usedAt: null,
+    revokedAt: null,
+    replacedByHash: null,
   };
   const now = new Date("2026-03-15T00:00:00Z");
 
@@ -86,13 +104,19 @@ describe("refresh token", () => {
     // first may revoke the session.
     assert.deepEqual(verifyRefreshToken({ ...base, usedAt: now }, now), { usable: false, reason: "reused" });
     assert.deepEqual(verifyRefreshToken({ ...base, revokedAt: now }, now), { usable: false, reason: "revoked" });
-    assert.deepEqual(verifyRefreshToken({ ...base, expiresAt: new Date("2026-03-01T00:00:00Z") }, now), { usable: false, reason: "expired" });
+    assert.deepEqual(verifyRefreshToken({ ...base, expiresAt: new Date("2026-03-01T00:00:00Z") }, now), {
+      usable: false,
+      reason: "expired",
+    });
   });
 
   test("el reuso gana sobre la revocación", () => {
     // A token that was spent *and* then revoked was still spent: reporting it as merely revoked
     // would swallow the signal that two parties held the chain.
-    assert.deepEqual(verifyRefreshToken({ ...base, usedAt: now, revokedAt: now }, now), { usable: false, reason: "reused" });
+    assert.deepEqual(verifyRefreshToken({ ...base, usedAt: now, revokedAt: now }, now), {
+      usable: false,
+      reason: "reused",
+    });
   });
 
   test("caduca en el instante exacto, no un momento después", () => {
@@ -112,7 +136,11 @@ describe("hash de contraseñas", () => {
   test("el mismo texto produce digests distintos y ambos verifican", async () => {
     const hasher = new ScryptPasswordHasher();
     const [first, second] = [await hasher.hash("una-contraseña-larga"), await hasher.hash("una-contraseña-larga")];
-    assert.notEqual(first, second, "sin sal aleatoria dos usuarios con la misma contraseña serían visiblemente iguales");
+    assert.notEqual(
+      first,
+      second,
+      "sin sal aleatoria dos usuarios con la misma contraseña serían visiblemente iguales",
+    );
     assert.ok(await hasher.verify("una-contraseña-larga", first));
     assert.ok(await hasher.verify("una-contraseña-larga", second));
   });
@@ -221,7 +249,11 @@ describe("configuración de entorno", () => {
     // "false", "no" and anything else must not enable it — a typo that opened the internal
     // network would be the worst possible parsing bug here.
     for (const value of ["false", "no", "0", "", "maybe"]) {
-      assert.equal(loadEnv({ ...TEST_ENV, ALLOW_PRIVATE_TARGETS: value }).ALLOW_PRIVATE_TARGETS, false, `"${value}" no debería activar destinos privados`);
+      assert.equal(
+        loadEnv({ ...TEST_ENV, ALLOW_PRIVATE_TARGETS: value }).ALLOW_PRIVATE_TARGETS,
+        false,
+        `"${value}" no debería activar destinos privados`,
+      );
     }
   });
 });

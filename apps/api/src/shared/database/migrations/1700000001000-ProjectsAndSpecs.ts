@@ -58,8 +58,12 @@ export class ProjectsAndSpecs1700000001000 implements MigrationInterface {
     // One row per distinct document per project. A re-import of an unchanged contract resolves
     // to the existing version instead of piling up identical snapshots, which is what makes a
     // scheduled drift check cheap enough to run often.
-    await queryRunner.query(`CREATE UNIQUE INDEX "ux_spec_versions_project_hash" ON "spec_versions" ("projectId", "hash")`);
-    await queryRunner.query(`CREATE INDEX "ix_spec_versions_project" ON "spec_versions" ("projectId", "importedAt" DESC)`);
+    await queryRunner.query(
+      `CREATE UNIQUE INDEX "ux_spec_versions_project_hash" ON "spec_versions" ("projectId", "hash")`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX "ix_spec_versions_project" ON "spec_versions" ("projectId", "importedAt" DESC)`,
+    );
 
     await queryRunner.query(`
       CREATE TABLE "spec_operations" (
@@ -76,8 +80,12 @@ export class ProjectsAndSpecs1700000001000 implements MigrationInterface {
         "derivedId" boolean NOT NULL DEFAULT false,
         "position" int NOT NULL
       )`);
-    await queryRunner.query(`CREATE UNIQUE INDEX "ux_spec_operations_version_op" ON "spec_operations" ("specVersionId", "operationId")`);
-    await queryRunner.query(`CREATE INDEX "ix_spec_operations_version" ON "spec_operations" ("specVersionId", "position")`);
+    await queryRunner.query(
+      `CREATE UNIQUE INDEX "ux_spec_operations_version_op" ON "spec_operations" ("specVersionId", "operationId")`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX "ix_spec_operations_version" ON "spec_operations" ("specVersionId", "position")`,
+    );
 
     // Added after `spec_versions` exists, since it points at it. `SET NULL` and not `CASCADE`:
     // deleting a version must leave the project standing with no active contract, not delete

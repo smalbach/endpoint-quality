@@ -1,9 +1,7 @@
 {
   "parameters": {
     "parameterSamples": {
-      "cursor": [
-        "eyJpZCI6MX0="
-      ],
+      "cursor": ["eyJpZCI6MX0="],
       "limit": [
         "1",
         "100",
@@ -18,91 +16,29 @@
           "description": "Comprueba el límite fuera de rango."
         }
       ],
-      "ean_sap": [
-        "7702001234567",
-        "0000000000000"
-      ],
-      "code_sap": [
-        "MAT-00123"
-      ],
-      "name_sap": [
-        "leche",
-        "producto-inexistente"
-      ],
-      "category_id": [
-        "1",
-        "999999"
-      ],
-      "store_id": [
-        "1",
-        "999999"
-      ],
-      "type_akn": [
-        "product",
-        "model"
-      ],
-      "family_code_akn": [
-        "alimentos_liquidos"
-      ],
-      "q": [
-        "leche entera",
-        "termino-inexistente"
-      ],
-      "region": [
-        "Centro",
-        "region-inexistente"
-      ],
-      "department": [
-        "Cundinamarca",
-        "departamento-inexistente"
-      ],
-      "zone_id": [
-        "ZN-01",
-        "zona-inexistente"
-      ],
-      "lat": [
-        "4.6482"
-      ],
-      "lon": [
-        "-74.0648"
-      ],
-      "radius_km": [
-        "1",
-        "10"
-      ],
-      "product_id": [
-        "1",
-        "999999"
-      ],
-      "is_enabled": [
-        "true",
-        "false"
-      ],
-      "locale_akn": [
-        "es_CO",
-        "en_US"
-      ],
-      "channel_akn": [
-        "app",
-        "web"
-      ],
-      "parent_code_akn": [
-        "alimentos",
-        "root"
-      ],
-      "include_children": [
-        "true",
-        "false"
-      ]
+      "ean_sap": ["7702001234567", "0000000000000"],
+      "code_sap": ["MAT-00123"],
+      "name_sap": ["leche", "producto-inexistente"],
+      "category_id": ["1", "999999"],
+      "store_id": ["1", "999999"],
+      "type_akn": ["product", "model"],
+      "family_code_akn": ["alimentos_liquidos"],
+      "q": ["leche entera", "termino-inexistente"],
+      "region": ["Centro", "region-inexistente"],
+      "department": ["Cundinamarca", "departamento-inexistente"],
+      "zone_id": ["ZN-01", "zona-inexistente"],
+      "lat": ["4.6482"],
+      "lon": ["-74.0648"],
+      "radius_km": ["1", "10"],
+      "product_id": ["1", "999999"],
+      "is_enabled": ["true", "false"],
+      "locale_akn": ["es_CO", "en_US"],
+      "channel_akn": ["app", "web"],
+      "parent_code_akn": ["alimentos", "root"],
+      "include_children": ["true", "false"]
     },
-    "fallbackSamples": [
-      "test"
-    ],
-    "excludeFromSoloScenarios": [
-      "lat",
-      "lon",
-      "radius_km"
-    ],
+    "fallbackSamples": ["test"],
+    "excludeFromSoloScenarios": ["lat", "lon", "radius_km"],
     "pathDefaults": {
       "product_id": "1",
       "store_id": "1",
@@ -125,9 +61,7 @@
         "parameters": {
           "cursor": "broken"
         },
-        "requiresParameters": [
-          "cursor"
-        ]
+        "requiresParameters": ["cursor"]
       },
       {
         "id": "geo-1km",
@@ -139,9 +73,7 @@
           "lon": "-74.0648",
           "radius_km": "1"
         },
-        "requiresParameters": [
-          "lat"
-        ]
+        "requiresParameters": ["lat"]
       },
       {
         "id": "geo-20km",
@@ -153,9 +85,7 @@
           "lon": "-74.0648",
           "radius_km": "20"
         },
-        "requiresParameters": [
-          "lat"
-        ]
+        "requiresParameters": ["lat"]
       },
       {
         "id": "geo-default",
@@ -166,9 +96,7 @@
           "lat": "4.6482",
           "lon": "-74.0648"
         },
-        "requiresParameters": [
-          "lat"
-        ]
+        "requiresParameters": ["lat"]
       },
       {
         "id": "geo-empty",
@@ -180,9 +108,7 @@
           "lon": "0",
           "radius_km": "1"
         },
-        "requiresParameters": [
-          "lat"
-        ]
+        "requiresParameters": ["lat"]
       },
       {
         "id": "geo-incomplete",
@@ -192,9 +118,7 @@
         "parameters": {
           "lat": "4.6482"
         },
-        "requiresParameters": [
-          "lat"
-        ]
+        "requiresParameters": ["lat"]
       },
       {
         "id": "geo-radius-alone",
@@ -204,9 +128,7 @@
         "parameters": {
           "radius_km": "5"
         },
-        "requiresParameters": [
-          "lat"
-        ]
+        "requiresParameters": ["lat"]
       },
       {
         "id": "store-enabled",
@@ -217,10 +139,7 @@
           "store_id": "1",
           "is_enabled": "true"
         },
-        "requiresParameters": [
-          "store_id",
-          "is_enabled"
-        ]
+        "requiresParameters": ["store_id", "is_enabled"]
       }
     ],
     "operationOverrides": {
@@ -250,9 +169,7 @@
       }
     },
     "listOperations": {
-      "methods": [
-        "GET"
-      ],
+      "methods": ["GET"],
       "operationIdPrefix": "list"
     },
     "bulkOperationIdPrefix": "bulk"
@@ -598,15 +515,11 @@
         "credential": "api-key",
         "expectedStatus": 401,
         "when": {
-          "methods": [
-            "DELETE"
-          ]
+          "methods": ["DELETE"]
         }
       }
     ],
-    "authExcludedOperationIds": [
-      "healthCheck"
-    ],
+    "authExcludedOperationIds": ["healthCheck"],
     "scopes": {
       "default": "catalog:read",
       "byMethod": {
@@ -632,9 +545,7 @@
       },
       {
         "id": "ean",
-        "methods": [
-          "GET"
-        ],
+        "methods": ["GET"],
         "queryMatches": "[?&]ean_sap=",
         "thresholdMs": 50,
         "label": "?ean_sap= p95 con caché caliente < 50 ms",
@@ -642,9 +553,7 @@
       },
       {
         "id": "get",
-        "methods": [
-          "GET"
-        ],
+        "methods": ["GET"],
         "thresholdMs": 70,
         "label": "GET p95 < 70 ms",
         "source": "RFP §6"
@@ -657,9 +566,7 @@
         {
           "id": "delete",
           "match": {
-            "methods": [
-              "DELETE"
-            ]
+            "methods": ["DELETE"]
           },
           "shape": "No body"
         },

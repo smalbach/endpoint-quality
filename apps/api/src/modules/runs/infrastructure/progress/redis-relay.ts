@@ -30,7 +30,10 @@ export class RedisProgressRelay implements ProgressRelayPort, OnModuleDestroy {
   private publisher: any;
   private subscriber: any;
 
-  constructor(private readonly redisUrl: string, private readonly channel = "eq:run-progress") {}
+  constructor(
+    private readonly redisUrl: string,
+    private readonly channel = "eq:run-progress",
+  ) {}
 
   private async redis(): Promise<any> {
     const specifier = "ioredis";
@@ -45,7 +48,11 @@ export class RedisProgressRelay implements ProgressRelayPort, OnModuleDestroy {
   publish(event: ProgressEvent): void {
     // Fire and forget. A relay that made the domain wait on a network write would put Redis in
     // the path of executing a case, so a slow broker would slow the run it is only reporting on.
-    void this.send(event).catch((error) => this.logger.warn(`No se pudo retransmitir el progreso: ${error instanceof Error ? error.message : String(error)}`));
+    void this.send(event).catch((error) =>
+      this.logger.warn(
+        `No se pudo retransmitir el progreso: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+    );
   }
 
   private async send(event: ProgressEvent): Promise<void> {
@@ -77,7 +84,9 @@ export class RedisProgressRelay implements ProgressRelayPort, OnModuleDestroy {
       } catch (error) {
         // The run still executes and the screen still polls. A broken relay degrades the live
         // view; it must not take the API down.
-        this.logger.warn(`Sin retransmisión de progreso entre instancias: ${error instanceof Error ? error.message : String(error)}`);
+        this.logger.warn(
+          `Sin retransmisión de progreso entre instancias: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     })();
   }

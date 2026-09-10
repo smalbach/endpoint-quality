@@ -57,7 +57,10 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     if (problem.status >= 500) {
       // Logged in full here and described in one line there. The operator gets the cause; the
       // caller gets nothing that describes the inside of the process.
-      this.logger.error(`${request.method} ${request.url} → 500`, exception instanceof Error ? exception.stack : String(exception));
+      this.logger.error(
+        `${request.method} ${request.url} → 500`,
+        exception instanceof Error ? exception.stack : String(exception),
+      );
     }
     response.status(problem.status).type("application/problem+json").json(problem);
   }
@@ -81,9 +84,10 @@ export class ProblemDetailsFilter implements ExceptionFilter {
       // `class-validator` hands the pipe an array of prose messages. They are turned into named
       // fields because "no debe estar vacío" without a field name is not actionable, and naming
       // the field is exactly what the tool asserts of every API it points at.
-      const messages = typeof payload === "object" && payload !== null && Array.isArray((payload as { message?: unknown }).message)
-        ? ((payload as { message: string[] }).message)
-        : [];
+      const messages =
+        typeof payload === "object" && payload !== null && Array.isArray((payload as { message?: unknown }).message)
+          ? (payload as { message: string[] }).message
+          : [];
       return {
         type: `https://endpoint-quality.dev/problems/${status}`,
         title: TITLE_BY_STATUS[status] ?? exception.name,

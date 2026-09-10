@@ -70,7 +70,9 @@ function Totals({ totals }: { totals: RunTotals }) {
       <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700">{totals.passed} ✓</span>
       {totals.failed > 0 && <span className="rounded bg-rose-50 px-1.5 py-0.5 text-rose-700">{totals.failed} ✗</span>}
       {/* Amber, not red: a case the environment refused is not a finding about the API. */}
-      {totals.skipped > 0 && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">{totals.skipped} ⃠</span>}
+      {totals.skipped > 0 && (
+        <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">{totals.skipped} ⃠</span>
+      )}
     </span>
   );
 }
@@ -171,27 +173,45 @@ export function RunDetailPage() {
               <span className="text-xs text-slate-400">{formatDate(run.data.startedAt)}</span>
               {running && (
                 <span className="text-[11px] text-slate-500">
-                  {streaming === "live" ? "en vivo" : streaming === "polling" ? "consultando cada 2 s (el stream no está disponible)" : "conectando…"}
+                  {streaming === "live"
+                    ? "en vivo"
+                    : streaming === "polling"
+                      ? "consultando cada 2 s (el stream no está disponible)"
+                      : "conectando…"}
                 </span>
               )}
             </div>
-            {run.data.error && <p className="mt-2 rounded bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{run.data.error}</p>}
+            {run.data.error && (
+              <p className="mt-2 rounded bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{run.data.error}</p>
+            )}
             <div className="mt-4 flex items-center gap-3">
               <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/10">
-                <div className="h-full rounded-full bg-emerald-400 transition-all duration-300" style={{ width: `${progress}%` }} />
+                <div
+                  className="h-full rounded-full bg-emerald-400 transition-all duration-300"
+                  style={{ width: `${progress}%` }}
+                />
               </div>
               <span className="w-24 text-right font-mono text-xs text-slate-300">
                 {totals.completed}/{totals.cases} · {progress}%
               </span>
             </div>
             <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
-              <span className="rounded-full bg-emerald-400/10 px-2.5 py-1 text-emerald-300">{totals.passed} correctos</span>
+              <span className="rounded-full bg-emerald-400/10 px-2.5 py-1 text-emerald-300">
+                {totals.passed} correctos
+              </span>
               <span className="rounded-full bg-rose-400/10 px-2.5 py-1 text-rose-300">{totals.failed} fallidos</span>
-              <span className="rounded-full bg-amber-400/10 px-2.5 py-1 text-amber-300">{totals.skipped} no ejecutados</span>
+              <span className="rounded-full bg-amber-400/10 px-2.5 py-1 text-amber-300">
+                {totals.skipped} no ejecutados
+              </span>
             </div>
           </div>
           {running && canCancel && (
-            <Button variant="ghost" className="border-white/20 text-white hover:bg-white/10" disabled={cancel.isPending} onClick={() => cancel.mutate()}>
+            <Button
+              variant="ghost"
+              className="border-white/20 text-white hover:bg-white/10"
+              disabled={cancel.isPending}
+              onClick={() => cancel.mutate()}
+            >
               Cancelar
             </Button>
           )}
@@ -204,9 +224,14 @@ export function RunDetailPage() {
             <button
               key={runCase.id}
               onClick={() => setOpenCase(runCase.id)}
-              className={cn("flex w-full items-center gap-2 border-b border-slate-100 px-3 py-2 text-left last:border-b-0", openCase === runCase.id && "bg-slate-50")}
+              className={cn(
+                "flex w-full items-center gap-2 border-b border-slate-100 px-3 py-2 text-left last:border-b-0",
+                openCase === runCase.id && "bg-slate-50",
+              )}
             >
-              <Badge className={cn("w-14 shrink-0 justify-center", methodStyle(runCase.method))}>{runCase.method}</Badge>
+              <Badge className={cn("w-14 shrink-0 justify-center", methodStyle(runCase.method))}>
+                {runCase.method}
+              </Badge>
               <span className="min-w-0 flex-1 truncate">
                 <span className="block truncate font-mono text-[11px] text-slate-700">{runCase.path}</span>
                 <span className="block truncate text-[10px] text-slate-400">{runCase.scenarioId}</span>
@@ -218,7 +243,11 @@ export function RunDetailPage() {
         </Card>
 
         <Card className="p-4">
-          {!openCase && <p className="text-xs text-slate-500">Elige un caso para ver lo que se envió, lo que llegó y qué se afirmó sobre ello.</p>}
+          {!openCase && (
+            <p className="text-xs text-slate-500">
+              Elige un caso para ver lo que se envió, lo que llegó y qué se afirmó sobre ello.
+            </p>
+          )}
           {detail.isLoading && openCase && <p className="text-xs text-slate-500">Cargando…</p>}
           {detail.data && <CaseDetail runCase={detail.data} />}
         </Card>
@@ -247,7 +276,11 @@ function CaseDetail({ runCase }: { runCase: RunCaseView }) {
             <span className="text-xs font-medium text-slate-800">{step.label}</span>
             <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">{step.purpose}</span>
             <span className="ml-auto font-mono text-[10px] text-slate-500">
-              {step.actual ? `${step.actual.status} · ${formatDuration(step.durationMs)}` : step.prunedAt ? formatDuration(step.durationMs) : "sin respuesta"}
+              {step.actual
+                ? `${step.actual.status} · ${formatDuration(step.durationMs)}`
+                : step.prunedAt
+                  ? formatDuration(step.durationMs)
+                  : "sin respuesta"}
             </span>
           </div>
 
@@ -261,14 +294,16 @@ function CaseDetail({ runCase }: { runCase: RunCaseView }) {
               ))}
             </div>
             {step.latency && step.latency.samples.length > 1 && (
-              <p className="mt-2 font-mono text-[10px] text-slate-400">muestras: {step.latency.samples.join(", ")} ms</p>
+              <p className="mt-2 font-mono text-[10px] text-slate-400">
+                muestras: {step.latency.samples.join(", ")} ms
+              </p>
             )}
             {step.prunedAt ? (
               // Sin esto, una corrida vieja se lee como una pared de timeouts: `actual` en null
               // significa «no contestó», y aquí significa «se retiró el cuerpo». Son dos cosas.
               <p className="mt-2 text-[11px] text-slate-400">
-                Los cuerpos de esta petición se retiraron el {formatDate(step.prunedAt)} por la política de retención. El veredicto y sus aserciones se
-                conservan.
+                Los cuerpos de esta petición se retiraron el {formatDate(step.prunedAt)} por la política de retención.
+                El veredicto y sus aserciones se conservan.
               </p>
             ) : (
               <details className="mt-2">
@@ -276,7 +311,10 @@ function CaseDetail({ runCase }: { runCase: RunCaseView }) {
                 <div className="mt-2 grid gap-2 md:grid-cols-2">
                   <div>
                     <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-400">Enviado</p>
-                    <Json value={step.request ? { headers: step.request.headers, body: step.request.body } : undefined} empty="Sin petición registrada" />
+                    <Json
+                      value={step.request ? { headers: step.request.headers, body: step.request.body } : undefined}
+                      empty="Sin petición registrada"
+                    />
                   </div>
                   <div>
                     <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-400">Recibido</p>

@@ -172,9 +172,13 @@ if (failed.length && !has("json")) {
 }
 
 const { cases, passed, failed: failedCount, skipped: skippedCount } = run.totals;
-console.log(`\n${cases} casos · ${passed} en verde · ${failedCount} en rojo · ${skippedCount} saltados · ${run.status}`);
+console.log(
+  `\n${cases} casos · ${passed} en verde · ${failedCount} en rojo · ${skippedCount} saltados · ${run.status}`,
+);
 if (skippedCount && !FAIL_ON_SKIP) {
-  console.log(`  Los saltados no rompen la build: son casos que este entorno no ejecuta. Usa --fail-on-skip si esperabas que corrieran.`);
+  console.log(
+    `  Los saltados no rompen la build: son casos que este entorno no ejecuta. Usa --fail-on-skip si esperabas que corrieran.`,
+  );
 }
 
 process.exit(failedCount > 0 || (FAIL_ON_SKIP && skipped.length) ? 1 : 0);

@@ -42,7 +42,9 @@ function save(path: string, payload: Side): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(payload, null, 2));
   const failed = payload.verdicts.filter((verdict) => !verdict.ok).length;
-  console.log(`\n${payload.side}: ${payload.verdicts.length} casos · ${payload.verdicts.length - failed} en verde · ${failed} en rojo → ${path}`);
+  console.log(
+    `\n${payload.side}: ${payload.verdicts.length} casos · ${payload.verdicts.length - failed} en verde · ${failed} en rojo → ${path}`,
+  );
 }
 
 async function runLegacy(authEnabled: boolean, out: string): Promise<void> {
@@ -78,7 +80,8 @@ async function runProduct(authEnabled: boolean, out: string): Promise<void> {
 function diff(legacyPath: string, productPath: string): void {
   const legacy = JSON.parse(readFileSync(legacyPath, "utf8")) as Side;
   const product = JSON.parse(readFileSync(productPath, "utf8")) as Side;
-  if (legacy.authEnabled !== product.authEnabled) throw new Error("Los dos lados corrieron con distinta configuración de autenticación");
+  if (legacy.authEnabled !== product.authEnabled)
+    throw new Error("Los dos lados corrieron con distinta configuración de autenticación");
 
   const byKey = (verdicts: Verdict[]) => new Map(verdicts.map((verdict) => [verdict.key, verdict]));
   const legacyByKey = byKey(legacy.verdicts);
@@ -97,7 +100,10 @@ function diff(legacyPath: string, productPath: string): void {
   console.log(`  verdes legacy   ${legacy.verdicts.filter((verdict) => verdict.ok).length}`);
   console.log(`  verdes producto ${product.verdicts.filter((verdict) => verdict.ok).length}`);
 
-  for (const [label, keys] of [["Solo en legacy", onlyLegacy], ["Solo en el producto", onlyProduct]] as const) {
+  for (const [label, keys] of [
+    ["Solo en legacy", onlyLegacy],
+    ["Solo en el producto", onlyProduct],
+  ] as const) {
     if (keys.length) {
       console.log(`\n${label} (${keys.length}):`);
       for (const key of keys) console.log(`  ${key}`);
@@ -108,13 +114,21 @@ function diff(legacyPath: string, productPath: string): void {
     console.log(`\nVeredictos que no coinciden (${disagreements.length}):`);
     for (const { key, legacy: left, product: right } of disagreements) {
       console.log(`  ${key}`);
-      console.log(`    legacy   ${left.ok ? "verde" : "rojo"}  pasos=${left.steps}  falló: ${left.failedAssertions.join(", ") || "—"}`);
-      console.log(`    producto ${right.ok ? "verde" : "rojo"}  pasos=${right.steps}  falló: ${right.failedAssertions.join(", ") || "—"}`);
+      console.log(
+        `    legacy   ${left.ok ? "verde" : "rojo"}  pasos=${left.steps}  falló: ${left.failedAssertions.join(", ") || "—"}`,
+      );
+      console.log(
+        `    producto ${right.ok ? "verde" : "rojo"}  pasos=${right.steps}  falló: ${right.failedAssertions.join(", ") || "—"}`,
+      );
     }
   }
 
   const identical = !onlyLegacy.length && !onlyProduct.length && !disagreements.length;
-  console.log(identical ? "\nParidad: idéntica, caso por caso.\n" : `\nParidad: ROTA — ${onlyLegacy.length + onlyProduct.length} casos ausentes, ${disagreements.length} veredictos distintos.\n`);
+  console.log(
+    identical
+      ? "\nParidad: idéntica, caso por caso.\n"
+      : `\nParidad: ROTA — ${onlyLegacy.length + onlyProduct.length} casos ausentes, ${disagreements.length} veredictos distintos.\n`,
+  );
   process.exitCode = identical ? 0 : 1;
 }
 
@@ -126,7 +140,9 @@ const out = argument("out");
 // red rows and a confident-looking report about nothing: with `AUTH_ENABLED=false` the API grants
 // `catalog:admin` to everyone, so every 401 and 403 case fails for a reason outside the endpoint.
 if (process.env.E2E_AUTH_ENABLED && (process.env.E2E_AUTH_ENABLED === "true") !== authEnabled) {
-  console.error(`El backend arrancó con auth ${process.env.E2E_AUTH_ENABLED === "true" ? "activada" : "desactivada"} y el corte se pidió al revés.`);
+  console.error(
+    `El backend arrancó con auth ${process.env.E2E_AUTH_ENABLED === "true" ? "activada" : "desactivada"} y el corte se pidió al revés.`,
+  );
   process.exit(2);
 }
 

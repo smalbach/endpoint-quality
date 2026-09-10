@@ -21,6 +21,10 @@ export function resolvePath(operation: Operation, values: Record<string, string>
 
 /** The path a given case requests: the project's placeholder defaults, overridden by whatever
  * the case itself declares. */
-export function requestPathFor(operation: Operation, config: ProjectConfig, parameters: Record<string, string> = {}): string {
+export function requestPathFor(
+  operation: Operation,
+  config: ProjectConfig,
+  parameters: Record<string, string> = {},
+): string {
   return resolvePath(operation, { ...config.pathDefaults, ...parameters }, config.fallbackPathValue);
 }

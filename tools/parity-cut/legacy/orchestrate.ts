@@ -26,12 +26,22 @@ import { POST } from "./route.ts";
 import type { Endpoint } from "../../../packages/runner-core/test/legacy/endpoints.ts";
 import type { TestScenario } from "../../../packages/runner-core/test/legacy/scenarios.ts";
 
-const DEFAULT_PARAMETERS: Record<string, string> = { product_id: "1", store_id: "1", category_id: "1", price_id: "1", projection_id: "1", product_category_id: "1", store_assortment_id: "1" };
+const DEFAULT_PARAMETERS: Record<string, string> = {
+  product_id: "1",
+  store_id: "1",
+  category_id: "1",
+  price_id: "1",
+  projection_id: "1",
+  product_category_id: "1",
+  store_assortment_id: "1",
+};
 
 function resolvePath(endpoint: Endpoint, values: Record<string, string>) {
   const path = endpoint.path.replace(/\{([^}]+)\}/g, (_, key: string) => encodeURIComponent(values[key] || "1"));
   const query = new URLSearchParams();
-  endpoint.parameters?.filter((name) => !endpoint.path.includes(`{${name}}`) && values[name]).forEach((name) => query.set(name, values[name]));
+  endpoint.parameters
+    ?.filter((name) => !endpoint.path.includes(`{${name}}`) && values[name])
+    .forEach((name) => query.set(name, values[name]));
   return query.size ? `${path}?${query}` : path;
 }
 
@@ -94,15 +104,36 @@ export class LegacyRunner {
     return credentials;
   }
 
-  private async execute(item: Endpoint, scenario: TestScenario, parameterOverrides: Record<string, string> = {}, options: { body?: Record<string, unknown> } = {}): Promise<RunResult> {
+  private async execute(
+    item: Endpoint,
+    scenario: TestScenario,
+    parameterOverrides: Record<string, string> = {},
+    options: { body?: Record<string, unknown> } = {},
+  ): Promise<RunResult> {
     let parsedBody: unknown = undefined;
     const text = options.body ? JSON.stringify(options.body) : scenario.body ? JSON.stringify(scenario.body) : "";
-    if (text.trim()) { try { parsedBody = JSON.parse(text); } catch { throw new Error("El body no es JSON válido"); } }
+    if (text.trim()) {
+      try {
+        parsedBody = JSON.parse(text);
+      } catch {
+        throw new Error("El body no es JSON válido");
+      }
+    }
     const path = resolvePath(item, { ...DEFAULT_PARAMETERS, ...(scenario.parameters ?? {}), ...parameterOverrides });
     const request = new Request("http://harness.invalid/api/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ baseUrl: this.baseUrl, method: item.method, path, operationPath: item.path, expectedStatus: scenario.expectedStatus, body: parsedBody, headers: this.credentialsFor(scenario), responseShape: scenario.expectedStatus >= 400 ? "ProblemDetails" : item.responseShape, samples: this.samples }),
+      body: JSON.stringify({
+        baseUrl: this.baseUrl,
+        method: item.method,
+        path,
+        operationPath: item.path,
+        expectedStatus: scenario.expectedStatus,
+        body: parsedBody,
+        headers: this.credentialsFor(scenario),
+        responseShape: scenario.expectedStatus >= 400 ? "ProblemDetails" : item.responseShape,
+        samples: this.samples,
+      }),
     });
     const response = await POST(request);
     // was: setResults((current) => ({ ...current, [item.id]: result }))
@@ -111,7 +142,12 @@ export class LegacyRunner {
 
   private detailEndpointFor(collection: Endpoint) {
     const prefixPlaceholders = (collection.path.match(/\{/g) ?? []).length;
-    return this.endpoints.find((candidate) => candidate.method === "GET" && candidate.path.startsWith(`${collection.path}/{`) && (candidate.path.match(/\{/g) ?? []).length === prefixPlaceholders + 1);
+    return this.endpoints.find(
+      (candidate) =>
+        candidate.method === "GET" &&
+        candidate.path.startsWith(`${collection.path}/{`) &&
+        (candidate.path.match(/\{/g) ?? []).length === prefixPlaceholders + 1,
+    );
   }
 
   private idFrom(result: RunResult, detail: Endpoint) {
@@ -122,9 +158,17 @@ export class LegacyRunner {
 
   private verifySentFields(result: RunResult, sent: Record<string, unknown>) {
     const received = (result.actual?.body as { data?: Record<string, unknown> } | undefined)?.data;
-    const mismatches = Object.entries(sent).filter(([key, value]) => JSON.stringify(received?.[key]) !== JSON.stringify(value)).map(([key]) => key);
+    const mismatches = Object.entries(sent)
+      .filter(([key, value]) => JSON.stringify(received?.[key]) !== JSON.stringify(value))
+      .map(([key]) => key);
     const pass = Boolean(received) && mismatches.length === 0;
-    result.assertions.push({ label: "Persistencia de campos", pass, detail: pass ? `${Object.keys(sent).length} campos coinciden con lo enviado` : `No coinciden: ${mismatches.join(", ")}` });
+    result.assertions.push({
+      label: "Persistencia de campos",
+      pass,
+      detail: pass
+        ? `${Object.keys(sent).length} campos coinciden con lo enviado`
+        : `No coinciden: ${mismatches.join(", ")}`,
+    });
     result.ok = result.ok && pass;
     return result;
   }
@@ -133,11 +177,22 @@ export class LegacyRunner {
     const remove = this.endpoints.find((candidate) => candidate.method === "DELETE" && candidate.path === detail.path);
     if (!remove) return undefined;
     const parameters = { [captured.field]: captured.value };
-    const scenario = { id: "cleanup-delete", name: "Limpiar el recurso creado", description: "Deja la base como estaba para que el caso pueda repetirse.", expectedStatus: 204, parameters, flow: "request" } as TestScenario;
+    const scenario = {
+      id: "cleanup-delete",
+      name: "Limpiar el recurso creado",
+      description: "Deja la base como estaba para que el caso pueda repetirse.",
+      expectedStatus: 204,
+      parameters,
+      flow: "request",
+    } as TestScenario;
     return this.execute(remove, scenario, parameters);
   }
 
-  async runScenario(item: Endpoint, scenario: TestScenario, initialParameters: Record<string, string> = {}): Promise<ScenarioResult> {
+  async runScenario(
+    item: Endpoint,
+    scenario: TestScenario,
+    initialParameters: Record<string, string> = {},
+  ): Promise<ScenarioResult> {
     const steps: RunResult[] = [];
     if (scenario.flow === "request" || scenario.flow === "bulk-read") {
       steps.push(await this.execute(item, scenario, initialParameters));
@@ -148,11 +203,27 @@ export class LegacyRunner {
       if (detail) {
         const captured = this.idFrom(created, detail);
         const capturedOk = Boolean(captured?.value);
-        created.assertions.push({ label: "ID retornado", pass: capturedOk, detail: capturedOk ? `${captured?.field} = ${captured?.value}` : "La respuesta no contiene el identificador esperado" });
+        created.assertions.push({
+          label: "ID retornado",
+          pass: capturedOk,
+          detail: capturedOk
+            ? `${captured?.field} = ${captured?.value}`
+            : "La respuesta no contiene el identificador esperado",
+        });
         created.ok = created.ok && capturedOk;
         if (created.ok && captured?.value) {
-          const readScenario = { id: "verify-created", name: "Consultar ID creado", description: "Verificación posterior", expectedStatus: 200, parameters: { [captured.field]: captured.value }, flow: "request" } as TestScenario;
-          const verified = this.verifySentFields(await this.execute(detail, readScenario, readScenario.parameters), scenario.body ?? {});
+          const readScenario = {
+            id: "verify-created",
+            name: "Consultar ID creado",
+            description: "Verificación posterior",
+            expectedStatus: 200,
+            parameters: { [captured.field]: captured.value },
+            flow: "request",
+          } as TestScenario;
+          const verified = this.verifySentFields(
+            await this.execute(detail, readScenario, readScenario.parameters),
+            scenario.body ?? {},
+          );
           steps.push(verified);
           // was: setResults(... [item.id]: verified) — the panel showed the verification
           const cleanup = await this.deleteCreated(detail, captured);
@@ -162,30 +233,63 @@ export class LegacyRunner {
     } else {
       const idField = [...item.path.matchAll(/\{([^}]+)\}/g)].at(-1)?.[1];
       const collectionPath = item.path.replace(/\/\{[^}]+\}$/, "");
-      const createEndpoint = this.endpoints.find((candidate) => candidate.method === "POST" && candidate.path === collectionPath);
-      const readEndpoint = this.endpoints.find((candidate) => candidate.method === "GET" && candidate.path === item.path);
+      const createEndpoint = this.endpoints.find(
+        (candidate) => candidate.method === "POST" && candidate.path === collectionPath,
+      );
+      const readEndpoint = this.endpoints.find(
+        (candidate) => candidate.method === "GET" && candidate.path === item.path,
+      );
       if (!idField || !createEndpoint || !readEndpoint) {
         steps.push(await this.execute(item, scenario, {}));
       } else {
-        const createScenario = { id: "setup-create", name: "Preparar entidad", description: "Prerequisito aislado", expectedStatus: createEndpoint.statuses.includes(201) ? 201 : 200, body: createEndpoint.body, flow: "request" } as TestScenario;
+        const createScenario = {
+          id: "setup-create",
+          name: "Preparar entidad",
+          description: "Prerequisito aislado",
+          expectedStatus: createEndpoint.statuses.includes(201) ? 201 : 200,
+          body: createEndpoint.body,
+          flow: "request",
+        } as TestScenario;
         const created = await this.execute(createEndpoint, createScenario);
         steps.push(created);
         const captured = this.idFrom(created, readEndpoint);
         const capturedOk = Boolean(captured?.value);
-        created.assertions.push({ label: "ID de preparación", pass: capturedOk, detail: capturedOk ? `${captured?.field} = ${captured?.value}` : "No se pudo capturar el identificador" });
+        created.assertions.push({
+          label: "ID de preparación",
+          pass: capturedOk,
+          detail: capturedOk ? `${captured?.field} = ${captured?.value}` : "No se pudo capturar el identificador",
+        });
         created.ok = created.ok && capturedOk;
         if (created.ok && captured?.value && scenario.flow === "deleted-read") {
           const parameters = { [idField]: captured.value };
-          const removal = await this.execute(item, { ...scenario, id: "setup-delete", name: "Eliminar el recurso", expectedStatus: 204 }, parameters);
+          const removal = await this.execute(
+            item,
+            { ...scenario, id: "setup-delete", name: "Eliminar el recurso", expectedStatus: 204 },
+            parameters,
+          );
           created.step = "Preparación: crea la entidad que se va a eliminar";
           removal.step = "Preparación: la elimina. El 204 lo comprueba el caso anterior";
           steps.push(removal);
           if (removal.ok) {
-            const readScenario = { id: "read-deleted", name: "Consultar el recurso eliminado", description: "El GET posterior al DELETE", expectedStatus: 404, parameters, flow: "request" } as TestScenario;
+            const readScenario = {
+              id: "read-deleted",
+              name: "Consultar el recurso eliminado",
+              description: "El GET posterior al DELETE",
+              expectedStatus: 404,
+              parameters,
+              flow: "request",
+            } as TestScenario;
             const read = await this.execute(readEndpoint, readScenario, parameters);
             read.step = "El caso: consultar lo eliminado debe ser 404 en Problem Details";
             steps.push(read);
-            const repeatScenario = { id: "delete-again", name: "Eliminar de nuevo", description: "Un segundo DELETE sobre lo que ya no existe", expectedStatus: 404, parameters, flow: "request" } as TestScenario;
+            const repeatScenario = {
+              id: "delete-again",
+              name: "Eliminar de nuevo",
+              description: "Un segundo DELETE sobre lo que ya no existe",
+              expectedStatus: 404,
+              parameters,
+              flow: "request",
+            } as TestScenario;
             const repeated = await this.execute(item, repeatScenario, parameters);
             repeated.step = "Un segundo DELETE sobre lo que ya no existe: 404, no 204";
             steps.push(repeated);
@@ -197,7 +301,14 @@ export class LegacyRunner {
           const mutation = await this.execute(item, scenario, parameters);
           steps.push(mutation);
           if (mutation.ok) {
-            const verifyScenario = { id: "verify-mutation", name: "Verificar persistencia", description: "Consulta posterior", expectedStatus: scenario.flow === "delete-read" ? 404 : 200, parameters, flow: "request" } as TestScenario;
+            const verifyScenario = {
+              id: "verify-mutation",
+              name: "Verificar persistencia",
+              description: "Consulta posterior",
+              expectedStatus: scenario.flow === "delete-read" ? 404 : 200,
+              parameters,
+              flow: "request",
+            } as TestScenario;
             const verification = await this.execute(readEndpoint, verifyScenario, parameters);
             if (scenario.flow !== "delete-read") this.verifySentFields(verification, scenario.body ?? {});
             steps.push(verification);
@@ -210,6 +321,10 @@ export class LegacyRunner {
         }
       }
     }
-    return { ok: steps.length > 0 && steps.every((step) => step.ok), durationMs: steps.reduce((total, step) => total + step.durationMs, 0), steps };
+    return {
+      ok: steps.length > 0 && steps.every((step) => step.ok),
+      durationMs: steps.reduce((total, step) => total + step.durationMs, 0),
+      steps,
+    };
   }
 }

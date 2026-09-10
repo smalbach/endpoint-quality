@@ -36,15 +36,21 @@ export type CaseSelection = Record<string, string[]>;
  */
 const methodRank: Record<string, number> = { GET: 0, HEAD: 0, OPTIONS: 0, POST: 1, PUT: 2, PATCH: 3, DELETE: 4 };
 
-export function orderOperations(list: ResolvedOperation[], mode: OrderMode, customOrder: string[]): ResolvedOperation[] {
+export function orderOperations(
+  list: ResolvedOperation[],
+  mode: OrderMode,
+  customOrder: string[],
+): ResolvedOperation[] {
   const contractIndex = new Map(list.map((operation, index) => [operation.id, index]));
   const contractRank = (operation: ResolvedOperation) => contractIndex.get(operation.id) ?? list.length;
   if (mode === "contract") return [...list];
-  if (mode === "safe") return [...list].sort((a, b) => methodRank[a.method] - methodRank[b.method] || contractRank(a) - contractRank(b));
+  if (mode === "safe")
+    return [...list].sort((a, b) => methodRank[a.method] - methodRank[b.method] || contractRank(a) - contractRank(b));
   // An id the custom order never mentions is not dropped: it keeps the contract order, placed
   // after everything that was ordered by hand.
   const position = new Map(customOrder.map((id, index) => [id, index]));
-  const customRank = (operation: ResolvedOperation) => position.get(operation.id) ?? customOrder.length + contractRank(operation);
+  const customRank = (operation: ResolvedOperation) =>
+    position.get(operation.id) ?? customOrder.length + contractRank(operation);
   return [...list].sort((a, b) => customRank(a) - customRank(b));
 }
 
@@ -59,7 +65,12 @@ export function moveOperation(order: string[], id: string, direction: -1 | 1): s
   return next;
 }
 
-export function selectedCases(operation: ResolvedOperation, config: ProjectConfig, selection: CaseSelection, authEnabled: boolean): TestScenario[] {
+export function selectedCases(
+  operation: ResolvedOperation,
+  config: ProjectConfig,
+  selection: CaseSelection,
+  authEnabled: boolean,
+): TestScenario[] {
   const all = runnableScenarios(operation, config, authEnabled);
   const picked = selection[operation.id];
   return picked ? all.filter((scenario) => picked.includes(scenario.id)) : all;
@@ -78,5 +89,10 @@ export function buildQueue(list: ResolvedOperation[], config: ProjectConfig, opt
   const included = options.operationIds ? new Set(options.operationIds) : undefined;
   return orderOperations(list, options.mode, options.customOrder ?? [])
     .filter((operation) => !included || included.has(operation.id))
-    .flatMap((operation) => selectedCases(operation, config, options.caseSelection ?? {}, options.authEnabled).map((scenario) => ({ operation, scenario })));
+    .flatMap((operation) =>
+      selectedCases(operation, config, options.caseSelection ?? {}, options.authEnabled).map((scenario) => ({
+        operation,
+        scenario,
+      })),
+    );
 }

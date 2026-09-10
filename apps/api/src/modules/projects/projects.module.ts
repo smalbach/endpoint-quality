@@ -23,7 +23,13 @@ export const PROJECT_ADAPTERS = [{ provide: PROJECT_REPOSITORY, useClass: TypeOr
  * would put `/projects/:id/spec-versions` in a module that knows nothing about projects.
  */
 @Module({
-  imports: [CqrsModule, TypeOrmModule.forFeature([ProjectEntity]), forwardRef(() => SpecsModule), AuthModule, IamModule],
+  imports: [
+    CqrsModule,
+    TypeOrmModule.forFeature([ProjectEntity]),
+    forwardRef(() => SpecsModule),
+    AuthModule,
+    IamModule,
+  ],
   controllers: [ProjectsController],
   providers: [...PROJECT_ADAPTERS, ...PROJECT_COMMAND_HANDLERS, ...PROJECT_QUERY_HANDLERS],
   exports: [PROJECT_REPOSITORY],

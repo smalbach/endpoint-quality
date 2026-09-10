@@ -160,10 +160,16 @@ export function envelopeKey(shape: string): string | null {
   return match ? match[1] : null;
 }
 
-function schemaDetail(input: EvaluateInput, notImplemented: boolean, schemaValid: boolean | null, errors: string[] | null): string {
+function schemaDetail(
+  input: EvaluateInput,
+  notImplemented: boolean,
+  schemaValid: boolean | null,
+  errors: string[] | null,
+): string {
   if (notImplemented) return "No evaluado: la API respondió 405";
   if (input.schemaDiagnostic) return `${input.schemaDiagnostic}. Se verificó el envelope ${input.expectedShape}`;
-  if (schemaValid === null) return `El contrato no declara ${input.expectedStatus} para esta operación; se verificó el envelope ${input.expectedShape}`;
+  if (schemaValid === null)
+    return `El contrato no declara ${input.expectedStatus} para esta operación; se verificó el envelope ${input.expectedShape}`;
   return schemaValid ? "JSON válido contra el schema" : (errors ?? []).join(" · ");
 }
 
@@ -177,7 +183,10 @@ function schemaDetail(input: EvaluateInput, notImplemented: boolean, schemaValid
  * Compared by serialised value so `4900` and `"4900"` are a mismatch: a field that changes type
  * on the way through is a contract violation, not a formatting detail.
  */
-export function verifyPersistedFields(received: Record<string, unknown> | undefined, sent: Record<string, unknown>): Assertion {
+export function verifyPersistedFields(
+  received: Record<string, unknown> | undefined,
+  sent: Record<string, unknown>,
+): Assertion {
   const mismatches = Object.entries(sent)
     .filter(([key, value]) => JSON.stringify(received?.[key]) !== JSON.stringify(value))
     .map(([key]) => key);

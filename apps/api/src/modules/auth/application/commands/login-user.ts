@@ -10,10 +10,18 @@ import { ENV } from "@/shared/config/env";
 import type { Env } from "@/shared/config/env";
 import { ACCESS_TOKEN_SERVICE, type AccessTokenServicePort } from "../../domain/access-token";
 import { isActive, normalizeEmail } from "../../domain/model";
-import { REFRESH_TOKEN_REPOSITORY, USER_REPOSITORY, type RefreshTokenRepositoryPort, type UserRepositoryPort } from "../../domain/ports";
+import {
+  REFRESH_TOKEN_REPOSITORY,
+  USER_REPOSITORY,
+  type RefreshTokenRepositoryPort,
+  type UserRepositoryPort,
+} from "../../domain/ports";
 
 export class LoginUserCommand implements ICommand {
-  constructor(readonly email: string, readonly password: string) {}
+  constructor(
+    readonly email: string,
+    readonly password: string,
+  ) {}
 }
 
 export type SessionTokens = {

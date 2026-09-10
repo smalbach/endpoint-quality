@@ -20,7 +20,10 @@ export type PruneReport = { bodiesPruned: number; runsDeleted: number };
  * without waiting a month. Omitted, the environment decides.
  */
 export class PruneRunsCommand implements ICommand {
-  constructor(readonly bodiesDays?: number, readonly runsDays?: number) {}
+  constructor(
+    readonly bodiesDays?: number,
+    readonly runsDays?: number,
+  ) {}
 }
 
 @CommandHandler(PruneRunsCommand)
@@ -44,7 +47,8 @@ export class PruneRunsHandler implements ICommandHandler<PruneRunsCommand, Prune
 
     // Logged only when it did something. A sweep that finds nothing is the normal case and does
     // not need a line every six hours saying so.
-    if (bodiesPruned || runsDeleted) this.logger.log(`Retención: ${bodiesPruned} pasos sin cuerpo, ${runsDeleted} corridas borradas`);
+    if (bodiesPruned || runsDeleted)
+      this.logger.log(`Retención: ${bodiesPruned} pasos sin cuerpo, ${runsDeleted} corridas borradas`);
     return { bodiesPruned, runsDeleted };
   }
 

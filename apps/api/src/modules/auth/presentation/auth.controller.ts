@@ -27,7 +27,12 @@ import { LoginUserCommand, type SessionTokens } from "../application/commands/lo
 import { RefreshSessionCommand } from "../application/commands/refresh-session";
 import { LogoutUserCommand } from "../application/commands/logout-user";
 import { ChangePasswordCommand } from "../application/commands/change-password";
-import { GetAuthContextQuery, GetCurrentUserQuery, type AuthContextView, type CurrentUserView } from "../application/queries/get-current-user";
+import {
+  GetAuthContextQuery,
+  GetCurrentUserQuery,
+  type AuthContextView,
+  type CurrentUserView,
+} from "../application/queries/get-current-user";
 import { CurrentUser, Public, type Principal } from "../infrastructure/guards/auth.guard";
 import { ChangePasswordDto, LoginDto, LogoutDto, RefreshDto, RegisterDto } from "./dto/auth.dto";
 
@@ -47,7 +52,9 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post("register")
   async register(@Body() body: RegisterDto): Promise<RegisterUserResult> {
-    return this.commandBus.execute(new RegisterUserCommand(body.email, body.password, body.name, body.organizationName));
+    return this.commandBus.execute(
+      new RegisterUserCommand(body.email, body.password, body.name, body.organizationName),
+    );
   }
 
   @Public()
@@ -55,7 +62,9 @@ export class AuthController {
   @HttpCode(200)
   @Post("login")
   async login(@Body() body: LoginDto, @Res({ passthrough: true }) response: Response) {
-    const session = await this.commandBus.execute<LoginUserCommand, SessionTokens>(new LoginUserCommand(body.email, body.password));
+    const session = await this.commandBus.execute<LoginUserCommand, SessionTokens>(
+      new LoginUserCommand(body.email, body.password),
+    );
     return this.respondWithSession(session, response);
   }
 
@@ -66,13 +75,20 @@ export class AuthController {
   async refresh(@Body() body: RefreshDto, @Req() request: Request, @Res({ passthrough: true }) response: Response) {
     const token = body.refreshToken ?? (request.cookies?.[REFRESH_COOKIE] as string | undefined);
     if (!token) throw new UnauthenticatedError("Falta el refresh token");
-    const session = await this.commandBus.execute<RefreshSessionCommand, SessionTokens>(new RefreshSessionCommand(token));
+    const session = await this.commandBus.execute<RefreshSessionCommand, SessionTokens>(
+      new RefreshSessionCommand(token),
+    );
     return this.respondWithSession(session, response);
   }
 
   @HttpCode(204)
   @Post("logout")
-  async logout(@Body() body: LogoutDto, @Req() request: Request, @Res({ passthrough: true }) response: Response, @CurrentUser() principal: Principal): Promise<void> {
+  async logout(
+    @Body() body: LogoutDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+    @CurrentUser() principal: Principal,
+  ): Promise<void> {
     if (principal.kind !== "user") throw new UnauthenticatedError("Un token de servicio no tiene sesión que cerrar");
     const token = body.refreshToken ?? (request.cookies?.[REFRESH_COOKIE] as string | undefined);
     await this.commandBus.execute(new LogoutUserCommand(token, body.everywhere ?? false, principal.userId));
@@ -83,7 +99,11 @@ export class AuthController {
 
   @HttpCode(204)
   @Post("change-password")
-  async changePassword(@Body() body: ChangePasswordDto, @Res({ passthrough: true }) response: Response, @CurrentUser() principal: Principal): Promise<void> {
+  async changePassword(
+    @Body() body: ChangePasswordDto,
+    @Res({ passthrough: true }) response: Response,
+    @CurrentUser() principal: Principal,
+  ): Promise<void> {
     if (principal.kind !== "user") throw new UnauthenticatedError("Un token de servicio no tiene contraseña");
     await this.commandBus.execute(new ChangePasswordCommand(principal.userId, body.currentPassword, body.newPassword));
     // Changing the password logs every session out, including this one. Leaving the cookie in

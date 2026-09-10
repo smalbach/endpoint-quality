@@ -6,7 +6,11 @@ import { atLeast, wouldOrphanOrganization } from "../../domain/model";
 import { MEMBERSHIP_REPOSITORY, type MembershipRepositoryPort } from "../../domain/ports";
 
 export class RemoveMemberCommand implements ICommand {
-  constructor(readonly organizationId: string, readonly targetUserId: string, readonly actorId: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly targetUserId: string,
+    readonly actorId: string,
+  ) {}
 }
 
 /** Removing yourself is allowed — that is "leave the organization" — as long as you are not the
@@ -25,7 +29,8 @@ export class RemoveMemberHandler implements ICommandHandler<RemoveMemberCommand,
     const leaving = command.actorId === command.targetUserId;
     if (!leaving) {
       if (!atLeast(actor.role, "admin")) throw new ForbiddenError("No puedes gestionar miembros de esta organización");
-      if (!atLeast(actor.role, target.role)) throw new ForbiddenError("No puedes expulsar a alguien con un rol superior al tuyo", "role-escalation");
+      if (!atLeast(actor.role, target.role))
+        throw new ForbiddenError("No puedes expulsar a alguien con un rol superior al tuyo", "role-escalation");
     }
 
     const all = await this.memberships.listForOrganization(command.organizationId);

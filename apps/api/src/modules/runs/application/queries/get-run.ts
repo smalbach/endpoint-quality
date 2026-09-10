@@ -10,13 +10,26 @@ import type { Run, RunCase, RunStep } from "../../domain/model";
 import { RUN_REPOSITORY, type RunRepositoryPort } from "../../domain/ports";
 
 export class ListRunsQuery implements IQuery {
-  constructor(readonly organizationId: string, readonly projectId: string, readonly limit = 25) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly limit = 25,
+  ) {}
 }
 export class GetRunQuery implements IQuery {
-  constructor(readonly organizationId: string, readonly projectId: string, readonly runId: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly runId: string,
+  ) {}
 }
 export class GetRunCaseQuery implements IQuery {
-  constructor(readonly organizationId: string, readonly projectId: string, readonly runId: string, readonly caseId: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly runId: string,
+    readonly caseId: string,
+  ) {}
 }
 
 /** The same declarations the browser reads, instantiated with this side's timestamps. */
@@ -89,7 +102,11 @@ export class GetRunCaseHandler implements IQueryHandler<GetRunCaseQuery, RunCase
  * few hundred kilobytes instead of tens of megabytes.
  */
 export class GetRunReportQuery implements IQuery {
-  constructor(readonly organizationId: string, readonly projectId: string, readonly runId: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly runId: string,
+  ) {}
 }
 
 export type ReportAssertion = RunReportStep["assertions"][number];

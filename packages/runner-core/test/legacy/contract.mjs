@@ -25,7 +25,8 @@ export function dereference(node, root, seen = new Set()) {
   if (typeof record.$ref === "string" && record.$ref.startsWith("#/")) {
     if (seen.has(record.$ref)) return {};
     let target = /** @type {unknown} */ (root);
-    for (const part of record.$ref.slice(2).split("/")) target = /** @type {Record<string, unknown>} */ (target)?.[part];
+    for (const part of record.$ref.slice(2).split("/"))
+      target = /** @type {Record<string, unknown>} */ (target)?.[part];
     return dereference(target, root, new Set(seen).add(record.$ref));
   }
   return Object.fromEntries(Object.entries(record).map(([key, value]) => [key, dereference(value, root, seen)]));
@@ -44,32 +45,58 @@ export function validateJson(value, schema, path = "$", errors = []) {
   if (!schema || typeof schema !== "object") return errors;
   const rule = /** @type {Record<string, unknown>} */ (schema);
   if (Array.isArray(rule.allOf)) rule.allOf.forEach((part) => validateJson(value, part, path, errors));
-  if (Array.isArray(rule.anyOf) && !rule.anyOf.some((part) => validateJson(value, part, path, []).length === 0)) errors.push(`${path}: no coincide con ninguna alternativa`);
-  if (Array.isArray(rule.oneOf) && rule.oneOf.filter((part) => validateJson(value, part, path, []).length === 0).length !== 1) errors.push(`${path}: debe coincidir con una alternativa`);
-  if (Array.isArray(rule.enum) && !rule.enum.some((item) => JSON.stringify(item) === JSON.stringify(value))) errors.push(`${path}: valor fuera del enum`);
+  if (Array.isArray(rule.anyOf) && !rule.anyOf.some((part) => validateJson(value, part, path, []).length === 0))
+    errors.push(`${path}: no coincide con ninguna alternativa`);
+  if (
+    Array.isArray(rule.oneOf) &&
+    rule.oneOf.filter((part) => validateJson(value, part, path, []).length === 0).length !== 1
+  )
+    errors.push(`${path}: debe coincidir con una alternativa`);
+  if (Array.isArray(rule.enum) && !rule.enum.some((item) => JSON.stringify(item) === JSON.stringify(value)))
+    errors.push(`${path}: valor fuera del enum`);
   const types = Array.isArray(rule.type) ? rule.type : typeof rule.type === "string" ? [rule.type] : [];
   if (types.length) {
-    const matches = types.some((type) => type === "null" ? value === null : type === "array" ? Array.isArray(value) : type === "object" ? Boolean(value) && typeof value === "object" && !Array.isArray(value) : type === "integer" ? Number.isInteger(value) : type === "number" ? typeof value === "number" : typeof value === type);
-    if (!matches) { errors.push(`${path}: tipo esperado ${types.join(" | ")}`); return errors; }
+    const matches = types.some((type) =>
+      type === "null"
+        ? value === null
+        : type === "array"
+          ? Array.isArray(value)
+          : type === "object"
+            ? Boolean(value) && typeof value === "object" && !Array.isArray(value)
+            : type === "integer"
+              ? Number.isInteger(value)
+              : type === "number"
+                ? typeof value === "number"
+                : typeof value === type,
+    );
+    if (!matches) {
+      errors.push(`${path}: tipo esperado ${types.join(" | ")}`);
+      return errors;
+    }
   }
   if (value && typeof value === "object" && !Array.isArray(value)) {
     const record = /** @type {Record<string, unknown>} */ (value);
     const properties = /** @type {Record<string, unknown>} */ (rule.properties ?? {});
-    for (const required of /** @type {string[]} */ (rule.required ?? [])) if (!(required in record)) errors.push(`${path}.${required}: campo requerido`);
+    for (const required of /** @type {string[]} */ (rule.required ?? []))
+      if (!(required in record)) errors.push(`${path}.${required}: campo requerido`);
     for (const [key, child] of Object.entries(record)) {
       if (properties[key]) validateJson(child, properties[key], `${path}.${key}`, errors);
       else if (rule.additionalProperties === false) errors.push(`${path}.${key}: campo adicional no permitido`);
     }
   }
-  if (Array.isArray(value) && rule.items) value.forEach((item, index) => validateJson(item, rule.items, `${path}[${index}]`, errors));
+  if (Array.isArray(value) && rule.items)
+    value.forEach((item, index) => validateJson(item, rule.items, `${path}[${index}]`, errors));
   if (typeof value === "number") {
     if (typeof rule.minimum === "number" && value < rule.minimum) errors.push(`${path}: menor que ${rule.minimum}`);
     if (typeof rule.maximum === "number" && value > rule.maximum) errors.push(`${path}: mayor que ${rule.maximum}`);
   }
   if (typeof value === "string") {
-    if (typeof rule.minLength === "number" && value.length < rule.minLength) errors.push(`${path}: longitud menor que ${rule.minLength}`);
-    if (typeof rule.maxLength === "number" && value.length > rule.maxLength) errors.push(`${path}: longitud mayor que ${rule.maxLength}`);
-    if (typeof rule.pattern === "string" && !new RegExp(rule.pattern).test(value)) errors.push(`${path}: no cumple el patrón`);
+    if (typeof rule.minLength === "number" && value.length < rule.minLength)
+      errors.push(`${path}: longitud menor que ${rule.minLength}`);
+    if (typeof rule.maxLength === "number" && value.length > rule.maxLength)
+      errors.push(`${path}: longitud mayor que ${rule.maxLength}`);
+    if (typeof rule.pattern === "string" && !new RegExp(rule.pattern).test(value))
+      errors.push(`${path}: no cumple el patrón`);
   }
   return errors;
 }
@@ -91,9 +118,15 @@ export function validateJson(value, schema, path = "$", errors = []) {
  */
 export function responseSchema(spec, operationPath, method, status, contentType = "application/json") {
   const paths = /** @type {Record<string, unknown>} */ (spec.paths ?? {});
-  const operation = /** @type {Record<string, unknown>} */ (/** @type {Record<string, unknown>} */ (paths[operationPath])?.[method.toLowerCase()]);
-  const declared = /** @type {Record<string, unknown>} */ (/** @type {Record<string, unknown>} */ (operation?.responses)?.[String(status)]);
+  const operation = /** @type {Record<string, unknown>} */ (
+    /** @type {Record<string, unknown>} */ (paths[operationPath])?.[method.toLowerCase()]
+  );
+  const declared = /** @type {Record<string, unknown>} */ (
+    /** @type {Record<string, unknown>} */ (operation?.responses)?.[String(status)]
+  );
   const content = /** @type {Record<string, unknown>} */ (declared?.content ?? {});
-  const media = /** @type {Record<string, unknown>} */ (content[contentType.split(";")[0]] ?? content["application/json"]);
+  const media = /** @type {Record<string, unknown>} */ (
+    content[contentType.split(";")[0]] ?? content["application/json"]
+  );
   return media?.schema ? dereference(media.schema, spec) : undefined;
 }

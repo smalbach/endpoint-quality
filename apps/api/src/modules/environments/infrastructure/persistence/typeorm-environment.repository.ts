@@ -10,7 +10,8 @@ import type { EnvironmentRepositoryPort } from "../../domain/ports";
 export class TypeOrmEnvironmentRepository implements EnvironmentRepositoryPort {
   constructor(
     @InjectRepository(EnvironmentEntity) private readonly environments: Repository<EnvironmentEntity>,
-    @InjectRepository(EnvironmentCredentialEntity) private readonly credentials: Repository<EnvironmentCredentialEntity>,
+    @InjectRepository(EnvironmentCredentialEntity)
+    private readonly credentials: Repository<EnvironmentCredentialEntity>,
   ) {}
 
   async findById(id: string): Promise<Environment | null> {
@@ -22,7 +23,9 @@ export class TypeOrmEnvironmentRepository implements EnvironmentRepositoryPort {
     return row ? { ...row } : null;
   }
   async listForProject(projectId: string): Promise<Environment[]> {
-    return (await this.environments.find({ where: { projectId }, order: { createdAt: "ASC" } })).map((row) => ({ ...row }));
+    return (await this.environments.find({ where: { projectId }, order: { createdAt: "ASC" } })).map((row) => ({
+      ...row,
+    }));
   }
   async save(environment: Environment): Promise<void> {
     await this.environments.save(environment);
@@ -48,4 +51,8 @@ export class TypeOrmEnvironmentRepository implements EnvironmentRepositoryPort {
   }
 }
 
-const toCredential = (row: EnvironmentCredentialEntity): Credential => ({ ...row, role: row.role as CredentialRole, kind: row.kind as CredentialKind });
+const toCredential = (row: EnvironmentCredentialEntity): Credential => ({
+  ...row,
+  role: row.role as CredentialRole,
+  kind: row.kind as CredentialKind,
+});

@@ -27,7 +27,13 @@ const minimal: Doc = {
   security: [{ bearerAuth: [] }],
   paths: {
     "/posts": {
-      get: { operationId: "listPosts", summary: "List", tags: ["Posts"], parameters: [{ name: "author", in: "query" }], responses: { "200": {}, "401": {} } },
+      get: {
+        operationId: "listPosts",
+        summary: "List",
+        tags: ["Posts"],
+        parameters: [{ name: "author", in: "query" }],
+        responses: { "200": {}, "401": {} },
+      },
       post: { operationId: "createPost", tags: ["Posts"], responses: { "201": {}, "422": {} } },
     },
     "/posts/{slug}": {
@@ -84,7 +90,10 @@ describe("operaciones", () => {
   const spec = importSpec(JSON.stringify(minimal));
 
   test("ordena por ruta y después por método, en orden de codepoint", () => {
-    assert.deepEqual(spec.operations.map((operation) => operation.id), ["listPosts", "createPost", "deletePost", "getPost"]);
+    assert.deepEqual(
+      spec.operations.map((operation) => operation.id),
+      ["listPosts", "createPost", "deletePost", "getPost"],
+    );
   });
 
   test("el parámetro compartido de la ruta llega a las dos operaciones", () => {
@@ -96,8 +105,14 @@ describe("operaciones", () => {
   test("los compartidos van antes que los propios de la operación", () => {
     const withBoth = importSpec(
       JSON.stringify({
-        openapi: "3.1.0", info: {},
-        paths: { "/x/{id}": { parameters: [{ name: "id", in: "path" }], get: { operationId: "g", parameters: [{ name: "q", in: "query" }], responses: { "200": {} } } } },
+        openapi: "3.1.0",
+        info: {},
+        paths: {
+          "/x/{id}": {
+            parameters: [{ name: "id", in: "path" }],
+            get: { operationId: "g", parameters: [{ name: "q", in: "query" }], responses: { "200": {} } },
+          },
+        },
       }),
     );
     assert.deepEqual(withBoth.operations[0].parameters, ["id", "q"]);
@@ -105,7 +120,11 @@ describe("operaciones", () => {
 
   test("los estados llegan como números ordenados y sin los no numéricos", () => {
     const spec = importSpec(
-      JSON.stringify({ openapi: "3.1.0", info: {}, paths: { "/x": { get: { operationId: "g", responses: { "404": {}, "200": {}, default: {}, "4XX": {} } } } } }),
+      JSON.stringify({
+        openapi: "3.1.0",
+        info: {},
+        paths: { "/x": { get: { operationId: "g", responses: { "404": {}, "200": {}, default: {}, "4XX": {} } } } },
+      }),
     );
     // `default` and `4XX` are real OpenAPI and cannot be asserted against: a case needs a
     // specific status to expect.
@@ -113,18 +132,27 @@ describe("operaciones", () => {
   });
 
   test("una operación sin estados declarados avisa: no generará ningún caso", () => {
-    const spec = importSpec(JSON.stringify({ openapi: "3.1.0", info: {}, paths: { "/x": { get: { operationId: "g", responses: {} } } } }));
+    const spec = importSpec(
+      JSON.stringify({ openapi: "3.1.0", info: {}, paths: { "/x": { get: { operationId: "g", responses: {} } } } }),
+    );
     assert.ok(spec.problems.some((problem) => /no generará casos/.test(problem.message)));
   });
 
   test("un tag ausente no rompe la importación", () => {
-    assert.equal(importSpec(JSON.stringify(minimal)).operations.find((operation) => operation.id === "getPost")!.tag, "");
+    assert.equal(
+      importSpec(JSON.stringify(minimal)).operations.find((operation) => operation.id === "getPost")!.tag,
+      "",
+    );
   });
 });
 
 describe("operationId ausente", () => {
   const spec = importSpec(
-    JSON.stringify({ openapi: "3.1.0", info: {}, paths: { "/v1/stores/{store_id}/assortment": { get: { responses: { "200": {} } } } } }),
+    JSON.stringify({
+      openapi: "3.1.0",
+      info: {},
+      paths: { "/v1/stores/{store_id}/assortment": { get: { responses: { "200": {} } } } },
+    }),
   );
 
   test("se deriva un id estable del método y la ruta", () => {
@@ -138,14 +166,23 @@ describe("operationId ausente", () => {
     // Configuration keyed by a derived id breaks the day the author adds a real one, so the
     // caller has to be able to see which ids are borrowed.
     assert.equal(spec.operations[0].derivedId, true);
-    assert.ok(spec.problems.some((problem) => problem.severity === "warning" && /Sin operationId/.test(problem.message)));
+    assert.ok(
+      spec.problems.some((problem) => problem.severity === "warning" && /Sin operationId/.test(problem.message)),
+    );
   });
 
   test("dos operaciones con el mismo operationId: la segunda se rechaza y se reporta", () => {
     // Two operations under one id would share configuration silently, and the second would
     // overwrite the first's verdict in every view keyed by it.
     const duplicated = importSpec(
-      JSON.stringify({ openapi: "3.1.0", info: {}, paths: { "/a": { get: { operationId: "same", responses: { "200": {} } } }, "/b": { get: { operationId: "same", responses: { "200": {} } } } } }),
+      JSON.stringify({
+        openapi: "3.1.0",
+        info: {},
+        paths: {
+          "/a": { get: { operationId: "same", responses: { "200": {} } } },
+          "/b": { get: { operationId: "same", responses: { "200": {} } } },
+        },
+      }),
     );
     assert.equal(duplicated.operations.length, 1);
     assert.ok(duplicated.problems.some((problem) => problem.severity === "error" && /duplicado/.test(problem.message)));
@@ -154,7 +191,10 @@ describe("operationId ausente", () => {
 
 describe("seguridad", () => {
   test("una operación sin security hereda la del documento", () => {
-    assert.deepEqual(importSpec(JSON.stringify(minimal)).operations.find((operation) => operation.id === "getPost")!.security, ["bearerAuth"]);
+    assert.deepEqual(
+      importSpec(JSON.stringify(minimal)).operations.find((operation) => operation.id === "getPost")!.security,
+      ["bearerAuth"],
+    );
   });
 
   test("security: [] significa pública y no hereda nada", () => {
@@ -162,7 +202,12 @@ describe("seguridad", () => {
     // says "this one endpoint needs no credential", and falling back to the default would
     // generate 401 cases against a health probe.
     const spec = importSpec(
-      JSON.stringify({ openapi: "3.1.0", info: {}, security: [{ bearerAuth: [] }], paths: { "/health": { get: { operationId: "h", security: [], responses: { "200": {} } } } } }),
+      JSON.stringify({
+        openapi: "3.1.0",
+        info: {},
+        security: [{ bearerAuth: [] }],
+        paths: { "/health": { get: { operationId: "h", security: [], responses: { "200": {} } } } },
+      }),
     );
     assert.deepEqual(spec.operations[0].security, []);
   });
@@ -172,9 +217,15 @@ describe("$ref", () => {
   test("un parámetro por referencia local se resuelve", () => {
     const spec = importSpec(
       JSON.stringify({
-        openapi: "3.1.0", info: {},
+        openapi: "3.1.0",
+        info: {},
         components: { parameters: { StoreId: { name: "store_id", in: "path" } } },
-        paths: { "/s/{store_id}": { parameters: [{ $ref: "#/components/parameters/StoreId" }], get: { operationId: "g", responses: { "200": {} } } } },
+        paths: {
+          "/s/{store_id}": {
+            parameters: [{ $ref: "#/components/parameters/StoreId" }],
+            get: { operationId: "g", responses: { "200": {} } },
+          },
+        },
       }),
     );
     assert.deepEqual(spec.operations[0].parameters, ["store_id"]);
@@ -184,7 +235,13 @@ describe("$ref", () => {
     // Resolving it would mean fetching whatever URL the document names, which turns importing a
     // spec into a request forger pointed at the importer's own network.
     const spec = importSpec(
-      JSON.stringify({ openapi: "3.1.0", info: {}, paths: { "/s": { get: { operationId: "g", parameters: [{ $ref: "./common.yaml#/Foo" }], responses: { "200": {} } } } } }),
+      JSON.stringify({
+        openapi: "3.1.0",
+        info: {},
+        paths: {
+          "/s": { get: { operationId: "g", parameters: [{ $ref: "./common.yaml#/Foo" }], responses: { "200": {} } } },
+        },
+      }),
     );
     assert.deepEqual(spec.operations[0].parameters, []);
     assert.ok(spec.problems.some((problem) => /sin empaquetar/.test(problem.message)));
@@ -193,9 +250,16 @@ describe("$ref", () => {
   test("una referencia circular no cuelga la importación", () => {
     const spec = importSpec(
       JSON.stringify({
-        openapi: "3.1.0", info: {},
-        components: { parameters: { A: { $ref: "#/components/parameters/B" }, B: { $ref: "#/components/parameters/A" } } },
-        paths: { "/s": { get: { operationId: "g", parameters: [{ $ref: "#/components/parameters/A" }], responses: { "200": {} } } } },
+        openapi: "3.1.0",
+        info: {},
+        components: {
+          parameters: { A: { $ref: "#/components/parameters/B" }, B: { $ref: "#/components/parameters/A" } },
+        },
+        paths: {
+          "/s": {
+            get: { operationId: "g", parameters: [{ $ref: "#/components/parameters/A" }], responses: { "200": {} } },
+          },
+        },
       }),
     );
     assert.deepEqual(spec.operations[0].parameters, []);
@@ -236,7 +300,10 @@ describe("drift entre dos versiones", () => {
     const drift = diffOperations(before, importSpec(JSON.stringify(next)).operations);
     const moved = drift.changes.filter((change) => change.kind === "moved");
     assert.equal(moved.length, 2);
-    assert.equal(drift.changes.some((change) => change.kind === "removed"), false);
+    assert.equal(
+      drift.changes.some((change) => change.kind === "removed"),
+      false,
+    );
   });
 
   test("un estado que deja de declararse invalida los casos que lo esperaban", () => {
@@ -252,7 +319,10 @@ describe("drift entre dos versiones", () => {
     const next = structuredClone(minimal) as Doc;
     next.security = [{ apiKey: [] }];
     const drift = diffOperations(before, importSpec(JSON.stringify(next)).operations);
-    assert.equal(drift.breaking.every((change) => change.kind === "security"), true);
+    assert.equal(
+      drift.breaking.every((change) => change.kind === "security"),
+      true,
+    );
     assert.equal(drift.breaking.length, 4);
   });
 });
@@ -270,6 +340,10 @@ describe("huella del documento", () => {
     const other = structuredClone(minimal) as Doc;
     other.info.title = "Otro";
     assert.notEqual(fingerprint(JSON.stringify(minimal)), fingerprint(JSON.stringify(other)));
-    assert.deepEqual(diffOperations(importSpec(JSON.stringify(minimal)).operations, importSpec(JSON.stringify(other)).operations).changes, []);
+    assert.deepEqual(
+      diffOperations(importSpec(JSON.stringify(minimal)).operations, importSpec(JSON.stringify(other)).operations)
+        .changes,
+      [],
+    );
   });
 });

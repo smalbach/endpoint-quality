@@ -22,11 +22,21 @@ const ORDERS = ["contract", "safe"] as const;
 /** The resolved path a case would request, reproducing `resolvePath` in `api-dashboard.tsx`.
  * The budget of a GET depends on the query string (`?ean_sap=` carries its own target), so a
  * golden that only recorded the templated path would not pin the budgets down. */
-const DEFAULT_PARAMETERS: Record<string, string> = { product_id: "1", store_id: "1", category_id: "1", price_id: "1", projection_id: "1", product_category_id: "1", store_assortment_id: "1" };
+const DEFAULT_PARAMETERS: Record<string, string> = {
+  product_id: "1",
+  store_id: "1",
+  category_id: "1",
+  price_id: "1",
+  projection_id: "1",
+  product_category_id: "1",
+  store_assortment_id: "1",
+};
 function resolvePath(endpoint: { path: string; parameters?: string[] }, values: Record<string, string>) {
   const path = endpoint.path.replace(/\{([^}]+)\}/g, (_, key: string) => encodeURIComponent(values[key] || "1"));
   const query = new URLSearchParams();
-  endpoint.parameters?.filter((name) => !endpoint.path.includes(`{${name}}`) && values[name]).forEach((name) => query.set(name, values[name]));
+  endpoint.parameters
+    ?.filter((name) => !endpoint.path.includes(`{${name}}`) && values[name])
+    .forEach((name) => query.set(name, values[name]));
   return query.size ? `${path}?${query}` : path;
 }
 
@@ -60,13 +70,17 @@ const operations = endpoints.map((endpoint) => ({
   runnableWithAuth: runnableScenarios(endpoint, true).map((scenario) => scenario.id),
 }));
 
-const orders = Object.fromEntries(ORDERS.map((mode) => [mode, orderEndpoints(endpoints, mode, []).map((endpoint) => endpoint.id)]));
+const orders = Object.fromEntries(
+  ORDERS.map((mode) => [mode, orderEndpoints(endpoints, mode, []).map((endpoint) => endpoint.id)]),
+);
 
 const queues = Object.fromEntries(
   ORDERS.flatMap((mode) =>
     [false, true].map((authEnabled) => [
       `${mode}:${authEnabled ? "auth" : "no-auth"}`,
-      buildQueue(endpoints, { mode, customOrder: [], caseSelection: {}, authEnabled }).map((item) => `${item.endpoint.id}:${item.scenario.id}`),
+      buildQueue(endpoints, { mode, customOrder: [], caseSelection: {}, authEnabled }).map(
+        (item) => `${item.endpoint.id}:${item.scenario.id}`,
+      ),
     ]),
   ),
 );

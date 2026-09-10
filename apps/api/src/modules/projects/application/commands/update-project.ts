@@ -6,18 +6,27 @@ import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "../../domain/ports";
 
 export class UpdateProjectCommand implements ICommand {
-  constructor(readonly organizationId: string, readonly projectId: string, readonly changes: { name?: string; description?: string }) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly changes: { name?: string; description?: string },
+  ) {}
 }
 
 export class SetProjectArchivedCommand implements ICommand {
-  constructor(readonly organizationId: string, readonly projectId: string, readonly archived: boolean) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly archived: boolean,
+  ) {}
 }
 
 /** Loads a project and refuses to admit it exists to anyone outside its organization. The check
  * is folded into the 404 rather than answered with a 403, which would confirm the id is real. */
 async function ownedProject(projects: ProjectRepositoryPort, organizationId: string, projectId: string) {
   const project = await projects.findById(projectId);
-  if (!project || project.organizationId !== organizationId) throw new NotFoundError("El proyecto no existe", "project-not-found");
+  if (!project || project.organizationId !== organizationId)
+    throw new NotFoundError("El proyecto no existe", "project-not-found");
   return project;
 }
 

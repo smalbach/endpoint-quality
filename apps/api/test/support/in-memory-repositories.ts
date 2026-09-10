@@ -11,9 +11,17 @@
  * hash and not on the plaintext.
  */
 import type { ApiToken, RefreshToken, User } from "@/modules/auth/domain/model";
-import type { ApiTokenRepositoryPort, RefreshTokenRepositoryPort, UserRepositoryPort } from "@/modules/auth/domain/ports";
+import type {
+  ApiTokenRepositoryPort,
+  RefreshTokenRepositoryPort,
+  UserRepositoryPort,
+} from "@/modules/auth/domain/ports";
 import type { Invitation, Membership, Organization } from "@/modules/iam/domain/model";
-import type { InvitationRepositoryPort, MembershipRepositoryPort, OrganizationRepositoryPort } from "@/modules/iam/domain/ports";
+import type {
+  InvitationRepositoryPort,
+  MembershipRepositoryPort,
+  OrganizationRepositoryPort,
+} from "@/modules/iam/domain/ports";
 import type { Project } from "@/modules/projects/domain/model";
 import type { ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import type { SpecOperation, SpecSource, SpecVersion, SpecVersionSummary } from "@/modules/specs/domain/model";
@@ -155,10 +163,15 @@ export class InMemoryProjectRepository implements ProjectRepositoryPort {
     return this.rows.get(id) ?? null;
   }
   async findBySlug(organizationId: string, slug: string): Promise<Project | null> {
-    return [...this.rows.values()].find((project) => project.organizationId === organizationId && project.slug === slug) ?? null;
+    return (
+      [...this.rows.values()].find((project) => project.organizationId === organizationId && project.slug === slug) ??
+      null
+    );
   }
   async listForOrganization(organizationId: string, includeArchived: boolean): Promise<Project[]> {
-    return [...this.rows.values()].filter((project) => project.organizationId === organizationId && (includeArchived || !project.archivedAt));
+    return [...this.rows.values()].filter(
+      (project) => project.organizationId === organizationId && (includeArchived || !project.archivedAt),
+    );
   }
   async save(project: Project): Promise<void> {
     this.rows.set(project.id, { ...project });
@@ -174,19 +187,26 @@ export class InMemorySpecRepository implements SpecRepositoryPort {
     return this.versions.get(id) ?? null;
   }
   async findVersionByHash(projectId: string, hash: string): Promise<SpecVersion | null> {
-    return [...this.versions.values()].find((version) => version.projectId === projectId && version.hash === hash) ?? null;
+    return (
+      [...this.versions.values()].find((version) => version.projectId === projectId && version.hash === hash) ?? null
+    );
   }
   async listVersions(projectId: string): Promise<SpecVersionSummary[]> {
-    return [...this.versions.values()]
-      .filter((version) => version.projectId === projectId)
-      .sort((a, b) => b.importedAt.getTime() - a.importedAt.getTime())
-      // `raw` is dropped here too, so a test that asserts the listing never ships the document
-      // is checking the same contract the SQL repository implements with a `select`.
-      .map(({ raw, ...summary }) => summary);
+    return (
+      [...this.versions.values()]
+        .filter((version) => version.projectId === projectId)
+        .sort((a, b) => b.importedAt.getTime() - a.importedAt.getTime())
+        // `raw` is dropped here too, so a test that asserts the listing never ships the document
+        // is checking the same contract the SQL repository implements with a `select`.
+        .map(({ raw, ...summary }) => summary)
+    );
   }
   async saveVersion(version: SpecVersion, operations: SpecOperation[]): Promise<void> {
     this.versions.set(version.id, { ...version });
-    this.operations.set(version.id, operations.map((operation) => ({ ...operation })));
+    this.operations.set(
+      version.id,
+      operations.map((operation) => ({ ...operation })),
+    );
   }
   async listOperations(specVersionId: string): Promise<SpecOperation[]> {
     return [...(this.operations.get(specVersionId) ?? [])].sort((a, b) => a.position - b.position);
@@ -195,10 +215,18 @@ export class InMemorySpecRepository implements SpecRepositoryPort {
     this.sources.set(source.id, { ...source });
   }
   async findSourceByLocation(projectId: string, kind: string, location: string): Promise<SpecSource | null> {
-    return [...this.sources.values()].find((source) => source.projectId === projectId && source.kind === kind && source.location === location) ?? null;
+    return (
+      [...this.sources.values()].find(
+        (source) => source.projectId === projectId && source.kind === kind && source.location === location,
+      ) ?? null
+    );
   }
   async findLatestSource(projectId: string): Promise<SpecSource | null> {
-    return [...this.sources.values()].filter((source) => source.projectId === projectId).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0] ?? null;
+    return (
+      [...this.sources.values()]
+        .filter((source) => source.projectId === projectId)
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0] ?? null
+    );
   }
   async deleteVersion(id: string): Promise<void> {
     this.versions.delete(id);
@@ -217,7 +245,10 @@ export class InMemoryEnvironmentRepository implements EnvironmentRepositoryPort 
     return this.rows.get(id) ?? null;
   }
   async findByName(projectId: string, name: string): Promise<Environment | null> {
-    return [...this.rows.values()].find((environment) => environment.projectId === projectId && environment.name === name) ?? null;
+    return (
+      [...this.rows.values()].find((environment) => environment.projectId === projectId && environment.name === name) ??
+      null
+    );
   }
   async listForProject(projectId: string): Promise<Environment[]> {
     return [...this.rows.values()].filter((environment) => environment.projectId === projectId);
@@ -255,7 +286,9 @@ export class InMemoryConfigRepository implements ConfigRepositoryPort {
   }
 
   async listSections(projectId: string): Promise<ConfigRow[]> {
-    return [...this.rows.values()].filter((row) => row.projectId === projectId).sort((a, b) => a.section.localeCompare(b.section));
+    return [...this.rows.values()]
+      .filter((row) => row.projectId === projectId)
+      .sort((a, b) => a.section.localeCompare(b.section));
   }
   async findSection(projectId: string, section: ConfigSection): Promise<ConfigRow | null> {
     return this.rows.get(this.key(projectId, section)) ?? null;
@@ -289,7 +322,9 @@ export class InMemoryRunRepository implements RunRepositoryPort {
     for (const runCase of cases) this.cases.set(runCase.id, { ...runCase });
   }
   async listCases(runId: string): Promise<RunCase[]> {
-    return [...this.cases.values()].filter((runCase) => runCase.runId === runId).sort((a, b) => a.position - b.position);
+    return [...this.cases.values()]
+      .filter((runCase) => runCase.runId === runId)
+      .sort((a, b) => a.position - b.position);
   }
   async findCase(id: string): Promise<RunCase | null> {
     return this.cases.get(id) ?? null;
@@ -307,7 +342,9 @@ export class InMemoryRunRepository implements RunRepositoryPort {
    * read top to bottom and a fake that returned insertion order would hide a wrong ORDER BY. */
   async listStepsForRun(runId: string): Promise<RunStep[]> {
     const cases = await this.listCases(runId);
-    return cases.flatMap((runCase) => [...this.steps.values()].filter((step) => step.runCaseId === runCase.id).sort((a, b) => a.index - b.index));
+    return cases.flatMap((runCase) =>
+      [...this.steps.values()].filter((step) => step.runCaseId === runCase.id).sort((a, b) => a.index - b.index),
+    );
   }
 
   /** Counted from the case rows, exactly as the SQL repository does. A fake that kept its own
@@ -338,10 +375,12 @@ export class InMemoryRunRepository implements RunRepositoryPort {
    * everything every time would hide the `prunedAt IS NULL` guard that makes the sweep converge. */
   async pruneStepBodies(before: Date): Promise<number> {
     const stale = new Set(
-      [...this.cases.values()].filter((runCase) => {
-        const run = this.runs.get(runCase.runId);
-        return run?.finishedAt && run.finishedAt < before;
-      }).map((runCase) => runCase.id),
+      [...this.cases.values()]
+        .filter((runCase) => {
+          const run = this.runs.get(runCase.runId);
+          return run?.finishedAt && run.finishedAt < before;
+        })
+        .map((runCase) => runCase.id),
     );
     let affected = 0;
     for (const [id, step] of this.steps) {

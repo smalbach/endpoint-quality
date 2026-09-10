@@ -2,7 +2,12 @@ import { Inject } from "@nestjs/common";
 import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
 
 import { NotFoundError } from "@/shared/errors/domain-error";
-import { MEMBERSHIP_REPOSITORY, ORGANIZATION_REPOSITORY, type MembershipRepositoryPort, type OrganizationRepositoryPort } from "@/modules/iam/domain/ports";
+import {
+  MEMBERSHIP_REPOSITORY,
+  ORGANIZATION_REPOSITORY,
+  type MembershipRepositoryPort,
+  type OrganizationRepositoryPort,
+} from "@/modules/iam/domain/ports";
 import type { Role } from "@/modules/iam/domain/model";
 import { USER_REPOSITORY, type UserRepositoryPort } from "../../domain/ports";
 
@@ -41,7 +46,9 @@ export class GetCurrentUserHandler implements IQueryHandler<GetCurrentUserQuery,
     const organizations = await Promise.all(
       memberships.map(async (membership) => {
         const organization = await this.organizations.findById(membership.organizationId);
-        return organization ? { id: organization.id, name: organization.name, slug: organization.slug, role: membership.role } : null;
+        return organization
+          ? { id: organization.id, name: organization.name, slug: organization.slug, role: membership.role }
+          : null;
       }),
     );
 
@@ -49,7 +56,9 @@ export class GetCurrentUserHandler implements IQueryHandler<GetCurrentUserQuery,
       id: user.id,
       email: user.email,
       name: user.name,
-      organizations: organizations.filter((organization): organization is NonNullable<typeof organization> => organization !== null),
+      organizations: organizations.filter(
+        (organization): organization is NonNullable<typeof organization> => organization !== null,
+      ),
     };
   }
 }
@@ -69,7 +78,10 @@ export class GetCurrentUserHandler implements IQueryHandler<GetCurrentUserQuery,
  * boot from one call whichever credential it holds.
  */
 export class GetAuthContextQuery implements IQuery {
-  constructor(readonly principal: { kind: "user"; userId: string } | { kind: "api-token"; organizationId: string; tokenId: string }) {}
+  constructor(
+    readonly principal:
+      { kind: "user"; userId: string } | { kind: "api-token"; organizationId: string; tokenId: string },
+  ) {}
 }
 
 export type AuthContextView = {
@@ -94,7 +106,11 @@ export class GetAuthContextHandler implements IQueryHandler<GetAuthContextQuery,
       // `editor` because that is what `OrgRoleGuard` grants a service token — reported rather
       // than implied, so a client can tell before it tries that this credential will not, say,
       // invite a member.
-      return { principal: "api-token", user: null, organizations: [{ id: organization.id, name: organization.name, slug: organization.slug, role: "editor" }] };
+      return {
+        principal: "api-token",
+        user: null,
+        organizations: [{ id: organization.id, name: organization.name, slug: organization.slug, role: "editor" }],
+      };
     }
     const user = await this.users.findById(query.principal.userId);
     if (!user) throw new NotFoundError("El usuario no existe", "user-not-found");
@@ -102,13 +118,17 @@ export class GetAuthContextHandler implements IQueryHandler<GetAuthContextQuery,
     const organizations = await Promise.all(
       memberships.map(async (membership) => {
         const organization = await this.organizations.findById(membership.organizationId);
-        return organization ? { id: organization.id, name: organization.name, slug: organization.slug, role: membership.role } : null;
+        return organization
+          ? { id: organization.id, name: organization.name, slug: organization.slug, role: membership.role }
+          : null;
       }),
     );
     return {
       principal: "user",
       user: { id: user.id, email: user.email, name: user.name },
-      organizations: organizations.filter((organization): organization is NonNullable<typeof organization> => organization !== null),
+      organizations: organizations.filter(
+        (organization): organization is NonNullable<typeof organization> => organization !== null,
+      ),
     };
   }
 }

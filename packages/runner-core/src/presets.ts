@@ -11,7 +11,9 @@ import type { HttpMethod } from "./types.ts";
 
 /** A cursor that is not a cursor must produce a handled error and never a 500. Applies to any
  * operation that accepts a parameter with the given name. */
-export function corruptCursorScenario(options: { parameter?: string; expectedStatus?: number; name?: string; description?: string } = {}): ConditionalScenario {
+export function corruptCursorScenario(
+  options: { parameter?: string; expectedStatus?: number; name?: string; description?: string } = {},
+): ConditionalScenario {
   const parameter = options.parameter ?? "cursor";
   return {
     id: `${parameter}-invalid`,
@@ -30,7 +32,11 @@ export function corruptCursorScenario(options: { parameter?: string; expectedSta
  * credential the operation does not accept at all. An API that answers 403 has authenticated
  * something it should have refused to look at.
  */
-export function unacceptedCredentialRule(options: { methods: HttpMethod[]; id?: string; description?: string }): AuthRule {
+export function unacceptedCredentialRule(options: {
+  methods: HttpMethod[];
+  id?: string;
+  description?: string;
+}): AuthRule {
   return {
     id: options.id ?? "auth-api-key",
     credential: "api-key",

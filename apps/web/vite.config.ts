@@ -10,7 +10,13 @@ export default defineConfig({
     port: 5173,
     // The API is a separate origin in production; proxying in development keeps the refresh
     // cookie same-site, which is what `SameSite=Strict` requires to work at all.
-    proxy: { "/api": { target: process.env.VITE_API_URL ?? "http://localhost:3001", changeOrigin: true, rewrite: (path) => path.replace(/^\/api/, "") } },
+    proxy: {
+      "/api": {
+        target: process.env.VITE_API_URL ?? "http://localhost:3001",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ""),
+      },
+    },
   },
   test: { environment: "jsdom", globals: true },
 });

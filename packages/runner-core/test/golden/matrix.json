@@ -13,10 +13,7 @@
       "method": "GET",
       "path": "/health",
       "tag": "Health",
-      "statuses": [
-        200,
-        503
-      ],
+      "statuses": [200, 503],
       "parameters": [],
       "implemented": true,
       "responseShape": "HealthStatus",
@@ -40,29 +37,16 @@
           }
         }
       ],
-      "runnableWithoutAuth": [
-        "healthy"
-      ],
-      "runnableWithAuth": [
-        "healthy"
-      ]
+      "runnableWithoutAuth": ["healthy"],
+      "runnableWithAuth": ["healthy"]
     },
     {
       "id": "listCategories",
       "method": "GET",
       "path": "/v1/categories",
       "tag": "Categories",
-      "statuses": [
-        200,
-        401,
-        403
-      ],
-      "parameters": [
-        "cursor",
-        "limit",
-        "parent_code_akn",
-        "q"
-      ],
+      "statuses": [200, 401, 403],
+      "parameters": ["cursor", "limit", "parent_code_akn", "q"],
       "implemented": false,
       "responseShape": "{ data: [...], meta, links }",
       "body": null,
@@ -331,13 +315,7 @@
       "method": "POST",
       "path": "/v1/categories",
       "tag": "Categories",
-      "statuses": [
-        201,
-        401,
-        403,
-        409,
-        422
-      ],
+      "statuses": [201, 401, 403, 409, 422],
       "parameters": [],
       "implemented": false,
       "responseShape": "{ data: Resource }",
@@ -441,33 +419,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "create-read",
-        "invalid-body",
-        "conflict"
-      ],
-      "runnableWithAuth": [
-        "create-read",
-        "invalid-body",
-        "conflict",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["create-read", "invalid-body", "conflict"],
+      "runnableWithAuth": ["create-read", "invalid-body", "conflict", "auth-none", "auth-insufficient"]
     },
     {
       "id": "deleteCategory",
       "method": "DELETE",
       "path": "/v1/categories/{category_id}",
       "tag": "Categories",
-      "statuses": [
-        204,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "category_id"
-      ],
+      "statuses": [204, 401, 403, 404],
+      "parameters": ["category_id"],
       "implemented": false,
       "responseShape": "No body",
       "body": null,
@@ -548,34 +509,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "delete-read",
-        "deleted-read",
-        "not-found"
-      ],
-      "runnableWithAuth": [
-        "delete-read",
-        "deleted-read",
-        "not-found",
-        "auth-none",
-        "auth-insufficient",
-        "auth-api-key"
-      ]
+      "runnableWithoutAuth": ["delete-read", "deleted-read", "not-found"],
+      "runnableWithAuth": ["delete-read", "deleted-read", "not-found", "auth-none", "auth-insufficient", "auth-api-key"]
     },
     {
       "id": "getCategory",
       "method": "GET",
       "path": "/v1/categories/{category_id}",
       "tag": "Categories",
-      "statuses": [
-        200,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "category_id"
-      ],
+      "statuses": [200, 401, 403, 404],
+      "parameters": ["category_id"],
       "implemented": false,
       "responseShape": "{ data: Resource }",
       "body": null,
@@ -650,32 +593,16 @@
           }
         }
       ],
-      "runnableWithoutAuth": [
-        "found",
-        "not-found"
-      ],
-      "runnableWithAuth": [
-        "found",
-        "not-found",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["found", "not-found"],
+      "runnableWithAuth": ["found", "not-found", "auth-none", "auth-insufficient"]
     },
     {
       "id": "patchCategory",
       "method": "PATCH",
       "path": "/v1/categories/{category_id}",
       "tag": "Categories",
-      "statuses": [
-        200,
-        401,
-        403,
-        404,
-        422
-      ],
-      "parameters": [
-        "category_id"
-      ],
+      "statuses": [200, 401, 403, 404, 422],
+      "parameters": ["category_id"],
       "implemented": false,
       "responseShape": "{ data: Resource }",
       "body": {
@@ -766,34 +693,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "patch-read",
-        "not-found",
-        "invalid-body"
-      ],
-      "runnableWithAuth": [
-        "patch-read",
-        "not-found",
-        "invalid-body",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["patch-read", "not-found", "invalid-body"],
+      "runnableWithAuth": ["patch-read", "not-found", "invalid-body", "auth-none", "auth-insufficient"]
     },
     {
       "id": "replaceCategory",
       "method": "PUT",
       "path": "/v1/categories/{category_id}",
       "tag": "Categories",
-      "statuses": [
-        200,
-        401,
-        403,
-        404,
-        422
-      ],
-      "parameters": [
-        "category_id"
-      ],
+      "statuses": [200, 401, 403, 404, 422],
+      "parameters": ["category_id"],
       "implemented": false,
       "responseShape": "{ data: Resource }",
       "body": {
@@ -894,36 +803,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "replace-read",
-        "not-found",
-        "invalid-body"
-      ],
-      "runnableWithAuth": [
-        "replace-read",
-        "not-found",
-        "invalid-body",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["replace-read", "not-found", "invalid-body"],
+      "runnableWithAuth": ["replace-read", "not-found", "invalid-body", "auth-none", "auth-insufficient"]
     },
     {
       "id": "listCategoryProducts",
       "method": "GET",
       "path": "/v1/categories/{category_id}/products",
       "tag": "Categories",
-      "statuses": [
-        200,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "category_id",
-        "cursor",
-        "limit",
-        "include_children"
-      ],
+      "statuses": [200, 401, 403, 404],
+      "parameters": ["category_id", "cursor", "limit", "include_children"],
       "implemented": false,
       "responseShape": "{ data: [...], meta, links }",
       "body": null,
@@ -1172,15 +1061,8 @@
       "method": "GET",
       "path": "/v1/prices",
       "tag": "Prices",
-      "statuses": [
-        200,
-        401,
-        403
-      ],
-      "parameters": [
-        "cursor",
-        "limit"
-      ],
+      "statuses": [200, 401, 403],
+      "parameters": ["cursor", "limit"],
       "implemented": false,
       "responseShape": "{ data: [...], meta, links }",
       "body": null,
@@ -1369,12 +1251,7 @@
       "method": "POST",
       "path": "/v1/prices",
       "tag": "Prices",
-      "statuses": [
-        201,
-        401,
-        403,
-        422
-      ],
+      "statuses": [201, 401, 403, 422],
       "parameters": [],
       "implemented": false,
       "responseShape": "{ data: Resource }",
@@ -1466,31 +1343,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "create-read",
-        "invalid-body"
-      ],
-      "runnableWithAuth": [
-        "create-read",
-        "invalid-body",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["create-read", "invalid-body"],
+      "runnableWithAuth": ["create-read", "invalid-body", "auth-none", "auth-insufficient"]
     },
     {
       "id": "deletePrice",
       "method": "DELETE",
       "path": "/v1/prices/{price_id}",
       "tag": "Prices",
-      "statuses": [
-        204,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "price_id"
-      ],
+      "statuses": [204, 401, 403, 404],
+      "parameters": ["price_id"],
       "implemented": false,
       "responseShape": "No body",
       "body": null,
@@ -1571,34 +1433,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "delete-read",
-        "deleted-read",
-        "not-found"
-      ],
-      "runnableWithAuth": [
-        "delete-read",
-        "deleted-read",
-        "not-found",
-        "auth-none",
-        "auth-insufficient",
-        "auth-api-key"
-      ]
+      "runnableWithoutAuth": ["delete-read", "deleted-read", "not-found"],
+      "runnableWithAuth": ["delete-read", "deleted-read", "not-found", "auth-none", "auth-insufficient", "auth-api-key"]
     },
     {
       "id": "getPrice",
       "method": "GET",
       "path": "/v1/prices/{price_id}",
       "tag": "Prices",
-      "statuses": [
-        200,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "price_id"
-      ],
+      "statuses": [200, 401, 403, 404],
+      "parameters": ["price_id"],
       "implemented": false,
       "responseShape": "{ data: Resource }",
       "body": null,
@@ -1673,32 +1517,16 @@
           }
         }
       ],
-      "runnableWithoutAuth": [
-        "found",
-        "not-found"
-      ],
-      "runnableWithAuth": [
-        "found",
-        "not-found",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["found", "not-found"],
+      "runnableWithAuth": ["found", "not-found", "auth-none", "auth-insufficient"]
     },
     {
       "id": "patchPrice",
       "method": "PATCH",
       "path": "/v1/prices/{price_id}",
       "tag": "Prices",
-      "statuses": [
-        200,
-        401,
-        403,
-        404,
-        422
-      ],
-      "parameters": [
-        "price_id"
-      ],
+      "statuses": [200, 401, 403, 404, 422],
+      "parameters": ["price_id"],
       "implemented": false,
       "responseShape": "{ data: Resource }",
       "body": {
@@ -1779,34 +1607,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "patch-read",
-        "not-found",
-        "invalid-body"
-      ],
-      "runnableWithAuth": [
-        "patch-read",
-        "not-found",
-        "invalid-body",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["patch-read", "not-found", "invalid-body"],
+      "runnableWithAuth": ["patch-read", "not-found", "invalid-body", "auth-none", "auth-insufficient"]
     },
     {
       "id": "replacePrice",
       "method": "PUT",
       "path": "/v1/prices/{price_id}",
       "tag": "Prices",
-      "statuses": [
-        200,
-        401,
-        403,
-        404,
-        422
-      ],
-      "parameters": [
-        "price_id"
-      ],
+      "statuses": [200, 401, 403, 404, 422],
+      "parameters": ["price_id"],
       "implemented": false,
       "responseShape": "{ data: Resource }",
       "body": {
@@ -1922,29 +1732,15 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "replace-read",
-        "not-found",
-        "invalid-body"
-      ],
-      "runnableWithAuth": [
-        "replace-read",
-        "not-found",
-        "invalid-body",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["replace-read", "not-found", "invalid-body"],
+      "runnableWithAuth": ["replace-read", "not-found", "invalid-body", "auth-none", "auth-insufficient"]
     },
     {
       "id": "listProducts",
       "method": "GET",
       "path": "/v1/products",
       "tag": "Products",
-      "statuses": [
-        200,
-        401,
-        403
-      ],
+      "statuses": [200, 401, 403],
       "parameters": [
         "cursor",
         "limit",
@@ -2425,13 +2221,7 @@
       "method": "POST",
       "path": "/v1/products",
       "tag": "Products",
-      "statuses": [
-        201,
-        401,
-        403,
-        409,
-        422
-      ],
+      "statuses": [201, 401, 403, 409, 422],
       "parameters": [],
       "implemented": false,
       "responseShape": "{ data: Resource }",
@@ -2577,30 +2367,15 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "create-read",
-        "invalid-body",
-        "conflict"
-      ],
-      "runnableWithAuth": [
-        "create-read",
-        "invalid-body",
-        "conflict",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["create-read", "invalid-body", "conflict"],
+      "runnableWithAuth": ["create-read", "invalid-body", "conflict", "auth-none", "auth-insufficient"]
     },
     {
       "id": "bulkUpsertProducts",
       "method": "POST",
       "path": "/v1/products/bulk",
       "tag": "Products",
-      "statuses": [
-        200,
-        401,
-        403,
-        422
-      ],
+      "statuses": [200, 401, 403, 422],
       "parameters": [],
       "implemented": false,
       "responseShape": "{ data: ProductBulkResult }",
@@ -2740,31 +2515,16 @@
           }
         }
       ],
-      "runnableWithoutAuth": [
-        "create-read",
-        "invalid-body"
-      ],
-      "runnableWithAuth": [
-        "create-read",
-        "invalid-body",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["create-read", "invalid-body"],
+      "runnableWithAuth": ["create-read", "invalid-body", "auth-none", "auth-insufficient"]
     },
     {
       "id": "deleteProduct",
       "method": "DELETE",
       "path": "/v1/products/{product_id}",
       "tag": "Products",
-      "statuses": [
-        204,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "product_id"
-      ],
+      "statuses": [204, 401, 403, 404],
+      "parameters": ["product_id"],
       "implemented": false,
       "responseShape": "No body",
       "body": null,
@@ -2845,34 +2605,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "delete-read",
-        "deleted-read",
-        "not-found"
-      ],
-      "runnableWithAuth": [
-        "delete-read",
-        "deleted-read",
-        "not-found",
-        "auth-none",
-        "auth-insufficient",
-        "auth-api-key"
-      ]
+      "runnableWithoutAuth": ["delete-read", "deleted-read", "not-found"],
+      "runnableWithAuth": ["delete-read", "deleted-read", "not-found", "auth-none", "auth-insufficient", "auth-api-key"]
     },
     {
       "id": "getProduct",
       "method": "GET",
       "path": "/v1/products/{product_id}",
       "tag": "Products",
-      "statuses": [
-        200,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "product_id"
-      ],
+      "statuses": [200, 401, 403, 404],
+      "parameters": ["product_id"],
       "implemented": true,
       "responseShape": "{ data: Resource }",
       "body": null,
@@ -2947,32 +2689,16 @@
           }
         }
       ],
-      "runnableWithoutAuth": [
-        "found",
-        "not-found"
-      ],
-      "runnableWithAuth": [
-        "found",
-        "not-found",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["found", "not-found"],
+      "runnableWithAuth": ["found", "not-found", "auth-none", "auth-insufficient"]
     },
     {
       "id": "patchProduct",
       "method": "PATCH",
       "path": "/v1/products/{product_id}",
       "tag": "Products",
-      "statuses": [
-        200,
-        401,
-        403,
-        404,
-        422
-      ],
-      "parameters": [
-        "product_id"
-      ],
+      "statuses": [200, 401, 403, 404, 422],
+      "parameters": ["product_id"],
       "implemented": false,
       "responseShape": "{ data: Resource }",
       "body": {
@@ -3053,34 +2779,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "patch-read",
-        "not-found",
-        "invalid-body"
-      ],
-      "runnableWithAuth": [
-        "patch-read",
-        "not-found",
-        "invalid-body",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["patch-read", "not-found", "invalid-body"],
+      "runnableWithAuth": ["patch-read", "not-found", "invalid-body", "auth-none", "auth-insufficient"]
     },
     {
       "id": "replaceProduct",
       "method": "PUT",
       "path": "/v1/products/{product_id}",
       "tag": "Products",
-      "statuses": [
-        200,
-        401,
-        403,
-        404,
-        422
-      ],
-      "parameters": [
-        "product_id"
-      ],
+      "statuses": [200, 401, 403, 404, 422],
+      "parameters": ["product_id"],
       "implemented": false,
       "responseShape": "{ data: Resource }",
       "body": {
@@ -3216,35 +2924,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "replace-read",
-        "not-found",
-        "invalid-body"
-      ],
-      "runnableWithAuth": [
-        "replace-read",
-        "not-found",
-        "invalid-body",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["replace-read", "not-found", "invalid-body"],
+      "runnableWithAuth": ["replace-read", "not-found", "invalid-body", "auth-none", "auth-insufficient"]
     },
     {
       "id": "listProductCategories",
       "method": "GET",
       "path": "/v1/products/{product_id}/categories",
       "tag": "Product Categories",
-      "statuses": [
-        200,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "product_id",
-        "cursor",
-        "limit"
-      ],
+      "statuses": [200, 401, 403, 404],
+      "parameters": ["product_id", "cursor", "limit"],
       "implemented": false,
       "responseShape": "{ data: [...], meta, links }",
       "body": null,
@@ -3453,17 +3142,8 @@
       "method": "POST",
       "path": "/v1/products/{product_id}/categories",
       "tag": "Product Categories",
-      "statuses": [
-        201,
-        401,
-        403,
-        404,
-        409,
-        422
-      ],
-      "parameters": [
-        "product_id"
-      ],
+      "statuses": [201, 401, 403, 404, 409, 422],
+      "parameters": ["product_id"],
       "implemented": false,
       "responseShape": "{ data: Resource }",
       "body": {
@@ -3558,36 +3238,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "create-read",
-        "invalid-body",
-        "not-found",
-        "conflict"
-      ],
-      "runnableWithAuth": [
-        "create-read",
-        "invalid-body",
-        "not-found",
-        "conflict",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["create-read", "invalid-body", "not-found", "conflict"],
+      "runnableWithAuth": ["create-read", "invalid-body", "not-found", "conflict", "auth-none", "auth-insufficient"]
     },
     {
       "id": "removeProductCategory",
       "method": "DELETE",
       "path": "/v1/products/{product_id}/categories/{product_category_id}",
       "tag": "Product Categories",
-      "statuses": [
-        204,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "product_id",
-        "product_category_id"
-      ],
+      "statuses": [204, 401, 403, 404],
+      "parameters": ["product_id", "product_category_id"],
       "implemented": false,
       "responseShape": "No body",
       "body": null,
@@ -3669,35 +3329,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "delete-read",
-        "deleted-read",
-        "not-found"
-      ],
-      "runnableWithAuth": [
-        "delete-read",
-        "deleted-read",
-        "not-found",
-        "auth-none",
-        "auth-insufficient",
-        "auth-api-key"
-      ]
+      "runnableWithoutAuth": ["delete-read", "deleted-read", "not-found"],
+      "runnableWithAuth": ["delete-read", "deleted-read", "not-found", "auth-none", "auth-insufficient", "auth-api-key"]
     },
     {
       "id": "getProductCategory",
       "method": "GET",
       "path": "/v1/products/{product_id}/categories/{product_category_id}",
       "tag": "Product Categories",
-      "statuses": [
-        200,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "product_id",
-        "product_category_id"
-      ],
+      "statuses": [200, 401, 403, 404],
+      "parameters": ["product_id", "product_category_id"],
       "implemented": false,
       "responseShape": "{ data: Resource }",
       "body": null,
@@ -3774,32 +3415,16 @@
           }
         }
       ],
-      "runnableWithoutAuth": [
-        "found",
-        "not-found"
-      ],
-      "runnableWithAuth": [
-        "found",
-        "not-found",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["found", "not-found"],
+      "runnableWithAuth": ["found", "not-found", "auth-none", "auth-insufficient"]
     },
     {
       "id": "getProductFull",
       "method": "GET",
       "path": "/v1/products/{product_id}/full",
       "tag": "Products",
-      "statuses": [
-        200,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "product_id",
-        "store_id"
-      ],
+      "statuses": [200, 401, 403, 404],
+      "parameters": ["product_id", "store_id"],
       "implemented": true,
       "responseShape": "{ data: Resource }",
       "body": null,
@@ -3893,38 +3518,16 @@
           }
         }
       ],
-      "runnableWithoutAuth": [
-        "found",
-        "not-found",
-        "store-price"
-      ],
-      "runnableWithAuth": [
-        "found",
-        "not-found",
-        "store-price",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["found", "not-found", "store-price"],
+      "runnableWithAuth": ["found", "not-found", "store-price", "auth-none", "auth-insufficient"]
     },
     {
       "id": "listProductProjections",
       "method": "GET",
       "path": "/v1/products/{product_id}/projections",
       "tag": "Product Projections",
-      "statuses": [
-        200,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "product_id",
-        "cursor",
-        "limit",
-        "locale_akn",
-        "channel_akn",
-        "q"
-      ],
+      "statuses": [200, 401, 403, 404],
+      "parameters": ["product_id", "cursor", "limit", "locale_akn", "channel_akn", "q"],
       "implemented": false,
       "responseShape": "{ data: [...], meta, links }",
       "body": null,
@@ -4253,17 +3856,8 @@
       "method": "POST",
       "path": "/v1/products/{product_id}/projections",
       "tag": "Product Projections",
-      "statuses": [
-        201,
-        401,
-        403,
-        404,
-        409,
-        422
-      ],
-      "parameters": [
-        "product_id"
-      ],
+      "statuses": [201, 401, 403, 404, 409, 422],
+      "parameters": ["product_id"],
       "implemented": false,
       "responseShape": "{ data: Resource }",
       "body": {
@@ -4372,36 +3966,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "create-read",
-        "invalid-body",
-        "not-found",
-        "conflict"
-      ],
-      "runnableWithAuth": [
-        "create-read",
-        "invalid-body",
-        "not-found",
-        "conflict",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["create-read", "invalid-body", "not-found", "conflict"],
+      "runnableWithAuth": ["create-read", "invalid-body", "not-found", "conflict", "auth-none", "auth-insufficient"]
     },
     {
       "id": "deleteProductProjection",
       "method": "DELETE",
       "path": "/v1/products/{product_id}/projections/{projection_id}",
       "tag": "Product Projections",
-      "statuses": [
-        204,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "product_id",
-        "projection_id"
-      ],
+      "statuses": [204, 401, 403, 404],
+      "parameters": ["product_id", "projection_id"],
       "implemented": false,
       "responseShape": "No body",
       "body": null,
@@ -4483,35 +4057,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "delete-read",
-        "deleted-read",
-        "not-found"
-      ],
-      "runnableWithAuth": [
-        "delete-read",
-        "deleted-read",
-        "not-found",
-        "auth-none",
-        "auth-insufficient",
-        "auth-api-key"
-      ]
+      "runnableWithoutAuth": ["delete-read", "deleted-read", "not-found"],
+      "runnableWithAuth": ["delete-read", "deleted-read", "not-found", "auth-none", "auth-insufficient", "auth-api-key"]
     },
     {
       "id": "getProductProjection",
       "method": "GET",
       "path": "/v1/products/{product_id}/projections/{projection_id}",
       "tag": "Product Projections",
-      "statuses": [
-        200,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "product_id",
-        "projection_id"
-      ],
+      "statuses": [200, 401, 403, 404],
+      "parameters": ["product_id", "projection_id"],
       "implemented": false,
       "responseShape": "{ data: Resource }",
       "body": null,
@@ -4588,33 +4143,16 @@
           }
         }
       ],
-      "runnableWithoutAuth": [
-        "found",
-        "not-found"
-      ],
-      "runnableWithAuth": [
-        "found",
-        "not-found",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["found", "not-found"],
+      "runnableWithAuth": ["found", "not-found", "auth-none", "auth-insufficient"]
     },
     {
       "id": "patchProductProjection",
       "method": "PATCH",
       "path": "/v1/products/{product_id}/projections/{projection_id}",
       "tag": "Product Projections",
-      "statuses": [
-        200,
-        401,
-        403,
-        404,
-        422
-      ],
-      "parameters": [
-        "product_id",
-        "projection_id"
-      ],
+      "statuses": [200, 401, 403, 404, 422],
+      "parameters": ["product_id", "projection_id"],
       "implemented": false,
       "responseShape": "{ data: Resource }",
       "body": {
@@ -4697,35 +4235,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "patch-read",
-        "not-found",
-        "invalid-body"
-      ],
-      "runnableWithAuth": [
-        "patch-read",
-        "not-found",
-        "invalid-body",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["patch-read", "not-found", "invalid-body"],
+      "runnableWithAuth": ["patch-read", "not-found", "invalid-body", "auth-none", "auth-insufficient"]
     },
     {
       "id": "replaceProductProjection",
       "method": "PUT",
       "path": "/v1/products/{product_id}/projections/{projection_id}",
       "tag": "Product Projections",
-      "statuses": [
-        200,
-        401,
-        403,
-        404,
-        422
-      ],
-      "parameters": [
-        "product_id",
-        "projection_id"
-      ],
+      "statuses": [200, 401, 403, 404, 422],
+      "parameters": ["product_id", "projection_id"],
       "implemented": false,
       "responseShape": "{ data: Resource }",
       "body": {
@@ -4818,36 +4337,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "replace-read",
-        "not-found",
-        "invalid-body"
-      ],
-      "runnableWithAuth": [
-        "replace-read",
-        "not-found",
-        "invalid-body",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["replace-read", "not-found", "invalid-body"],
+      "runnableWithAuth": ["replace-read", "not-found", "invalid-body", "auth-none", "auth-insufficient"]
     },
     {
       "id": "listStoreAssortments",
       "method": "GET",
       "path": "/v1/store-assortments",
       "tag": "Store Assortments",
-      "statuses": [
-        200,
-        401,
-        403
-      ],
-      "parameters": [
-        "cursor",
-        "limit",
-        "store_id",
-        "product_id",
-        "is_enabled"
-      ],
+      "statuses": [200, 401, 403],
+      "parameters": ["cursor", "limit", "store_id", "product_id", "is_enabled"],
       "implemented": true,
       "responseShape": "{ data: [...], meta, links }",
       "body": null,
@@ -5177,13 +4676,7 @@
       "method": "POST",
       "path": "/v1/store-assortments",
       "tag": "Store Assortments",
-      "statuses": [
-        201,
-        401,
-        403,
-        409,
-        422
-      ],
+      "statuses": [201, 401, 403, 409, 422],
       "parameters": [],
       "implemented": true,
       "responseShape": "{ data: Resource }",
@@ -5321,30 +4814,15 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "create-read",
-        "invalid-body",
-        "conflict"
-      ],
-      "runnableWithAuth": [
-        "create-read",
-        "invalid-body",
-        "conflict",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["create-read", "invalid-body", "conflict"],
+      "runnableWithAuth": ["create-read", "invalid-body", "conflict", "auth-none", "auth-insufficient"]
     },
     {
       "id": "bulkUpsertStoreAssortments",
       "method": "POST",
       "path": "/v1/store-assortments/bulk",
       "tag": "Store Assortments",
-      "statuses": [
-        200,
-        401,
-        403,
-        422
-      ],
+      "statuses": [200, 401, 403, 422],
       "parameters": [],
       "implemented": true,
       "responseShape": "{ data: StoreAssortmentBulkResult }",
@@ -5480,31 +4958,16 @@
           }
         }
       ],
-      "runnableWithoutAuth": [
-        "create-read",
-        "invalid-body"
-      ],
-      "runnableWithAuth": [
-        "create-read",
-        "invalid-body",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["create-read", "invalid-body"],
+      "runnableWithAuth": ["create-read", "invalid-body", "auth-none", "auth-insufficient"]
     },
     {
       "id": "deleteStoreAssortment",
       "method": "DELETE",
       "path": "/v1/store-assortments/{store_assortment_id}",
       "tag": "Store Assortments",
-      "statuses": [
-        204,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "store_assortment_id"
-      ],
+      "statuses": [204, 401, 403, 404],
+      "parameters": ["store_assortment_id"],
       "implemented": true,
       "responseShape": "No body",
       "body": null,
@@ -5585,34 +5048,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "delete-read",
-        "deleted-read",
-        "not-found"
-      ],
-      "runnableWithAuth": [
-        "delete-read",
-        "deleted-read",
-        "not-found",
-        "auth-none",
-        "auth-insufficient",
-        "auth-api-key"
-      ]
+      "runnableWithoutAuth": ["delete-read", "deleted-read", "not-found"],
+      "runnableWithAuth": ["delete-read", "deleted-read", "not-found", "auth-none", "auth-insufficient", "auth-api-key"]
     },
     {
       "id": "getStoreAssortment",
       "method": "GET",
       "path": "/v1/store-assortments/{store_assortment_id}",
       "tag": "Store Assortments",
-      "statuses": [
-        200,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "store_assortment_id"
-      ],
+      "statuses": [200, 401, 403, 404],
+      "parameters": ["store_assortment_id"],
       "implemented": true,
       "responseShape": "{ data: Resource }",
       "body": null,
@@ -5687,32 +5132,16 @@
           }
         }
       ],
-      "runnableWithoutAuth": [
-        "found",
-        "not-found"
-      ],
-      "runnableWithAuth": [
-        "found",
-        "not-found",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["found", "not-found"],
+      "runnableWithAuth": ["found", "not-found", "auth-none", "auth-insufficient"]
     },
     {
       "id": "patchStoreAssortment",
       "method": "PATCH",
       "path": "/v1/store-assortments/{store_assortment_id}",
       "tag": "Store Assortments",
-      "statuses": [
-        200,
-        401,
-        403,
-        404,
-        422
-      ],
-      "parameters": [
-        "store_assortment_id"
-      ],
+      "statuses": [200, 401, 403, 404, 422],
+      "parameters": ["store_assortment_id"],
       "implemented": true,
       "responseShape": "{ data: Resource }",
       "body": {
@@ -5793,34 +5222,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "patch-read",
-        "not-found",
-        "invalid-body"
-      ],
-      "runnableWithAuth": [
-        "patch-read",
-        "not-found",
-        "invalid-body",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["patch-read", "not-found", "invalid-body"],
+      "runnableWithAuth": ["patch-read", "not-found", "invalid-body", "auth-none", "auth-insufficient"]
     },
     {
       "id": "replaceStoreAssortment",
       "method": "PUT",
       "path": "/v1/store-assortments/{store_assortment_id}",
       "tag": "Store Assortments",
-      "statuses": [
-        200,
-        401,
-        403,
-        404,
-        422
-      ],
-      "parameters": [
-        "store_assortment_id"
-      ],
+      "statuses": [200, 401, 403, 404, 422],
+      "parameters": ["store_assortment_id"],
       "implemented": true,
       "responseShape": "{ data: Resource }",
       "body": {
@@ -5951,39 +5362,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "replace-read",
-        "not-found",
-        "invalid-body"
-      ],
-      "runnableWithAuth": [
-        "replace-read",
-        "not-found",
-        "invalid-body",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["replace-read", "not-found", "invalid-body"],
+      "runnableWithAuth": ["replace-read", "not-found", "invalid-body", "auth-none", "auth-insufficient"]
     },
     {
       "id": "listStores",
       "method": "GET",
       "path": "/v1/stores",
       "tag": "Stores",
-      "statuses": [
-        200,
-        401,
-        403
-      ],
-      "parameters": [
-        "cursor",
-        "limit",
-        "region",
-        "department",
-        "zone_id",
-        "lat",
-        "lon",
-        "radius_km"
-      ],
+      "statuses": [200, 401, 403],
+      "parameters": ["cursor", "limit", "region", "department", "zone_id", "lat", "lon", "radius_km"],
       "implemented": true,
       "responseShape": "{ data: [...], meta, links }",
       "body": null,
@@ -6419,12 +5807,7 @@
       "method": "POST",
       "path": "/v1/stores",
       "tag": "Stores",
-      "statuses": [
-        201,
-        401,
-        403,
-        422
-      ],
+      "statuses": [201, 401, 403, 422],
       "parameters": [],
       "implemented": true,
       "responseShape": "{ data: Resource }",
@@ -6508,31 +5891,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "create-read",
-        "invalid-body"
-      ],
-      "runnableWithAuth": [
-        "create-read",
-        "invalid-body",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["create-read", "invalid-body"],
+      "runnableWithAuth": ["create-read", "invalid-body", "auth-none", "auth-insufficient"]
     },
     {
       "id": "deleteStore",
       "method": "DELETE",
       "path": "/v1/stores/{store_id}",
       "tag": "Stores",
-      "statuses": [
-        204,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "store_id"
-      ],
+      "statuses": [204, 401, 403, 404],
+      "parameters": ["store_id"],
       "implemented": true,
       "responseShape": "No body",
       "body": null,
@@ -6613,34 +5981,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "delete-read",
-        "deleted-read",
-        "not-found"
-      ],
-      "runnableWithAuth": [
-        "delete-read",
-        "deleted-read",
-        "not-found",
-        "auth-none",
-        "auth-insufficient",
-        "auth-api-key"
-      ]
+      "runnableWithoutAuth": ["delete-read", "deleted-read", "not-found"],
+      "runnableWithAuth": ["delete-read", "deleted-read", "not-found", "auth-none", "auth-insufficient", "auth-api-key"]
     },
     {
       "id": "getStore",
       "method": "GET",
       "path": "/v1/stores/{store_id}",
       "tag": "Stores",
-      "statuses": [
-        200,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "store_id"
-      ],
+      "statuses": [200, 401, 403, 404],
+      "parameters": ["store_id"],
       "implemented": true,
       "responseShape": "{ data: Resource }",
       "body": null,
@@ -6715,32 +6065,16 @@
           }
         }
       ],
-      "runnableWithoutAuth": [
-        "found",
-        "not-found"
-      ],
-      "runnableWithAuth": [
-        "found",
-        "not-found",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["found", "not-found"],
+      "runnableWithAuth": ["found", "not-found", "auth-none", "auth-insufficient"]
     },
     {
       "id": "patchStore",
       "method": "PATCH",
       "path": "/v1/stores/{store_id}",
       "tag": "Stores",
-      "statuses": [
-        200,
-        401,
-        403,
-        404,
-        422
-      ],
-      "parameters": [
-        "store_id"
-      ],
+      "statuses": [200, 401, 403, 404, 422],
+      "parameters": ["store_id"],
       "implemented": true,
       "responseShape": "{ data: Resource }",
       "body": {
@@ -6821,34 +6155,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "patch-read",
-        "not-found",
-        "invalid-body"
-      ],
-      "runnableWithAuth": [
-        "patch-read",
-        "not-found",
-        "invalid-body",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["patch-read", "not-found", "invalid-body"],
+      "runnableWithAuth": ["patch-read", "not-found", "invalid-body", "auth-none", "auth-insufficient"]
     },
     {
       "id": "replaceStore",
       "method": "PUT",
       "path": "/v1/stores/{store_id}",
       "tag": "Stores",
-      "statuses": [
-        200,
-        401,
-        403,
-        404,
-        422
-      ],
-      "parameters": [
-        "store_id"
-      ],
+      "statuses": [200, 401, 403, 404, 422],
+      "parameters": ["store_id"],
       "implemented": true,
       "responseShape": "{ data: Resource }",
       "body": {
@@ -6954,36 +6270,16 @@
           "budget": null
         }
       ],
-      "runnableWithoutAuth": [
-        "replace-read",
-        "not-found",
-        "invalid-body"
-      ],
-      "runnableWithAuth": [
-        "replace-read",
-        "not-found",
-        "invalid-body",
-        "auth-none",
-        "auth-insufficient"
-      ]
+      "runnableWithoutAuth": ["replace-read", "not-found", "invalid-body"],
+      "runnableWithAuth": ["replace-read", "not-found", "invalid-body", "auth-none", "auth-insufficient"]
     },
     {
       "id": "listStoreAssortment",
       "method": "GET",
       "path": "/v1/stores/{store_id}/assortment",
       "tag": "Store Assortments",
-      "statuses": [
-        200,
-        401,
-        403,
-        404
-      ],
-      "parameters": [
-        "store_id",
-        "cursor",
-        "limit",
-        "is_enabled"
-      ],
+      "statuses": [200, 401, 403, 404],
+      "parameters": ["store_id", "cursor", "limit", "is_enabled"],
       "implemented": true,
       "responseShape": "{ data: [...], meta, links }",
       "body": null,

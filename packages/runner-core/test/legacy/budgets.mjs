@@ -37,7 +37,8 @@ export function budgetFor(method, operationPath, requestPath = "") {
   if (method.toUpperCase() !== "GET") return null;
   // The EAN path is the one the cache exists for, and it carries its own tighter target. It is
   // only claimed on a warm cache, so a first, cold sample is expected to miss it.
-  if (/[?&]ean_sap=/.test(requestPath)) return { ms: 50, label: "?ean_sap= p95 con caché caliente < 50 ms", source: "RFP §6" };
+  if (/[?&]ean_sap=/.test(requestPath))
+    return { ms: 50, label: "?ean_sap= p95 con caché caliente < 50 ms", source: "RFP §6" };
   return { ms: 70, label: "GET p95 < 70 ms", source: "RFP §6" };
 }
 
@@ -73,8 +74,13 @@ export function latencyAssertion(budget, samples) {
   if (!budget || samples.length === 0) return null;
   const p95 = percentile(samples, 95);
   const measured = samples.length === 1 ? samples[0] : p95;
-  const how = samples.length === 1
-    ? `1 muestra: ${measured} ms (una medición no es un p95)`
-    : `${samples.length} muestras · p50 ${percentile(samples, 50)} ms · p95 ${p95} ms`;
-  return { label: budget.label, pass: measured < budget.ms, detail: `${how} · objetivo ${budget.ms} ms (${budget.source})` };
+  const how =
+    samples.length === 1
+      ? `1 muestra: ${measured} ms (una medición no es un p95)`
+      : `${samples.length} muestras · p50 ${percentile(samples, 50)} ms · p95 ${p95} ms`;
+  return {
+    label: budget.label,
+    pass: measured < budget.ms,
+    detail: `${how} · objetivo ${budget.ms} ms (${budget.source})`,
+  };
 }

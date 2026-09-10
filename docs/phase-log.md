@@ -18,7 +18,7 @@ golden de la matriz actual congelado.
 - `test/golden/matrix.json` — generado por `test/golden/generate.ts` desde los módulos del
   dashboard acoplado, sin tocarlos: **46 operaciones, 196 respuestas declaradas, 311 casos**
   (214 sin los de autorización), las cuatro colas y los dos modos de orden.
-- `test/parity.test.ts` — el motor generalizado, alimentado con Digital Catalog *como datos*,
+- `test/parity.test.ts` — el motor generalizado, alimentado con Digital Catalog _como datos_,
   reproduce ese fichero campo por campo: cada caso, cada descripción, cada status esperado, cada
   path resuelto, cada presupuesto y el orden exacto de cada cola.
 - `test/scenarios.test.ts` — el mismo motor sobre un proyecto que no es Digital Catalog (una API
@@ -26,18 +26,18 @@ golden de la matriz actual congelado.
   mitad que demuestra que la configuración es configuración y no las constantes con otro nombre.
 
 **Lo que el test de paridad encontró**: `bulkUpsertProducts` tiene su propio envelope
-(`ProductBulkResult`), declarado en el legacy *antes* de la regla genérica del prefijo `bulk`.
+(`ProductBulkResult`), declarado en el legacy _antes_ de la regla genérica del prefijo `bulk`.
 La primera versión de la configuración lo perdía. Es exactamente el tipo de detalle que una
 revisión a ojo no ve y por el que la fase existe.
 
 **Criterios de aceptación**
 
-| Criterio | Estado |
-|----------|--------|
-| Golden generado y congelado desde el código acoplado | ✅ `test/golden/matrix.json` |
-| El motor parametrizado reproduce la matriz sin pérdidas | ✅ 5 tests de paridad |
-| El dashboard acoplado sigue intacto | ✅ solo se le añadió `docs/`; `lib/` sin tocar |
-| Tipado estricto limpio | ✅ `tsc --noEmit` sin errores |
+| Criterio                                                | Estado                                         |
+| ------------------------------------------------------- | ---------------------------------------------- |
+| Golden generado y congelado desde el código acoplado    | ✅ `test/golden/matrix.json`                   |
+| El motor parametrizado reproduce la matriz sin pérdidas | ✅ 5 tests de paridad                          |
+| El dashboard acoplado sigue intacto                     | ✅ solo se le añadió `docs/`; `lib/` sin tocar |
+| Tipado estricto limpio                                  | ✅ `tsc --noEmit` sin errores                  |
 
 **Deuda que P0 deja anotada**
 
@@ -147,7 +147,7 @@ mismos parámetros compartidos, mismos estados. Y `apps/api/test/http/projects.t
 3. **Choque entre `operationId` y clave primaria.** `ImportedOperation.id` es el nombre que el
    contrato da a la operación; la fila también tiene un `id`. Al guardar, el UUID pisaba al
    `operationId` — y `diffOperations` empareja versiones **por `id`**, así que el drift habría
-   comparado dos juegos de UUID recién generados y reportado *todas* las operaciones como
+   comparado dos juegos de UUID recién generados y reportado _todas_ las operaciones como
    eliminadas y vueltas a añadir en cada importación. La clave de la fila pasa a llamarse
    `rowId`.
 
@@ -292,17 +292,17 @@ pipeline no era algo que pudiera existir.
 **Los seis escenarios del §6.4 del plan, contra un servidor HTTP real** — no un `fetch` simulado,
 que solo demostraría que el simulacro se comporta:
 
-| Fallo del destino | Qué lo detecta |
-|---|---|
-| 200 con envelope roto | Pasa el status, falla el schema. **La tesis del producto en un test.** |
-| POST 201 que no persiste los campos | El paso `act` está bien; falla la relectura |
-| DELETE 204 que no borra | `delete-read` pasa, `deleted-read` falla |
-| Destino lento | Falla el presupuesto y **solo** el presupuesto |
-| 405 sobre operación declarada | Diagnóstico propio; silencia el resto y detiene el flujo |
-| Errores sin Problem Details | `{ "error": "..." }` se rechaza |
+| Fallo del destino                   | Qué lo detecta                                                         |
+| ----------------------------------- | ---------------------------------------------------------------------- |
+| 200 con envelope roto               | Pasa el status, falla el schema. **La tesis del producto en un test.** |
+| POST 201 que no persiste los campos | El paso `act` está bien; falla la relectura                            |
+| DELETE 204 que no borra             | `delete-read` pasa, `deleted-read` falla                               |
+| Destino lento                       | Falla el presupuesto y **solo** el presupuesto                         |
+| 405 sobre operación declarada       | Diagnóstico propio; silencia el resto y detiene el flujo               |
+| Errores sin Problem Details         | `{ "error": "..." }` se rechaza                                        |
 
 Más las guardas: sin `writesAllowed` **no sale nada a la red** (comprobado contando las
-peticiones que llegan al destino), una URL base inalcanzable falla como *conexión* y no como
+peticiones que llegan al destino), una URL base inalcanzable falla como _conexión_ y no como
 schema, y con `authEnforced` la matriz 401/403 se ejecuta de verdad usando las dos credenciales
 por rol.
 
@@ -342,7 +342,7 @@ lo dice RFC 9110, no una convención de proyecto**, así que la regla vive ahora
 **Deuda que P4 deja anotada**
 
 - **SSE es in-process.** Con `QUEUE_DRIVER=redis` y más de una instancia de API, un seguidor
-  conectado a la instancia B no ve nada de una corrida que ejecuta la instancia A. El *fallback*
+  conectado a la instancia B no ve nada de una corrida que ejecuta la instancia A. El _fallback_
   por polling de `GET /runs/:id` lo cubre hoy; un relé por Redis pub/sub es el arreglo cuando
   multi-instancia sea real.
 - **Sin política de retención.** `run_steps` guarda cuerpos completos y es la tabla que crece.
@@ -378,7 +378,7 @@ la versión acoplada esas constantes estaban repartidas por cinco módulos y cad
 incidental donde estaba.
 
 **Ese test encontró una fuga a la primera**: había dejado `http://127.0.0.1:8100` —la URL del
-backend de Digital Catalog— como *placeholder* del formulario de entornos.
+backend de Digital Catalog— como _placeholder_ del formulario de entornos.
 
 **Cuatro fallos que solo aparecieron al ejecutar de verdad**
 
@@ -400,7 +400,7 @@ Ninguno lo veía la suite, y los cuatro son del tipo que un despliegue encuentra
 
 Y una decisión que salió de usarlo: **el stream SSE queda fuera del throttler**. Una conexión
 larga no es una tasa de peticiones, y contarla como tal crea una trampa — cuando el stream se
-rechaza el cliente cae a *polling*, el *polling* gasta el mismo presupuesto, y el stream ya no
+rechaza el cliente cae a _polling_, el _polling_ gasta el mismo presupuesto, y el stream ya no
 puede reconectar.
 
 **Verificado en un navegador, contra la API viva y Postgres real**: registro, sesión que sobrevive
@@ -446,7 +446,7 @@ conteo de cobertura del README acoplado.
 
 ### Cómo se compara un veredicto con un veredicto
 
-Las fases anteriores compararon *listas de casos*. Esto compara *resultados*, que es lo único que
+Las fases anteriores compararon _listas de casos_. Esto compara _resultados_, que es lo único que
 prueba que el producto juzga igual. Para eso hacía falta un oráculo ejecutable:
 
 - `tools/parity-cut/legacy/route.ts` es una copia **byte a byte** de
@@ -463,7 +463,7 @@ prueba que el producto juzga igual. Para eso hacía falta un oráculo ejecutable
   atajo aquí probaría la paridad de una función interna, no la del producto.
 
 Cada lado corre contra una base **recién reiniciada**. La matriz escribe, el dashboard acoplado
-limpia detrás de sí *para poder repetirse*, y "para poder" no es "demostradamente lo hace": una
+limpia detrás de sí _para poder repetirse_, y "para poder" no es "demostradamente lo hace": una
 fila que sobreviva convierte el `POST` del segundo lado en un 409 sobre una UNIQUE, y eso se
 reportaría como fallo del desacoplamiento sin serlo.
 
@@ -507,7 +507,7 @@ que los casos 403 y D-29 exigen rellenar, pone en rojo toda la matriz de escritu
 ajeno al endpoint**. Es exactamente la clase de falso rojo que este producto existe para no
 producir: `auth: "default"` significa "la credencial que este caso presenta", en singular.
 
-El producto manda solo la credencial `primary`. Para demostrar que los diez son *un* defecto y no
+El producto manda solo la credencial `primary`. Para demostrar que los diez son _un_ defecto y no
 diez regresiones, el snapshot lleva un `singleCredential` que neutraliza únicamente eso; con él la
 paridad es idéntica en los 311. El guion lo ejecuta solo cuando la segunda pasada difiere, y falla
 si quedan diferencias que esa causa no explique.
@@ -577,7 +577,7 @@ vista de evidencia nombrando el paso que falla.
 Termina en **13 verdes y 2 rojos**, y los rojos son un fallo puesto a propósito en la muestra: el
 borrado es blando y la lectura por id se olvidó del flag, así que `DELETE /widgets/{id}` responde
 el `204` que su contrato declara y sigue sirviendo la fila. Una suite de códigos de estado lo da
-por bueno. Es deliberadamente un fallo corriente y deliberadamente *aislado* —el flag se respeta en
+por bueno. Es deliberadamente un fallo corriente y deliberadamente _aislado_ —el flag se respeta en
 todas partes menos en esa lectura— para que la limpieza siga liberando el nombre, la matriz se
 pueda repetir y salgan dos filas rojas en vez de una cascada que nadie lee.
 
@@ -594,10 +594,10 @@ demo no funciona sin abrirlo, y un despliegue de verdad no debe heredarlo por de
 2. **No había migraciones en la imagen.** `pnpm migration:run` pasa las fuentes TypeScript por el
    CLI de TypeORM, que está bien en un portátil y es imposible en una imagen sin fuentes ni
    compilador: habría arrancado contra un esquema vacío. Ahora es `apps/api/dist/migrate.js`, con
-   su servicio, su código de salida y un *advisory lock* de Postgres para el caso de dos
+   su servicio, su código de salida y un _advisory lock_ de Postgres para el caso de dos
    contenedores de init a la vez. **No `migrationsRun` al arrancar**: eso ata «el esquema cambió» a
    «un proceso arrancó», cada réplica lo intenta, la API atiende con el DDL a medias, y una
-   migración fallida parece un *crash loop*.
+   migración fallida parece un _crash loop_.
 3. **Tres de las cuatro pestañas de proyecto te echaban del proyecto.** Eran rutas relativas, y
    react-router las resuelve contra **la ruta en la que se renderiza el enlace**, no contra la URL
    de la barra de direcciones; este layout está montado en `/`, así que `runs` era `/runs`, no
@@ -701,7 +701,7 @@ comportándose igual y reimportar es lo que los rellena.
   mínimo válido es el que más probablemente se acepte, y un 422 provocado por un campo opcional que
   nadie pidió se lee como un fallo del endpoint.
 - **Salvo que no haya ninguno obligatorio**, y entonces todos los que declare. Declararlo todo
-  opcional es lo que *es* un `PATCH`: su payload mínimo válido es `{}`, que es no mandar nada, y a
+  opcional es lo que _es_ un `PATCH`: su payload mínimo válido es `{}`, que es no mandar nada, y a
   eso varias APIs responden 422 con razón.
 - **`readOnly` no viaja.** Lo dice OpenAPI, y una API que valida estricto responde 422 — seríamos
   nosotros provocando el fallo que luego reportamos.
@@ -709,14 +709,14 @@ comportándose igual y reimportar es lo que los rellena.
   incumple la restricción que el propio contrato publicó sería esta herramienta escribiendo el 422.
 - **Determinista.** Un cuerpo que cambia entre corridas hace dos corridas incomparables y un fallo
   irreproducible.
-- **Nunca un objeto vacío.** Un objeto vacío *es* el caso `invalid-body`; devolverlo aquí haría que
+- **Nunca un objeto vacío.** Un objeto vacío _es_ el caso `invalid-body`; devolverlo aquí haría que
   el caso de creación y el de cuerpo inválido mandaran el mismo payload y esperaran lo contrario.
 - **El 409 no se deriva.** Necesita un payload que choque con una fila que ya está ahí, que es
   conocimiento sobre los datos y no sobre el schema. `conflictBody` sigue siendo configuración, y
   sin él sencillamente no hay caso de conflicto.
 
 Y **la configuración sigue mandando**: un schema dice qué es estructuralmente válido; un proyecto
-sabe qué es *aceptable* — qué tienda existe, qué EAN es real, qué nombre está cogido.
+sabe qué es _aceptable_ — qué tienda existe, qué EAN es real, qué nombre está cogido.
 
 ### La prueba
 
@@ -772,7 +772,7 @@ crear un entorno. No lo es: el handler responde 422 nombrando `name`. **El docum
 API que no existe**, que es exactamente el fallo que este producto busca en los demás.
 
 `CreateEnvironmentDto` exige `name` y `baseUrl`; `UpdateEnvironmentDto` no exige nada, que es lo
-que un update parcial *es*. El 422 sale ahora del pipe, donde se decide por la forma de la
+que un update parcial _es_. El 422 sale ahora del pipe, donde se decide por la forma de la
 petición y no por lógica de negocio tres capas más abajo. El handler conserva sus comprobaciones:
 un command bus se alcanza desde sitios donde ningún `ValidationPipe` corre, y el invariante es del
 dominio, no de HTTP.
@@ -797,7 +797,7 @@ aprendió de cada una, que casi nunca fue lo que decía la nota.
 
 Un campo con `pattern: "^[A-Z]{3}-\\d{4}$"` recibía `"ejemplo"`. La nota decía «se podría
 satisfacer una expresión regular sencilla»; lo cierto es más fuerte: es el único sitio donde «no
-adivinar más allá del documento» no aplica, porque el patrón *es* el documento, y mandar otra cosa
+adivinar más allá del documento» no aplica, porque el patrón _es_ el documento, y mandar otra cosa
 es escribir uno mismo el 422 que luego se reporta.
 
 `exampleFromPattern` cubre literales, clases, rangos, escapes, grupos, alternancia y repetición

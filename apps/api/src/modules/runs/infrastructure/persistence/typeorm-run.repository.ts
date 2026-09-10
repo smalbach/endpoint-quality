@@ -18,7 +18,9 @@ export class TypeOrmRunRepository implements RunRepositoryPort {
     return toRun(await this.runs.findOne({ where: { id } }));
   }
   async listForProject(projectId: string, limit: number): Promise<Run[]> {
-    return (await this.runs.find({ where: { projectId }, order: { startedAt: "DESC" }, take: limit })).map((row) => toRun(row)!);
+    return (await this.runs.find({ where: { projectId }, order: { startedAt: "DESC" }, take: limit })).map((row) =>
+      toRun(row)!,
+    );
   }
   async save(run: Run): Promise<void> {
     await this.runs.save(run as unknown as RunEntity);
@@ -88,7 +90,10 @@ export class TypeOrmRunRepository implements RunRepositoryPort {
 
   async updateStatus(runId: string, status: RunStatus, at: Date, error?: string): Promise<void> {
     const finished = ["passed", "failed", "cancelled", "error"].includes(status);
-    await this.runs.update({ id: runId }, { status, ...(finished ? { finishedAt: at } : {}), ...(error ? { error } : {}) });
+    await this.runs.update(
+      { id: runId },
+      { status, ...(finished ? { finishedAt: at } : {}), ...(error ? { error } : {}) },
+    );
   }
 
   /**
@@ -136,7 +141,13 @@ export class TypeOrmRunRepository implements RunRepositoryPort {
 
 function toRun(row: RunEntity | null): Run | null {
   return row
-    ? { ...row, status: row.status as RunStatus, plan: row.plan as RunPlan, totals: row.totals as RunTotals, triggeredByKind: row.triggeredByKind as Run["triggeredByKind"] }
+    ? {
+        ...row,
+        status: row.status as RunStatus,
+        plan: row.plan as RunPlan,
+        totals: row.totals as RunTotals,
+        triggeredByKind: row.triggeredByKind as Run["triggeredByKind"],
+      }
     : null;
 }
 const toCase = (row: RunCaseEntity): RunCase => ({ ...row, status: row.status as CaseStatus });

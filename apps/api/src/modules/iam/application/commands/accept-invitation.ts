@@ -6,10 +6,18 @@ import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { hashOpaqueToken } from "@/shared/crypto/opaque-token";
 import { USER_REPOSITORY, type UserRepositoryPort } from "@/modules/auth/domain/ports";
 import { normalizeEmail } from "@/modules/auth/domain/model";
-import { INVITATION_REPOSITORY, MEMBERSHIP_REPOSITORY, type InvitationRepositoryPort, type MembershipRepositoryPort } from "../../domain/ports";
+import {
+  INVITATION_REPOSITORY,
+  MEMBERSHIP_REPOSITORY,
+  type InvitationRepositoryPort,
+  type MembershipRepositoryPort,
+} from "../../domain/ports";
 
 export class AcceptInvitationCommand implements ICommand {
-  constructor(readonly token: string, readonly userId: string) {}
+  constructor(
+    readonly token: string,
+    readonly userId: string,
+  ) {}
 }
 
 /**
@@ -34,8 +42,10 @@ export class AcceptInvitationHandler implements ICommandHandler<AcceptInvitation
   async execute(command: AcceptInvitationCommand) {
     const now = this.clock.now();
     const invitation = await this.invitations.findByHash(hashOpaqueToken(command.token));
-    if (!invitation || invitation.revokedAt || invitation.acceptedAt) throw new NotFoundError("La invitación no es válida", "invitation-invalid");
-    if (invitation.expiresAt.getTime() <= now.getTime()) throw new NotFoundError("La invitación ha caducado", "invitation-expired");
+    if (!invitation || invitation.revokedAt || invitation.acceptedAt)
+      throw new NotFoundError("La invitación no es válida", "invitation-invalid");
+    if (invitation.expiresAt.getTime() <= now.getTime())
+      throw new NotFoundError("La invitación ha caducado", "invitation-expired");
 
     const user = await this.users.findById(command.userId);
     if (!user) throw new NotFoundError("El usuario no existe", "user-not-found");
@@ -44,7 +54,13 @@ export class AcceptInvitationHandler implements ICommandHandler<AcceptInvitation
     }
 
     const existing = await this.memberships.find(invitation.organizationId, user.id);
-    if (!existing) await this.memberships.save({ organizationId: invitation.organizationId, userId: user.id, role: invitation.role, createdAt: now });
+    if (!existing)
+      await this.memberships.save({
+        organizationId: invitation.organizationId,
+        userId: user.id,
+        role: invitation.role,
+        createdAt: now,
+      });
     await this.invitations.save({ ...invitation, acceptedAt: now });
 
     return { organizationId: invitation.organizationId };

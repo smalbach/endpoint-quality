@@ -93,7 +93,6 @@ export class ApiTokenEntity {
   @Column({ type: "timestamptz", nullable: true }) revokedAt: Date | null;
 }
 
-
 /**
  * A project: one contract, its environments, and everything configured around them.
  *
@@ -186,7 +185,6 @@ export class SpecOperationEntity {
   @Column({ type: "int" }) position: number;
 }
 
-
 /**
  * Where a project's contract is exercised: a base URL, and the credentials to present there.
  *
@@ -255,7 +253,6 @@ export class ProjectConfigEntity {
   @Column({ type: "timestamptz" }) updatedAt: Date;
   @Column("uuid") updatedBy: string;
 }
-
 
 /**
  * One execution of a matrix.
@@ -329,6 +326,9 @@ export class RunStepEntity {
   @Column({ type: "timestamptz", nullable: true }) prunedAt: Date | null;
 }
 
+// The line breaks group these by module, which is information a formatter cannot know and
+// one-per-line would lose.
+// prettier-ignore
 export const ENTITIES = [
   UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity,
   ProjectEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity,

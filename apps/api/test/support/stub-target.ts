@@ -36,15 +36,38 @@ const SPEC = {
   info: { title: "Stub", version: "1.0.0" },
   components: {
     schemas: {
-      Thing: { type: "object", required: ["id", "name"], properties: { id: { type: "string" }, name: { type: "string" }, size: { type: "integer" } } },
-      ThingEnvelope: { type: "object", required: ["data"], properties: { data: { $ref: "#/components/schemas/Thing" } } },
-      ThingList: { type: "object", required: ["data"], properties: { data: { type: "array", items: { $ref: "#/components/schemas/Thing" } } } },
-      Problem: { type: "object", required: ["type", "title", "status"], properties: { type: { type: "string" }, title: { type: "string" }, status: { type: "integer" } } },
+      Thing: {
+        type: "object",
+        required: ["id", "name"],
+        properties: { id: { type: "string" }, name: { type: "string" }, size: { type: "integer" } },
+      },
+      ThingEnvelope: {
+        type: "object",
+        required: ["data"],
+        properties: { data: { $ref: "#/components/schemas/Thing" } },
+      },
+      ThingList: {
+        type: "object",
+        required: ["data"],
+        properties: { data: { type: "array", items: { $ref: "#/components/schemas/Thing" } } },
+      },
+      Problem: {
+        type: "object",
+        required: ["type", "title", "status"],
+        properties: { type: { type: "string" }, title: { type: "string" }, status: { type: "integer" } },
+      },
     },
   },
   paths: {
     "/things": {
-      get: { operationId: "listThings", tags: ["Things"], responses: { "200": { content: { "application/json": { schema: { $ref: "#/components/schemas/ThingList" } } } }, "401": {} } },
+      get: {
+        operationId: "listThings",
+        tags: ["Things"],
+        responses: {
+          "200": { content: { "application/json": { schema: { $ref: "#/components/schemas/ThingList" } } } },
+          "401": {},
+        },
+      },
       post: {
         operationId: "createThing",
         tags: ["Things"],
@@ -58,7 +81,11 @@ const SPEC = {
               schema: {
                 type: "object",
                 required: ["name", "size"],
-                properties: { id: { type: "string", readOnly: true }, name: { type: "string" }, size: { type: "integer", minimum: 2 } },
+                properties: {
+                  id: { type: "string", readOnly: true },
+                  name: { type: "string" },
+                  size: { type: "integer", minimum: 2 },
+                },
               },
             },
           },
@@ -147,7 +174,10 @@ export class StubTarget {
     if (this.faults.slowMs) await new Promise((resolve) => setTimeout(resolve, this.faults.slowMs));
 
     if (url.pathname === "/things" && method === "GET") {
-      return send(200, this.faults.brokenEnvelope ? { items: [...this.things.values()] } : { data: [...this.things.values()] });
+      return send(
+        200,
+        this.faults.brokenEnvelope ? { items: [...this.things.values()] } : { data: [...this.things.values()] },
+      );
     }
 
     if (url.pathname === "/things" && method === "POST") {

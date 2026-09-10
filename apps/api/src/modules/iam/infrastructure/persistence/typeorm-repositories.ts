@@ -4,7 +4,11 @@ import { Repository } from "typeorm";
 
 import { InvitationEntity, MembershipEntity, OrganizationEntity } from "@/shared/database/entities";
 import type { Invitation, Membership, Organization, Role } from "../../domain/model";
-import type { InvitationRepositoryPort, MembershipRepositoryPort, OrganizationRepositoryPort } from "../../domain/ports";
+import type {
+  InvitationRepositoryPort,
+  MembershipRepositoryPort,
+  OrganizationRepositoryPort,
+} from "../../domain/ports";
 
 @Injectable()
 export class TypeOrmOrganizationRepository implements OrganizationRepositoryPort {

@@ -7,7 +7,12 @@ import { hashOpaqueToken } from "@/shared/crypto/opaque-token";
 import { ENV, type Env } from "@/shared/config/env";
 import { ACCESS_TOKEN_SERVICE, type AccessTokenServicePort } from "../../domain/access-token";
 import { isActive, verifyRefreshToken } from "../../domain/model";
-import { REFRESH_TOKEN_REPOSITORY, USER_REPOSITORY, type RefreshTokenRepositoryPort, type UserRepositoryPort } from "../../domain/ports";
+import {
+  REFRESH_TOKEN_REPOSITORY,
+  USER_REPOSITORY,
+  type RefreshTokenRepositoryPort,
+  type UserRepositoryPort,
+} from "../../domain/ports";
 import { issueSession, type SessionTokens } from "./login-user";
 
 export class RefreshSessionCommand implements ICommand {
@@ -51,7 +56,9 @@ export class RefreshSessionHandler implements ICommandHandler<RefreshSessionComm
     if (!verdict.usable) {
       if (verdict.reason === "reused") {
         await this.refreshTokens.revokeSession(stored.sessionId, now);
-        this.logger.warn(`Reuso de refresh token detectado; sesión ${stored.sessionId} revocada para el usuario ${stored.userId}`);
+        this.logger.warn(
+          `Reuso de refresh token detectado; sesión ${stored.sessionId} revocada para el usuario ${stored.userId}`,
+        );
       }
       throw new UnauthenticatedError("La sesión no es válida");
     }

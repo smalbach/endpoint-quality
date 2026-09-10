@@ -76,8 +76,10 @@ export class GetScenariosHandler implements IQueryHandler<GetScenariosQuery, Sce
 
   async execute(query: GetScenariosQuery): Promise<ScenariosView> {
     const project = await this.projects.findById(query.projectId);
-    if (!project || project.organizationId !== query.organizationId) throw new NotFoundError("El proyecto no existe", "project-not-found");
-    if (!project.activeSpecVersionId) throw new ConflictError("El proyecto todavía no tiene contrato importado", "no-active-spec");
+    if (!project || project.organizationId !== query.organizationId)
+      throw new NotFoundError("El proyecto no existe", "project-not-found");
+    if (!project.activeSpecVersionId)
+      throw new ConflictError("El proyecto todavía no tiene contrato importado", "no-active-spec");
 
     const version = await this.specs.findVersionById(project.activeSpecVersionId);
     if (!version) throw new NotFoundError("La versión activa no existe", "spec-version-not-found");
@@ -92,7 +94,9 @@ export class GetScenariosHandler implements IQueryHandler<GetScenariosQuery, Sce
     // The row key is dropped here: the engine keys everything by `operationId`, which is the
     // contract's own name and survives a re-import. Handing it `rowId` would tie every piece of
     // configuration to one snapshot.
-    const operations: Operation[] = stored.map(({ rowId, specVersionId, position, derivedId, security, ...operation }) => operation);
+    const operations: Operation[] = stored.map(
+      ({ rowId, specVersionId, position, derivedId, security, ...operation }) => operation,
+    );
     const resolved = resolveOperations(operations, projectConfig);
 
     // Without an environment the matrix shows what the contract declares, authorization cases
@@ -109,7 +113,9 @@ export class GetScenariosHandler implements IQueryHandler<GetScenariosQuery, Sce
       summary: operation.summary,
       implemented: operation.implemented,
       responseShape: operation.responseShape,
-      scenarios: scenariosFor(operation, projectConfig).map((scenario) => this.describe(operation, scenario, projectConfig, authEnabled, writesAllowed)),
+      scenarios: scenariosFor(operation, projectConfig).map((scenario) =>
+        this.describe(operation, scenario, projectConfig, authEnabled, writesAllowed),
+      ),
     }));
 
     const queue = buildQueue(resolved, projectConfig, { mode: query.order, authEnabled }).map((item) => ({
@@ -118,13 +124,22 @@ export class GetScenariosHandler implements IQueryHandler<GetScenariosQuery, Sce
     }));
 
     const cases = operationViews.reduce((sum, operation) => sum + operation.scenarios.length, 0);
-    const runnable = operationViews.reduce((sum, operation) => sum + operation.scenarios.filter((scenario) => scenario.runnable).length, 0);
+    const runnable = operationViews.reduce(
+      (sum, operation) => sum + operation.scenarios.filter((scenario) => scenario.runnable).length,
+      0,
+    );
 
     return {
       specVersionId: version.id,
       contractVersion: version.contractVersion,
       environment: environment
-        ? { id: environment.id, name: environment.name, baseUrl: environment.baseUrl, writesAllowed: environment.writesAllowed, authEnforced: environment.authEnforced }
+        ? {
+            id: environment.id,
+            name: environment.name,
+            baseUrl: environment.baseUrl,
+            writesAllowed: environment.writesAllowed,
+            authEnforced: environment.authEnforced,
+          }
         : null,
       operations: operationViews,
       queue,
@@ -140,7 +155,9 @@ export class GetScenariosHandler implements IQueryHandler<GetScenariosQuery, Sce
     writesAllowed: boolean,
   ): ScenarioView {
     const requestPath = requestPathFor(operation, config, scenario.parameters);
-    const runnableHere = runnableScenarios(operation, config, authEnabled).some((candidate) => candidate.id === scenario.id);
+    const runnableHere = runnableScenarios(operation, config, authEnabled).some(
+      (candidate) => candidate.id === scenario.id,
+    );
 
     // Two different reasons a case will not run tonight, kept apart because the fix is
     // different: one needs a backend started with authorization, the other needs somebody to

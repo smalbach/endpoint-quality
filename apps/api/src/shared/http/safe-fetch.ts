@@ -46,7 +46,10 @@ export type SafeFetchResult = {
 };
 
 export class BlockedTargetError extends Error {
-  constructor(readonly target: string, readonly why: string) {
+  constructor(
+    readonly target: string,
+    readonly why: string,
+  ) {
     super(`El destino ${target} está bloqueado: ${why}`);
     this.name = "BlockedTargetError";
   }
@@ -104,7 +107,10 @@ export function isBlockedAddress(address: string): { blocked: boolean; why?: str
 }
 
 /** Validates the URL and resolves it to the address the request will actually go to. */
-export async function resolveTarget(rawUrl: string, policy: SafeFetchPolicy): Promise<{ url: URL; address: string; family: number }> {
+export async function resolveTarget(
+  rawUrl: string,
+  policy: SafeFetchPolicy,
+): Promise<{ url: URL; address: string; family: number }> {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -113,7 +119,8 @@ export async function resolveTarget(rawUrl: string, policy: SafeFetchPolicy): Pr
   }
   // `file:`, `gopher:` and friends are not oversights to be handled later — they are the other
   // half of SSRF, and an allowlist is the only way to be sure a new scheme does not appear.
-  if (!["http:", "https:"].includes(url.protocol)) throw new BlockedTargetError(rawUrl, `esquema ${url.protocol} no permitido, solo http y https`);
+  if (!["http:", "https:"].includes(url.protocol))
+    throw new BlockedTargetError(rawUrl, `esquema ${url.protocol} no permitido, solo http y https`);
   if (url.username || url.password) throw new BlockedTargetError(rawUrl, "las credenciales en la URL no se aceptan");
 
   const hostname = url.hostname.replace(/^\[|\]$/g, "");
@@ -179,7 +186,11 @@ export async function safeFetch(
       const literalHost = family === 6 ? `[${address}]` : address;
       const direct = new URL(url.toString());
       direct.hostname = literalHost;
-      const headers: Record<string, string> = { Accept: "application/json, application/yaml, text/yaml, */*", ...options.headers, Host: url.host };
+      const headers: Record<string, string> = {
+        Accept: "application/json, application/yaml, text/yaml, */*",
+        ...options.headers,
+        Host: url.host,
+      };
       response = await fetch(direct, {
         method,
         headers,
@@ -200,7 +211,10 @@ export async function safeFetch(
       if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
         // Following it would repeat a write at an address the caller never chose. It is also
         // indistinguishable, from here, from an attempt to have us delete something elsewhere.
-        throw new BlockedTargetError(current, `redirección ${response.status} sobre un ${method}: no se reenvía una escritura`);
+        throw new BlockedTargetError(
+          current,
+          `redirección ${response.status} sobre un ${method}: no se reenvía una escritura`,
+        );
       }
       current = new URL(location, url).toString();
       continue;

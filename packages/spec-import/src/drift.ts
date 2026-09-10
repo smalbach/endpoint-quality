@@ -52,15 +52,22 @@ export function diffOperations(before: ImportedOperation[], after: ImportedOpera
     // Matched by id and not by path, so a route that moves is reported as one operation that
     // moved rather than as an unrelated removal plus an unrelated addition.
     if (old.path !== operation.path || old.method !== operation.method) {
-      changes.push({ kind: "moved", id, from: `${old.method} ${old.path}`, to: `${operation.method} ${operation.path}` });
+      changes.push({
+        kind: "moved",
+        id,
+        from: `${old.method} ${old.path}`,
+        to: `${operation.method} ${operation.path}`,
+      });
     }
     const statusesAdded = operation.statuses.filter((status) => !old.statuses.includes(status));
     const statusesRemoved = old.statuses.filter((status) => !operation.statuses.includes(status));
-    if (statusesAdded.length || statusesRemoved.length) changes.push({ kind: "statuses", id, added: statusesAdded, removed: statusesRemoved });
+    if (statusesAdded.length || statusesRemoved.length)
+      changes.push({ kind: "statuses", id, added: statusesAdded, removed: statusesRemoved });
 
     const parametersAdded = operation.parameters.filter((name) => !old.parameters.includes(name));
     const parametersRemoved = old.parameters.filter((name) => !operation.parameters.includes(name));
-    if (parametersAdded.length || parametersRemoved.length) changes.push({ kind: "parameters", id, added: parametersAdded, removed: parametersRemoved });
+    if (parametersAdded.length || parametersRemoved.length)
+      changes.push({ kind: "parameters", id, added: parametersAdded, removed: parametersRemoved });
 
     if (JSON.stringify([...old.security].sort()) !== JSON.stringify([...operation.security].sort())) {
       // A security scheme appearing or vanishing changes which 401/403 cases are meaningful, and
@@ -72,7 +79,12 @@ export function diffOperations(before: ImportedOperation[], after: ImportedOpera
   return {
     changes,
     breaking: changes.filter(isBreaking),
-    uncovered: changes.filter((change) => change.kind === "added" || (change.kind === "statuses" && change.added.length > 0) || (change.kind === "parameters" && change.added.length > 0)),
+    uncovered: changes.filter(
+      (change) =>
+        change.kind === "added" ||
+        (change.kind === "statuses" && change.added.length > 0) ||
+        (change.kind === "parameters" && change.added.length > 0),
+    ),
   };
 }
 
@@ -87,15 +99,23 @@ function isBreaking(change: OperationChange): boolean {
 /** One line per change, for a log or a CI comment. */
 export function describeChange(change: OperationChange): string {
   switch (change.kind) {
-    case "added": return `+ ${change.method} ${change.path} (${change.id})`;
-    case "removed": return `- ${change.method} ${change.path} (${change.id})`;
-    case "moved": return `~ ${change.id}: ${change.from} → ${change.to}`;
-    case "statuses": return `~ ${change.id}: estados ${format(change.added, change.removed)}`;
-    case "parameters": return `~ ${change.id}: parámetros ${format(change.added, change.removed)}`;
-    case "security": return `~ ${change.id}: seguridad [${change.from.join(", ")}] → [${change.to.join(", ")}]`;
+    case "added":
+      return `+ ${change.method} ${change.path} (${change.id})`;
+    case "removed":
+      return `- ${change.method} ${change.path} (${change.id})`;
+    case "moved":
+      return `~ ${change.id}: ${change.from} → ${change.to}`;
+    case "statuses":
+      return `~ ${change.id}: estados ${format(change.added, change.removed)}`;
+    case "parameters":
+      return `~ ${change.id}: parámetros ${format(change.added, change.removed)}`;
+    case "security":
+      return `~ ${change.id}: seguridad [${change.from.join(", ")}] → [${change.to.join(", ")}]`;
   }
 }
 
 function format(added: (string | number)[], removed: (string | number)[]): string {
-  return [added.length ? `+${added.join(", +")}` : "", removed.length ? `-${removed.join(", -")}` : ""].filter(Boolean).join(" ");
+  return [added.length ? `+${added.join(", +")}` : "", removed.length ? `-${removed.join(", -")}` : ""]
+    .filter(Boolean)
+    .join(" ");
 }

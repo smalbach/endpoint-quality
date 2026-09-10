@@ -6,7 +6,12 @@ import { atLeast, wouldOrphanOrganization, type Role } from "../../domain/model"
 import { MEMBERSHIP_REPOSITORY, type MembershipRepositoryPort } from "../../domain/ports";
 
 export class ChangeMemberRoleCommand implements ICommand {
-  constructor(readonly organizationId: string, readonly targetUserId: string, readonly role: Role, readonly actorId: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly targetUserId: string,
+    readonly role: Role,
+    readonly actorId: string,
+  ) {}
 }
 
 /**
@@ -24,15 +29,19 @@ export class ChangeMemberRoleHandler implements ICommandHandler<ChangeMemberRole
 
   async execute(command: ChangeMemberRoleCommand): Promise<void> {
     const actor = await this.memberships.find(command.organizationId, command.actorId);
-    if (!actor || !atLeast(actor.role, "admin")) throw new ForbiddenError("No puedes gestionar miembros de esta organización");
-    if (command.actorId === command.targetUserId) throw new ForbiddenError("No puedes cambiar tu propio rol", "self-role-change");
-    if (!atLeast(actor.role, command.role)) throw new ForbiddenError("No puedes otorgar un rol superior al tuyo", "role-escalation");
+    if (!actor || !atLeast(actor.role, "admin"))
+      throw new ForbiddenError("No puedes gestionar miembros de esta organización");
+    if (command.actorId === command.targetUserId)
+      throw new ForbiddenError("No puedes cambiar tu propio rol", "self-role-change");
+    if (!atLeast(actor.role, command.role))
+      throw new ForbiddenError("No puedes otorgar un rol superior al tuyo", "role-escalation");
 
     const target = await this.memberships.find(command.organizationId, command.targetUserId);
     if (!target) throw new NotFoundError("Esa persona no es miembro de la organización", "membership-not-found");
     // An admin cannot demote an owner either: the ladder has to hold in both directions or the
     // rank above yours is only a label.
-    if (!atLeast(actor.role, target.role)) throw new ForbiddenError("No puedes modificar a alguien con un rol superior al tuyo", "role-escalation");
+    if (!atLeast(actor.role, target.role))
+      throw new ForbiddenError("No puedes modificar a alguien con un rol superior al tuyo", "role-escalation");
 
     const all = await this.memberships.listForOrganization(command.organizationId);
     if (wouldOrphanOrganization(all, command.targetUserId, command.role)) {

@@ -21,14 +21,21 @@ type Actor = { userId: string; organizationId: string; accessToken: string; emai
 
 async function signUp(email: string, organizationName?: string): Promise<Actor> {
   const password = "una-contraseña-larga";
-  const registered = await api().post("/auth/register").send({ email, password, name: email.split("@")[0], organizationName });
+  const registered = await api()
+    .post("/auth/register")
+    .send({ email, password, name: email.split("@")[0], organizationName });
   const session = await api().post("/auth/login").send({ email, password });
   // Asserted rather than trusted. When login fails the token is `undefined`, every later request
   // goes out as `Bearer undefined`, and the suite reports a 401 on whatever line happens to be
   // next — which describes the symptom and hides the cause.
   assert.equal(session.status, 200, `no se pudo iniciar sesión como ${email}: ${JSON.stringify(session.body)}`);
   assert.ok(session.body.accessToken, `el login de ${email} no devolvió token`);
-  return { userId: registered.body.userId, organizationId: registered.body.organizationId, accessToken: session.body.accessToken, email };
+  return {
+    userId: registered.body.userId,
+    organizationId: registered.body.organizationId,
+    accessToken: session.body.accessToken,
+    email,
+  };
 }
 
 /** Puts an existing account into somebody else's organization at a given role, without going
@@ -75,8 +82,16 @@ describe("aislamiento entre organizaciones", () => {
     // four at the same listener races the bind and surfaces as ECONNRESET — a flake that says
     // nothing about authorization.
     const attempts = [
-      () => api().post(`/orgs/${owner.organizationId}/invitations`).set(as(outsider)).send({ email: "x@example.com", role: "admin" }),
-      () => api().patch(`/orgs/${owner.organizationId}/members/${viewer.userId}`).set(as(outsider)).send({ role: "viewer" }),
+      () =>
+        api()
+          .post(`/orgs/${owner.organizationId}/invitations`)
+          .set(as(outsider))
+          .send({ email: "x@example.com", role: "admin" }),
+      () =>
+        api()
+          .patch(`/orgs/${owner.organizationId}/members/${viewer.userId}`)
+          .set(as(outsider))
+          .send({ role: "viewer" }),
       () => api().delete(`/orgs/${owner.organizationId}/members/${viewer.userId}`).set(as(outsider)),
       () => api().get(`/orgs/${owner.organizationId}/tokens`).set(as(outsider)),
     ];
@@ -92,41 +107,72 @@ describe("aislamiento entre organizaciones", () => {
 describe("la escalera de roles", () => {
   test("viewer lee los miembros pero no los gestiona", async () => {
     assert.equal((await api().get(`/orgs/${owner.organizationId}/members`).set(as(viewer))).status, 200);
-    assert.equal((await api().post(`/orgs/${owner.organizationId}/invitations`).set(as(viewer)).send({ email: "n@example.com", role: "viewer" })).status, 403);
+    assert.equal(
+      (
+        await api()
+          .post(`/orgs/${owner.organizationId}/invitations`)
+          .set(as(viewer))
+          .send({ email: "n@example.com", role: "viewer" })
+      ).status,
+      403,
+    );
   });
 
   test("editor tampoco gestiona miembros ni credenciales", async () => {
     // `editor` edits the matrix; environments and credentials are `admin`, because those are the
     // two capabilities that can damage something outside this system.
-    assert.equal((await api().post(`/orgs/${owner.organizationId}/invitations`).set(as(editor)).send({ email: "n@example.com", role: "viewer" })).status, 403);
+    assert.equal(
+      (
+        await api()
+          .post(`/orgs/${owner.organizationId}/invitations`)
+          .set(as(editor))
+          .send({ email: "n@example.com", role: "viewer" })
+      ).status,
+      403,
+    );
     assert.equal((await api().get(`/orgs/${owner.organizationId}/tokens`).set(as(editor))).status, 403);
   });
 
   test("admin invita, y no por encima de su propio nivel", async () => {
-    const allowed = await api().post(`/orgs/${owner.organizationId}/invitations`).set(as(admin)).send({ email: "nuevo@example.com", role: "editor" });
+    const allowed = await api()
+      .post(`/orgs/${owner.organizationId}/invitations`)
+      .set(as(admin))
+      .send({ email: "nuevo@example.com", role: "editor" });
     assert.equal(allowed.status, 201);
 
     // Without this rule an admin invites a new owner and then either accepts it themselves or
     // asks the invitee for the link: a one-step escalation dressed as an ordinary feature.
-    const escalation = await api().post(`/orgs/${owner.organizationId}/invitations`).set(as(admin)).send({ email: "otro@example.com", role: "owner" });
+    const escalation = await api()
+      .post(`/orgs/${owner.organizationId}/invitations`)
+      .set(as(admin))
+      .send({ email: "otro@example.com", role: "owner" });
     assert.equal(escalation.status, 403);
     assert.match(escalation.body.type, /role-escalation$/);
   });
 
   test("nadie puede cambiar su propio rol", async () => {
-    const response = await api().patch(`/orgs/${owner.organizationId}/members/${admin.userId}`).set(as(admin)).send({ role: "owner" });
+    const response = await api()
+      .patch(`/orgs/${owner.organizationId}/members/${admin.userId}`)
+      .set(as(admin))
+      .send({ role: "owner" });
     assert.equal(response.status, 403);
     assert.match(response.body.type, /self-role-change$/);
   });
 
   test("un admin no puede degradar a un owner", async () => {
-    const response = await api().patch(`/orgs/${owner.organizationId}/members/${owner.userId}`).set(as(admin)).send({ role: "viewer" });
+    const response = await api()
+      .patch(`/orgs/${owner.organizationId}/members/${owner.userId}`)
+      .set(as(admin))
+      .send({ role: "viewer" });
     assert.equal(response.status, 403);
     assert.match(response.body.type, /role-escalation$/);
   });
 
   test("un rol inexistente es 422 y no un rol silenciosamente ignorado", async () => {
-    const response = await api().patch(`/orgs/${owner.organizationId}/members/${viewer.userId}`).set(as(admin)).send({ role: "superuser" });
+    const response = await api()
+      .patch(`/orgs/${owner.organizationId}/members/${viewer.userId}`)
+      .set(as(admin))
+      .send({ role: "superuser" });
     assert.equal(response.status, 422);
   });
 });
@@ -135,7 +181,10 @@ describe("la organización no puede quedarse sin dueño", () => {
   test("el último owner no puede degradarse ni ser degradado", async () => {
     // An organization with no owner has nobody who can appoint one, so its projects,
     // environments and stored credentials become unreachable by everybody.
-    const response = await api().patch(`/orgs/${owner.organizationId}/members/${owner.userId}`).set(as(owner)).send({ role: "admin" });
+    const response = await api()
+      .patch(`/orgs/${owner.organizationId}/members/${owner.userId}`)
+      .set(as(owner))
+      .send({ role: "admin" });
     // Blocked by the self-change rule first; the last-owner rule is what catches it when a
     // second owner exists and then leaves.
     assert.equal(response.status, 403);
@@ -148,7 +197,10 @@ describe("la organización no puede quedarse sin dueño", () => {
   test("con dos owners, uno puede irse", async () => {
     const second = await signUp("second-owner@example.com");
     await joinAs(second, owner.organizationId, "owner");
-    assert.equal((await api().delete(`/orgs/${owner.organizationId}/members/${second.userId}`).set(as(second))).status, 204);
+    assert.equal(
+      (await api().delete(`/orgs/${owner.organizationId}/members/${second.userId}`).set(as(second))).status,
+      204,
+    );
   });
 });
 
@@ -156,7 +208,10 @@ describe("salir de una organización", () => {
   test("un viewer puede irse solo, sin permiso para gestionar a nadie", async () => {
     const leaver = await signUp("leaver@example.com");
     await joinAs(leaver, owner.organizationId, "viewer");
-    assert.equal((await api().delete(`/orgs/${owner.organizationId}/members/${leaver.userId}`).set(as(leaver))).status, 204);
+    assert.equal(
+      (await api().delete(`/orgs/${owner.organizationId}/members/${leaver.userId}`).set(as(leaver))).status,
+      204,
+    );
     assert.equal(await context.repositories.memberships.find(owner.organizationId, leaver.userId), null);
   });
 
@@ -170,7 +225,10 @@ describe("invitaciones", () => {
   test("la invitación solo la acepta la dirección a la que se envió", async () => {
     // Otherwise the link is a bearer token for a role: anyone it is forwarded to, deliberately
     // or by a mail rule, can accept it with their own account.
-    const invited = await api().post(`/orgs/${owner.organizationId}/invitations`).set(as(owner)).send({ email: "destinatario@example.com", role: "editor" });
+    const invited = await api()
+      .post(`/orgs/${owner.organizationId}/invitations`)
+      .set(as(owner))
+      .send({ email: "destinatario@example.com", role: "editor" });
     const wrongPerson = await api().post("/invitations/accept").set(as(outsider)).send({ token: invited.body.token });
     assert.equal(wrongPerson.status, 403);
     assert.match(wrongPerson.body.type, /invitation-wrong-recipient$/);
@@ -182,10 +240,19 @@ describe("invitaciones", () => {
   });
 
   test("una invitación ya aceptada no vale una segunda vez", async () => {
-    const invited = await api().post(`/orgs/${owner.organizationId}/invitations`).set(as(owner)).send({ email: "unavez@example.com", role: "viewer" });
+    const invited = await api()
+      .post(`/orgs/${owner.organizationId}/invitations`)
+      .set(as(owner))
+      .send({ email: "unavez@example.com", role: "viewer" });
     const person = await signUp("unavez@example.com");
-    assert.equal((await api().post("/invitations/accept").set(as(person)).send({ token: invited.body.token })).status, 200);
-    assert.equal((await api().post("/invitations/accept").set(as(person)).send({ token: invited.body.token })).status, 404);
+    assert.equal(
+      (await api().post("/invitations/accept").set(as(person)).send({ token: invited.body.token })).status,
+      200,
+    );
+    assert.equal(
+      (await api().post("/invitations/accept").set(as(person)).send({ token: invited.body.token })).status,
+      404,
+    );
   });
 
   test("un token de invitación inventado es 404", async () => {
@@ -219,21 +286,31 @@ describe("tokens de servicio", () => {
 
     assert.equal((await api().get(`/orgs/${owner.organizationId}/members`).set(withToken)).status, 200);
     // A leaked build secret must not be an account takeover.
-    const invite = await api().post(`/orgs/${owner.organizationId}/invitations`).set(withToken).send({ email: "z@example.com", role: "admin" });
+    const invite = await api()
+      .post(`/orgs/${owner.organizationId}/invitations`)
+      .set(withToken)
+      .send({ email: "z@example.com", role: "admin" });
     assert.equal(invite.status, 403);
     assert.match(invite.body.type, /api-token-role$/);
   });
 
   test("un token de servicio no puede actuar sobre otra organización", async () => {
     const created = await api().post(`/orgs/${owner.organizationId}/tokens`).set(as(owner)).send({ name: "CI" });
-    const response = await api().get(`/orgs/${outsider.organizationId}/members`).set({ Authorization: `Bearer ${created.body.token}` });
+    const response = await api()
+      .get(`/orgs/${outsider.organizationId}/members`)
+      .set({ Authorization: `Bearer ${created.body.token}` });
     assert.equal(response.status, 403);
   });
 
   test("un token revocado deja de autenticar", async () => {
     const created = await api().post(`/orgs/${owner.organizationId}/tokens`).set(as(owner)).send({ name: "temporal" });
-    assert.equal((await api().delete(`/orgs/${owner.organizationId}/tokens/${created.body.id}`).set(as(owner))).status, 204);
-    const response = await api().get(`/orgs/${owner.organizationId}/members`).set({ Authorization: `Bearer ${created.body.token}` });
+    assert.equal(
+      (await api().delete(`/orgs/${owner.organizationId}/tokens/${created.body.id}`).set(as(owner))).status,
+      204,
+    );
+    const response = await api()
+      .get(`/orgs/${owner.organizationId}/members`)
+      .set({ Authorization: `Bearer ${created.body.token}` });
     assert.equal(response.status, 401);
   });
 

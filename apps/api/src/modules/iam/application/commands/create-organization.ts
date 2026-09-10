@@ -4,10 +4,18 @@ import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqr
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { slugify } from "../../domain/model";
-import { MEMBERSHIP_REPOSITORY, ORGANIZATION_REPOSITORY, type MembershipRepositoryPort, type OrganizationRepositoryPort } from "../../domain/ports";
+import {
+  MEMBERSHIP_REPOSITORY,
+  ORGANIZATION_REPOSITORY,
+  type MembershipRepositoryPort,
+  type OrganizationRepositoryPort,
+} from "../../domain/ports";
 
 export class CreateOrganizationCommand implements ICommand {
-  constructor(readonly name: string, readonly ownerId: string) {}
+  constructor(
+    readonly name: string,
+    readonly ownerId: string,
+  ) {}
 }
 
 /**
@@ -18,7 +26,10 @@ export class CreateOrganizationCommand implements ICommand {
  * leaves a row nobody in the system can reach or delete.
  */
 @CommandHandler(CreateOrganizationCommand)
-export class CreateOrganizationHandler implements ICommandHandler<CreateOrganizationCommand, { organizationId: string; slug: string }> {
+export class CreateOrganizationHandler implements ICommandHandler<
+  CreateOrganizationCommand,
+  { organizationId: string; slug: string }
+> {
   constructor(
     @Inject(ORGANIZATION_REPOSITORY) private readonly organizations: OrganizationRepositoryPort,
     @Inject(MEMBERSHIP_REPOSITORY) private readonly memberships: MembershipRepositoryPort,

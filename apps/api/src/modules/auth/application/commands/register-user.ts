@@ -48,12 +48,17 @@ export class RegisterUserHandler implements ICommandHandler<RegisterUserCommand,
 
   async execute(command: RegisterUserCommand): Promise<RegisterUserResult> {
     const email = normalizeEmail(command.email);
-    if (!email.includes("@")) throw new InvalidInputError("El correo no es válido", [{ field: "email", detail: "Debe ser una dirección de correo" }]);
+    if (!email.includes("@"))
+      throw new InvalidInputError("El correo no es válido", [
+        { field: "email", detail: "Debe ser una dirección de correo" },
+      ]);
     // Length is the only password rule enforced. Composition rules ("one uppercase, one symbol")
     // measurably push people towards `Password1!` and are not in NIST 800-63B any more; length
     // is what actually buys entropy.
     if (command.password.length < 12) {
-      throw new InvalidInputError("La contraseña es demasiado corta", [{ field: "password", detail: "Debe tener al menos 12 caracteres" }]);
+      throw new InvalidInputError("La contraseña es demasiado corta", [
+        { field: "password", detail: "Debe tener al menos 12 caracteres" },
+      ]);
     }
 
     if (await this.users.findByEmail(email)) {

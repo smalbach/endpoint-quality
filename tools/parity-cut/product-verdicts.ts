@@ -14,19 +14,30 @@ export type ProductSession = { api: string; base: string; token: string };
 async function call(session: ProductSession, method: string, path: string, body?: unknown): Promise<any> {
   const response = await fetch(`${session.api}${path}`, {
     method,
-    headers: { "Content-Type": "application/json", ...(session.token ? { Authorization: `Bearer ${session.token}` } : {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(session.token ? { Authorization: `Bearer ${session.token}` } : {}),
+    },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const text = await response.text();
   const parsed = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    const fields = parsed?.errors?.map((error: { field: string; detail: string }) => `\n    ${error.field}: ${error.detail}`).join("") ?? "";
+    const fields =
+      parsed?.errors
+        ?.map((error: { field: string; detail: string }) => `\n    ${error.field}: ${error.detail}`)
+        .join("") ?? "";
     throw new Error(`${method} ${path} → ${response.status}: ${parsed?.detail ?? response.statusText}${fields}`);
   }
   return parsed;
 }
 
-export async function openSession(api: string, email: string, password: string, projectName: string): Promise<ProductSession> {
+export async function openSession(
+  api: string,
+  email: string,
+  password: string,
+  projectName: string,
+): Promise<ProductSession> {
   const bootstrap: ProductSession = { api, base: "", token: "" };
   const login = await call(bootstrap, "POST", "/auth/login", { email, password });
   const session: ProductSession = { api, base: "", token: login.accessToken };
@@ -35,7 +46,8 @@ export async function openSession(api: string, email: string, password: string, 
   if (!organization) throw new Error("La cuenta no pertenece a ninguna organización");
   const projects: { id: string; name: string }[] = await call(session, "GET", `/orgs/${organization.id}/projects`);
   const project = projects.find((candidate) => candidate.name === projectName);
-  if (!project) throw new Error(`No existe el proyecto ${projectName}: ejecuta tools/migrate-digital-catalog.ts primero`);
+  if (!project)
+    throw new Error(`No existe el proyecto ${projectName}: ejecuta tools/migrate-digital-catalog.ts primero`);
   session.base = `/orgs/${organization.id}/projects/${project.id}`;
   return session;
 }
@@ -47,7 +59,12 @@ export async function openSession(api: string, email: string, password: string, 
  * two passes disagree about it — so reusing whatever the last run left behind would silently
  * compare 311 cases against 214.
  */
-export async function prepareEnvironment(session: ProductSession, name: string, baseUrl: string, authEnabled: boolean): Promise<string> {
+export async function prepareEnvironment(
+  session: ProductSession,
+  name: string,
+  baseUrl: string,
+  authEnabled: boolean,
+): Promise<string> {
   const environments: { id: string; name: string }[] = await call(session, "GET", `${session.base}/environments`);
   const existing = environments.find((environment) => environment.name === name);
   const settings = { baseUrl, writesAllowed: true, authEnforced: authEnabled };
@@ -56,20 +73,43 @@ export async function prepareEnvironment(session: ProductSession, name: string, 
     : (await call(session, "POST", `${session.base}/environments`, { name, ...settings })).environmentId;
 
   if (authEnabled) {
-    await call(session, "PUT", `${session.base}/environments/${environmentId}/credentials`, { name: "catalog:admin", role: "primary", kind: "bearer", secret: ADMIN_TOKEN });
-    await call(session, "PUT", `${session.base}/environments/${environmentId}/credentials`, { name: "catalog:read", role: "insufficient", kind: "bearer", secret: READ_TOKEN });
-    await call(session, "PUT", `${session.base}/environments/${environmentId}/credentials`, { name: "X-API-Key de E2E", role: "alternate", kind: "api_key", headerName: "X-API-Key", secret: API_KEY });
+    await call(session, "PUT", `${session.base}/environments/${environmentId}/credentials`, {
+      name: "catalog:admin",
+      role: "primary",
+      kind: "bearer",
+      secret: ADMIN_TOKEN,
+    });
+    await call(session, "PUT", `${session.base}/environments/${environmentId}/credentials`, {
+      name: "catalog:read",
+      role: "insufficient",
+      kind: "bearer",
+      secret: READ_TOKEN,
+    });
+    await call(session, "PUT", `${session.base}/environments/${environmentId}/credentials`, {
+      name: "X-API-Key de E2E",
+      role: "alternate",
+      kind: "api_key",
+      headerName: "X-API-Key",
+      secret: API_KEY,
+    });
   } else {
     // Deleted, not left in place: with the target running without `--auth` the dashboard sends
     // nothing, and a stored credential would make the two sides send different requests.
     for (const role of ["primary", "insufficient", "alternate"]) {
-      await fetch(`${session.api}${session.base}/environments/${environmentId}/credentials/${role}`, { method: "DELETE", headers: { Authorization: `Bearer ${session.token}` } });
+      await fetch(`${session.api}${session.base}/environments/${environmentId}/credentials/${role}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.token}` },
+      });
     }
   }
   return environmentId;
 }
 
-export async function productVerdicts(session: ProductSession, environmentId: string, onProgress?: (completed: number, total: number) => void): Promise<Verdict[]> {
+export async function productVerdicts(
+  session: ProductSession,
+  environmentId: string,
+  onProgress?: (completed: number, total: number) => void,
+): Promise<Verdict[]> {
   const started = await call(session, "POST", `${session.base}/runs`, {
     environmentId,
     // The legacy side runs `buildQueue(..., { mode: "safe" })` with no case selection and one
@@ -102,6 +142,8 @@ export async function productVerdicts(session: ProductSession, environmentId: st
     scenarioId: runCase.scenarioId,
     ok: runCase.status === "passed",
     steps: runCase.steps.length,
-    failedAssertions: runCase.steps.flatMap((step: any) => (step.assertions ?? []).filter((assertion: any) => !assertion.pass).map((assertion: any) => assertion.label)),
+    failedAssertions: runCase.steps.flatMap((step: any) =>
+      (step.assertions ?? []).filter((assertion: any) => !assertion.pass).map((assertion: any) => assertion.label),
+    ),
   }));
 }

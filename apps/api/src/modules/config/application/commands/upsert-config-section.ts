@@ -9,11 +9,21 @@ import { ownedProject } from "@/modules/projects/application/commands/update-pro
 import { CONFIG_REPOSITORY, type ConfigRepositoryPort } from "../../domain/ports";
 
 export class UpsertConfigSectionCommand implements ICommand {
-  constructor(readonly organizationId: string, readonly projectId: string, readonly section: string, readonly data: unknown, readonly updatedBy: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly section: string,
+    readonly data: unknown,
+    readonly updatedBy: string,
+  ) {}
 }
 
 export class ResetConfigSectionCommand implements ICommand {
-  constructor(readonly organizationId: string, readonly projectId: string, readonly section: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly section: string,
+  ) {}
 }
 
 /**
@@ -40,9 +50,16 @@ export class UpsertConfigSectionHandler implements ICommandHandler<UpsertConfigS
     const section = assertSection(command.section);
 
     const verdict = safeParseSection(section, command.data);
-    if (!verdict.ok) throw new InvalidInputError(`La sección ${section} no es válida`, verdict.issues, "config-invalid");
+    if (!verdict.ok)
+      throw new InvalidInputError(`La sección ${section} no es válida`, verdict.issues, "config-invalid");
 
-    await this.config.saveSection({ projectId: project.id, section, data: command.data, updatedAt: this.clock.now(), updatedBy: command.updatedBy });
+    await this.config.saveSection({
+      projectId: project.id,
+      section,
+      data: command.data,
+      updatedAt: this.clock.now(),
+      updatedBy: command.updatedBy,
+    });
   }
 }
 
@@ -63,7 +80,11 @@ export class ResetConfigSectionHandler implements ICommandHandler<ResetConfigSec
 
 function assertSection(value: string): ConfigSection {
   if (!isConfigSection(value)) {
-    throw new InvalidInputError("Sección de configuración desconocida", [{ field: "section", detail: `"${value}" no es una sección válida` }], "config-section-unknown");
+    throw new InvalidInputError(
+      "Sección de configuración desconocida",
+      [{ field: "section", detail: `"${value}" no es una sección válida` }],
+      "config-section-unknown",
+    );
   }
   return value;
 }

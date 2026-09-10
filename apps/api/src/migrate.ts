@@ -46,7 +46,11 @@ async function main(): Promise<void> {
     await dataSource.query("SELECT pg_advisory_lock($1)", [LOCK_ID]);
     try {
       const applied = await dataSource.runMigrations({ transaction: "each" });
-      console.log(applied.length ? `migraciones aplicadas: ${applied.map((migration) => migration.name).join(", ")}` : "sin migraciones pendientes");
+      console.log(
+        applied.length
+          ? `migraciones aplicadas: ${applied.map((migration) => migration.name).join(", ")}`
+          : "sin migraciones pendientes",
+      );
     } finally {
       await dataSource.query("SELECT pg_advisory_unlock($1)", [LOCK_ID]);
     }

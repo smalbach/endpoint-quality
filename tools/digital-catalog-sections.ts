@@ -11,7 +11,8 @@
 import { bundles, type ProjectConfig } from "../packages/runner-core/src/index.ts";
 import { digitalCatalogConfig } from "../packages/runner-core/test/fixtures/digital-catalog.ts";
 
-export type SectionName = "parameters" | "scenarios" | "bodies" | "authorization" | "budgets" | "envelope" | "implemented" | "text";
+export type SectionName =
+  "parameters" | "scenarios" | "bodies" | "authorization" | "budgets" | "envelope" | "implemented" | "text";
 
 /** Splits a full configuration into the documents the API stores, one per section. */
 export function toSections(config: ProjectConfig): Record<SectionName, unknown> {
@@ -48,7 +49,9 @@ export function toSections(config: ProjectConfig): Record<SectionName, unknown> 
 
 function overriddenText(config: ProjectConfig): Record<string, string> {
   const bundle = bundles[config.locale] as Record<string, string>;
-  return Object.fromEntries(Object.entries(config.text as Record<string, string>).filter(([key, value]) => bundle[key] !== value));
+  return Object.fromEntries(
+    Object.entries(config.text as Record<string, string>).filter(([key, value]) => bundle[key] !== value),
+  );
 }
 
 export const digitalCatalogSections = toSections(digitalCatalogConfig);

@@ -27,7 +27,11 @@ export type CaseSelection = Record<string, string[]>;
 
 export const ORDER_MODES: { id: OrderMode; label: string; hint: string }[] = [
   { id: "contract", label: "Contrato", hint: "El orden en que bundled.yaml declara las 45 operaciones." },
-  { id: "safe", label: "Lecturas primero", hint: "GET, POST, PUT, PATCH y por último DELETE. Es el orden por defecto: un DELETE que borra de más no puede dejar en rojo a los casos que vienen después, porque ya no queda ninguno." },
+  {
+    id: "safe",
+    label: "Lecturas primero",
+    hint: "GET, POST, PUT, PATCH y por último DELETE. Es el orden por defecto: un DELETE que borra de más no puede dejar en rojo a los casos que vienen después, porque ya no queda ninguno.",
+  },
   { id: "custom", label: "Personalizado", hint: "El orden que fijes a mano. Se parte del orden visible al activarlo." },
 ];
 
@@ -57,7 +61,8 @@ export function orderEndpoints(list: Endpoint[], mode: OrderMode, customOrder: s
   const contractIndex = new Map(list.map((endpoint, index) => [endpoint.id, index]));
   const contractRank = (endpoint: Endpoint) => contractIndex.get(endpoint.id) ?? list.length;
   if (mode === "contract") return [...list];
-  if (mode === "safe") return [...list].sort((a, b) => methodRank[a.method] - methodRank[b.method] || contractRank(a) - contractRank(b));
+  if (mode === "safe")
+    return [...list].sort((a, b) => methodRank[a.method] - methodRank[b.method] || contractRank(a) - contractRank(b));
   // An id the custom order never mentions is not dropped: it keeps the contract order, placed
   // after everything that was ordered by hand.
   const position = new Map(customOrder.map((id, index) => [id, index]));
@@ -88,9 +93,20 @@ export function selectedCases(endpoint: Endpoint, selection: CaseSelection, auth
  * `endpointIds` is the subset to include; `undefined` means every endpoint the list carries,
  * which is what the two matrix buttons pass.
  */
-export function buildQueue(list: Endpoint[], options: { mode: OrderMode; customOrder: string[]; endpointIds?: string[]; caseSelection: CaseSelection; authEnabled: boolean }): QueueItem[] {
+export function buildQueue(
+  list: Endpoint[],
+  options: {
+    mode: OrderMode;
+    customOrder: string[];
+    endpointIds?: string[];
+    caseSelection: CaseSelection;
+    authEnabled: boolean;
+  },
+): QueueItem[] {
   const included = options.endpointIds ? new Set(options.endpointIds) : undefined;
   return orderEndpoints(list, options.mode, options.customOrder)
     .filter((endpoint) => !included || included.has(endpoint.id))
-    .flatMap((endpoint) => selectedCases(endpoint, options.caseSelection, options.authEnabled).map((scenario) => ({ endpoint, scenario })));
+    .flatMap((endpoint) =>
+      selectedCases(endpoint, options.caseSelection, options.authEnabled).map((scenario) => ({ endpoint, scenario })),
+    );
 }

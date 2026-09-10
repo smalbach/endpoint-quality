@@ -28,7 +28,8 @@ export function ProjectsPage() {
   });
 
   const create = useMutation({
-    mutationFn: (projectName: string) => api<{ projectId: string }>(`/orgs/${organization!.id}/projects`, { method: "POST", body: { name: projectName } }),
+    mutationFn: (projectName: string) =>
+      api<{ projectId: string }>(`/orgs/${organization!.id}/projects`, { method: "POST", body: { name: projectName } }),
     onSuccess: async () => {
       setName("");
       setError(null);
@@ -47,12 +48,19 @@ export function ProjectsPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-slate-900">Proyectos</h1>
-          <p className="mt-1 text-xs text-slate-500">Un proyecto es un contrato y todo lo que un equipo decidió sobre cómo ejercitarlo.</p>
+          <p className="mt-1 text-xs text-slate-500">
+            Un proyecto es un contrato y todo lo que un equipo decidió sobre cómo ejercitarlo.
+          </p>
         </div>
         {canCreate && (
           <form className="flex items-end gap-2" onSubmit={submit}>
             <Field label="Nuevo proyecto" error={error instanceof ApiError ? error.fields[0]?.detail : undefined}>
-              <input className={`${inputClass} w-64`} value={name} onChange={(event) => setName(event.target.value)} placeholder="Digital Catalog" />
+              <input
+                className={`${inputClass} w-64`}
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Digital Catalog"
+              />
             </Field>
             <Button type="submit" disabled={create.isPending || !name.trim()}>
               Crear
@@ -62,7 +70,9 @@ export function ProjectsPage() {
       </div>
 
       {projects.isLoading && <p className="text-sm text-slate-500">Cargando…</p>}
-      {projects.error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{(projects.error as Error).message}</p>}
+      {projects.error && (
+        <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{(projects.error as Error).message}</p>
+      )}
 
       {projects.data?.length === 0 && (
         <Empty
@@ -80,7 +90,9 @@ export function ProjectsPage() {
                   <p className="truncate text-sm font-semibold text-slate-900">{project.name}</p>
                   <p className="truncate font-mono text-[11px] text-slate-400">{project.slug}</p>
                 </div>
-                {project.archivedAt && <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">archivado</span>}
+                {project.archivedAt && (
+                  <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">archivado</span>
+                )}
               </div>
 
               {project.description && <p className="mt-2 line-clamp-2 text-xs text-slate-500">{project.description}</p>}

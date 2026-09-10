@@ -29,7 +29,13 @@ services:
     # de desarrollo el 9000 suele tenerlo php-fpm.
     ports: ["${EQ_SAMPLE_PORT:-9100}:9000"]
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:9000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
       interval: 3s
       timeout: 3s
       retries: 20

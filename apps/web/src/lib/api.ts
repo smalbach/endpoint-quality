@@ -82,7 +82,10 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   const text = await response.text();
   const parsed = text ? (JSON.parse(text) as unknown) : null;
   if (!response.ok) {
-    throw new ApiError(response.status, (parsed as ProblemDetails) ?? { type: "", title: response.statusText, status: response.status, detail: "" });
+    throw new ApiError(
+      response.status,
+      (parsed as ProblemDetails) ?? { type: "", title: response.statusText, status: response.status, detail: "" },
+    );
   }
   return parsed as T;
 }
@@ -91,7 +94,12 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
 export function refreshOnce(): Promise<boolean> {
   refreshing ??= (async () => {
     try {
-      const response = await fetch(`${BASE}/auth/refresh`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const response = await fetch(`${BASE}/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
       if (!response.ok) {
         setAccessToken(null);
         return false;
@@ -110,12 +118,21 @@ export function refreshOnce(): Promise<boolean> {
 }
 
 export async function login(email: string, password: string): Promise<Session> {
-  const session = await api<Session>("/auth/login", { method: "POST", body: { email, password }, retryOnUnauthorized: false });
+  const session = await api<Session>("/auth/login", {
+    method: "POST",
+    body: { email, password },
+    retryOnUnauthorized: false,
+  });
   setAccessToken(session.accessToken);
   return session;
 }
 
-export async function register(input: { email: string; password: string; name: string; organizationName?: string }): Promise<void> {
+export async function register(input: {
+  email: string;
+  password: string;
+  name: string;
+  organizationName?: string;
+}): Promise<void> {
   await api("/auth/register", { method: "POST", body: input, retryOnUnauthorized: false });
   await login(input.email, input.password);
 }
@@ -147,7 +164,13 @@ export async function streamRun(
     credentials: "include",
     signal: handlers.signal,
   });
-  if (!response.ok || !response.body) throw new ApiError(response.status, { type: "", title: "stream", status: response.status, detail: "No se pudo abrir el stream" });
+  if (!response.ok || !response.body)
+    throw new ApiError(response.status, {
+      type: "",
+      title: "stream",
+      status: response.status,
+      detail: "No se pudo abrir el stream",
+    });
 
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";

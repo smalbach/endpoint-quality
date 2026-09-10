@@ -66,6 +66,10 @@ export class RunCaseProjector implements IEventHandler<RunCaseFinishedEvent> {
 export class RunFinishedProjector implements IEventHandler<RunFinishedEvent> {
   constructor(private readonly stream: RunProgressStream) {}
   handle(event: RunFinishedEvent): void {
-    this.stream.publish({ runId: event.runId, type: "finished", payload: { status: event.status, totals: event.totals } });
+    this.stream.publish({
+      runId: event.runId,
+      type: "finished",
+      payload: { status: event.status, totals: event.totals },
+    });
   }
 }

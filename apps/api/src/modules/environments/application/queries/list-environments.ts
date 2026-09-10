@@ -9,14 +9,25 @@ import type { CredentialRole, Environment } from "../../domain/model";
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "../../domain/ports";
 
 export class ListEnvironmentsQuery implements IQuery {
-  constructor(readonly organizationId: string, readonly projectId: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+  ) {}
 }
 
 export type EnvironmentView = Environment &
   EnvironmentSummaryOf<Date> & {
     /** `scopes` is on the wire too and the browser does not read it yet; the contract declares
      * what a client can rely on, not everything the row happens to carry. */
-    credentials: { id: string; name: string; role: CredentialRole; kind: string; headerName: string | null; scopes: string[]; updatedAt: Date }[];
+    credentials: {
+      id: string;
+      name: string;
+      role: CredentialRole;
+      kind: string;
+      headerName: string | null;
+      scopes: string[];
+      updatedAt: Date;
+    }[];
   };
 
 @QueryHandler(ListEnvironmentsQuery)

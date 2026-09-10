@@ -51,7 +51,10 @@ export class InMemoryRunQueue implements RunQueuePort {
         } catch (error) {
           // Swallowed on purpose: one run that throws must not stop the queue, and the handler
           // has already recorded the failure against its own run.
-          this.logger.error(`La corrida ${runId} terminó con un error no controlado`, error instanceof Error ? error.stack : String(error));
+          this.logger.error(
+            `La corrida ${runId} terminó con un error no controlado`,
+            error instanceof Error ? error.stack : String(error),
+          );
         } finally {
           this.cancelled.delete(runId);
         }

@@ -23,7 +23,11 @@ export const SPEC_ADAPTERS = [
 ];
 
 @Module({
-  imports: [CqrsModule, TypeOrmModule.forFeature([SpecVersionEntity, SpecOperationEntity, SpecSourceEntity]), forwardRef(() => ProjectsModule)],
+  imports: [
+    CqrsModule,
+    TypeOrmModule.forFeature([SpecVersionEntity, SpecOperationEntity, SpecSourceEntity]),
+    forwardRef(() => ProjectsModule),
+  ],
   providers: [...SPEC_ADAPTERS, ...SPEC_COMMAND_HANDLERS, ...SPEC_QUERY_HANDLERS],
   exports: [SPEC_REPOSITORY, SAFE_FETCH],
 })

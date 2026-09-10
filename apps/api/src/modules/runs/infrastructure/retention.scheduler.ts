@@ -20,7 +20,10 @@ export class RetentionScheduler implements OnApplicationBootstrap, OnApplication
   private readonly logger = new Logger("Retention");
   private timer?: NodeJS.Timeout;
 
-  constructor(private readonly commandBus: CommandBus, @Inject(ENV) private readonly env: Env) {}
+  constructor(
+    private readonly commandBus: CommandBus,
+    @Inject(ENV) private readonly env: Env,
+  ) {}
 
   onApplicationBootstrap(): void {
     const hours = this.env.RETENTION_SWEEP_HOURS;
@@ -45,7 +48,9 @@ export class RetentionScheduler implements OnApplicationBootstrap, OnApplication
     try {
       await this.commandBus.execute(new PruneRunsCommand());
     } catch (error) {
-      this.logger.warn(`La retención falló y se reintentará: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `La retención falló y se reintentará: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 }

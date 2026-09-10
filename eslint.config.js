@@ -63,11 +63,19 @@ export default tseslint.config(
         "error",
         {
           paths: [
-            { name: "typeorm", message: "domain/ no conoce la persistencia: el puerto va aquí, el adaptador en infrastructure/." },
+            {
+              name: "typeorm",
+              message: "domain/ no conoce la persistencia: el puerto va aquí, el adaptador en infrastructure/.",
+            },
             { name: "@nestjs/typeorm", message: "domain/ no conoce la persistencia." },
             { name: "express", message: "domain/ no conoce el transporte." },
           ],
-          patterns: [{ group: ["@/modules/*/infrastructure/*", "**/infrastructure/*"], message: "domain/ no depende de infrastructure/." }],
+          patterns: [
+            {
+              group: ["@/modules/*/infrastructure/*", "**/infrastructure/*"],
+              message: "domain/ no depende de infrastructure/.",
+            },
+          ],
         },
       ],
     },
@@ -80,7 +88,10 @@ export default tseslint.config(
         "error",
         {
           patterns: [
-            { group: ["@nestjs/*", "react", "react-*", "typeorm", "express"], message: "packages/ es dominio puro: sin framework." },
+            {
+              group: ["@nestjs/*", "react", "react-*", "typeorm", "express"],
+              message: "packages/ es dominio puro: sin framework.",
+            },
           ],
         },
       ],

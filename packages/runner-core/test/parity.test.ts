@@ -68,7 +68,9 @@ function buildMatrix() {
     runnableWithAuth: runnableScenarios(operation, config, true).map((scenario) => scenario.id),
   }));
 
-  const orders = Object.fromEntries(ORDERS.map((mode) => [mode, orderOperations(resolved, mode, []).map((operation) => operation.id)]));
+  const orders = Object.fromEntries(
+    ORDERS.map((mode) => [mode, orderOperations(resolved, mode, []).map((operation) => operation.id)]),
+  );
 
   const queues = Object.fromEntries(
     ORDERS.flatMap((mode) =>

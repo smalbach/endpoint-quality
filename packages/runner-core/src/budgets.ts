@@ -10,7 +10,12 @@
 import type { Assertion, Budget, HttpMethod } from "./types.ts";
 import type { BudgetRule, ProjectConfig } from "./config.ts";
 
-export function matchesBudgetRule(rule: BudgetRule, method: HttpMethod, operationPath: string, requestPath: string): boolean {
+export function matchesBudgetRule(
+  rule: BudgetRule,
+  method: HttpMethod,
+  operationPath: string,
+  requestPath: string,
+): boolean {
   if (rule.methods && !rule.methods.includes(method)) return false;
   if (rule.pathEquals !== undefined && operationPath !== rule.pathEquals) return false;
   if (rule.pathSuffix !== undefined && !operationPath.endsWith(rule.pathSuffix)) return false;
@@ -20,7 +25,12 @@ export function matchesBudgetRule(rule: BudgetRule, method: HttpMethod, operatio
 }
 
 /** The published budget for one request, or `null` when the project set none. */
-export function budgetFor(config: ProjectConfig, method: HttpMethod, operationPath: string, requestPath = ""): Budget | null {
+export function budgetFor(
+  config: ProjectConfig,
+  method: HttpMethod,
+  operationPath: string,
+  requestPath = "",
+): Budget | null {
   const rule = config.budgets.find((candidate) => matchesBudgetRule(candidate, method, operationPath, requestPath));
   return rule ? { ms: rule.thresholdMs, label: rule.label, source: rule.source } : null;
 }
@@ -49,8 +59,13 @@ export function latencyAssertion(budget: Budget | null, samples: number[]): Asse
   if (!budget || samples.length === 0) return null;
   const p95 = percentile(samples, 95);
   const measured = samples.length === 1 ? samples[0] : p95;
-  const how = samples.length === 1
-    ? `1 muestra: ${measured} ms (una medición no es un p95)`
-    : `${samples.length} muestras · p50 ${percentile(samples, 50)} ms · p95 ${p95} ms`;
-  return { label: budget.label, pass: measured < budget.ms, detail: `${how} · objetivo ${budget.ms} ms (${budget.source})` };
+  const how =
+    samples.length === 1
+      ? `1 muestra: ${measured} ms (una medición no es un p95)`
+      : `${samples.length} muestras · p50 ${percentile(samples, 50)} ms · p95 ${p95} ms`;
+  return {
+    label: budget.label,
+    pass: measured < budget.ms,
+    detail: `${how} · objetivo ${budget.ms} ms (${budget.source})`,
+  };
 }

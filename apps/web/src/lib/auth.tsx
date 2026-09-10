@@ -79,7 +79,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   /** The stored choice only counts while it is still one of the user's. Being removed from an
    * organization must not leave the app pointing at it and every request answering 403. */
-  const resolved = user?.organizations.find((entry) => entry.id === organizationId)?.id ?? user?.organizations[0]?.id ?? null;
+  const resolved =
+    user?.organizations.find((entry) => entry.id === organizationId)?.id ?? user?.organizations[0]?.id ?? null;
 
   const value = useMemo<AuthState>(
     () => ({

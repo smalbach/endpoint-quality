@@ -27,7 +27,10 @@ beforeEach(() => {
     const url = String(input);
     calls.push({ url, init });
     const queue = replies.get(url);
-    const reply = (queue && (queue.length > 1 ? queue.shift()! : queue[0])) ?? { status: 404, body: { title: "sin stub", status: 404, detail: url, type: "" } };
+    const reply = (queue && (queue.length > 1 ? queue.shift()! : queue[0])) ?? {
+      status: 404,
+      body: { title: "sin stub", status: 404, detail: url, type: "" },
+    };
     const text = reply.body === undefined ? "" : JSON.stringify(reply.body);
     return new Response(reply.status === 204 ? null : text, {
       status: reply.status,
@@ -71,7 +74,11 @@ describe("dónde vive la sesión", () => {
 describe("renovación", () => {
   test("un 401 renueva una vez y reintenta la petición original", async () => {
     setAccessToken("caducado");
-    respond("/api/projects", { status: 401, body: { title: "No autenticado", status: 401, detail: "", type: "" } }, { status: 200, body: [{ id: "p1" }] });
+    respond(
+      "/api/projects",
+      { status: 401, body: { title: "No autenticado", status: 401, detail: "", type: "" } },
+      { status: 200, body: [{ id: "p1" }] },
+    );
     respond("/api/auth/refresh", { status: 200, body: { userId: "u1", accessToken: "token-nuevo", expiresIn: 900 } });
 
     await expect(api("/projects")).resolves.toEqual([{ id: "p1" }]);
@@ -85,7 +92,11 @@ describe("renovación", () => {
     // out on every page load where the token happened to expire.
     setAccessToken("caducado");
     for (const path of ["/a", "/b", "/c", "/d", "/e", "/f"]) {
-      respond(`/api${path}`, { status: 401, body: { title: "", status: 401, detail: "", type: "" } }, { status: 200, body: { path } });
+      respond(
+        `/api${path}`,
+        { status: 401, body: { title: "", status: 401, detail: "", type: "" } },
+        { status: 200, body: { path } },
+      );
     }
     respond("/api/auth/refresh", { status: 200, body: { userId: "u1", accessToken: "token-nuevo", expiresIn: 900 } });
 
@@ -114,7 +125,10 @@ describe("renovación", () => {
   test("el login no reintenta con renovación", async () => {
     // A wrong password is not an expired session, and refreshing over it would turn one 401 into
     // two requests and a confusing message.
-    respond("/api/auth/login", { status: 401, body: { title: "No autenticado", status: 401, detail: "Credenciales inválidas", type: "" } });
+    respond("/api/auth/login", {
+      status: 401,
+      body: { title: "No autenticado", status: 401, detail: "Credenciales inválidas", type: "" },
+    });
     await expect(login("ada@example.com", "mal")).rejects.toThrow("Credenciales inválidas");
     expect(calls.filter((call) => call.url.endsWith("/auth/refresh"))).toHaveLength(0);
   });
@@ -124,7 +138,13 @@ describe("errores", () => {
   test("un Problem Details llega con sus campos", async () => {
     respond("/api/projects", {
       status: 422,
-      body: { type: "https://x/problems/config-invalid", title: "Entidad no procesable", status: 422, detail: "La sección no es válida", errors: [{ field: "budgets.0.thresholdMs", detail: "debe ser positivo" }] },
+      body: {
+        type: "https://x/problems/config-invalid",
+        title: "Entidad no procesable",
+        status: 422,
+        detail: "La sección no es válida",
+        errors: [{ field: "budgets.0.thresholdMs", detail: "debe ser positivo" }],
+      },
     });
     // A form needs the field path to put the message next to the input that caused it.
     await expect(api("/projects")).rejects.toMatchObject({

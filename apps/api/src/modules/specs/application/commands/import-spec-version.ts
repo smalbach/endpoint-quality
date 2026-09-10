@@ -81,7 +81,8 @@ export class ImportSpecVersionHandler implements ICommandHandler<ImportSpecVersi
     const project = await ownedProject(this.projects, command.organizationId, command.projectId);
     const source = command.source ?? (await this.rememberedSource(project.id));
     const raw = await this.read(project.id, source);
-    if (!raw.trim()) throw new InvalidInputError("El documento está vacío", [{ field: "source", detail: "No se recibió contenido" }]);
+    if (!raw.trim())
+      throw new InvalidInputError("El documento está vacío", [{ field: "source", detail: "No se recibió contenido" }]);
 
     const hash = fingerprint(raw);
     const existing = await this.specs.findVersionByHash(project.id, hash);
@@ -90,7 +91,14 @@ export class ImportSpecVersionHandler implements ICommandHandler<ImportSpecVersi
       // reasonable thing to ask about a version that happens to already be on file.
       const activated = command.activate && project.activeSpecVersionId !== existing.id;
       if (activated) await this.projects.save({ ...project, activeSpecVersionId: existing.id });
-      return { specVersionId: existing.id, hash, operationCount: existing.operationCount, problems: existing.problems, unchanged: true, activated };
+      return {
+        specVersionId: existing.id,
+        hash,
+        operationCount: existing.operationCount,
+        problems: existing.problems,
+        unchanged: true,
+        activated,
+      };
     }
 
     const parsed = importSpec(raw);
@@ -138,7 +146,14 @@ export class ImportSpecVersionHandler implements ICommandHandler<ImportSpecVersi
 
     this.eventBus.publish(new SpecVersionImportedEvent(project.id, specVersionId, hash, parsed.operations.length, now));
 
-    return { specVersionId, hash, operationCount: parsed.operations.length, problems: parsed.problems, unchanged: false, activated: activate };
+    return {
+      specVersionId,
+      hash,
+      operationCount: parsed.operations.length,
+      problems: parsed.problems,
+      unchanged: false,
+      activated: activate,
+    };
   }
 
   /**
@@ -150,7 +165,11 @@ export class ImportSpecVersionHandler implements ICommandHandler<ImportSpecVersi
    */
   private async rememberedSource(projectId: string): Promise<SpecSourceInput> {
     const stored = await this.specs.findLatestSource(projectId);
-    if (!stored) throw new ConflictError("El proyecto no tiene ninguna fuente guardada: indica de dónde leer el contrato", "no-spec-source");
+    if (!stored)
+      throw new ConflictError(
+        "El proyecto no tiene ninguna fuente guardada: indica de dónde leer el contrato",
+        "no-spec-source",
+      );
     if (stored.kind !== "url" || !stored.location) {
       throw new ConflictError(
         `La última importación de este proyecto fue ${stored.kind === "upload" ? "un fichero subido" : "un documento pegado"}, que no se puede volver a leer solo: adjunta el contrato`,
@@ -233,7 +252,9 @@ export class ImportSpecVersionHandler implements ICommandHandler<ImportSpecVersi
       // No `SECRETS_KEY`. The import still succeeds — refusing it would be failing an operation
       // the operator asked for because of one we offered — but the headers are not written in
       // the clear, and the next import will ask for them again.
-      this.logger.warn("SECRETS_KEY no está configurada: las cabeceras del contrato no se guardan y habrá que repetirlas en cada importación");
+      this.logger.warn(
+        "SECRETS_KEY no está configurada: las cabeceras del contrato no se guardan y habrá que repetirlas en cada importación",
+      );
       return null;
     }
   }

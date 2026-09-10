@@ -7,11 +7,19 @@ import { slugifyProject, type Project } from "../../domain/model";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "../../domain/ports";
 
 export class CreateProjectCommand implements ICommand {
-  constructor(readonly organizationId: string, readonly name: string, readonly description: string, readonly createdBy: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly name: string,
+    readonly description: string,
+    readonly createdBy: string,
+  ) {}
 }
 
 @CommandHandler(CreateProjectCommand)
-export class CreateProjectHandler implements ICommandHandler<CreateProjectCommand, { projectId: string; slug: string }> {
+export class CreateProjectHandler implements ICommandHandler<
+  CreateProjectCommand,
+  { projectId: string; slug: string }
+> {
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,

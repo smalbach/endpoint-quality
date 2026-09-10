@@ -36,15 +36,33 @@ const asWidget = ({ deleted, ...widget }) => widget;
 
 const json = (response, status, body, contentType = "application/json") => {
   const payload = body === undefined ? "" : JSON.stringify(body);
-  response.writeHead(status, payload ? { "content-type": contentType, "content-length": Buffer.byteLength(payload) } : {});
+  response.writeHead(
+    status,
+    payload ? { "content-type": contentType, "content-length": Buffer.byteLength(payload) } : {},
+  );
   response.end(payload);
 };
 
 /** RFC 9457, like everything this product asserts against. */
 const problem = (response, status, title, detail, errors) =>
-  json(response, status, { type: `${PUBLIC_URL}/problems/${title.toLowerCase().replace(/\s+/g, "-")}`, title, status, detail, ...(errors ? { errors } : {}) }, "application/problem+json");
+  json(
+    response,
+    status,
+    {
+      type: `${PUBLIC_URL}/problems/${title.toLowerCase().replace(/\s+/g, "-")}`,
+      title,
+      status,
+      detail,
+      ...(errors ? { errors } : {}),
+    },
+    "application/problem+json",
+  );
 
-const listEnvelope = (data, self) => ({ data, meta: { total: data.length, limit: 50 }, links: { self: `${PUBLIC_URL}${self}`, next: null, prev: null } });
+const listEnvelope = (data, self) => ({
+  data,
+  meta: { total: data.length, limit: 50 },
+  links: { self: `${PUBLIC_URL}${self}`, next: null, prev: null },
+});
 
 function readBody(request) {
   return new Promise((resolve, reject) => {
@@ -88,12 +106,24 @@ const server = createServer(async (request, response) => {
     }
     const missing = ["name", "colour"].filter((field) => typeof body?.[field] !== "string" || !body[field]);
     if (missing.length) {
-      return problem(response, 422, "Entidad no procesable", "Faltan campos obligatorios", missing.map((field) => ({ field, detail: "es obligatorio y debe ser una cadena" })));
+      return problem(
+        response,
+        422,
+        "Entidad no procesable",
+        "Faltan campos obligatorios",
+        missing.map((field) => ({ field, detail: "es obligatorio y debe ser una cadena" })),
+      );
     }
     if (live().some((widget) => widget.name === body.name)) {
       return problem(response, 409, "Conflicto", `Ya existe un widget llamado ${body.name}`);
     }
-    const widget = { id: nextId++, name: body.name, colour: body.colour, stock: Number(body.stock ?? 0), deleted: false };
+    const widget = {
+      id: nextId++,
+      name: body.name,
+      colour: body.colour,
+      stock: Number(body.stock ?? 0),
+      deleted: false,
+    };
     widgets.push(widget);
     return json(response, 201, { data: asWidget(widget) });
   }
@@ -124,11 +154,19 @@ const server = createServer(async (request, response) => {
       // An empty patch is rejected rather than answered with 200: it is the 422 the contract
       // declares, and "modify nothing" is almost always a caller sending the wrong thing.
       if (!body || Object.keys(body).length === 0) {
-        return problem(response, 422, "Entidad no procesable", "Un PATCH tiene que traer al menos un campo", [{ field: "", detail: "el cuerpo no puede estar vacío" }]);
+        return problem(response, 422, "Entidad no procesable", "Un PATCH tiene que traer al menos un campo", [
+          { field: "", detail: "el cuerpo no puede estar vacío" },
+        ]);
       }
       const wrong = ["name", "colour"].filter((field) => body[field] !== undefined && typeof body[field] !== "string");
       if (wrong.length) {
-        return problem(response, 422, "Entidad no procesable", "Campos con el tipo equivocado", wrong.map((field) => ({ field, detail: "debe ser una cadena" })));
+        return problem(
+          response,
+          422,
+          "Entidad no procesable",
+          "Campos con el tipo equivocado",
+          wrong.map((field) => ({ field, detail: "debe ser una cadena" })),
+        );
       }
       Object.assign(widget, body);
       return json(response, 200, { data: asWidget(widget) });
@@ -156,29 +194,59 @@ function openapi() {
   const widget = {
     type: "object",
     required: ["id", "name", "colour", "stock"],
-    properties: { id: { type: "integer" }, name: { type: "string" }, colour: { type: "string" }, stock: { type: "integer" } },
+    properties: {
+      id: { type: "integer" },
+      name: { type: "string" },
+      colour: { type: "string" },
+      stock: { type: "integer" },
+    },
   };
   const problemSchema = {
     type: "object",
     required: ["type", "title", "status"],
-    properties: { type: { type: "string" }, title: { type: "string" }, status: { type: "integer" }, detail: { type: "string" }, errors: { type: "array", items: { type: "object" } } },
+    properties: {
+      type: { type: "string" },
+      title: { type: "string" },
+      status: { type: "integer" },
+      detail: { type: "string" },
+      errors: { type: "array", items: { type: "object" } },
+    },
   };
   const listOf = {
     type: "object",
     required: ["data", "meta", "links"],
     properties: {
       data: { type: "array", items: widget },
-      meta: { type: "object", required: ["total", "limit"], properties: { total: { type: "integer" }, limit: { type: "integer" } } },
-      links: { type: "object", required: ["self"], properties: { self: { type: "string" }, next: { type: ["string", "null"] }, prev: { type: ["string", "null"] } } },
+      meta: {
+        type: "object",
+        required: ["total", "limit"],
+        properties: { total: { type: "integer" }, limit: { type: "integer" } },
+      },
+      links: {
+        type: "object",
+        required: ["self"],
+        properties: {
+          self: { type: "string" },
+          next: { type: ["string", "null"] },
+          prev: { type: ["string", "null"] },
+        },
+      },
     },
   };
   const singleOf = { type: "object", required: ["data"], properties: { data: widget } };
   const body = (schema) => ({ content: { "application/json": { schema } } });
-  const errorResponse = (description) => ({ description, content: { "application/problem+json": { schema: problemSchema } } });
+  const errorResponse = (description) => ({
+    description,
+    content: { "application/problem+json": { schema: problemSchema } },
+  });
 
   return {
     openapi: "3.0.3",
-    info: { title: "Sample API", version: "1.0.0", description: "Un servicio de muestra para ver funcionando Endpoint Quality." },
+    info: {
+      title: "Sample API",
+      version: "1.0.0",
+      description: "Un servicio de muestra para ver funcionando Endpoint Quality.",
+    },
     servers: [{ url: PUBLIC_URL }],
     paths: {
       "/health": {
@@ -186,7 +254,16 @@ function openapi() {
           operationId: "healthCheck",
           tags: ["Health"],
           summary: "Estado del servicio",
-          responses: { 200: { description: "Vivo", ...body({ type: "object", required: ["status", "checks"], properties: { status: { type: "string" }, checks: { type: "object" } } }) } },
+          responses: {
+            200: {
+              description: "Vivo",
+              ...body({
+                type: "object",
+                required: ["status", "checks"],
+                properties: { status: { type: "string" }, checks: { type: "object" } },
+              }),
+            },
+          },
         },
       },
       "/widgets": {
@@ -201,19 +278,39 @@ function openapi() {
           operationId: "createWidget",
           tags: ["Widgets"],
           summary: "Crear un widget",
-          requestBody: body({ type: "object", required: ["name", "colour"], properties: { name: { type: "string" }, colour: { type: "string" }, stock: { type: "integer" } } }),
-          responses: { 201: { description: "Creado", ...body(singleOf) }, 409: errorResponse("Nombre repetido"), 422: errorResponse("Cuerpo inválido") },
+          requestBody: body({
+            type: "object",
+            required: ["name", "colour"],
+            properties: { name: { type: "string" }, colour: { type: "string" }, stock: { type: "integer" } },
+          }),
+          responses: {
+            201: { description: "Creado", ...body(singleOf) },
+            409: errorResponse("Nombre repetido"),
+            422: errorResponse("Cuerpo inválido"),
+          },
         },
       },
       "/widgets/{id}": {
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
-        get: { operationId: "getWidget", tags: ["Widgets"], summary: "Un widget", responses: { 200: { description: "El widget", ...body(singleOf) }, 404: errorResponse("No existe") } },
+        get: {
+          operationId: "getWidget",
+          tags: ["Widgets"],
+          summary: "Un widget",
+          responses: { 200: { description: "El widget", ...body(singleOf) }, 404: errorResponse("No existe") },
+        },
         patch: {
           operationId: "patchWidget",
           tags: ["Widgets"],
           summary: "Modificar un widget",
-          requestBody: body({ type: "object", properties: { name: { type: "string" }, colour: { type: "string" }, stock: { type: "integer" } } }),
-          responses: { 200: { description: "Modificado", ...body(singleOf) }, 404: errorResponse("No existe"), 422: errorResponse("Cuerpo inválido") },
+          requestBody: body({
+            type: "object",
+            properties: { name: { type: "string" }, colour: { type: "string" }, stock: { type: "integer" } },
+          }),
+          responses: {
+            200: { description: "Modificado", ...body(singleOf) },
+            404: errorResponse("No existe"),
+            422: errorResponse("Cuerpo inválido"),
+          },
         },
         delete: {
           operationId: "deleteWidget",

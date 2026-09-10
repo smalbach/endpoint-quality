@@ -35,13 +35,7 @@ export type ResolvedOperation = Operation & {
 };
 
 export type ScenarioFlow =
-  | "request"
-  | "create-read"
-  | "replace-read"
-  | "patch-read"
-  | "delete-read"
-  | "deleted-read"
-  | "bulk-read";
+  "request" | "create-read" | "replace-read" | "patch-read" | "delete-read" | "deleted-read" | "bulk-read";
 
 /**
  * Which credential a case presents, which is the thing the case is testing.

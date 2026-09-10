@@ -64,7 +64,9 @@ export class TypeOrmApiTokenRepository implements ApiTokenRepositoryPort {
     return row ? { ...row } : null;
   }
   async listForOrganization(organizationId: string): Promise<ApiToken[]> {
-    return (await this.repository.find({ where: { organizationId }, order: { createdAt: "DESC" } })).map((row) => ({ ...row }));
+    return (await this.repository.find({ where: { organizationId }, order: { createdAt: "DESC" } })).map((row) => ({
+      ...row,
+    }));
   }
   async save(token: ApiToken): Promise<void> {
     await this.repository.save(token);

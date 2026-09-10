@@ -33,7 +33,8 @@ export function LoginPage({ mode }: { mode: "login" | "register" }) {
 
   if (status === "authenticated") return <Navigate to="/" replace />;
 
-  const fieldError = (field: string) => (error instanceof ApiError ? error.fields.find((entry) => entry.field.includes(field))?.detail : undefined);
+  const fieldError = (field: string) =>
+    error instanceof ApiError ? error.fields.find((entry) => entry.field.includes(field))?.detail : undefined;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -43,7 +44,10 @@ export function LoginPage({ mode }: { mode: "login" | "register" }) {
       if (mode === "login") await signIn(email, password);
       else await signUp({ email, password, name, ...(organizationName ? { organizationName } : {}) });
       if (invitation) {
-        const accepted = await api<{ organizationId: string }>("/invitations/accept", { method: "POST", body: { token: invitation } });
+        const accepted = await api<{ organizationId: string }>("/invitations/accept", {
+          method: "POST",
+          body: { token: invitation },
+        });
         // And land *in* it. Registering also founds an organization of your own, so without this
         // the invitee arrives at an empty one and the invitation looks like it did nothing.
         selectOrganization(accepted.organizationId);
@@ -72,11 +76,24 @@ export function LoginPage({ mode }: { mode: "login" | "register" }) {
         <form className="mt-6 space-y-4" onSubmit={submit}>
           {mode === "register" && (
             <Field label="Nombre" error={fieldError("name")}>
-              <input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} required autoComplete="name" />
+              <input
+                className={inputClass}
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                required
+                autoComplete="name"
+              />
             </Field>
           )}
           <Field label="Correo" error={fieldError("email")}>
-            <input className={inputClass} type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" />
+            <input
+              className={inputClass}
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              required
+              autoComplete="email"
+            />
           </Field>
           <Field
             label="Contraseña"
@@ -94,7 +111,12 @@ export function LoginPage({ mode }: { mode: "login" | "register" }) {
           </Field>
           {mode === "register" && !invitation && (
             <Field label="Organización" hint="Opcional. Si la dejas vacía se crea una con tu nombre.">
-              <input className={inputClass} value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} autoComplete="organization" />
+              <input
+                className={inputClass}
+                value={organizationName}
+                onChange={(event) => setOrganizationName(event.target.value)}
+                autoComplete="organization"
+              />
             </Field>
           )}
 
@@ -110,11 +132,17 @@ export function LoginPage({ mode }: { mode: "login" | "register" }) {
         <p className="mt-4 text-center text-xs text-slate-500">
           {mode === "login" ? (
             <>
-              ¿Sin cuenta? <Link className="font-medium text-slate-900 underline" to="/register">Crear una</Link>
+              ¿Sin cuenta?{" "}
+              <Link className="font-medium text-slate-900 underline" to="/register">
+                Crear una
+              </Link>
             </>
           ) : (
             <>
-              ¿Ya tienes cuenta? <Link className="font-medium text-slate-900 underline" to="/login">Entrar</Link>
+              ¿Ya tienes cuenta?{" "}
+              <Link className="font-medium text-slate-900 underline" to="/login">
+                Entrar
+              </Link>
             </>
           )}
         </p>

@@ -82,7 +82,10 @@ export type FlowContext = {
  * `flowOverrides` is how the other ten per cent say so — that is P5's editor; the convention is
  * what makes the tool useful before anybody opens it.
  */
-export function detailOperationFor(collection: ResolvedOperation, operations: ResolvedOperation[]): ResolvedOperation | undefined {
+export function detailOperationFor(
+  collection: ResolvedOperation,
+  operations: ResolvedOperation[],
+): ResolvedOperation | undefined {
   const placeholders = (collection.path.match(/\{/g) ?? []).length;
   return operations.find(
     (candidate) =>
@@ -98,7 +101,15 @@ export function idFieldOf(operation: ResolvedOperation): string | undefined {
   return [...operation.path.matchAll(/\{([^}]+)\}/g)].at(-1)?.[1];
 }
 
-function step(context: FlowContext, partial: Omit<StepRequest, "index" | "expectedShape" | "auth" | "samples" | "requestPath"> & { parameters?: Record<string, string>; auth?: TestScenario["auth"]; samples?: number }, index: number): StepRequest {
+function step(
+  context: FlowContext,
+  partial: Omit<StepRequest, "index" | "expectedShape" | "auth" | "samples" | "requestPath"> & {
+    parameters?: Record<string, string>;
+    auth?: TestScenario["auth"];
+    samples?: number;
+  },
+  index: number,
+): StepRequest {
   const operation = context.operations.find((candidate) => candidate.id === partial.operationId) ?? context.operation;
   const requestPath = requestPathFor(operation, context.config, partial.parameters);
   return {
@@ -317,10 +328,18 @@ export function* planFlow(context: FlowContext): Generator<StepRequest, void, St
  * Kept out of `planFlow` because it needs the response of the step it judges, and a generator
  * that both plans and judges would have to carry the comparison across a yield.
  */
-export function persistenceAssertion(step: StepRequest, actual: ActualResponse | null, sent: Record<string, unknown>, envelopeShape: string): Assertion | null {
+export function persistenceAssertion(
+  step: StepRequest,
+  actual: ActualResponse | null,
+  sent: Record<string, unknown>,
+  envelopeShape: string,
+): Assertion | null {
   if (step.purpose !== "verify" || step.method !== "GET" || Object.keys(sent).length === 0) return null;
   const key = envelopeShape;
-  const container = actual && typeof actual.body === "object" && actual.body !== null ? (actual.body as Record<string, unknown>) : undefined;
+  const container =
+    actual && typeof actual.body === "object" && actual.body !== null
+      ? (actual.body as Record<string, unknown>)
+      : undefined;
   const envelope = /^\{\s*([A-Za-z_$][\w$]*)/.exec(key.trim())?.[1];
   const resource = envelope ? (container?.[envelope] as Record<string, unknown> | undefined) : container;
   return verifyPersistedFields(resource, sent);

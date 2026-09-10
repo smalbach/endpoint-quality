@@ -12,17 +12,55 @@ import assert from "node:assert/strict";
 import { defineProjectConfig } from "../src/config.ts";
 import { resolveOperations, scenariosFor } from "../src/scenarios.ts";
 import { detailOperationFor, idFieldOf, planFlow, type StepOutcome, type StepRequest } from "../src/flow.ts";
-import { capturedId, evaluateResponse, matchesShape, verifyPersistedFields, type ActualResponse } from "../src/assertions.ts";
+import {
+  capturedId,
+  evaluateResponse,
+  matchesShape,
+  verifyPersistedFields,
+  type ActualResponse,
+} from "../src/assertions.ts";
 import { expectedShapeFor } from "../src/envelope.ts";
 import type { Operation, ResolvedOperation, TestScenario } from "../src/types.ts";
 
 const operations: Operation[] = [
   { id: "listThings", method: "GET", path: "/things", summary: "", tag: "T", statuses: [200], parameters: [] },
   { id: "createThing", method: "POST", path: "/things", summary: "", tag: "T", statuses: [201, 422], parameters: [] },
-  { id: "getThing", method: "GET", path: "/things/{id}", summary: "", tag: "T", statuses: [200, 404], parameters: ["id"] },
-  { id: "replaceThing", method: "PUT", path: "/things/{id}", summary: "", tag: "T", statuses: [200, 404], parameters: ["id"] },
-  { id: "patchThing", method: "PATCH", path: "/things/{id}", summary: "", tag: "T", statuses: [200, 404], parameters: ["id"] },
-  { id: "deleteThing", method: "DELETE", path: "/things/{id}", summary: "", tag: "T", statuses: [204, 404], parameters: ["id"] },
+  {
+    id: "getThing",
+    method: "GET",
+    path: "/things/{id}",
+    summary: "",
+    tag: "T",
+    statuses: [200, 404],
+    parameters: ["id"],
+  },
+  {
+    id: "replaceThing",
+    method: "PUT",
+    path: "/things/{id}",
+    summary: "",
+    tag: "T",
+    statuses: [200, 404],
+    parameters: ["id"],
+  },
+  {
+    id: "patchThing",
+    method: "PATCH",
+    path: "/things/{id}",
+    summary: "",
+    tag: "T",
+    statuses: [200, 404],
+    parameters: ["id"],
+  },
+  {
+    id: "deleteThing",
+    method: "DELETE",
+    path: "/things/{id}",
+    summary: "",
+    tag: "T",
+    statuses: [204, 404],
+    parameters: ["id"],
+  },
 ];
 
 const config = defineProjectConfig({
@@ -31,7 +69,11 @@ const config = defineProjectConfig({
     replaceThing: { body: { name: "reemplazado", size: 3 }, replaceBody: { name: "reemplazado", size: 9 } },
     patchThing: { body: { name: "parcheado" } },
   },
-  envelope: { rules: [{ id: "delete", match: { methods: ["DELETE"] }, shape: "No body" }], fallbackShape: "{ data: Resource }", errorShape: "ProblemDetails" },
+  envelope: {
+    rules: [{ id: "delete", match: { methods: ["DELETE"] }, shape: "No body" }],
+    fallbackShape: "{ data: Resource }",
+    errorShape: "ProblemDetails",
+  },
   pathDefaults: { id: "1" },
 });
 
@@ -40,8 +82,22 @@ const find = (id: string) => resolved.find((operation) => operation.id === id)!;
 const caseOf = (operationId: string, scenarioId: string): TestScenario =>
   scenariosFor(find(operationId), config).find((scenario) => scenario.id === scenarioId)!;
 
-const okBody = (id: string) => ({ status: 201, statusText: "Created", contentType: "application/json", headers: {}, body: { data: { id, name: "nuevo", size: 3 } }, raw: "{}" });
-const emptyOk: ActualResponse = { status: 204, statusText: "No Content", contentType: "", headers: {}, body: "", raw: "" };
+const okBody = (id: string) => ({
+  status: 201,
+  statusText: "Created",
+  contentType: "application/json",
+  headers: {},
+  body: { data: { id, name: "nuevo", size: 3 } },
+  raw: "{}",
+});
+const emptyOk: ActualResponse = {
+  status: 204,
+  statusText: "No Content",
+  contentType: "",
+  headers: {},
+  body: "",
+  raw: "",
+};
 
 /** A target that answers a create with a resource and everything else with an empty 204. The
  * distinction matters: answering the prepare step with a bodyless 204 leaves the flow with no id
@@ -50,7 +106,11 @@ const createsThenEmpty = (step: StepRequest): Partial<StepOutcome> =>
   step.method === "POST" ? {} : { actual: emptyOk };
 
 /** Drives a flow to completion, answering every step with the same canned outcome builder. */
-function walk(operation: ResolvedOperation, scenario: TestScenario, answer: (step: StepRequest) => Partial<StepOutcome> = () => ({})): StepRequest[] {
+function walk(
+  operation: ResolvedOperation,
+  scenario: TestScenario,
+  answer: (step: StepRequest) => Partial<StepOutcome> = () => ({}),
+): StepRequest[] {
   const flow = planFlow({ operation, scenario, config, operations: resolved, samples: 1 });
   const steps: StepRequest[] = [];
   let result = flow.next();
@@ -73,12 +133,28 @@ describe("descubrimiento de operaciones relacionadas", () => {
     assert.equal(detailOperationFor(find("listThings"), resolved)?.id, "getThing");
   });
   test("una colección sin detalle devuelve undefined en vez de adivinar", () => {
-    const orphan = resolveOperations([{ id: "listOrphans", method: "GET", path: "/orphans", summary: "", tag: "T", statuses: [200], parameters: [] }], config)[0];
+    const orphan = resolveOperations(
+      [{ id: "listOrphans", method: "GET", path: "/orphans", summary: "", tag: "T", statuses: [200], parameters: [] }],
+      config,
+    )[0];
     assert.equal(detailOperationFor(orphan, resolved), undefined);
   });
   test("el identificador es el último placeholder de la ruta", () => {
     assert.equal(idFieldOf(find("getThing")), "id");
-    const nested = resolveOperations([{ id: "getNested", method: "GET", path: "/a/{a_id}/b/{b_id}", summary: "", tag: "T", statuses: [200], parameters: ["a_id", "b_id"] }], config)[0];
+    const nested = resolveOperations(
+      [
+        {
+          id: "getNested",
+          method: "GET",
+          path: "/a/{a_id}/b/{b_id}",
+          summary: "",
+          tag: "T",
+          statuses: [200],
+          parameters: ["a_id", "b_id"],
+        },
+      ],
+      config,
+    )[0];
     assert.equal(idFieldOf(nested), "b_id");
   });
 });
@@ -88,11 +164,10 @@ describe("create-read", () => {
     // The cleanup is not tidiness: without it the second run of this case is a 409 over the
     // natural key, which reports the previous run rather than the endpoint.
     const steps = walk(find("createThing"), caseOf("createThing", "create-read"));
-    assert.deepEqual(steps.map((step) => `${step.purpose}:${step.method} ${step.requestPath}`), [
-      "act:POST /things",
-      "verify:GET /things/42",
-      "cleanup:DELETE /things/42",
-    ]);
+    assert.deepEqual(
+      steps.map((step) => `${step.purpose}:${step.method} ${step.requestPath}`),
+      ["act:POST /things", "verify:GET /things/42", "cleanup:DELETE /things/42"],
+    );
   });
 
   test("si el POST falla no persigue una lectura que no diría nada nuevo", () => {
@@ -104,7 +179,14 @@ describe("create-read", () => {
     // A create that answers 201 without saying what it created cannot be read back, and the case
     // reports that instead of requesting `/things/undefined`.
     const steps = walk(find("createThing"), caseOf("createThing", "create-read"), () => ({
-      actual: { status: 201, statusText: "", contentType: "application/json", headers: {}, body: { data: { name: "nuevo" } }, raw: "{}" },
+      actual: {
+        status: 201,
+        statusText: "",
+        contentType: "application/json",
+        headers: {},
+        body: { data: { name: "nuevo" } },
+        raw: "{}",
+      },
     }));
     assert.equal(steps.length, 1);
   });
@@ -118,7 +200,10 @@ describe("replace-read", () => {
   test("crea su propia entidad en vez de mutar una semilla", () => {
     // A PUT over fixture id 1 changes what every later case in the matrix reads.
     const steps = walk(find("replaceThing"), caseOf("replaceThing", "replace-read"));
-    assert.deepEqual(steps.map((step) => `${step.purpose}:${step.method}`), ["prepare:POST", "act:PUT", "verify:GET", "cleanup:DELETE"]);
+    assert.deepEqual(
+      steps.map((step) => `${step.purpose}:${step.method}`),
+      ["prepare:POST", "act:PUT", "verify:GET", "cleanup:DELETE"],
+    );
     assert.equal(steps[1].requestPath, "/things/42");
     assert.deepEqual(steps[1].body, { name: "reemplazado", size: 9 });
   });
@@ -126,18 +211,31 @@ describe("replace-read", () => {
   test("si la preparación falla no se ejecuta la mutación", () => {
     // Otherwise the PUT lands on a seed row, which is exactly the fixture damage the prepare
     // step exists to avoid.
-    const steps = walk(find("replaceThing"), caseOf("replaceThing", "replace-read"), (step) => (step.purpose === "prepare" ? { ok: false } : {}));
-    assert.deepEqual(steps.map((step) => step.purpose), ["prepare"]);
+    const steps = walk(find("replaceThing"), caseOf("replaceThing", "replace-read"), (step) =>
+      step.purpose === "prepare" ? { ok: false } : {},
+    );
+    assert.deepEqual(
+      steps.map((step) => step.purpose),
+      ["prepare"],
+    );
   });
 
   test("aunque la mutación falle, la entidad creada se limpia", () => {
-    const steps = walk(find("replaceThing"), caseOf("replaceThing", "replace-read"), (step) => (step.purpose === "act" ? { ok: false } : {}));
-    assert.deepEqual(steps.map((step) => step.purpose), ["prepare", "act", "cleanup"]);
+    const steps = walk(find("replaceThing"), caseOf("replaceThing", "replace-read"), (step) =>
+      step.purpose === "act" ? { ok: false } : {},
+    );
+    assert.deepEqual(
+      steps.map((step) => step.purpose),
+      ["prepare", "act", "cleanup"],
+    );
   });
 
   test("patch-read sigue la misma forma con el body parcial", () => {
     const steps = walk(find("patchThing"), caseOf("patchThing", "patch-read"));
-    assert.deepEqual(steps.map((step) => step.purpose), ["prepare", "act", "verify", "cleanup"]);
+    assert.deepEqual(
+      steps.map((step) => step.purpose),
+      ["prepare", "act", "verify", "cleanup"],
+    );
     assert.deepEqual(steps[1].body, { name: "parcheado" });
   });
 });
@@ -149,21 +247,27 @@ describe("delete-read y deleted-read", () => {
     // read path forgot the flag answers a perfectly correct 204 and goes on serving the row; only
     // the read-back sees it.
     const steps = walk(find("deleteThing"), caseOf("deleteThing", "delete-read"), createsThenEmpty);
-    assert.deepEqual(steps.map((step) => `${step.purpose}:${step.method}:${step.expectedStatus}`), ["prepare:POST:201", "act:DELETE:204", "verify:GET:404"]);
+    assert.deepEqual(
+      steps.map((step) => `${step.purpose}:${step.method}:${step.expectedStatus}`),
+      ["prepare:POST:201", "act:DELETE:204", "verify:GET:404"],
+    );
   });
 
   test("deleted-read va un paso más allá: el segundo DELETE", () => {
     // Not a duplicate of the one above. That one asks what the resource *is* afterwards; this one
     // asks whether the endpoint admits the row is gone.
     const steps = walk(find("deleteThing"), caseOf("deleteThing", "deleted-read"));
-    assert.deepEqual(steps.map((step) => `${step.purpose}:${step.method}:${step.expectedStatus}`), [
-      "prepare:POST:201",
-      "act:DELETE:204",
-      "verify:GET:404",
-      // An endpoint that answers 204 to a second DELETE is reporting success for work it did
-      // not do.
-      "verify:DELETE:404",
-    ]);
+    assert.deepEqual(
+      steps.map((step) => `${step.purpose}:${step.method}:${step.expectedStatus}`),
+      [
+        "prepare:POST:201",
+        "act:DELETE:204",
+        "verify:GET:404",
+        // An endpoint that answers 204 to a second DELETE is reporting success for work it did
+        // not do.
+        "verify:DELETE:404",
+      ],
+    );
   });
 });
 
@@ -171,10 +275,17 @@ describe("muestras de latencia", () => {
   test("solo se repiten los métodos seguros", () => {
     // Repeating a POST would create N resources: the measurement would change the thing being
     // measured.
-    const flow = planFlow({ operation: find("createThing"), scenario: caseOf("createThing", "create-read"), config, operations: resolved, samples: 30 });
+    const flow = planFlow({
+      operation: find("createThing"),
+      scenario: caseOf("createThing", "create-read"),
+      config,
+      operations: resolved,
+      samples: 30,
+    });
     const first = flow.next().value as StepRequest;
     assert.equal(first.samples, 1);
-    const read = flow.next({ request: first, actual: okBody("7") as ActualResponse, ok: true, assertions: [] }).value as StepRequest;
+    const read = flow.next({ request: first, actual: okBody("7") as ActualResponse, ok: true, assertions: [] })
+      .value as StepRequest;
     assert.equal(read.samples, 30);
   });
 });
@@ -202,7 +313,15 @@ describe("aserciones sobre una respuesta", () => {
     budget: null,
     latencySamples: [10],
   };
-  const response = (over: Partial<ActualResponse>): ActualResponse => ({ status: 200, statusText: "OK", contentType: "application/json", headers: {}, body: { data: [] }, raw: '{"data":[]}', ...over });
+  const response = (over: Partial<ActualResponse>): ActualResponse => ({
+    status: 200,
+    statusText: "OK",
+    contentType: "application/json",
+    headers: {},
+    body: { data: [] },
+    raw: '{"data":[]}',
+    ...over,
+  });
 
   test("un 200 con el envelope correcto pasa", () => {
     const verdict = evaluateResponse({ ...base, actual: response({}) });
@@ -224,12 +343,18 @@ describe("aserciones sobre una respuesta", () => {
     assert.match(verdict.assertions[0].detail, /no está implementado/);
     // No latency assertion at all: nothing downstream says anything useful about a response the
     // API never produced.
-    assert.equal(verdict.assertions.some((assertion) => /ms/.test(assertion.label)), false);
+    assert.equal(
+      verdict.assertions.some((assertion) => /ms/.test(assertion.label)),
+      false,
+    );
   });
 
   test("sin schema declarado se verifica el envelope y se dice que fue eso", () => {
     const verdict = evaluateResponse({ ...base, actual: response({}) });
-    assert.match(verdict.assertions.find((assertion) => assertion.label === "Schema OpenAPI")!.detail, /no declara 200/);
+    assert.match(
+      verdict.assertions.find((assertion) => assertion.label === "Schema OpenAPI")!.detail,
+      /no declara 200/,
+    );
   });
 
   test("con schema declarado manda el schema", () => {
@@ -237,7 +362,10 @@ describe("aserciones sobre una respuesta", () => {
     assert.equal(evaluateResponse({ ...base, schema, actual: response({}) }).ok, true);
     const broken = evaluateResponse({ ...base, schema, actual: response({ body: { data: "no es un array" } }) });
     assert.equal(broken.ok, false);
-    assert.match(broken.assertions.find((assertion) => assertion.label === "Schema OpenAPI")!.detail, /tipo esperado array/);
+    assert.match(
+      broken.assertions.find((assertion) => assertion.label === "Schema OpenAPI")!.detail,
+      /tipo esperado array/,
+    );
   });
 
   test("sin presupuesto no se emite aserción de latencia", () => {
@@ -247,7 +375,12 @@ describe("aserciones sobre una respuesta", () => {
 
   test("con presupuesto incumplido el caso falla aunque todo lo demás esté bien", () => {
     // The number that can disqualify the delivery is an assertion like any other.
-    const verdict = evaluateResponse({ ...base, budget: { ms: 70, label: "GET p95 < 70 ms", source: "RFP §6" }, latencySamples: [120], actual: response({}) });
+    const verdict = evaluateResponse({
+      ...base,
+      budget: { ms: 70, label: "GET p95 < 70 ms", source: "RFP §6" },
+      latencySamples: [120],
+      actual: response({}),
+    });
     assert.equal(verdict.ok, false);
     assert.equal(verdict.assertions.at(-1)!.pass, false);
   });
@@ -263,21 +396,41 @@ describe("aserciones sobre una respuesta", () => {
 
   test("un 204 debe venir sin cuerpo", () => {
     const noBody = { ...base, expectedStatus: 204, expectedShape: "No body" };
-    assert.equal(evaluateResponse({ ...noBody, actual: response({ status: 204, contentType: "", body: "", raw: "" }) }).ok, true);
-    assert.equal(evaluateResponse({ ...noBody, actual: response({ status: 204, body: "algo", raw: "algo" }) }).ok, false);
+    assert.equal(
+      evaluateResponse({ ...noBody, actual: response({ status: 204, contentType: "", body: "", raw: "" }) }).ok,
+      true,
+    );
+    assert.equal(
+      evaluateResponse({ ...noBody, actual: response({ status: 204, body: "algo", raw: "algo" }) }).ok,
+      false,
+    );
   });
 
   test("un error debe traer Problem Details, no un objeto cualquiera", () => {
     const error = { ...base, expectedStatus: 404, expectedShape: "ProblemDetails" };
-    assert.equal(evaluateResponse({ ...error, actual: response({ status: 404, body: { type: "x", title: "y", status: 404 } }) }).ok, true);
+    assert.equal(
+      evaluateResponse({ ...error, actual: response({ status: 404, body: { type: "x", title: "y", status: 404 } }) })
+        .ok,
+      true,
+    );
     // `{ "error": "not found" }` is the shape this assertion exists to reject.
-    assert.equal(evaluateResponse({ ...error, actual: response({ status: 404, body: { error: "not found" } }) }).ok, false);
+    assert.equal(
+      evaluateResponse({ ...error, actual: response({ status: 404, body: { error: "not found" } }) }).ok,
+      false,
+    );
   });
 });
 
 describe("envelope y campos persistidos", () => {
   test("la clave del envelope se lee de la forma configurada", () => {
-    const actual: ActualResponse = { status: 200, statusText: "", contentType: "application/json", headers: {}, body: { payload: {} }, raw: "{}" };
+    const actual: ActualResponse = {
+      status: 200,
+      statusText: "",
+      contentType: "application/json",
+      headers: {},
+      body: { payload: {} },
+      raw: "{}",
+    };
     assert.equal(matchesShape(actual, "{ payload: Resource }", "ProblemDetails"), true);
     assert.equal(matchesShape(actual, "{ data: Resource }", "ProblemDetails"), false);
   });

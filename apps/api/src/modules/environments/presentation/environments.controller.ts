@@ -10,11 +10,23 @@ import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query
 import { CommandBus, QueryBus } from "@nestjs/cqrs";
 import type { OrderMode } from "@eq/runner-core";
 
-import { CurrentUser, OrgRoleGuard, RequireRole, type Principal } from "@/modules/auth/infrastructure/guards/auth.guard";
-import { CreateEnvironmentCommand, DeleteEnvironmentCommand, UpdateEnvironmentCommand } from "../application/commands/manage-environment";
+import {
+  CurrentUser,
+  OrgRoleGuard,
+  RequireRole,
+  type Principal,
+} from "@/modules/auth/infrastructure/guards/auth.guard";
+import {
+  CreateEnvironmentCommand,
+  DeleteEnvironmentCommand,
+  UpdateEnvironmentCommand,
+} from "../application/commands/manage-environment";
 import { DeleteCredentialCommand, UpsertCredentialCommand } from "../application/commands/manage-credential";
 import { ListEnvironmentsQuery } from "../application/queries/list-environments";
-import { UpsertConfigSectionCommand, ResetConfigSectionCommand } from "@/modules/config/application/commands/upsert-config-section";
+import {
+  UpsertConfigSectionCommand,
+  ResetConfigSectionCommand,
+} from "@/modules/config/application/commands/upsert-config-section";
 import { GetProjectConfigQuery } from "@/modules/config/application/queries/get-project-config";
 import { GetScenariosQuery } from "@/modules/config/application/queries/get-scenarios";
 import { GetCoverageQuery } from "@/modules/config/application/queries/get-coverage";
@@ -26,7 +38,10 @@ const actorId = (principal: Principal): string => (principal.kind === "user" ? p
 @Controller("orgs/:organizationId/projects/:projectId")
 @UseGuards(OrgRoleGuard)
 export class EnvironmentsController {
-  constructor(private readonly commandBus: CommandBus, private readonly queryBus: QueryBus) {}
+  constructor(
+    private readonly commandBus: CommandBus,
+    private readonly queryBus: QueryBus,
+  ) {}
 
   @Get("environments")
   @RequireRole("viewer")
@@ -36,7 +51,11 @@ export class EnvironmentsController {
 
   @Post("environments")
   @RequireRole("editor")
-  async create(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string, @Body() body: CreateEnvironmentDto) {
+  async create(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Body() body: CreateEnvironmentDto,
+  ) {
     return this.commandBus.execute(new CreateEnvironmentCommand(organizationId, projectId, body));
   }
 
@@ -85,7 +104,9 @@ export class EnvironmentsController {
     @Param("environmentId") environmentId: string,
     @Param("role") role: string,
   ): Promise<void> {
-    await this.commandBus.execute(new DeleteCredentialCommand(organizationId, projectId, environmentId, role as CredentialRole));
+    await this.commandBus.execute(
+      new DeleteCredentialCommand(organizationId, projectId, environmentId, role as CredentialRole),
+    );
   }
 
   @Get("config")
@@ -104,7 +125,9 @@ export class EnvironmentsController {
     @Body() body: unknown,
     @CurrentUser() principal: Principal,
   ): Promise<void> {
-    await this.commandBus.execute(new UpsertConfigSectionCommand(organizationId, projectId, section, body, actorId(principal)));
+    await this.commandBus.execute(
+      new UpsertConfigSectionCommand(organizationId, projectId, section, body, actorId(principal)),
+    );
   }
 
   /** Removes the section so the project falls back to the engine's defaults. Writing the

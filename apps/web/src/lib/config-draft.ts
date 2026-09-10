@@ -19,8 +19,9 @@ export function move<T>(items: T[], index: number, delta: number): T[] {
   return next;
 }
 
-export const replaceAt = <T,>(items: T[], index: number, value: T): T[] => items.map((item, position) => (position === index ? value : item));
-export const removeAt = <T,>(items: T[], index: number): T[] => items.filter((_item, position) => position !== index);
+export const replaceAt = <T>(items: T[], index: number, value: T): T[] =>
+  items.map((item, position) => (position === index ? value : item));
+export const removeAt = <T>(items: T[], index: number): T[] => items.filter((_item, position) => position !== index);
 
 /**
  * A unique id for a new rule, derived from what the operator typed.

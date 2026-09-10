@@ -55,13 +55,15 @@ export type Invitation = {
 /** URL-safe, stable, and unique per organization. Accents are folded rather than dropped so
  * "Cañón" and "Canon" do not collide silently into different slugs that look the same. */
 export function slugify(name: string): string {
-  return name
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60) || "org";
+  return (
+    name
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "org"
+  );
 }
 
 /**

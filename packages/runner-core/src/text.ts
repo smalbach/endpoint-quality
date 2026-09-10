@@ -70,7 +70,8 @@ export const es: TextBundle = {
   getNotFoundName: "Recurso inexistente",
   getNotFoundDescription: "Comprueba el 404 y el formato Problem Details.",
   createReadName: "Crear y consultar",
-  createReadDescription: "Crea el recurso, captura el ID devuelto y lo consulta para comparar todos los campos enviados.",
+  createReadDescription:
+    "Crea el recurso, captura el ID devuelto y lo consulta para comparar todos los campos enviados.",
   replaceReadName: "Crear, reemplazar y consultar",
   replaceReadDescription: "Crea una entidad aislada, ejecuta PUT y verifica el estado persistido con GET.",
   patchReadName: "Crear, actualizar y consultar",
@@ -78,7 +79,8 @@ export const es: TextBundle = {
   deleteReadName: "Crear, eliminar y confirmar",
   deleteReadDescription: "Crea una entidad aislada, la elimina y confirma que GET responde 404.",
   deletedReadName: "Consultar el recurso eliminado",
-  deletedReadDescription: "Tras eliminarlo, el GET debe responder 404 en Problem Details y un segundo DELETE también 404: ni sigue accesible ni se puede borrar dos veces.",
+  deletedReadDescription:
+    "Tras eliminarlo, el GET debe responder 404 en Problem Details y un segundo DELETE también 404: ni sigue accesible ni se puede borrar dos veces.",
 };
 
 export const en: TextBundle = {
@@ -105,7 +107,8 @@ export const en: TextBundle = {
   getNotFoundName: "Missing resource",
   getNotFoundDescription: "Checks the 404 and the Problem Details format.",
   createReadName: "Create and read back",
-  createReadDescription: "Creates the resource, captures the returned ID and reads it back to compare every field sent.",
+  createReadDescription:
+    "Creates the resource, captures the returned ID and reads it back to compare every field sent.",
   replaceReadName: "Create, replace and read back",
   replaceReadDescription: "Creates an isolated entity, runs the PUT and verifies the persisted state with a GET.",
   patchReadName: "Create, update and read back",
@@ -113,7 +116,8 @@ export const en: TextBundle = {
   deleteReadName: "Create, delete and confirm",
   deleteReadDescription: "Creates an isolated entity, deletes it and confirms the GET answers 404.",
   deletedReadName: "Read the deleted resource",
-  deletedReadDescription: "After deleting it the GET must answer 404 in Problem Details and a second DELETE 404 too: it is neither still reachable nor deletable twice.",
+  deletedReadDescription:
+    "After deleting it the GET must answer 404 in Problem Details and a second DELETE 404 too: it is neither still reachable nor deletable twice.",
 };
 
 export const bundles = { es, en } as const;

@@ -24,7 +24,8 @@ export function dereference(node: unknown, root: Record<string, unknown>, seen: 
   if (typeof record.$ref === "string" && record.$ref.startsWith("#/")) {
     if (seen.has(record.$ref)) return {};
     let target: unknown = root;
-    for (const part of record.$ref.slice(2).split("/")) target = (target as Record<string, unknown> | undefined)?.[part];
+    for (const part of record.$ref.slice(2).split("/"))
+      target = (target as Record<string, unknown> | undefined)?.[part];
     return dereference(target, root, new Set(seen).add(record.$ref));
   }
   return Object.fromEntries(Object.entries(record).map(([key, value]) => [key, dereference(value, root, seen)]));
@@ -36,38 +37,58 @@ export function validateJson(value: unknown, schema: unknown, path = "$", errors
   if (!schema || typeof schema !== "object") return errors;
   const rule = schema as Record<string, unknown>;
   if (Array.isArray(rule.allOf)) rule.allOf.forEach((part) => validateJson(value, part, path, errors));
-  if (Array.isArray(rule.anyOf) && !rule.anyOf.some((part) => validateJson(value, part, path, []).length === 0)) errors.push(`${path}: no coincide con ninguna alternativa`);
-  if (Array.isArray(rule.oneOf) && rule.oneOf.filter((part) => validateJson(value, part, path, []).length === 0).length !== 1) errors.push(`${path}: debe coincidir con una alternativa`);
-  if (Array.isArray(rule.enum) && !rule.enum.some((item) => JSON.stringify(item) === JSON.stringify(value))) errors.push(`${path}: valor fuera del enum`);
+  if (Array.isArray(rule.anyOf) && !rule.anyOf.some((part) => validateJson(value, part, path, []).length === 0))
+    errors.push(`${path}: no coincide con ninguna alternativa`);
+  if (
+    Array.isArray(rule.oneOf) &&
+    rule.oneOf.filter((part) => validateJson(value, part, path, []).length === 0).length !== 1
+  )
+    errors.push(`${path}: debe coincidir con una alternativa`);
+  if (Array.isArray(rule.enum) && !rule.enum.some((item) => JSON.stringify(item) === JSON.stringify(value)))
+    errors.push(`${path}: valor fuera del enum`);
   const types = Array.isArray(rule.type) ? (rule.type as string[]) : typeof rule.type === "string" ? [rule.type] : [];
   if (types.length) {
     const matches = types.some((type) =>
-      type === "null" ? value === null
-      : type === "array" ? Array.isArray(value)
-      : type === "object" ? Boolean(value) && typeof value === "object" && !Array.isArray(value)
-      : type === "integer" ? Number.isInteger(value)
-      : type === "number" ? typeof value === "number"
-      : typeof value === type);
-    if (!matches) { errors.push(`${path}: tipo esperado ${types.join(" | ")}`); return errors; }
+      type === "null"
+        ? value === null
+        : type === "array"
+          ? Array.isArray(value)
+          : type === "object"
+            ? Boolean(value) && typeof value === "object" && !Array.isArray(value)
+            : type === "integer"
+              ? Number.isInteger(value)
+              : type === "number"
+                ? typeof value === "number"
+                : typeof value === type,
+    );
+    if (!matches) {
+      errors.push(`${path}: tipo esperado ${types.join(" | ")}`);
+      return errors;
+    }
   }
   if (value && typeof value === "object" && !Array.isArray(value)) {
     const record = value as Record<string, unknown>;
     const properties = (rule.properties ?? {}) as Record<string, unknown>;
-    for (const required of (rule.required ?? []) as string[]) if (!(required in record)) errors.push(`${path}.${required}: campo requerido`);
+    for (const required of (rule.required ?? []) as string[])
+      if (!(required in record)) errors.push(`${path}.${required}: campo requerido`);
     for (const [key, child] of Object.entries(record)) {
       if (properties[key]) validateJson(child, properties[key], `${path}.${key}`, errors);
       else if (rule.additionalProperties === false) errors.push(`${path}.${key}: campo adicional no permitido`);
     }
   }
-  if (Array.isArray(value) && rule.items) value.forEach((item, index) => validateJson(item, rule.items, `${path}[${index}]`, errors));
+  if (Array.isArray(value) && rule.items)
+    value.forEach((item, index) => validateJson(item, rule.items, `${path}[${index}]`, errors));
   if (typeof value === "number") {
     if (typeof rule.minimum === "number" && value < rule.minimum) errors.push(`${path}: menor que ${rule.minimum}`);
     if (typeof rule.maximum === "number" && value > rule.maximum) errors.push(`${path}: mayor que ${rule.maximum}`);
   }
   if (typeof value === "string") {
-    if (typeof rule.minLength === "number" && value.length < rule.minLength) errors.push(`${path}: longitud menor que ${rule.minLength}`);
-    if (typeof rule.maxLength === "number" && value.length > rule.maxLength) errors.push(`${path}: longitud mayor que ${rule.maxLength}`);
-    if (typeof rule.pattern === "string" && !new RegExp(rule.pattern).test(value)) errors.push(`${path}: no cumple el patrón`);
+    if (typeof rule.minLength === "number" && value.length < rule.minLength)
+      errors.push(`${path}: longitud menor que ${rule.minLength}`);
+    if (typeof rule.maxLength === "number" && value.length > rule.maxLength)
+      errors.push(`${path}: longitud mayor que ${rule.maxLength}`);
+    if (typeof rule.pattern === "string" && !new RegExp(rule.pattern).test(value))
+      errors.push(`${path}: no cumple el patrón`);
   }
   return errors;
 }
@@ -80,11 +101,20 @@ export function validateJson(value: unknown, schema: unknown, path = "$", errors
  * cursor without having declared it, which is a finding about the contract rather than about
  * the response. The caller checks the error envelope in that case instead.
  */
-export function responseSchema(spec: Record<string, unknown>, operationPath: string, method: string, status: number, contentType = "application/json"): unknown | undefined {
+export function responseSchema(
+  spec: Record<string, unknown>,
+  operationPath: string,
+  method: string,
+  status: number,
+  contentType = "application/json",
+): unknown | undefined {
   const paths = (spec.paths ?? {}) as Record<string, unknown>;
-  const operation = (paths[operationPath] as Record<string, unknown> | undefined)?.[method.toLowerCase()] as Record<string, unknown> | undefined;
-  const declared = (operation?.responses as Record<string, unknown> | undefined)?.[String(status)] as Record<string, unknown> | undefined;
+  const operation = (paths[operationPath] as Record<string, unknown> | undefined)?.[method.toLowerCase()] as
+    Record<string, unknown> | undefined;
+  const declared = (operation?.responses as Record<string, unknown> | undefined)?.[String(status)] as
+    Record<string, unknown> | undefined;
   const content = (declared?.content ?? {}) as Record<string, unknown>;
-  const media = (content[contentType.split(";")[0]] ?? content["application/json"]) as Record<string, unknown> | undefined;
+  const media = (content[contentType.split(";")[0]] ?? content["application/json"]) as
+    Record<string, unknown> | undefined;
   return media?.schema ? dereference(media.schema, spec) : undefined;
 }

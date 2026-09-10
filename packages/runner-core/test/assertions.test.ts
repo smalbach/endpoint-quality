@@ -47,7 +47,11 @@ const failed = (assertions: Assertion[]) => assertions.filter((assertion) => !as
 test("un caso en rojo siempre trae al menos una aserción en rojo", () => {
   // The invariant, stated over the cases that used to break it: a declared schema that the
   // response satisfies, and an envelope the project did not expect.
-  const healthSchema = { type: "object", required: ["status", "checks"], properties: { status: { type: "string" }, checks: { type: "object" } } };
+  const healthSchema = {
+    type: "object",
+    required: ["status", "checks"],
+    properties: { status: { type: "string" }, checks: { type: "object" } },
+  };
   const evaluation = evaluate({
     schema: healthSchema,
     expectedShape: "{ data }",
@@ -56,13 +60,18 @@ test("un caso en rojo siempre trae al menos una aserción en rojo", () => {
 
   assert.equal(evaluation.ok, false, "la respuesta no tiene la forma que el proyecto espera");
   assert.ok(failed(evaluation.assertions).length > 0, "un rojo sin aserción en rojo no se puede accionar");
-  assert.deepEqual(failed(evaluation.assertions).map((assertion) => assertion.label), ["Envelope { data }"]);
+  assert.deepEqual(
+    failed(evaluation.assertions).map((assertion) => assertion.label),
+    ["Envelope { data }"],
+  );
   // And the message says where the knob is, because the likelier fault is the project's rule.
   assert.match(failed(evaluation.assertions)[0].detail, /sección envelope/);
 });
 
 test("y un caso en verde no trae ninguna", () => {
-  const evaluation = evaluate({ schema: { type: "object", required: ["data"], properties: { data: { type: "array" } } } });
+  const evaluation = evaluate({
+    schema: { type: "object", required: ["data"], properties: { data: { type: "array" } } },
+  });
   assert.equal(evaluation.ok, true);
   assert.deepEqual(failed(evaluation.assertions), []);
 });
@@ -72,8 +81,14 @@ test("sin schema declarado no se duplica la comprobación de envelope", () => {
   // and its own detail says so. A second assertion repeating it would be noise.
   const evaluation = evaluate({ schema: null, actual: response({ body: { items: [] }, raw: '{"items":[]}' }) });
   assert.equal(evaluation.ok, false);
-  assert.deepEqual(evaluation.assertions.map((assertion) => assertion.label), ["Status 200", "Schema OpenAPI", "Content-Type"]);
-  assert.deepEqual(failed(evaluation.assertions).map((assertion) => assertion.label), ["Schema OpenAPI"]);
+  assert.deepEqual(
+    evaluation.assertions.map((assertion) => assertion.label),
+    ["Status 200", "Schema OpenAPI", "Content-Type"],
+  );
+  assert.deepEqual(
+    failed(evaluation.assertions).map((assertion) => assertion.label),
+    ["Schema OpenAPI"],
+  );
 });
 
 test("un 405 silencia el resto y dice por qué", () => {

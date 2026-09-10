@@ -24,17 +24,27 @@ export class DomainError extends Error {
 }
 
 export class NotFoundError extends DomainError {
-  constructor(message: string, code?: string) { super("not-found", message, [], code); }
+  constructor(message: string, code?: string) {
+    super("not-found", message, [], code);
+  }
 }
 export class ConflictError extends DomainError {
-  constructor(message: string, code?: string) { super("conflict", message, [], code); }
+  constructor(message: string, code?: string) {
+    super("conflict", message, [], code);
+  }
 }
 export class InvalidInputError extends DomainError {
-  constructor(message: string, fields: { field: string; detail: string }[] = [], code?: string) { super("invalid", message, fields, code); }
+  constructor(message: string, fields: { field: string; detail: string }[] = [], code?: string) {
+    super("invalid", message, fields, code);
+  }
 }
 export class UnauthenticatedError extends DomainError {
-  constructor(message = "Credenciales inválidas", code?: string) { super("unauthenticated", message, [], code); }
+  constructor(message = "Credenciales inválidas", code?: string) {
+    super("unauthenticated", message, [], code);
+  }
 }
 export class ForbiddenError extends DomainError {
-  constructor(message = "No tienes permiso sobre este recurso", code?: string) { super("forbidden", message, [], code); }
+  constructor(message = "No tienes permiso sobre este recurso", code?: string) {
+    super("forbidden", message, [], code);
+  }
 }

@@ -13,7 +13,10 @@ import type { AccessTokenClaims, AccessTokenServicePort } from "../domain/access
  */
 @Injectable()
 export class JwtAccessTokenService implements AccessTokenServicePort {
-  constructor(private readonly jwt: JwtService, @Inject(ENV) private readonly env: Env) {}
+  constructor(
+    private readonly jwt: JwtService,
+    @Inject(ENV) private readonly env: Env,
+  ) {}
 
   async sign(claims: AccessTokenClaims): Promise<string> {
     // Seconds rather than the raw "15m": the string form is typed against `ms` and a value that

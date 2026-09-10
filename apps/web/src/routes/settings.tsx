@@ -47,11 +47,15 @@ function Members({ organizationId, actorRole }: { organizationId: string; actorR
   const queryClient = useQueryClient();
   const base = `/orgs/${organizationId}`;
 
-  const members = useQuery({ queryKey: ["members", organizationId], queryFn: () => api<MembersView>(`${base}/members`) });
+  const members = useQuery({
+    queryKey: ["members", organizationId],
+    queryFn: () => api<MembersView>(`${base}/members`),
+  });
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["members", organizationId] });
 
   const changeRole = useMutation({
-    mutationFn: ({ userId, role }: { userId: string; role: Role }) => api(`${base}/members/${userId}`, { method: "PATCH", body: { role } }),
+    mutationFn: ({ userId, role }: { userId: string; role: Role }) =>
+      api(`${base}/members/${userId}`, { method: "PATCH", body: { role } }),
     // `reload` and not only `invalidate`: changing your own role changes what the whole app may
     // render, and the session's copy of it is what every other screen reads.
     onSuccess: async () => {
@@ -159,10 +163,21 @@ function Invite({ base, onInvited }: { base: string; onInvited: () => void }) {
     <form onSubmit={submit} className="mt-3 flex flex-wrap items-end gap-2 rounded-lg bg-slate-50 p-3">
       <div className="min-w-56 flex-1">
         <Field label="Invitar por correo" hint={roleHint[role]}>
-          <input className={inputClass} type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="colega@example.com" required />
+          <input
+            className={inputClass}
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="colega@example.com"
+            required
+          />
         </Field>
       </div>
-      <select className={cn(inputClass, "h-9 w-28")} value={role} onChange={(event) => setRole(event.target.value as Role)}>
+      <select
+        className={cn(inputClass, "h-9 w-28")}
+        value={role}
+        onChange={(event) => setRole(event.target.value as Role)}
+      >
         {ROLES.filter((candidate) => candidate !== "owner").map((candidate) => (
           <option key={candidate} value={candidate}>
             {candidate}
@@ -192,7 +207,11 @@ function Tokens({ organizationId }: { organizationId: string }) {
   const base = `/orgs/${organizationId}/tokens`;
   const [name, setName] = useState("");
 
-  const tokens = useQuery({ queryKey: ["tokens", organizationId], enabled: canManage, queryFn: () => api<ApiTokenView[]>(base) });
+  const tokens = useQuery({
+    queryKey: ["tokens", organizationId],
+    enabled: canManage,
+    queryFn: () => api<ApiTokenView[]>(base),
+  });
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["tokens", organizationId] });
 
   const issue = useMutation({
@@ -202,7 +221,10 @@ function Tokens({ organizationId }: { organizationId: string }) {
       void invalidate();
     },
   });
-  const revoke = useMutation({ mutationFn: (id: string) => api(`${base}/${id}`, { method: "DELETE" }), onSuccess: invalidate });
+  const revoke = useMutation({
+    mutationFn: (id: string) => api(`${base}/${id}`, { method: "DELETE" }),
+    onSuccess: invalidate,
+  });
 
   if (!canManage) return null;
 
@@ -210,8 +232,9 @@ function Tokens({ organizationId }: { organizationId: string }) {
     <Card className="p-4">
       <p className="text-sm font-semibold text-slate-900">Credenciales de servicio</p>
       <p className="mt-1 text-xs text-slate-500">
-        Lo que usa una pipeline para lanzar la matriz sin que nadie entre. Un token vale como <span className="font-mono">editor</span>: cura y lanza, pero no
-        guarda credenciales de destino ni toca personas.
+        Lo que usa una pipeline para lanzar la matriz sin que nadie entre. Un token vale como{" "}
+        <span className="font-mono">editor</span>: cura y lanza, pero no guarda credenciales de destino ni toca
+        personas.
       </p>
 
       <form
@@ -223,7 +246,13 @@ function Tokens({ organizationId }: { organizationId: string }) {
       >
         <div className="min-w-56 flex-1">
           <Field label="Nombre" hint="Para qué es. Es lo único que se ve después.">
-            <input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} placeholder="CI de nightly" required />
+            <input
+              className={inputClass}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="CI de nightly"
+              required
+            />
           </Field>
         </div>
         <Button type="submit" disabled={!name || issue.isPending}>
@@ -239,7 +268,11 @@ function Tokens({ organizationId }: { organizationId: string }) {
           <code className="mt-1 block break-all font-mono text-[11px]">{issue.data.token}</code>
         </p>
       )}
-      {issue.error && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{(issue.error as ApiError).message}</p>}
+      {issue.error && (
+        <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+          {(issue.error as ApiError).message}
+        </p>
+      )}
 
       <div className="mt-3 divide-y divide-slate-100">
         {tokens.data?.length === 0 && <p className="py-2 text-xs text-slate-400">Todavía no hay ninguna.</p>}
@@ -248,13 +281,19 @@ function Tokens({ organizationId }: { organizationId: string }) {
             <span className="text-sm text-slate-800">{token.name}</span>
             <span className="font-mono text-[11px] text-slate-400">{token.preview}…</span>
             <span className="text-[10px] text-slate-400">
-              {token.lastUsedAt ? `usado ${formatDate(token.lastUsedAt)}` : "sin usar"} · creado {formatDate(token.createdAt)}
+              {token.lastUsedAt ? `usado ${formatDate(token.lastUsedAt)}` : "sin usar"} · creado{" "}
+              {formatDate(token.createdAt)}
             </span>
             <span className="ml-auto">
               {token.revokedAt ? (
                 <Badge className="border-slate-200 bg-slate-50 text-slate-400">revocado</Badge>
               ) : (
-                <Button variant="ghost" className="h-8 text-xs text-rose-600" disabled={revoke.isPending} onClick={() => revoke.mutate(token.id)}>
+                <Button
+                  variant="ghost"
+                  className="h-8 text-xs text-rose-600"
+                  disabled={revoke.isPending}
+                  onClick={() => revoke.mutate(token.id)}
+                >
                   Revocar
                 </Button>
               )}

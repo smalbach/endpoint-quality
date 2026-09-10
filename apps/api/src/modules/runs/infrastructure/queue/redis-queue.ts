@@ -18,7 +18,10 @@ export class RedisRunQueue implements RunQueuePort, OnModuleDestroy {
   private queue: any;
   private worker: any;
 
-  constructor(private readonly redisUrl: string, private readonly queueName = "runs") {}
+  constructor(
+    private readonly redisUrl: string,
+    private readonly queueName = "runs",
+  ) {}
 
   /**
    * Loaded through a variable specifier so the compiler does not demand the package.
@@ -73,7 +76,9 @@ export class RedisRunQueue implements RunQueuePort, OnModuleDestroy {
     await queue.remove(runId).catch(() => undefined);
     const { Queue } = await this.bullmq();
     void Queue;
-    await (await this.ensureQueue()).client.then((client: any) => client.set(`run:cancelled:${runId}`, "1", "EX", 3600));
+    await (
+      await this.ensureQueue()
+    ).client.then((client: any) => client.set(`run:cancelled:${runId}`, "1", "EX", 3600));
   }
 
   async isCancelled(runId: string): Promise<boolean> {

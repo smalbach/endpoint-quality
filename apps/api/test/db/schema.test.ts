@@ -24,7 +24,8 @@ import { RunCaseEntity, RunEntity, RunStepEntity } from "@/shared/database/entit
 import { TypeOrmRunRepository } from "@/modules/runs/infrastructure/persistence/typeorm-run.repository";
 
 const DATABASE_URL = process.env.EQ_TEST_DATABASE_URL;
-const REASON = "sin EQ_TEST_DATABASE_URL: levanta Postgres (docker compose -f docker/compose.yml up -d postgres) y reexporta la variable";
+const REASON =
+  "sin EQ_TEST_DATABASE_URL: levanta Postgres (docker compose -f docker/compose.yml up -d postgres) y reexporta la variable";
 
 let dataSource: DataSource | undefined;
 
@@ -42,7 +43,10 @@ after(async () => {
 });
 
 const insertUser = (id: string, email: string) =>
-  dataSource!.query(`INSERT INTO users (id, email, name, "passwordDigest", status, "createdAt") VALUES ($1, $2, 'x', 'x', 'active', now())`, [id, email]);
+  dataSource!.query(
+    `INSERT INTO users (id, email, name, "passwordDigest", status, "createdAt") VALUES ($1, $2, 'x', 'x', 'active', now())`,
+    [id, email],
+  );
 const insertOrganization = (id: string, slug: string) =>
   dataSource!.query(`INSERT INTO organizations (id, name, slug, "createdAt") VALUES ($1, 'x', $2, now())`, [id, slug]);
 
@@ -53,9 +57,22 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
     );
     const tables = rows.map((row) => row.table_name).sort();
     assert.deepEqual(tables, [
-      "api_tokens", "environment_credentials", "environments", "invitations", "memberships",
-      "organizations", "project_config", "projects", "refresh_tokens", "run_cases", "run_steps",
-      "runs", "spec_operations", "spec_sources", "spec_versions", "users",
+      "api_tokens",
+      "environment_credentials",
+      "environments",
+      "invitations",
+      "memberships",
+      "organizations",
+      "project_config",
+      "projects",
+      "refresh_tokens",
+      "run_cases",
+      "run_steps",
+      "runs",
+      "spec_operations",
+      "spec_sources",
+      "spec_versions",
+      "users",
     ]);
   });
 
@@ -68,7 +85,11 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
     // for a reason that had nothing to do with reversibility. What is actually being claimed is
     // that the whole ladder comes down and goes back up.
     const tables = async () =>
-      ((await dataSource!.query(`SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name <> 'migrations'`)) as { table_name: string }[])
+      (
+        (await dataSource!.query(
+          `SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name <> 'migrations'`,
+        )) as { table_name: string }[]
+      )
         .map((row) => row.table_name)
         .sort();
 
@@ -110,7 +131,10 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
     const userId = randomUUID();
     await insertUser(userId, `fk-${userId}@example.com`);
     await assert.rejects(
-      dataSource!.query(`INSERT INTO memberships ("organizationId", "userId", role, "createdAt") VALUES ($1, $2, 'owner', now())`, [randomUUID(), userId]),
+      dataSource!.query(
+        `INSERT INTO memberships ("organizationId", "userId", role, "createdAt") VALUES ($1, $2, 'owner', now())`,
+        [randomUUID(), userId],
+      ),
       /foreign key/i,
     );
   });
@@ -119,7 +143,11 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
     const [userId, organizationId] = [randomUUID(), randomUUID()];
     await insertUser(userId, `pk-${userId}@example.com`);
     await insertOrganization(organizationId, `pk-${organizationId.slice(0, 8)}`);
-    const insert = () => dataSource!.query(`INSERT INTO memberships ("organizationId", "userId", role, "createdAt") VALUES ($1, $2, 'viewer', now())`, [organizationId, userId]);
+    const insert = () =>
+      dataSource!.query(
+        `INSERT INTO memberships ("organizationId", "userId", role, "createdAt") VALUES ($1, $2, 'viewer', now())`,
+        [organizationId, userId],
+      );
     await insert();
     // Two rows would mean two roles, and which one wins would depend on row order.
     await assert.rejects(insert(), /duplicate key|unique/i);
@@ -129,7 +157,10 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
     const [userId, organizationId] = [randomUUID(), randomUUID()];
     await insertUser(userId, `cascade-${userId}@example.com`);
     await insertOrganization(organizationId, `cascade-${organizationId.slice(0, 8)}`);
-    await dataSource!.query(`INSERT INTO memberships ("organizationId", "userId", role, "createdAt") VALUES ($1, $2, 'owner', now())`, [organizationId, userId]);
+    await dataSource!.query(
+      `INSERT INTO memberships ("organizationId", "userId", role, "createdAt") VALUES ($1, $2, 'owner', now())`,
+      [organizationId, userId],
+    );
     await dataSource!.query(
       `INSERT INTO api_tokens (id, "organizationId", name, "tokenHash", preview, "createdBy", "createdAt") VALUES ($1, $2, 'ci', $3, 'eqt_ab…cd', $4, now())`,
       [randomUUID(), organizationId, randomUUID(), userId],
@@ -138,8 +169,12 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
     await dataSource!.query(`DELETE FROM organizations WHERE id = $1`, [organizationId]);
     // A live API token pointing at a deleted organization is a credential with no owner and no
     // way to revoke it from the UI.
-    const tokens: unknown[] = await dataSource!.query(`SELECT 1 FROM api_tokens WHERE "organizationId" = $1`, [organizationId]);
-    const memberships: unknown[] = await dataSource!.query(`SELECT 1 FROM memberships WHERE "organizationId" = $1`, [organizationId]);
+    const tokens: unknown[] = await dataSource!.query(`SELECT 1 FROM api_tokens WHERE "organizationId" = $1`, [
+      organizationId,
+    ]);
+    const memberships: unknown[] = await dataSource!.query(`SELECT 1 FROM memberships WHERE "organizationId" = $1`, [
+      organizationId,
+    ]);
     assert.equal(tokens.length, 0);
     assert.equal(memberships.length, 0);
   });
@@ -165,7 +200,10 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
     await insertOrganization(orgA, `a-${orgA.slice(0, 8)}`);
     await insertOrganization(orgB, `b-${orgB.slice(0, 8)}`);
     const insertProject = (organizationId: string) =>
-      dataSource!.query(`INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', 'catalog', $3, now())`, [randomUUID(), organizationId, userId]);
+      dataSource!.query(
+        `INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', 'catalog', $3, now())`,
+        [randomUUID(), organizationId, userId],
+      );
 
     await insertProject(orgA);
     await assert.rejects(insertProject(orgA), /duplicate key|unique/i);
@@ -178,7 +216,10 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
     const [userId, organizationId, projectId, versionId] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
     await insertUser(userId, `ver-${userId}@example.com`);
     await insertOrganization(organizationId, `v-${organizationId.slice(0, 8)}`);
-    await dataSource!.query(`INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`, [projectId, organizationId, `p-${projectId.slice(0, 8)}`, userId]);
+    await dataSource!.query(
+      `INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`,
+      [projectId, organizationId, `p-${projectId.slice(0, 8)}`, userId],
+    );
     await dataSource!.query(
       `INSERT INTO spec_versions (id, "projectId", hash, raw, format, "openapiVersion", title, "contractVersion", "operationCount", problems, "importedBy", "importedAt")
        VALUES ($1, $2, $3, 'x', 'yaml', '3.1.0', 't', '1', 0, '[]'::jsonb, $4, now())`,
@@ -187,7 +228,10 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
     await dataSource!.query(`UPDATE projects SET "activeSpecVersionId" = $1 WHERE id = $2`, [versionId, projectId]);
 
     await dataSource!.query(`DELETE FROM spec_versions WHERE id = $1`, [versionId]);
-    const [project]: { activeSpecVersionId: string | null }[] = await dataSource!.query(`SELECT "activeSpecVersionId" FROM projects WHERE id = $1`, [projectId]);
+    const [project]: { activeSpecVersionId: string | null }[] = await dataSource!.query(
+      `SELECT "activeSpecVersionId" FROM projects WHERE id = $1`,
+      [projectId],
+    );
     assert.equal(project.activeSpecVersionId, null);
   });
 
@@ -195,7 +239,10 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
     const [userId, organizationId, projectId, versionId] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
     await insertUser(userId, `ops-${userId}@example.com`);
     await insertOrganization(organizationId, `o-${organizationId.slice(0, 8)}`);
-    await dataSource!.query(`INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`, [projectId, organizationId, `q-${projectId.slice(0, 8)}`, userId]);
+    await dataSource!.query(
+      `INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`,
+      [projectId, organizationId, `q-${projectId.slice(0, 8)}`, userId],
+    );
     await dataSource!.query(
       `INSERT INTO spec_versions (id, "projectId", hash, raw, format, "openapiVersion", title, "contractVersion", "operationCount", problems, "importedBy", "importedAt")
        VALUES ($1, $2, $3, 'x', 'yaml', '3.1.0', 't', '1', 1, '[]'::jsonb, $4, now())`,
@@ -212,7 +259,9 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
     await assert.rejects(insertOperation(), /duplicate key|unique/i);
 
     await dataSource!.query(`DELETE FROM spec_versions WHERE id = $1`, [versionId]);
-    const left: unknown[] = await dataSource!.query(`SELECT 1 FROM spec_operations WHERE "specVersionId" = $1`, [versionId]);
+    const left: unknown[] = await dataSource!.query(`SELECT 1 FROM spec_operations WHERE "specVersionId" = $1`, [
+      versionId,
+    ]);
     assert.equal(left.length, 0);
   });
 
@@ -222,8 +271,14 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
     const [userId, organizationId, projectId, environmentId] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
     await insertUser(userId, `cred-${userId}@example.com`);
     await insertOrganization(organizationId, `c-${organizationId.slice(0, 8)}`);
-    await dataSource!.query(`INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`, [projectId, organizationId, `c-${projectId.slice(0, 8)}`, userId]);
-    await dataSource!.query(`INSERT INTO environments (id, "projectId", name, "baseUrl", "createdAt") VALUES ($1, $2, 'e2e', 'https://x.example.com', now())`, [environmentId, projectId]);
+    await dataSource!.query(
+      `INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`,
+      [projectId, organizationId, `c-${projectId.slice(0, 8)}`, userId],
+    );
+    await dataSource!.query(
+      `INSERT INTO environments (id, "projectId", name, "baseUrl", "createdAt") VALUES ($1, $2, 'e2e', 'https://x.example.com', now())`,
+      [environmentId, projectId],
+    );
 
     const insertCredential = () =>
       dataSource!.query(
@@ -237,7 +292,10 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
     // And deleting the environment must take the secrets with it: credentials left behind are a
     // set of live tokens nothing can reach to revoke.
     await dataSource!.query(`DELETE FROM environments WHERE id = $1`, [environmentId]);
-    const left: unknown[] = await dataSource!.query(`SELECT 1 FROM environment_credentials WHERE "environmentId" = $1`, [environmentId]);
+    const left: unknown[] = await dataSource!.query(
+      `SELECT 1 FROM environment_credentials WHERE "environmentId" = $1`,
+      [environmentId],
+    );
     assert.equal(left.length, 0);
   });
 
@@ -245,9 +303,15 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
     const [userId, organizationId, projectId] = [randomUUID(), randomUUID(), randomUUID()];
     await insertUser(userId, `cfg-${userId}@example.com`);
     await insertOrganization(organizationId, `g-${organizationId.slice(0, 8)}`);
-    await dataSource!.query(`INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`, [projectId, organizationId, `g-${projectId.slice(0, 8)}`, userId]);
+    await dataSource!.query(
+      `INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`,
+      [projectId, organizationId, `g-${projectId.slice(0, 8)}`, userId],
+    );
     const insertSection = () =>
-      dataSource!.query(`INSERT INTO project_config ("projectId", section, data, "updatedAt", "updatedBy") VALUES ($1, 'budgets', '{}'::jsonb, now(), $2)`, [projectId, userId]);
+      dataSource!.query(
+        `INSERT INTO project_config ("projectId", section, data, "updatedAt", "updatedBy") VALUES ($1, 'budgets', '{}'::jsonb, now(), $2)`,
+        [projectId, userId],
+      );
     await insertSection();
     // Two rows for one section would make the assembled configuration depend on row order.
     await assert.rejects(insertSection(), /duplicate key|unique/i);
@@ -260,7 +324,10 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
     const [userId, organizationId, projectId, versionId] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
     await insertUser(userId, `run-${userId}@example.com`);
     await insertOrganization(organizationId, `r-${organizationId.slice(0, 8)}`);
-    await dataSource!.query(`INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`, [projectId, organizationId, `r-${projectId.slice(0, 8)}`, userId]);
+    await dataSource!.query(
+      `INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`,
+      [projectId, organizationId, `r-${projectId.slice(0, 8)}`, userId],
+    );
     await dataSource!.query(
       `INSERT INTO spec_versions (id, "projectId", hash, raw, format, "openapiVersion", title, "contractVersion", "operationCount", problems, "importedBy", "importedAt")
        VALUES ($1, $2, $3, 'x', 'yaml', '3.1.0', 't', '1', 0, '[]'::jsonb, $4, now())`,
@@ -273,11 +340,17 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
       [runId, projectId, versionId, userId],
     );
 
-    await assert.rejects(dataSource!.query(`DELETE FROM spec_versions WHERE id = $1`, [versionId]), /foreign key|violates/i);
+    await assert.rejects(
+      dataSource!.query(`DELETE FROM spec_versions WHERE id = $1`, [versionId]),
+      /foreign key|violates/i,
+    );
 
     // Deleting the project, on the other hand, takes its runs, cases and steps with it.
     const caseId = randomUUID();
-    await dataSource!.query(`INSERT INTO run_cases (id, "runId", "operationId", "scenarioId", method, path, status, position) VALUES ($1, $2, 'o', 's', 'GET', '/x', 'passed', 0)`, [caseId, runId]);
+    await dataSource!.query(
+      `INSERT INTO run_cases (id, "runId", "operationId", "scenarioId", method, path, status, position) VALUES ($1, $2, 'o', 's', 'GET', '/x', 'passed', 0)`,
+      [caseId, runId],
+    );
     await dataSource!.query(
       `INSERT INTO run_steps (id, "runCaseId", index, purpose, label, request, expected, assertions, ok, "durationMs")
        VALUES ($1, $2, 0, 'act', 'l', '{}'::jsonb, '{}'::jsonb, '[]'::jsonb, true, 5)`,
@@ -291,10 +364,19 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
   test("dos casos de una corrida no pueden ocupar la misma posición", async () => {
     // The position is the execution order, and two rows claiming one slot would make the replay
     // of a run depend on which came back first.
-    const [userId, organizationId, projectId, versionId, runId] = [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    const [userId, organizationId, projectId, versionId, runId] = [
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+    ];
     await insertUser(userId, `pos-${userId}@example.com`);
     await insertOrganization(organizationId, `p-${organizationId.slice(0, 8)}`);
-    await dataSource!.query(`INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`, [projectId, organizationId, `s-${projectId.slice(0, 8)}`, userId]);
+    await dataSource!.query(
+      `INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`,
+      [projectId, organizationId, `s-${projectId.slice(0, 8)}`, userId],
+    );
     await dataSource!.query(
       `INSERT INTO spec_versions (id, "projectId", hash, raw, format, "openapiVersion", title, "contractVersion", "operationCount", problems, "importedBy", "importedAt")
        VALUES ($1, $2, $3, 'x', 'yaml', '3.1.0', 't', '1', 0, '[]'::jsonb, $4, now())`,
@@ -306,7 +388,10 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
       [runId, projectId, versionId, userId],
     );
     const insertCase = () =>
-      dataSource!.query(`INSERT INTO run_cases (id, "runId", "operationId", "scenarioId", method, path, status, position) VALUES ($1, $2, 'o', 's', 'GET', '/x', 'queued', 0)`, [randomUUID(), runId]);
+      dataSource!.query(
+        `INSERT INTO run_cases (id, "runId", "operationId", "scenarioId", method, path, status, position) VALUES ($1, $2, 'o', 's', 'GET', '/x', 'queued', 0)`,
+        [randomUUID(), runId],
+      );
     await insertCase();
     await assert.rejects(insertCase(), /duplicate key|unique/i);
   });
@@ -314,17 +399,26 @@ describe("restricciones que solo existen en SQL", { skip: DATABASE_URL ? false :
   test("los índices que sostienen cada comprobación de autorización existen", async () => {
     // Every request resolves "what is this user's role here", so this lookup is as hot as the
     // primary key.
-    const rows: { indexname: string }[] = await dataSource!.query(`SELECT indexname FROM pg_indexes WHERE tablename IN ('memberships','refresh_tokens','api_tokens','projects','spec_versions','spec_operations','environments','environment_credentials','runs','run_cases')`);
+    const rows: { indexname: string }[] = await dataSource!.query(
+      `SELECT indexname FROM pg_indexes WHERE tablename IN ('memberships','refresh_tokens','api_tokens','projects','spec_versions','spec_operations','environments','environment_credentials','runs','run_cases')`,
+    );
     const names = rows.map((row) => row.indexname);
     for (const expected of [
-      "ix_memberships_user", "ix_refresh_tokens_session", "ux_refresh_tokens_hash", "ux_api_tokens_hash",
+      "ix_memberships_user",
+      "ix_refresh_tokens_session",
+      "ux_refresh_tokens_hash",
+      "ux_api_tokens_hash",
       // A re-import looks the document up by hash before parsing it; without this index a
       // scheduled drift check scans every version the project ever had.
-      "ux_projects_org_slug", "ux_spec_versions_project_hash", "ix_spec_operations_version",
-      "ux_environments_project_name", "ux_credentials_environment_role",
+      "ux_projects_org_slug",
+      "ux_spec_versions_project_hash",
+      "ix_spec_operations_version",
+      "ux_environments_project_name",
+      "ux_credentials_environment_role",
       // The history view is "this project's runs, newest first", and it is the only query
       // anybody makes against that table often.
-      "ix_runs_project_started", "ux_run_cases_run_position",
+      "ix_runs_project_started",
+      "ux_run_cases_run_position",
       // Every retention sweep filters runs by when they finished. Without this it is a
       // sequential scan of every run ever executed — of the table the sweep exists to bound.
       "idx_runs_finished_at",
@@ -347,10 +441,20 @@ describe("retención en SQL", { skip: DATABASE_URL ? false : REASON }, () => {
 
   /** A run with one case and two steps, finished whenever the caller says — or still going. */
   async function seedRun(finishedAt: Date | null): Promise<{ runId: string; caseId: string }> {
-    const [userId, organizationId, projectId, versionId, runId, caseId] = [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    const [userId, organizationId, projectId, versionId, runId, caseId] = [
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+    ];
     await insertUser(userId, `ret-${userId}@example.com`);
     await insertOrganization(organizationId, `t-${organizationId.slice(0, 8)}`);
-    await dataSource!.query(`INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`, [projectId, organizationId, `t-${projectId.slice(0, 8)}`, userId]);
+    await dataSource!.query(
+      `INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`,
+      [projectId, organizationId, `t-${projectId.slice(0, 8)}`, userId],
+    );
     await dataSource!.query(
       `INSERT INTO spec_versions (id, "projectId", hash, raw, format, "openapiVersion", title, "contractVersion", "operationCount", problems, "importedBy", "importedAt")
        VALUES ($1, $2, $3, 'x', 'yaml', '3.1.0', 't', '1', 0, '[]'::jsonb, $4, now())`,
@@ -361,7 +465,10 @@ describe("retención en SQL", { skip: DATABASE_URL ? false : REASON }, () => {
        VALUES ($1, $2, $3, 'passed', '{}'::jsonb, '{}'::jsonb, 'user', $4, now(), $5)`,
       [runId, projectId, versionId, userId, finishedAt],
     );
-    await dataSource!.query(`INSERT INTO run_cases (id, "runId", "operationId", "scenarioId", method, path, status, position) VALUES ($1, $2, 'o', 's', 'GET', '/x', 'passed', 0)`, [caseId, runId]);
+    await dataSource!.query(
+      `INSERT INTO run_cases (id, "runId", "operationId", "scenarioId", method, path, status, position) VALUES ($1, $2, 'o', 's', 'GET', '/x', 'passed', 0)`,
+      [caseId, runId],
+    );
     for (const index of [0, 1]) {
       await dataSource!.query(
         `INSERT INTO run_steps (id, "runCaseId", index, purpose, label, request, expected, actual, assertions, ok, "durationMs")
@@ -373,8 +480,18 @@ describe("retención en SQL", { skip: DATABASE_URL ? false : REASON }, () => {
   }
 
   const steps = (caseId: string) =>
-    dataSource!.query(`SELECT request, expected, actual, assertions, ok, "prunedAt" FROM run_steps WHERE "runCaseId" = $1 ORDER BY index`, [caseId]) as Promise<
-      { request: unknown; expected: unknown; actual: unknown; assertions: unknown[]; ok: boolean; prunedAt: Date | null }[]
+    dataSource!.query(
+      `SELECT request, expected, actual, assertions, ok, "prunedAt" FROM run_steps WHERE "runCaseId" = $1 ORDER BY index`,
+      [caseId],
+    ) as Promise<
+      {
+        request: unknown;
+        expected: unknown;
+        actual: unknown;
+        assertions: unknown[];
+        ok: boolean;
+        prunedAt: Date | null;
+      }[]
     >;
 
   /**
@@ -384,7 +501,11 @@ describe("retención en SQL", { skip: DATABASE_URL ? false : REASON }, () => {
    * the one thing this file exists not to do.
    */
   const repository = () =>
-    new TypeOrmRunRepository(dataSource!.getRepository(RunEntity), dataSource!.getRepository(RunCaseEntity), dataSource!.getRepository(RunStepEntity));
+    new TypeOrmRunRepository(
+      dataSource!.getRepository(RunEntity),
+      dataSource!.getRepository(RunCaseEntity),
+      dataSource!.getRepository(RunStepEntity),
+    );
 
   test("vacía los cuerpos de una corrida vieja y deja el veredicto", async () => {
     const { caseId } = await seedRun(daysAgo(40));
@@ -412,7 +533,11 @@ describe("retención en SQL", { skip: DATABASE_URL ? false : REASON }, () => {
     const first = await repository().pruneStepBodies(daysAgo(30));
     const marks = (await steps(caseId)).map((step) => step.prunedAt?.getTime());
     await repository().pruneStepBodies(daysAgo(30));
-    assert.deepEqual((await steps(caseId)).map((step) => step.prunedAt?.getTime()), marks, "la marca cambiaría si la fila se hubiera vuelto a escribir");
+    assert.deepEqual(
+      (await steps(caseId)).map((step) => step.prunedAt?.getTime()),
+      marks,
+      "la marca cambiaría si la fila se hubiera vuelto a escribir",
+    );
     assert.equal(first, 2, "los dos pasos de la corrida sembrada, y solo esos");
   });
 

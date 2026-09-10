@@ -66,7 +66,10 @@ describe("el importador reproduce el generador de Python", { skip: AVAILABLE ? f
   test("el orden es el mismo: ruta y después método", () => {
     // The order is what the UI offers as "contrato", and a stable one is what makes two imports
     // of the same document a real diff instead of a reshuffle.
-    assert.deepEqual(imported!.operations.map((operation) => operation.id), contractOperations.map((operation) => operation.id));
+    assert.deepEqual(
+      imported!.operations.map((operation) => operation.id),
+      contractOperations.map((operation) => operation.id),
+    );
   });
 
   test("los parámetros compartidos de la ruta llegan a cada operación", () => {

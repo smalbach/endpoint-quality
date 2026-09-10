@@ -20,22 +20,22 @@ propio en NestJS + CQRS, y ejecutable tanto en la web como en local.
 
 Once puntos concretos, cada uno con su destino en el modelo nuevo.
 
-| # | Origen | Qué acopla | Destino |
-|---|--------|-----------|---------|
-| 1 | `lib/contract-operations.ts` | Las 46 operaciones de `bundled.yaml` **compiladas dentro del bundle**, generadas por `scripts/gen_dashboard_endpoints.py` del repo backend | `SpecVersion` + `Operation`: importación de OpenAPI en runtime, con hash y snapshot |
-| 2 | `lib/endpoints.ts` — `implemented` | Set literal de 18 operationIds; es un hecho sobre *ese* código | Tabla `implementation_flags` por proyecto, editable y/o derivable de un probe |
-| 3 | `lib/endpoints.ts` — `bodies` | Payloads con FKs del seed (`product_id: 2, store_id: 4`), EANs libres, `records` vs `items` | `body_templates` por proyecto/operación, con interpolación `{{var}}` |
-| 4 | `lib/scenarios.ts` — `values` | Catálogo de valores por parámetro del dominio (`ean_sap`, `zone_id`, `region: "Centro"`) | `parameter_samples` por proyecto |
-| 5 | `lib/scenarios.ts` — geo | Coordenadas de Bogotá y el caso "océano" incrustados en el generador | Regla de escenario declarativa: `geo` como *plugin de generación* configurable |
-| 6 | `lib/budgets.mjs` | Umbrales del RFP §6 (`/health` < 20 ms, `?ean_sap=` < 50 ms, GET < 70 ms) con `if` por path | `budget_rules` ordenadas: match método + path + query → umbral, etiqueta, fuente |
-| 7 | `app/api/run/route.ts` | Envelope `{data}`, `HealthStatus` con `status`/`checks`, `ProblemDetails`, y `GET /openapi.json` como ruta fija | `envelope_profile` por proyecto + `spec_url` explícito por entorno |
-| 8 | `components/api-dashboard.tsx` | `DEFAULT_PARAMETERS`, `baseUrl` por defecto `http://127.0.0.1:8100`, tres campos de credencial (`token`, `readToken`, `apiKey`) | `path_defaults`, `Environment.baseUrl`, lista de `Credential` con rol y scopes |
-| 9 | `api-dashboard.tsx` — `detailEndpointFor` / `idFrom` / `deleteCreated` | Los flujos `create-read`/`delete-read` **infieren** la operación de detalle por convención REST y el id por `body.data[<último placeholder>]` | Inferencia igual por defecto + `flow_overrides` explícitos cuando la convención no aplica |
-| 10 | `package.json` scripts | `cd ../../digital-catalog-back-end && uv run … e2e_env.py` en `test:e2e`, `test:auth`, `dev:e2e` | Los tests del producto usan un target simulado; el arranque del backend ajeno sale del repo |
-| 11 | `worker/index.ts`, `next.config.ts`, `vite.config.ts` | Despliegue atado a Cloudflare Workers + vinext beta | SPA estática + API NestJS en contenedor; despliegue agnóstico |
+| #   | Origen                                                                 | Qué acopla                                                                                                                                    | Destino                                                                                     |
+| --- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| 1   | `lib/contract-operations.ts`                                           | Las 46 operaciones de `bundled.yaml` **compiladas dentro del bundle**, generadas por `scripts/gen_dashboard_endpoints.py` del repo backend    | `SpecVersion` + `Operation`: importación de OpenAPI en runtime, con hash y snapshot         |
+| 2   | `lib/endpoints.ts` — `implemented`                                     | Set literal de 18 operationIds; es un hecho sobre _ese_ código                                                                                | Tabla `implementation_flags` por proyecto, editable y/o derivable de un probe               |
+| 3   | `lib/endpoints.ts` — `bodies`                                          | Payloads con FKs del seed (`product_id: 2, store_id: 4`), EANs libres, `records` vs `items`                                                   | `body_templates` por proyecto/operación, con interpolación `{{var}}`                        |
+| 4   | `lib/scenarios.ts` — `values`                                          | Catálogo de valores por parámetro del dominio (`ean_sap`, `zone_id`, `region: "Centro"`)                                                      | `parameter_samples` por proyecto                                                            |
+| 5   | `lib/scenarios.ts` — geo                                               | Coordenadas de Bogotá y el caso "océano" incrustados en el generador                                                                          | Regla de escenario declarativa: `geo` como _plugin de generación_ configurable              |
+| 6   | `lib/budgets.mjs`                                                      | Umbrales del RFP §6 (`/health` < 20 ms, `?ean_sap=` < 50 ms, GET < 70 ms) con `if` por path                                                   | `budget_rules` ordenadas: match método + path + query → umbral, etiqueta, fuente            |
+| 7   | `app/api/run/route.ts`                                                 | Envelope `{data}`, `HealthStatus` con `status`/`checks`, `ProblemDetails`, y `GET /openapi.json` como ruta fija                               | `envelope_profile` por proyecto + `spec_url` explícito por entorno                          |
+| 8   | `components/api-dashboard.tsx`                                         | `DEFAULT_PARAMETERS`, `baseUrl` por defecto `http://127.0.0.1:8100`, tres campos de credencial (`token`, `readToken`, `apiKey`)               | `path_defaults`, `Environment.baseUrl`, lista de `Credential` con rol y scopes              |
+| 9   | `api-dashboard.tsx` — `detailEndpointFor` / `idFrom` / `deleteCreated` | Los flujos `create-read`/`delete-read` **infieren** la operación de detalle por convención REST y el id por `body.data[<último placeholder>]` | Inferencia igual por defecto + `flow_overrides` explícitos cuando la convención no aplica   |
+| 10  | `package.json` scripts                                                 | `cd ../../digital-catalog-back-end && uv run … e2e_env.py` en `test:e2e`, `test:auth`, `dev:e2e`                                              | Los tests del producto usan un target simulado; el arranque del backend ajeno sale del repo |
+| 11  | `worker/index.ts`, `next.config.ts`, `vite.config.ts`                  | Despliegue atado a Cloudflare Workers + vinext beta                                                                                           | SPA estática + API NestJS en contenedor; despliegue agnóstico                               |
 
-**Lo que no hay que perder.** El valor del dashboard actual no es la UI: es que *un 200 no es un
-test que pasa*. Verifica el schema contra el `/openapi.json` vivo, los presupuestos de latencia
+**Lo que no hay que perder.** El valor del dashboard actual no es la UI: es que _un 200 no es un
+test que pasa_. Verifica el schema contra el `/openapi.json` vivo, los presupuestos de latencia
 con p95 sobre muestras reales, la matriz 401/403 y el D-29 del DELETE con API key, la
 persistencia real de los campos escritos, y el orden de ejecución que impide que un DELETE
 contagie de rojo al resto. Todo eso debe sobrevivir como comportamiento **por defecto**, no como
@@ -101,7 +101,7 @@ tomada. El trabajo es parametrizarlos: donde hoy leen constantes del módulo, re
   `imported_at`, `operation_count`. Una está `active` por proyecto.
 - **Operation** — proyección plana de `SpecVersion`: `operationId`, método, path, tag, summary,
   `statuses[]`, `parameters[]`, `security[]`, refs de schema de request/response.
-  *Reemplaza exactamente a `contract-operations.ts`.*
+  _Reemplaza exactamente a `contract-operations.ts`._
 - **Environment** — `(project, name, baseUrl)` + `specUrlOverride`, `variables`, `writesAllowed`.
   Ej.: `local`, `e2e`, `staging`. Un entorno de producción se marca `writesAllowed: false` y el
   motor rechaza toda operación no idempotente.
@@ -114,7 +114,7 @@ tomada. El trabajo es parametrizarlos: donde hoy leen constantes del módulo, re
 - **PathDefault** — valores por defecto de los placeholders (`{store_id} → 1`).
 - **BodyTemplate** — por operación: `body`, `conflictBody`, `patchBody`, con interpolación.
 - **BudgetRule** — lista ordenada; primera que casa gana. `{ method, pathGlob, queryMatch,
-  thresholdMs, label, source }`. **Sin regla no hay aserción** — se conserva la decisión actual
+thresholdMs, label, source }`. **Sin regla no hay aserción** — se conserva la decisión actual
   de `budgets.mjs`: un tick verde que no afirma nada es peor que ninguno.
 - **EnvelopeProfile** — `successPointer` (`/data`), `listPointer`, `errorShape`
   (`problem-details | custom` con campos requeridos), `healthShape`. Se usa **solo como
@@ -174,16 +174,16 @@ buena voluntad:
 
 ### 4.2 Comandos
 
-| Módulo | Comandos |
-|--------|----------|
-| `auth` | `RegisterUser`, `LoginUser`, `RefreshSession`, `LogoutUser`, `ChangePassword`, `IssueApiToken`, `RevokeApiToken` |
-| `iam` | `CreateOrganization`, `InviteMember`, `AcceptInvitation`, `ChangeMemberRole`, `RemoveMember` |
-| `projects` | `CreateProject`, `UpdateProject`, `ArchiveProject`, `CloneProjectConfig` |
-| `specs` | `ImportSpecVersion`, `ActivateSpecVersion`, `DeleteSpecVersion`, `CheckSpecDrift` |
-| `environments` | `CreateEnvironment`, `UpdateEnvironment`, `UpsertCredential`, `DeleteCredential`, `PingEnvironment` |
-| `config` | `UpsertBodyTemplate`, `UpsertParameterSamples`, `UpsertPathDefaults`, `UpsertBudgetRule`, `ReorderBudgetRules`, `UpsertEnvelopeProfile`, `UpsertFlowOverride`, `SetImplementedOperations`, `ProbeImplementedOperations` |
-| `runs` | `StartRun`, `CancelRun`, `RecordStepResult`, `FinishRun`, `ReplayRun`, `SaveRunPlan` |
-| `execution` | `ExecuteProbe` (un request suelto, el botón "ejecutar este caso") |
+| Módulo         | Comandos                                                                                                                                                                                                                |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth`         | `RegisterUser`, `LoginUser`, `RefreshSession`, `LogoutUser`, `ChangePassword`, `IssueApiToken`, `RevokeApiToken`                                                                                                        |
+| `iam`          | `CreateOrganization`, `InviteMember`, `AcceptInvitation`, `ChangeMemberRole`, `RemoveMember`                                                                                                                            |
+| `projects`     | `CreateProject`, `UpdateProject`, `ArchiveProject`, `CloneProjectConfig`                                                                                                                                                |
+| `specs`        | `ImportSpecVersion`, `ActivateSpecVersion`, `DeleteSpecVersion`, `CheckSpecDrift`                                                                                                                                       |
+| `environments` | `CreateEnvironment`, `UpdateEnvironment`, `UpsertCredential`, `DeleteCredential`, `PingEnvironment`                                                                                                                     |
+| `config`       | `UpsertBodyTemplate`, `UpsertParameterSamples`, `UpsertPathDefaults`, `UpsertBudgetRule`, `ReorderBudgetRules`, `UpsertEnvelopeProfile`, `UpsertFlowOverride`, `SetImplementedOperations`, `ProbeImplementedOperations` |
+| `runs`         | `StartRun`, `CancelRun`, `RecordStepResult`, `FinishRun`, `ReplayRun`, `SaveRunPlan`                                                                                                                                    |
+| `execution`    | `ExecuteProbe` (un request suelto, el botón "ejecutar este caso")                                                                                                                                                       |
 
 ### 4.3 Consultas
 
@@ -289,16 +289,16 @@ backend. Una SPA se sirve desde cualquier CDN, un nginx o el propio contenedor d
 
 Rutas:
 
-| Ruta | Contenido |
-|------|-----------|
-| `/login`, `/register`, `/accept-invite` | Autenticación |
-| `/` | Lista de proyectos de la organización |
-| `/p/:slug` | **El dashboard actual**, ahora alimentado por API: lista de operaciones, filtros por tag, panel de detalle con pestañas request/expected/actual, monitor de ejecución, orden de ejecución |
-| `/p/:slug/environments` | Entornos y credenciales |
-| `/p/:slug/contract` | Versiones de spec, importación, diff de drift |
-| `/p/:slug/config` | Bodies, samples, presupuestos, envelope, flujos, implementadas |
-| `/p/:slug/runs` · `/runs/:id` | Historial y detalle de corrida con sus steps |
-| `/settings/org` | Miembros, roles, tokens de CI |
+| Ruta                                    | Contenido                                                                                                                                                                                 |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/login`, `/register`, `/accept-invite` | Autenticación                                                                                                                                                                             |
+| `/`                                     | Lista de proyectos de la organización                                                                                                                                                     |
+| `/p/:slug`                              | **El dashboard actual**, ahora alimentado por API: lista de operaciones, filtros por tag, panel de detalle con pestañas request/expected/actual, monitor de ejecución, orden de ejecución |
+| `/p/:slug/environments`                 | Entornos y credenciales                                                                                                                                                                   |
+| `/p/:slug/contract`                     | Versiones de spec, importación, diff de drift                                                                                                                                             |
+| `/p/:slug/config`                       | Bodies, samples, presupuestos, envelope, flujos, implementadas                                                                                                                            |
+| `/p/:slug/runs` · `/runs/:id`           | Historial y detalle de corrida con sus steps                                                                                                                                              |
+| `/settings/org`                         | Miembros, roles, tokens de CI                                                                                                                                                             |
 
 Estado de servidor con **TanStack Query**; el progreso en vivo llega por SSE desde
 `GET /runs/:id/stream` y actualiza la caché. Se conservan tal cual los componentes de UI que ya
@@ -317,6 +317,7 @@ Cinco niveles, de más rápido a más lento.
 
 **1. Unitarias puras (`packages/runner-core`)** — sin NestJS, sin red. Es donde vive la lógica
 que de verdad puede equivocarse:
+
 - generación de escenarios: dado un `Operation` + `ProjectConfig`, la lista exacta de casos;
 - `percentile` nearest-rank, `latencyAssertion` con 1 muestra vs 30;
 - `orderEndpoints` en los tres modos, `moveEndpoint` en los bordes;
@@ -333,8 +334,9 @@ org B — un test por endpoint, generado en tabla) y los índices.
 **4. E2E de API** — `supertest` contra la app completa, con Postgres y Redis en Testcontainers,
 y un **target simulado**: un servidor Fastify generado desde una spec de fixture que puede
 responder correctamente, romper el envelope, tardar de más o devolver 405 a voluntad. Escenarios:
+
 - flujo completo `register → create project → import spec → create environment → start run →
-  stream SSE → assert totals`;
+stream SSE → assert totals`;
 - un target que responde 200 con envelope roto ⇒ el caso falla y la aserción que falla es la del
   schema, no otra;
 - un target lento ⇒ falla el presupuesto y solo el presupuesto;
@@ -358,16 +360,16 @@ Complementos: cobertura mínima 85 % en `runner-core` y en `application/`, mutat
 
 Cada fase termina en algo ejecutable y con su criterio de aceptación.
 
-| Fase | Alcance | Aceptación | Est. |
-|------|---------|-----------|------|
-| **P0 — Extracción** | Monorepo pnpm; mover `scenarios`/`execution-plan`/`budgets`/`contract` a `packages/runner-core` parametrizados por `ProjectConfig`; el dashboard actual sigue funcionando pasándole su config como literal | `npm test` actual sigue en verde sin tocar la API destino; golden file de la matriz generado y congelado | 2–3 d |
-| **P1 — Cimientos API** | NestJS + CQRS + TypeORM + migraciones; `auth` e `iam` completos; Docker Compose con Postgres | Registro, login, refresh con rotación, RBAC probado por endpoint; suite de integración con Testcontainers en verde | 3–4 d |
-| **P2 — Contrato como dato** | `projects`, `specs` con `spec-import`; importación por URL y por upload; drift check | Importar `bundled.yaml` produce las 46 operaciones idénticas a `contract-operations.ts`; test de paridad estructural en verde | 4–5 d |
-| **P3 — Entornos y config** | `environments`, `credentials` cifradas, y las seis secciones de `config`; `tools/migrate-digital-catalog.ts` | La configuración hardcodeada existe como filas; `GET /projects/:id/scenarios` devuelve la matriz completa | 3–4 d |
-| **P4 — Motor de ejecución** | `runs`, `execution`, saga, cola (memoria + BullMQ), SSE, persistencia de steps, guardas SSRF y `writesAllowed` | Corrida completa contra el target simulado; los 6 escenarios E2E del §6.4 en verde; una corrida sobrevive al cierre del navegador | 4–5 d |
-| **P5 — Front nuevo** | SPA Vite; login; selector de proyecto; el dashboard reconectado; entornos, config, historial | Paridad visual y funcional con la UI actual; corrida en vivo por SSE; sin ninguna constante de dominio en el bundle | 5–6 d |
-| **P6 — Corte de paridad** | Correr el proyecto Digital Catalog migrado contra el backend E2E real | Mismos veredictos que `npm run test:e2e` y `npm run test:auth` actuales, caso por caso; informe de cobertura reproduce el conteo del README | 2–3 d |
-| **P7 — Empaquetado** | Compose de un comando, imágenes publicadas, tokens de CI, `README` de despliegue, OpenAPI propio | `docker compose up` levanta todo y un proyecto de ejemplo corre solo; una corrida se lanza desde CI con token y devuelve exit code | 2 d |
+| Fase                        | Alcance                                                                                                                                                                                                    | Aceptación                                                                                                                                  | Est.  |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| **P0 — Extracción**         | Monorepo pnpm; mover `scenarios`/`execution-plan`/`budgets`/`contract` a `packages/runner-core` parametrizados por `ProjectConfig`; el dashboard actual sigue funcionando pasándole su config como literal | `npm test` actual sigue en verde sin tocar la API destino; golden file de la matriz generado y congelado                                    | 2–3 d |
+| **P1 — Cimientos API**      | NestJS + CQRS + TypeORM + migraciones; `auth` e `iam` completos; Docker Compose con Postgres                                                                                                               | Registro, login, refresh con rotación, RBAC probado por endpoint; suite de integración con Testcontainers en verde                          | 3–4 d |
+| **P2 — Contrato como dato** | `projects`, `specs` con `spec-import`; importación por URL y por upload; drift check                                                                                                                       | Importar `bundled.yaml` produce las 46 operaciones idénticas a `contract-operations.ts`; test de paridad estructural en verde               | 4–5 d |
+| **P3 — Entornos y config**  | `environments`, `credentials` cifradas, y las seis secciones de `config`; `tools/migrate-digital-catalog.ts`                                                                                               | La configuración hardcodeada existe como filas; `GET /projects/:id/scenarios` devuelve la matriz completa                                   | 3–4 d |
+| **P4 — Motor de ejecución** | `runs`, `execution`, saga, cola (memoria + BullMQ), SSE, persistencia de steps, guardas SSRF y `writesAllowed`                                                                                             | Corrida completa contra el target simulado; los 6 escenarios E2E del §6.4 en verde; una corrida sobrevive al cierre del navegador           | 4–5 d |
+| **P5 — Front nuevo**        | SPA Vite; login; selector de proyecto; el dashboard reconectado; entornos, config, historial                                                                                                               | Paridad visual y funcional con la UI actual; corrida en vivo por SSE; sin ninguna constante de dominio en el bundle                         | 5–6 d |
+| **P6 — Corte de paridad**   | Correr el proyecto Digital Catalog migrado contra el backend E2E real                                                                                                                                      | Mismos veredictos que `npm run test:e2e` y `npm run test:auth` actuales, caso por caso; informe de cobertura reproduce el conteo del README | 2–3 d |
+| **P7 — Empaquetado**        | Compose de un comando, imágenes publicadas, tokens de CI, `README` de despliegue, OpenAPI propio                                                                                                           | `docker compose up` levanta todo y un proyecto de ejemplo corre solo; una corrida se lanza desde CI con token y devuelve exit code          | 2 d   |
 
 **Total: 25–32 días de una persona** (~5–6 semanas). P2/P3 y P5 se paralelizan si hay dos.
 
@@ -391,11 +393,11 @@ Cada fase termina en algo ejecutable y con su criterio de aceptación.
 
 ## 9. Riesgos
 
-| Riesgo | Impacto | Mitigación |
-|--------|---------|-----------|
-| La generalización pierde aserciones específicas (geo, D-29, cursor corrupto) | Alto — el producto queda peor que el original | Test de paridad de P0 como *gate* obligatorio de P6; los generadores especiales se conservan como plugins configurables |
-| SSRF desde el backend alojado | Alto — acceso a red interna | Validación de IP resuelta, denylist de rangos, cap de redirecciones; auditoría de seguridad antes de exponer |
-| Crecimiento de `run_steps` | Medio — coste y lentitud | Retención por proyecto y compresión de cuerpos desde P4, no después |
-| SSE detrás de proxies corporativos | Medio — el progreso no llega | Fallback a polling de `GET /runs/:id` cada 2 s, detectado por el cliente |
-| Alcance del front crece (editor visual de config) | Medio — retraso | P5 entrega editores JSON con validación por schema; el editor visual es post-lanzamiento |
-| vinext beta abandonado a mitad de camino | Bajo | El corte a SPA ocurre entero en P5, no de forma incremental |
+| Riesgo                                                                       | Impacto                                       | Mitigación                                                                                                              |
+| ---------------------------------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| La generalización pierde aserciones específicas (geo, D-29, cursor corrupto) | Alto — el producto queda peor que el original | Test de paridad de P0 como _gate_ obligatorio de P6; los generadores especiales se conservan como plugins configurables |
+| SSRF desde el backend alojado                                                | Alto — acceso a red interna                   | Validación de IP resuelta, denylist de rangos, cap de redirecciones; auditoría de seguridad antes de exponer            |
+| Crecimiento de `run_steps`                                                   | Medio — coste y lentitud                      | Retención por proyecto y compresión de cuerpos desde P4, no después                                                     |
+| SSE detrás de proxies corporativos                                           | Medio — el progreso no llega                  | Fallback a polling de `GET /runs/:id` cada 2 s, detectado por el cliente                                                |
+| Alcance del front crece (editor visual de config)                            | Medio — retraso                               | P5 entrega editores JSON con validación por schema; el editor visual es post-lanzamiento                                |
+| vinext beta abandonado a mitad de camino                                     | Bajo                                          | El corte a SPA ocurre entero en P5, no de forma incremental                                                             |

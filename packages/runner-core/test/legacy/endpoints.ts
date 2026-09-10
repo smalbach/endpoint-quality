@@ -33,17 +33,49 @@ export type Endpoint = ContractOperation & {
 // which is what makes the dashboard report it as pending instead of red.
 const implemented = new Set([
   "healthCheck",
-  "listProducts", "getProduct", "getProductFull",
-  "listStores", "getStore", "createStore", "replaceStore", "patchStore", "deleteStore",
-  "listStoreAssortment", "listStoreAssortments", "getStoreAssortment",
-  "createStoreAssortment", "replaceStoreAssortment", "patchStoreAssortment", "deleteStoreAssortment",
+  "listProducts",
+  "getProduct",
+  "getProductFull",
+  "listStores",
+  "getStore",
+  "createStore",
+  "replaceStore",
+  "patchStore",
+  "deleteStore",
+  "listStoreAssortment",
+  "listStoreAssortments",
+  "getStoreAssortment",
+  "createStoreAssortment",
+  "replaceStoreAssortment",
+  "patchStoreAssortment",
+  "deleteStoreAssortment",
   "bulkUpsertStoreAssortments",
 ]);
 
 // `ProductWrite` requires the **11 SAP fields**. `measure_unit_value_sap` is a *string* since
 // v1.8.0 ("1000", not 1000): sending the integer is a 422 that says nothing about the endpoint.
-const productBody = { ean_sap: "7702005555555", code_sap: "MAT-E2E-001", name_sap: "Producto E2E", description_sap: "Producto de prueba E2E", pack_code_sap: "UNIDAD", quantity_in_pack_sap: "1", measure_unit_sap: "1", measure_unit_code_sap: "L", measure_unit_value_sap: "1000", sub_category_sap: "Lácteos", sub_category_code_sap: "LAC-01", type_akn: "product" };
-const storeBody = { name: "Ara Prueba E2E", address: "Cra 7 # 62-15", department: "Cundinamarca", region: "Bogotá", latitude: 4.6482, longitude: -74.0648 };
+const productBody = {
+  ean_sap: "7702005555555",
+  code_sap: "MAT-E2E-001",
+  name_sap: "Producto E2E",
+  description_sap: "Producto de prueba E2E",
+  pack_code_sap: "UNIDAD",
+  quantity_in_pack_sap: "1",
+  measure_unit_sap: "1",
+  measure_unit_code_sap: "L",
+  measure_unit_value_sap: "1000",
+  sub_category_sap: "Lácteos",
+  sub_category_code_sap: "LAC-01",
+  type_akn: "product",
+};
+const storeBody = {
+  name: "Ara Prueba E2E",
+  address: "Cra 7 # 62-15",
+  department: "Cundinamarca",
+  region: "Bogotá",
+  latitude: 4.6482,
+  longitude: -74.0648,
+};
 // `StoreAssortmentWrite` declares **10 required fields**: the pair, the 6 price and validity
 // ones, and — since v1.8.0 — `pum_vkp0` and `pum_vka0`. The PUM pair stopped being `readOnly`:
 // the integrator sends it pre-computed and the back end stores it, so a body without it is a 422.
@@ -58,7 +90,15 @@ const assortmentDates = {
 // PUM follows the contract's own formula over `measure_unit_value_sap: "1000"`, so the values
 // stay coherent with the prices above even though nothing recomputes them any more.
 const assortmentPum = { pum_vkp0: 4.9, pum_vka0: 3.9 };
-const assortmentBody = { product_id: 2, store_id: 4, is_enabled: true, vkp0_base_price_sap: 4900, vka0_promotional_price_sap: 3900, ...assortmentDates, ...assortmentPum };
+const assortmentBody = {
+  product_id: 2,
+  store_id: 4,
+  is_enabled: true,
+  vkp0_base_price_sap: 4900,
+  vka0_promotional_price_sap: 3900,
+  ...assortmentDates,
+  ...assortmentPum,
+};
 const categoryBody = { code_akn: "e2e-category", parent_code_akn: "alimentos", labels_akn: { es_CO: "Categoría E2E" } };
 const projectionBody = { locale_akn: "pt_BR", channel_akn: "kiosk", name_akn: "Produto E2E" };
 // `PriceWrite` requires the same 8 fields as the store-level payload minus the (product, store)
@@ -70,7 +110,10 @@ const bodies: Record<string, { body?: Record<string, unknown>; conflictBody?: Re
   createProduct: { body: productBody, conflictBody: { ...productBody, ean_sap: "7702001234567" } },
   replaceProduct: { body: productBody },
   patchProduct: { body: { name_sap: "Producto actualizado" } },
-  createProductProjection: { body: projectionBody, conflictBody: { locale_akn: "es_CO", channel_akn: "app", name_akn: "Proyección duplicada" } },
+  createProductProjection: {
+    body: projectionBody,
+    conflictBody: { locale_akn: "es_CO", channel_akn: "app", name_akn: "Proyección duplicada" },
+  },
   replaceProductProjection: { body: projectionBody },
   patchProductProjection: { body: { name_akn: "Nombre actualizado" } },
   assignProductCategory: { body: { category_id: 1 }, conflictBody: { category_id: 2 } },
@@ -80,7 +123,18 @@ const bodies: Record<string, { body?: Record<string, unknown>; conflictBody?: Re
   createStore: { body: storeBody },
   replaceStore: { body: storeBody },
   patchStore: { body: { name: "Ara Chapinero Norte" } },
-  createStoreAssortment: { body: assortmentBody, conflictBody: { product_id: 1, store_id: 1, vkp0_base_price_sap: 4900, vka0_promotional_price_sap: 0, ...assortmentDates, pum_vkp0: 4.9, pum_vka0: 0 } },
+  createStoreAssortment: {
+    body: assortmentBody,
+    conflictBody: {
+      product_id: 1,
+      store_id: 1,
+      vkp0_base_price_sap: 4900,
+      vka0_promotional_price_sap: 0,
+      ...assortmentDates,
+      pum_vkp0: 4.9,
+      pum_vka0: 0,
+    },
+  },
   // `records`, not `items`: that is the property `StoreAssortmentBulkWrite` declares, and a
   // body keyed by anything else is a 422 that says nothing about the endpoint.
   //
@@ -96,7 +150,11 @@ const bodies: Record<string, { body?: Record<string, unknown>; conflictBody?: Re
   // reason the assortment bulk moves to store 3: the bulk is a write with no cleanup step, and
   // the row it leaves behind over `7702005555555` would turn the next run of `createProduct`
   // into a 409. On its own EAN the first run is a `created` and every later one an `unchanged`.
-  bulkUpsertProducts: { body: { records: [{ ...productBody, ean_sap: "7702005555556", code_sap: "MAT-E2E-002", name_sap: "Producto E2E bulk" }] } },
+  bulkUpsertProducts: {
+    body: {
+      records: [{ ...productBody, ean_sap: "7702005555556", code_sap: "MAT-E2E-002", name_sap: "Producto E2E bulk" }],
+    },
+  },
   replaceStoreAssortment: { body: assortmentBody },
   patchStoreAssortment: { body: { is_enabled: false } },
   createCategory: { body: categoryBody, conflictBody: { ...categoryBody, code_akn: "alimentos" } },

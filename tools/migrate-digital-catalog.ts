@@ -53,7 +53,10 @@ async function call(method: string, path: string, body?: unknown): Promise<any> 
     // Problem Details all the way through, so a failure here names the field that was wrong
     // rather than printing a status code.
     const detail = parsed?.detail ?? response.statusText;
-    const fields = parsed?.errors?.map((error: { field: string; detail: string }) => `\n    ${error.field}: ${error.detail}`).join("") ?? "";
+    const fields =
+      parsed?.errors
+        ?.map((error: { field: string; detail: string }) => `\n    ${error.field}: ${error.detail}`)
+        .join("") ?? "";
     throw new Error(`${method} ${path} → ${response.status}: ${detail}${fields}`);
   }
   return parsed;
@@ -68,9 +71,19 @@ async function main(): Promise<void> {
   if (!organization) throw new Error("La cuenta no pertenece a ninguna organización");
   console.log(`organización  ${organization.name} (${organization.slug})`);
 
-  const existing: { id: string; name: string }[] = await call("GET", `/orgs/${organization.id}/projects?includeArchived=true`);
+  const existing: { id: string; name: string }[] = await call(
+    "GET",
+    `/orgs/${organization.id}/projects?includeArchived=true`,
+  );
   const found = existing.find((project) => project.name === PROJECT_NAME);
-  const projectId = found?.id ?? (await call("POST", `/orgs/${organization.id}/projects`, { name: PROJECT_NAME, description: "Contrato v1.8.0 del catálogo digital" })).projectId;
+  const projectId =
+    found?.id ??
+    (
+      await call("POST", `/orgs/${organization.id}/projects`, {
+        name: PROJECT_NAME,
+        description: "Contrato v1.8.0 del catálogo digital",
+      })
+    ).projectId;
   console.log(`proyecto      ${found ? "reutilizado" : "creado"} ${projectId}`);
 
   const base = `/orgs/${organization.id}/projects/${projectId}`;
@@ -78,7 +91,9 @@ async function main(): Promise<void> {
   const imported = await call("POST", `${base}/spec-versions`, {
     source: { kind: "upload", filename: "bundled.yaml", raw: readFileSync(SPEC, "utf8") },
   });
-  console.log(`contrato      ${imported.operationCount} operaciones · ${imported.unchanged ? "sin cambios" : "nueva versión"}`);
+  console.log(
+    `contrato      ${imported.operationCount} operaciones · ${imported.unchanged ? "sin cambios" : "nueva versión"}`,
+  );
   for (const problem of imported.problems ?? []) console.warn(`  aviso  ${problem.pointer}: ${problem.message}`);
 
   for (const [section, data] of Object.entries(digitalCatalogSections)) {

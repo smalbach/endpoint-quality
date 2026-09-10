@@ -6,7 +6,11 @@ import { hashOpaqueToken } from "@/shared/crypto/opaque-token";
 import { REFRESH_TOKEN_REPOSITORY, type RefreshTokenRepositoryPort } from "../../domain/ports";
 
 export class LogoutUserCommand implements ICommand {
-  constructor(readonly refreshToken: string | undefined, readonly everywhere: boolean, readonly userId: string) {}
+  constructor(
+    readonly refreshToken: string | undefined,
+    readonly everywhere: boolean,
+    readonly userId: string,
+  ) {}
 }
 
 /**

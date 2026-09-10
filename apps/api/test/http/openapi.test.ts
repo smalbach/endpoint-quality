@@ -27,7 +27,14 @@ let document: OpenAPIObject;
 
 before(async () => {
   context = await createTestApp();
-  document = describeBodies(describeErrors(SwaggerModule.createDocument(context.app, new DocumentBuilder().setTitle("Endpoint Quality API").setVersion("0.1.0").addBearerAuth().build())));
+  document = describeBodies(
+    describeErrors(
+      SwaggerModule.createDocument(
+        context.app,
+        new DocumentBuilder().setTitle("Endpoint Quality API").setVersion("0.1.0").addBearerAuth().build(),
+      ),
+    ),
+  );
 });
 after(async () => {
   await context?.close();
@@ -41,7 +48,8 @@ function operations(): DocumentedOperation[] {
   const found: DocumentedOperation[] = [];
   for (const [path, item] of Object.entries(document.paths ?? {})) {
     for (const method of ["get", "post", "put", "patch", "delete"]) {
-      const operation = (item as Record<string, unknown>)[method] as { responses?: Record<string, unknown> } | undefined;
+      const operation = (item as Record<string, unknown>)[method] as
+        { responses?: Record<string, unknown> } | undefined;
       if (operation?.responses) found.push({ method, path, responses: operation.responses });
     }
   }
@@ -75,7 +83,11 @@ describe("el contrato que publica esta API", () => {
         const content = (response as { content?: Record<string, { schema?: { $ref?: string } }> }).content ?? {};
         const media = content["application/problem+json"];
         assert.ok(media, `${method.toUpperCase()} ${path} ${status} no se declara como application/problem+json`);
-        assert.equal(media.schema?.$ref, "#/components/schemas/ProblemDetails", `${method.toUpperCase()} ${path} ${status} no referencia ProblemDetails`);
+        assert.equal(
+          media.schema?.$ref,
+          "#/components/schemas/ProblemDetails",
+          `${method.toUpperCase()} ${path} ${status} no referencia ProblemDetails`,
+        );
       }
     }
   });
@@ -112,13 +124,15 @@ describe("el contrato que publica esta API", () => {
     // un DTO nuevo que no esté en ella publica `{}` y rompe aquí.
     const empty: string[] = [];
     for (const { method, path, responses: _ignored } of operations()) {
-      const operation = ((document.paths?.[path] as Record<string, unknown>)[method] as { requestBody?: unknown }).requestBody as
-        | { content?: Record<string, { schema?: { $ref?: string } }> }
-        | undefined;
+      const operation = ((document.paths?.[path] as Record<string, unknown>)[method] as { requestBody?: unknown })
+        .requestBody as { content?: Record<string, { schema?: { $ref?: string } }> } | undefined;
       const schema = operation?.content?.["application/json"]?.schema;
       if (!schema) continue;
-      const resolved = schema.$ref ? (document.components?.schemas?.[schema.$ref.split("/").pop()!] as { properties?: object } | undefined) : (schema as { properties?: object });
-      if (!resolved || Object.keys(resolved.properties ?? {}).length === 0) empty.push(`${method.toUpperCase()} ${path}`);
+      const resolved = schema.$ref
+        ? (document.components?.schemas?.[schema.$ref.split("/").pop()!] as { properties?: object } | undefined)
+        : (schema as { properties?: object });
+      if (!resolved || Object.keys(resolved.properties ?? {}).length === 0)
+        empty.push(`${method.toUpperCase()} ${path}`);
     }
     assert.deepEqual(empty, [], "estas operaciones declaran un cuerpo y no dicen qué lleva dentro");
   });
@@ -126,14 +140,23 @@ describe("el contrato que publica esta API", () => {
   test("el cuerpo publicado dice lo mismo que la validación exige", async () => {
     // Derivado de `class-validator`, no escrito a mano, que es lo que impide que el documento y la
     // regla se separen. Un `@MinLength(12)` y un `@ApiProperty({ minLength: 8 })` compilan los dos.
-    const register = document.components?.schemas?.RegisterDto as { required?: string[]; properties?: Record<string, Record<string, unknown>> };
-    assert.deepEqual(register.required, ["email", "password", "name"], "organizationName es opcional y no debe aparecer");
+    const register = document.components?.schemas?.RegisterDto as {
+      required?: string[];
+      properties?: Record<string, Record<string, unknown>>;
+    };
+    assert.deepEqual(
+      register.required,
+      ["email", "password", "name"],
+      "organizationName es opcional y no debe aparecer",
+    );
     assert.deepEqual(register.properties?.email, { type: "string", maxLength: 320, format: "email" });
     assert.equal(register.properties?.password.minLength, 12, "es el mínimo que el pipe rechaza de verdad");
 
     // Y lo anidado se resuelve en línea: `source` es el único campo que toma el endpoint de
     // importación, y valía `{}`.
-    const importSpec = document.components?.schemas?.ImportSpecDto as { properties?: Record<string, { properties?: object }> };
+    const importSpec = document.components?.schemas?.ImportSpecDto as {
+      properties?: Record<string, { properties?: object }>;
+    };
     assert.ok(Object.keys(importSpec.properties?.source.properties ?? {}).length > 0, "el DTO anidado no se resolvió");
   });
 

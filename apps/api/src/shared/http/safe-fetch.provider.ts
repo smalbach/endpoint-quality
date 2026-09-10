@@ -1,6 +1,12 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { ENV, type Env } from "../config/env";
-import { safeFetch, type SafeFetchPolicy, type SafeFetchPort, type SafeFetchResult, type SafeRequestOptions } from "./safe-fetch";
+import {
+  safeFetch,
+  type SafeFetchPolicy,
+  type SafeFetchPort,
+  type SafeFetchResult,
+  type SafeRequestOptions,
+} from "./safe-fetch";
 
 /**
  * The guard, wired to the deployment's policy.

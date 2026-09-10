@@ -50,8 +50,13 @@ const problemDetailsSchema = {
     instance: { type: "string" },
     errors: {
       type: "array",
-      description: "Presente en un 422: qué campo y por qué. Es lo que permite poner el mensaje junto al input que lo causó.",
-      items: { type: "object", required: ["field", "detail"], properties: { field: { type: "string" }, detail: { type: "string" } } },
+      description:
+        "Presente en un 422: qué campo y por qué. Es lo que permite poner el mensaje junto al input que lo causó.",
+      items: {
+        type: "object",
+        required: ["field", "detail"],
+        properties: { field: { type: "string" }, detail: { type: "string" } },
+      },
     },
   },
 } as const;
@@ -66,7 +71,8 @@ const METHODS = ["get", "post", "put", "patch", "delete"] as const;
 export function describeErrors(document: OpenAPIObject): OpenAPIObject {
   document.components ??= {};
   document.components.schemas ??= {};
-  document.components.schemas[PROBLEM_DETAILS] = problemDetailsSchema as unknown as (typeof document.components.schemas)[string];
+  document.components.schemas[PROBLEM_DETAILS] =
+    problemDetailsSchema as unknown as (typeof document.components.schemas)[string];
 
   for (const [path, item] of Object.entries(document.paths ?? {})) {
     const isPublic = PUBLIC_PATHS.has(path);
@@ -76,16 +82,20 @@ export function describeErrors(document: OpenAPIObject): OpenAPIObject {
     const addressesSomething = path.includes("{");
 
     for (const method of METHODS) {
-      const operation = (item as Record<string, unknown>)[method] as { responses?: Record<string, unknown>; requestBody?: unknown } | undefined;
+      const operation = (item as Record<string, unknown>)[method] as
+        { responses?: Record<string, unknown>; requestBody?: unknown } | undefined;
       if (!operation) continue;
       const responses = (operation.responses ??= {});
 
       if (!isPublic) responses["401"] ??= problem("Falta el token, ha caducado o ha sido revocado.");
       if (scoped) responses["403"] ??= problem("El rol en la organización no alcanza para esta operación.");
       if (scoped && addressesSomething) {
-        responses["404"] ??= problem("No existe, o pertenece a otra organización: la API no distingue las dos cosas a propósito, para no confirmarle a nadie que un identificador ajeno es real.");
+        responses["404"] ??= problem(
+          "No existe, o pertenece a otra organización: la API no distingue las dos cosas a propósito, para no confirmarle a nadie que un identificador ajeno es real.",
+        );
       }
-      if (operation.requestBody) responses["422"] ??= problem("El cuerpo no supera la validación. `errors` nombra los campos.");
+      if (operation.requestBody)
+        responses["422"] ??= problem("El cuerpo no supera la validación. `errors` nombra los campos.");
       responses["429"] ??= problem("Demasiadas peticiones.");
     }
   }

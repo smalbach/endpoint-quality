@@ -23,7 +23,9 @@ const api = () => request(context.app.getHttpServer());
 const credentials = { email: "ada@example.com", password: "una-contraseña-larga", name: "Ada" };
 
 async function register(overrides: Partial<typeof credentials> = {}) {
-  return api().post("/auth/register").send({ ...credentials, ...overrides });
+  return api()
+    .post("/auth/register")
+    .send({ ...credentials, ...overrides });
 }
 async function login(overrides: Partial<typeof credentials> = {}) {
   const { email, password } = { ...credentials, ...overrides };
@@ -53,12 +55,17 @@ describe("registro", () => {
     const response = await register();
     assert.equal(response.status, 409);
     assert.equal(response.body.status, 409);
-    assert.equal([...context.repositories.users.rows.values()].filter((user) => user.email === credentials.email).length, 1);
+    assert.equal(
+      [...context.repositories.users.rows.values()].filter((user) => user.email === credentials.email).length,
+      1,
+    );
   });
 
   test("un campo no declarado se rechaza en vez de ignorarse", async () => {
     // Silently dropping `role: "owner"` would hide an attempt to send it.
-    const response = await api().post("/auth/register").send({ ...credentials, email: "x@example.com", role: "owner" });
+    const response = await api()
+      .post("/auth/register")
+      .send({ ...credentials, email: "x@example.com", role: "owner" });
     assert.equal(response.status, 422);
   });
 });
@@ -176,7 +183,10 @@ describe("rutas protegidas", () => {
 describe("cierre de sesión y cambio de contraseña", () => {
   test("el logout revoca la sesión y limpia la cookie", async () => {
     const session = (await login()).body;
-    const response = await api().post("/auth/logout").set("Authorization", `Bearer ${session.accessToken}`).send({ refreshToken: session.refreshToken });
+    const response = await api()
+      .post("/auth/logout")
+      .set("Authorization", `Bearer ${session.accessToken}`)
+      .send({ refreshToken: session.refreshToken });
     assert.equal(response.status, 204);
     assert.match((response.headers["set-cookie"] as unknown as string[])[0], /^eq_refresh=;/);
 

@@ -43,7 +43,14 @@ import { ProjectsController } from "@/modules/projects/presentation/projects.con
 import { PROJECT_COMMAND_HANDLERS, PROJECT_QUERY_HANDLERS } from "@/modules/projects/projects.module";
 import { SPEC_REPOSITORY } from "@/modules/specs/domain/ports";
 import { SPEC_COMMAND_HANDLERS, SPEC_QUERY_HANDLERS } from "@/modules/specs/specs.module";
-import { SAFE_FETCH, safeFetch, type SafeFetchPolicy, type SafeFetchPort, type SafeFetchResult, type SafeRequestOptions } from "@/shared/http/safe-fetch";
+import {
+  SAFE_FETCH,
+  safeFetch,
+  type SafeFetchPolicy,
+  type SafeFetchPort,
+  type SafeFetchResult,
+  type SafeRequestOptions,
+} from "@/shared/http/safe-fetch";
 import { SECRET_CIPHER, AesGcmSecretCipher } from "@/shared/crypto/secret-cipher";
 import { ENVIRONMENT_REPOSITORY } from "@/modules/environments/domain/ports";
 import { EnvironmentsController } from "@/modules/environments/presentation/environments.controller";
@@ -85,7 +92,10 @@ import {
  * place where the SSRF policy is decided.
  */
 export class StubSafeFetch implements SafeFetchPort {
-  readonly responses = new Map<string, { status: number; body: string; requires?: { header: string; value: string } }>();
+  readonly responses = new Map<
+    string,
+    { status: number; body: string; requires?: { header: string; value: string } }
+  >();
   readonly requested: string[] = [];
   /** What was sent, headers included. `requested` keeps only the URLs, and a credential that
    * travels in a header is invisible in a list of URLs. */
@@ -108,7 +118,9 @@ export class StubSafeFetch implements SafeFetchPort {
 
   async request(url: string, options: SafeRequestOptions): Promise<SafeFetchResult> {
     this.requested.push(url);
-    const headers = Object.fromEntries(Object.entries(options.headers ?? {}).map(([name, value]) => [name.toLowerCase(), value]));
+    const headers = Object.fromEntries(
+      Object.entries(options.headers ?? {}).map(([name, value]) => [name.toLowerCase(), value]),
+    );
     this.calls.push({ url, headers });
     const stored = this.responses.get(url);
     if (stored) {
@@ -172,7 +184,12 @@ export async function createTestApp(): Promise<TestContext> {
   };
   // Loopback is allowed here because the run tests point the engine at a stub server on
   // 127.0.0.1, which is also the ordinary self-hosted case.
-  const http = new StubSafeFetch({ allowPrivateTargets: true, maxRedirects: env.MAX_REDIRECTS, timeoutMs: 5_000, maxResponseBytes: env.MAX_RESPONSE_BYTES });
+  const http = new StubSafeFetch({
+    allowPrivateTargets: true,
+    maxRedirects: env.MAX_REDIRECTS,
+    timeoutMs: 5_000,
+    maxResponseBytes: env.MAX_RESPONSE_BYTES,
+  });
   const queue = new InMemoryRunQueue();
 
   const moduleRef = await Test.createTestingModule({
@@ -234,7 +251,12 @@ export async function createTestApp(): Promise<TestContext> {
   // contract that imports in production would fail here — or, worse, the other way round.
   app.useBodyParser("json", { limit: MAX_JSON_BODY });
   app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true, errorHttpStatusCode: HttpStatus.UNPROCESSABLE_ENTITY }),
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      errorHttpStatusCode: HttpStatus.UNPROCESSABLE_ENTITY,
+    }),
   );
   await app.init();
 

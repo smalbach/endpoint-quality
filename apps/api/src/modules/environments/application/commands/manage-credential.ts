@@ -15,12 +15,24 @@ export class UpsertCredentialCommand implements ICommand {
     readonly organizationId: string,
     readonly projectId: string,
     readonly environmentId: string,
-    readonly input: { name: string; role: CredentialRole; kind: CredentialKind; headerName?: string | null; secret: string; scopes?: string[] },
+    readonly input: {
+      name: string;
+      role: CredentialRole;
+      kind: CredentialKind;
+      headerName?: string | null;
+      secret: string;
+      scopes?: string[];
+    },
   ) {}
 }
 
 export class DeleteCredentialCommand implements ICommand {
-  constructor(readonly organizationId: string, readonly projectId: string, readonly environmentId: string, readonly role: CredentialRole) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly environmentId: string,
+    readonly role: CredentialRole,
+  ) {}
 }
 
 /**
@@ -44,13 +56,22 @@ export class UpsertCredentialHandler implements ICommandHandler<UpsertCredential
   ) {}
 
   async execute(command: UpsertCredentialCommand) {
-    const environment = await ownedEnvironment(this.projects, this.environments, command.organizationId, command.projectId, command.environmentId);
-    if (!command.input.secret) throw new InvalidInputError("Falta el secreto", [{ field: "secret", detail: "Requerido" }]);
+    const environment = await ownedEnvironment(
+      this.projects,
+      this.environments,
+      command.organizationId,
+      command.projectId,
+      command.environmentId,
+    );
+    if (!command.input.secret)
+      throw new InvalidInputError("Falta el secreto", [{ field: "secret", detail: "Requerido" }]);
     if (command.input.kind === "api_key" && !command.input.headerName) {
       // Bearer and Basic imply `Authorization`; an API key is whatever the target calls it, and
       // guessing `X-API-Key` for a target that expects something else produces a 401 that looks
       // like a finding about the endpoint.
-      throw new InvalidInputError("Una API key necesita el nombre de su cabecera", [{ field: "headerName", detail: "Requerido para kind api_key" }]);
+      throw new InvalidInputError("Una API key necesita el nombre de su cabecera", [
+        { field: "headerName", detail: "Requerido para kind api_key" },
+      ]);
     }
 
     const now = this.clock.now();
@@ -80,7 +101,13 @@ export class DeleteCredentialHandler implements ICommandHandler<DeleteCredential
   ) {}
 
   async execute(command: DeleteCredentialCommand): Promise<void> {
-    const environment = await ownedEnvironment(this.projects, this.environments, command.organizationId, command.projectId, command.environmentId);
+    const environment = await ownedEnvironment(
+      this.projects,
+      this.environments,
+      command.organizationId,
+      command.projectId,
+      command.environmentId,
+    );
     // Idempotent: deleting a credential that is already gone is the same outcome the caller
     // wanted, and reporting 404 for it only invites a retry loop.
     await this.environments.removeCredential(environment.id, command.role);

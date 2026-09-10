@@ -9,10 +9,17 @@ import { SPEC_REPOSITORY, type SpecRepositoryPort } from "../../domain/ports";
 export class GetOperationsQuery implements IQuery {
   /** `specVersionId` absent means the project's active version, which is what every caller
    * wants except the drift view. */
-  constructor(readonly organizationId: string, readonly projectId: string, readonly specVersionId?: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly specVersionId?: string,
+  ) {}
 }
 export class ListSpecVersionsQuery implements IQuery {
-  constructor(readonly organizationId: string, readonly projectId: string) {}
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+  ) {}
 }
 
 export type OperationsView = {
@@ -33,13 +40,15 @@ export class GetOperationsHandler implements IQueryHandler<GetOperationsQuery, O
 
   async execute(query: GetOperationsQuery): Promise<OperationsView> {
     const project = await this.projects.findById(query.projectId);
-    if (!project || project.organizationId !== query.organizationId) throw new NotFoundError("El proyecto no existe", "project-not-found");
+    if (!project || project.organizationId !== query.organizationId)
+      throw new NotFoundError("El proyecto no existe", "project-not-found");
 
     const versionId = query.specVersionId ?? project.activeSpecVersionId;
     if (!versionId) throw new ConflictError("El proyecto todavía no tiene contrato importado", "no-active-spec");
 
     const version = await this.specs.findVersionById(versionId);
-    if (!version || version.projectId !== project.id) throw new NotFoundError("La versión no existe", "spec-version-not-found");
+    if (!version || version.projectId !== project.id)
+      throw new NotFoundError("La versión no existe", "spec-version-not-found");
 
     const operations = await this.specs.listOperations(version.id);
     return {
@@ -52,7 +61,10 @@ export class GetOperationsHandler implements IQueryHandler<GetOperationsQuery, O
 }
 
 @QueryHandler(ListSpecVersionsQuery)
-export class ListSpecVersionsHandler implements IQueryHandler<ListSpecVersionsQuery, { active: string | null; versions: SpecVersionSummary[] }> {
+export class ListSpecVersionsHandler implements IQueryHandler<
+  ListSpecVersionsQuery,
+  { active: string | null; versions: SpecVersionSummary[] }
+> {
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(SPEC_REPOSITORY) private readonly specs: SpecRepositoryPort,
@@ -60,7 +72,8 @@ export class ListSpecVersionsHandler implements IQueryHandler<ListSpecVersionsQu
 
   async execute(query: ListSpecVersionsQuery) {
     const project = await this.projects.findById(query.projectId);
-    if (!project || project.organizationId !== query.organizationId) throw new NotFoundError("El proyecto no existe", "project-not-found");
+    if (!project || project.organizationId !== query.organizationId)
+      throw new NotFoundError("El proyecto no existe", "project-not-found");
     // Summaries, never the raw documents: ten versions of a 120 KB contract is 1.2 MB the
     // browser has no use for.
     return { active: project.activeSpecVersionId, versions: await this.specs.listVersions(project.id) };

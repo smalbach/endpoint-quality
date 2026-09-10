@@ -13,7 +13,11 @@ export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
 }
 
 export function Badge({ className, children }: { className?: string; children: ReactNode }) {
-  return <span className={cn("inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium", className)}>{children}</span>;
+  return (
+    <span className={cn("inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium", className)}>
+      {children}
+    </span>
+  );
 }
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "ghost" | "danger" };
@@ -24,17 +28,40 @@ export function Button({ className, variant = "primary", ...props }: ButtonProps
     ghost: "border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-40",
     danger: "bg-rose-600 text-white hover:bg-rose-500 disabled:bg-rose-300",
   }[variant];
-  return <button className={cn("inline-flex h-9 items-center justify-center rounded-lg px-3 text-sm font-medium transition-colors disabled:cursor-not-allowed", styles, className)} {...props} />;
+  return (
+    <button
+      className={cn(
+        "inline-flex h-9 items-center justify-center rounded-lg px-3 text-sm font-medium transition-colors disabled:cursor-not-allowed",
+        styles,
+        className,
+      )}
+      {...props}
+    />
+  );
 }
 
-export function Field({ label, hint, error, children }: { label: string; hint?: string; error?: string; children: ReactNode }) {
+export function Field({
+  label,
+  hint,
+  error,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  error?: string;
+  children: ReactNode;
+}) {
   return (
     <label className="block">
       <span className="text-xs font-medium text-slate-600">{label}</span>
       {children}
       {/* The error wins over the hint: when both are present the hint is what the person already
           read and did not help. */}
-      {error ? <span className="mt-1 block text-xs text-rose-600">{error}</span> : hint ? <span className="mt-1 block text-xs text-slate-400">{hint}</span> : null}
+      {error ? (
+        <span className="mt-1 block text-xs text-rose-600">{error}</span>
+      ) : hint ? (
+        <span className="mt-1 block text-xs text-slate-400">{hint}</span>
+      ) : null}
     </label>
   );
 }
@@ -54,7 +81,11 @@ export function Empty({ title, hint, action }: { title: string; hint?: string; a
 
 export function Json({ value, empty = "Sin contenido" }: { value: unknown; empty?: string }) {
   if (value === undefined || value === null || value === "") {
-    return <div className="grid min-h-32 place-items-center rounded-xl border border-dashed border-slate-700 bg-slate-950 text-sm text-slate-500">{empty}</div>;
+    return (
+      <div className="grid min-h-32 place-items-center rounded-xl border border-dashed border-slate-700 bg-slate-950 text-sm text-slate-500">
+        {empty}
+      </div>
+    );
   }
   return (
     <pre className="max-h-96 min-h-32 overflow-auto rounded-xl bg-slate-950 p-4 text-xs leading-6 text-slate-300">
@@ -68,7 +99,12 @@ export function Json({ value, empty = "Sin contenido" }: { value: unknown; empty
 export function AssertionRow({ label, pass, detail }: { label: string; pass: boolean; detail: string }) {
   return (
     <div className="flex items-start gap-2 border-b border-slate-100 py-2 last:border-b-0">
-      <span className={cn("mt-0.5 grid size-4 shrink-0 place-items-center rounded-full text-[10px] font-bold text-white", pass ? "bg-emerald-500" : "bg-rose-500")}>
+      <span
+        className={cn(
+          "mt-0.5 grid size-4 shrink-0 place-items-center rounded-full text-[10px] font-bold text-white",
+          pass ? "bg-emerald-500" : "bg-rose-500",
+        )}
+      >
         {pass ? "✓" : "✗"}
       </span>
       <div className="min-w-0">
