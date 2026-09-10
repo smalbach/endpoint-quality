@@ -945,3 +945,82 @@ Suites: runner-core **116** · spec-import 35 · api **206** · api/Postgres **2
 - La suite de la API es **intermitente**: en cinco ejecuciones completas dos fallaron, cada vez en
   un test distinto y ninguna reproducible. Coincide con el `signUp` intermitente que ya estaba
   anotado y sigue sin reproducirse a propósito.
+
+## Lo que se trajo del analizador de seguridad
+
+Dos repos de referencia —`security-analyzer` y su front— y una pregunta: qué tienen ellos que aquí
+falte, en pruebas, flujos y variables de entorno.
+
+**En pruebas, nada.** Los dos repos tienen cero ficheros de test. El back trae `jest` configurado
+en `package.json` con su `testRegex` y ni un solo `.spec.ts`; el front no declara ni el script.
+Aquí ya había `node --test` con dobles en memoria, vitest, la matriz dorada, la paridad contra el
+dashboard acoplado y un CI con Postgres de servicio. No había nada que aplicar, y decirlo es parte
+del análisis: la comparación honesta es la que también informa de las casillas en las que el otro
+proyecto está detrás.
+
+**En variables de proceso, tampoco.** Allí `process.env` en crudo; aquí un esquema de zod validado
+al arrancar. Lo que sí faltaba era la otra cosa que se llama igual: las variables _del producto_.
+
+### Una variable pasa a tener tres campos
+
+`{ initial, current, sensitive }`. Los dos primeros son el par de Postman y existen porque depurar
+con un token de usar y tirar reescribía lo que se lleva el siguiente que clona el proyecto. El
+tercero decide tres cosas a la vez: AES-256-GCM en la columna, ocho puntos en la respuesta, y esos
+ocho puntos volviendo en un `PATCH` significan «déjalo como estaba».
+
+Lo último es la parte que la implementación evidente hace mal, y el repo de referencia la hace mal:
+su `update` cifra lo que le llegue, máscara incluida, así que guardar el formulario sin tocar el
+secreto lo convierte en `••••••••` y la corrida empieza a presentar ocho puntos como token. Aquí la
+máscara es un centinela, y destaparla es su propia petición con rol `admin` en vez de un
+`?reveal=true` sobre la lista: un parámetro en la lista deja la lectura ordinaria y la sensible en
+la misma línea de un registro.
+
+### Un paso deja de ser solo una petición
+
+El motor comprobaba lo que se le puede exigir a un contrato. Un paso ahora afirma además lo suyo
+—doce operadores sobre estado, cuerpo, cabecera o duración—, se reintenta con espera y factor
+acotables por estado, y dice qué pasa si falla: saltar lo que dependa, continuar, o detener el
+flujo. Y puede esperar antes, condicionarse sobre lo que contestó otro paso, o recorrer una lista
+que otro devolvió, un caso por elemento.
+
+Tres decisiones que no se copiaron:
+
+- **No hay tipos de nodo.** Allí `condition`, `loop` y `delay` son nodos; aquí son propiedades del
+  paso. Todo lo que una corrida registra es sobre una petición que se hizo, y un nodo de condición
+  —que no la tiene— sería una fila de `run_cases` que significa otra cosa que el resto de la tabla.
+- **No hay nodo `script`.** Su sandbox es `node:vm`, que no es un límite de seguridad: ejecutar ahí
+  código de quien usa el producto es una fuga conocida a `process` por los constructores de
+  cualquier objeto que se filtre. Si se mete, va en un proceso aparte con límites, no en
+  `runInContext`.
+- **Las comprobaciones que pasan salen en el informe.** Una comprobación que desaparece cuando
+  acierta es una comprobación que nadie puede decir que se ejecutó, que es el mismo fallo que un
+  tic verde que no afirma nada.
+
+`Assertion` gana `severity`, y con ella la deriva: los campos que una respuesta trae y su propio
+documento no declara se informan como aviso. `additionalProperties: false` es lo que convierte «no
+declarado» en «prohibido», y eso lo decide el esquema, no el motor. `holds()` es el único sitio que
+decide qué cuenta como pasar, porque los cuatro que lo decidían por su cuenta tenían que ponerse de
+acuerdo el día que apareció el primer aviso.
+
+### Datos y suites
+
+Un flujo se recorre una vez por fila de un conjunto de datos, y varios flujos se encadenan en una
+suite con un solo veredicto. El anidamiento decide qué comparte con qué: una fila es un recorrido
+independiente —las variables vuelven a las del entorno— y los flujos dentro de una fila sí las
+comparten, porque una suite cuyo primer flujo inicia sesión y cuyos ocho siguientes la gastan es
+justo para lo que existen.
+
+Las listas van en `jsonb` y no en tablas de filas, por el mismo motivo por el que el flujo guarda
+su grafo en una columna: lo que cambia es la lista entera. Lo que cuesta es la cascada —borrar un
+flujo que una suite nombra es 409— que es la respuesta que este producto ya daba en cualquier otro
+sitio donde existiera una referencia.
+
+Suites: runner-core **132** · spec-import 35 · api **233** · api/Postgres 22 · web **80**.
+
+### Lo que queda
+
+- La intermitencia de la suite de la API **sigue ahí y no la trajo esto**: en el árbol limpio, sin
+  ningún cambio, una de cada cinco ejecuciones falla. Los síntomas cambian —un 404 en `/scenarios`,
+  un 401 al crear un proyecto, un 400 al importar el contrato— y ninguno reproduce en solitario.
+- La interfaz de todo esto está comprobada por tipos y por las funciones puras que la sostienen,
+  pero **no se ha abierto en un navegador**.
