@@ -18,6 +18,7 @@ import { useMutation } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { AssertionRow, Badge, Button, Json } from "@/components/ui";
 import { cn, formatBytes, formatDuration, httpStatusStyle } from "@/lib/format";
+import { maskedHeaders, toCurl } from "@/lib/curl";
 import { previewBodyFor } from "@/lib/request-preview";
 import type { RequestPreviewView, RequestTemplateView } from "@/lib/types";
 
@@ -49,6 +50,8 @@ export function RequestPreviewPanel({
   canSend: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("body");
+  const [copied, setCopied] = useState(false);
+  const [showingCurl, setShowingCurl] = useState(false);
   const send = useMutation({
     mutationFn: () =>
       api<RequestPreviewView>(`${base}/request-preview`, {
@@ -58,6 +61,31 @@ export function RequestPreviewPanel({
   });
 
   const preview = send.data;
+  const redacted = preview ? maskedHeaders(preview.request.headers) : [];
+  const curl = preview ? toCurl(preview.request) : "";
+
+  /**
+   * The command is **shown** and, if the browser lets it, also copied.
+   *
+   * Shown first and copied second, because the copy is the half that can fail invisibly:
+   * `navigator.clipboard` throws outside a secure context and in a window that is not focused, and
+   * the first version answered that by quietly switching to another tab — somebody pressed «cURL»,
+   * got a JSON tree, and had no way to know whether anything had been copied. A block they can
+   * select is the version that has no failure mode.
+   */
+  async function copyCurl() {
+    if (!preview) return;
+    setShowingCurl(true);
+    try {
+      await navigator.clipboard.writeText(curl);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 4000);
+    } catch {
+      // Nothing to report: the command is on screen either way, which is what the button promised.
+      setCopied(false);
+    }
+  }
+
   return (
     <div className="mt-3 rounded-lg border border-slate-200 p-2">
       <div className="flex items-center gap-2">
@@ -120,7 +148,7 @@ export function RequestPreviewPanel({
             <p className="mb-2 text-[11px] text-slate-500">Ninguna comprobación llegó a evaluarse.</p>
           )}
 
-          <div className="flex gap-1 border-b border-slate-200">
+          <div className="flex items-center gap-1 border-b border-slate-200">
             {TABS.map((entry) => (
               <button
                 key={entry.id}
@@ -134,6 +162,17 @@ export function RequestPreviewPanel({
                 {entry.label}
               </button>
             ))}
+            <button
+              type="button"
+              className={cn(
+                "ml-auto px-2 py-1 text-[11px]",
+                showingCurl ? "font-semibold text-slate-800" : "text-slate-500 hover:text-slate-800",
+              )}
+              title="La petición como un comando curl"
+              onClick={() => (showingCurl ? setShowingCurl(false) : void copyCurl())}
+            >
+              {copied ? "copiado" : "cURL"}
+            </button>
           </div>
 
           <div className="mt-2">
@@ -143,6 +182,22 @@ export function RequestPreviewPanel({
                 because this is the panel somebody copies a request out of. */}
             {tab === "request" && <Json value={preview.request} />}
           </div>
+
+          {showingCurl && (
+            <div className="mt-2">
+              <pre className="overflow-x-auto rounded-lg bg-slate-900 p-2 font-mono text-[10px] leading-4 text-slate-100">
+                {curl}
+              </pre>
+              {/* Said under the command and not as an error: it is the honest consequence of the
+                  API never sending a credential back, and mostly a feature — a cURL pasted into a
+                  ticket is a cURL somebody's staging token would otherwise have travelled in. */}
+              {redacted.length > 0 && (
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Rellena {redacted.join(", ")}: la credencial no sale de la API ni siquiera para esto.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
