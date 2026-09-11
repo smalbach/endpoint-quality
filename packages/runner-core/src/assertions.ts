@@ -29,6 +29,8 @@ export type EvaluateInput = {
   method: string;
   operationPath: string;
   expectedStatus: number;
+  /** Statuses that also pass. See {@link TestScenario.alsoAccepted}. */
+  alsoAccepted?: number[];
   /** The envelope the case expects: the project's shape for a success, its error shape for a 4xx
    * or 5xx. Only consulted where the contract declares no schema. */
   expectedShape: string;
@@ -66,7 +68,10 @@ export function evaluateResponse(input: EvaluateInput): Evaluation {
   const { actual } = input;
   const notImplemented = actual.status === NOT_IMPLEMENTED && input.expectedStatus !== NOT_IMPLEMENTED;
 
-  const statusMatches = actual.status === input.expectedStatus;
+  // `alsoAccepted` is empty on everything the matrix generates, so this is the plain equality it
+  // has always been except on a denial case — the one question where two answers are both right.
+  const accepted = input.alsoAccepted ?? [];
+  const statusMatches = actual.status === input.expectedStatus || accepted.includes(actual.status);
   const envelopeMatches = matchesShape(actual, input.expectedShape, input.errorShape);
   const contentTypeMatches = input.expectedShape === "No body" || actual.contentType.includes("json");
 
@@ -78,7 +83,9 @@ export function evaluateResponse(input: EvaluateInput): Evaluation {
 
   const assertions: Assertion[] = [
     {
-      label: `Status ${input.expectedStatus}`,
+      // The label names every code that would have passed. `Status 403` over a case that also
+      // accepts 404 would report a green pass against a claim it did not make.
+      label: `Status ${[input.expectedStatus, ...accepted].join(" o ")}`,
       pass: statusMatches,
       detail: notImplemented
         ? `Recibido 405: ${input.method} ${input.operationPath} no está implementado en la API`

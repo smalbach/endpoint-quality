@@ -53,6 +53,49 @@ export type AuthRule = {
   description?: string;
 };
 
+/**
+ * Who is allowed to reach an operation, and who must be refused.
+ *
+ * The question the generated matrix cannot ask. It derives everything from what the contract
+ * declares, and a contract declares that `403` is a possible answer — never *to whom*. «El rol
+ * vendedor no debe poder leer un pedido ajeno» is knowledge about the business, so it is written
+ * down rather than inferred, and this is where.
+ *
+ * `allow` and `deny` are both listed, and neither is the complement of the other on purpose. A
+ * role nobody mentioned is a role this project has not decided about, and generating a case for it
+ * would be the tool inventing a requirement — the same mistake as assuming every operation is
+ * implemented. Silence means «todavía no se ha dicho», never «no debe pasar».
+ */
+export type AccessRule = {
+  operationId: string;
+  /** Roles that must reach it: one case each, expecting the operation's declared success. */
+  allow: string[];
+  /** Roles that must be refused: one case each, expecting a denial. */
+  deny: string[];
+};
+
+/**
+ * A resource one role creates and another must not reach. The BOLA/IDOR case.
+ *
+ * It cannot be a single request, and that is the whole difficulty: to prove that `vendedor` cannot
+ * read `comprador`'s order there has to *be* an order of `comprador`'s, created in this run, with
+ * an id nobody guessed. So the case is two steps — create as `source`, then reach as `target` —
+ * and what it asserts is about the second.
+ *
+ * `allowed` exists because the interesting matrix has both: a support role that *should* see
+ * another's order is a rule worth asserting too, and an API that quietly stopped letting it is the
+ * same class of bug pointing the other way.
+ */
+export type CrossRoleRule = {
+  source: string;
+  target: string;
+  /** The operation that creates the resource, run as `source`. */
+  createOperationId: string;
+  /** The operation `target` then tries, whose last path placeholder takes the created id. */
+  operationId: string;
+  allowed: boolean;
+};
+
 export type BodyTemplate = {
   body?: Record<string, unknown>;
   /** A payload that collides with the resource's natural key, for a declared 409. */
@@ -153,6 +196,25 @@ export type ProjectConfig = {
    * which is the honest default for a project that has not said. */
   implemented: string[] | null;
 
+  /**
+   * §4 — who may reach what, which the contract does not say.
+   *
+   * `roles` is declared here and not read off the environment's credentials, because «esta API
+   * tiene estos roles» is true of the project while «este token es el del vendedor» is true of one
+   * environment. Reading them off an environment would make the matrix change shape depending on
+   * where it was launched, and two environments of one project would disagree about how many cases
+   * the project has.
+   */
+  access: {
+    roles: string[];
+    /** What counts as «no pudo». Both by default, and the order matters only for the label: a
+     * well-built API answers 404 to hide existence and an ordinary one answers 403, and putting
+     * either in red would be asserting a coding style rather than a permission. */
+    deniedStatuses: number[];
+    rules: AccessRule[];
+    crossRole: CrossRoleRule[];
+  };
+
   authRules: AuthRule[];
   /** Operations the authorization matrix does not apply to at all — a public health probe. */
   authExcludedOperationIds: string[];
@@ -194,6 +256,9 @@ export const DEFAULT_CONFIG: ProjectConfig = {
   missingIdValue: "999999",
   bodyTemplates: {},
   implemented: null,
+  // Empty, like every other list here: a project that has not written down who its roles are has
+  // not decided, and generating a permission case from silence would be inventing a requirement.
+  access: { roles: [], deniedStatuses: [403, 404], rules: [], crossRole: [] },
   authRules: [
     { id: "auth-none", credential: "none", expectedStatus: 401, when: { declaredStatus: 401 }, sendBody: true },
     {

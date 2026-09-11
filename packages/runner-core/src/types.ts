@@ -85,6 +85,18 @@ export type TestScenario = {
   expectedStatus: number;
   parameters?: Record<string, string>;
   /**
+   * Other statuses that also count as a pass, beside `expectedStatus`.
+   *
+   * Empty on everything the contract-derived matrix generates: a case built from a declared 201
+   * asserts 201, and «o cualquier otro» would be the assertion admitting it does not know what it
+   * is asserting. It exists for the one question where two answers are both right — **denying
+   * access**. A well-built API hides existence: asking for somebody else's order should be 404,
+   * because a 403 confirms the id exists. Demanding 403 would put the better-built API in red, and
+   * demanding 404 would do the same to a merely ordinary one. The finding is «el otro rol pudo
+   * leerlo», so what is asserted is «no pudo», and both codes say that.
+   */
+  alsoAccepted?: number[];
+  /**
    * The JSON payload, which is the only kind the generated matrix has.
    *
    * It derives what it sends from JSON Schema and from the project's `bodies` section, so by

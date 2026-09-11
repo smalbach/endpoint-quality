@@ -746,6 +746,86 @@ describe("credenciales del destino", () => {
     assert.equal(older.status, 204, JSON.stringify(older.body));
   });
 
+  /**
+   * La sección que dice quién puede llegar a qué, que es lo que un contrato no declara.
+   *
+   * Un contrato declara que `403` es una respuesta posible, nunca **a quién**. Por eso esta
+   * sección se escribe a mano y por eso las dos listas se guardan las dos: un rol que no aparece en
+   * ninguna es uno sobre el que este proyecto todavía no ha decidido, y darlo por denegado sería la
+   * herramienta inventándose un requisito.
+   */
+  test("la sección access se escribe y se lee como cualquier otra", async () => {
+    const written = await api()
+      .put(`${base}/config/access`)
+      .set(as(owner))
+      .send({
+        access: {
+          roles: ["vendedor", "comprador"],
+          deniedStatuses: [403, 404],
+          rules: [{ operationId: "getStore", allow: ["comprador"], deny: ["vendedor"] }],
+          crossRole: [],
+        },
+      });
+    assert.equal(written.status, 204, JSON.stringify(written.body));
+    const section = (await api().get(`${base}/config`).set(as(owner))).body.sections.access;
+    assert.deepEqual(section.data.access.rules[0], {
+      operationId: "getStore",
+      allow: ["comprador"],
+      deny: ["vendedor"],
+    });
+  });
+
+  test("el mismo rol en allow y en deny se rechaza con su ruta", async () => {
+    // Una regla que dice las dos cosas significa lo que signifique la lista que se mire primero.
+    const response = await api()
+      .put(`${base}/config/access`)
+      .set(as(owner))
+      .send({
+        access: {
+          roles: ["vendedor"],
+          deniedStatuses: [403],
+          rules: [{ operationId: "getStore", allow: ["vendedor"], deny: ["vendedor"] }],
+          crossRole: [],
+        },
+      });
+    assert.equal(response.status, 422, JSON.stringify(response.body));
+    assert.equal(response.body.errors[0].field, "access.rules.0.deny");
+  });
+
+  test("un código de éxito no puede contar como rechazo", async () => {
+    // Sin esto se podría escribir una matriz que pasa por definición.
+    const response = await api()
+      .put(`${base}/config/access`)
+      .set(as(owner))
+      .send({ access: { roles: ["vendedor"], deniedStatuses: [200], rules: [], crossRole: [] } });
+    assert.equal(response.status, 422, JSON.stringify(response.body));
+  });
+
+  test("un rol contra sí mismo no es un caso entre roles", async () => {
+    // Escrito aquí afirmaría lo contrario de lo que parece: eso es la fila `allow` de la matriz.
+    const response = await api()
+      .put(`${base}/config/access`)
+      .set(as(owner))
+      .send({
+        access: {
+          roles: ["vendedor"],
+          deniedStatuses: [403],
+          rules: [],
+          crossRole: [
+            {
+              source: "vendedor",
+              target: "vendedor",
+              createOperationId: "createStore",
+              operationId: "getStore",
+              allowed: false,
+            },
+          ],
+        },
+      });
+    assert.equal(response.status, 422, JSON.stringify(response.body));
+    assert.equal(response.body.errors[0].field, "access.crossRole.0.target");
+  });
+
   test("una URL base que no es http(s) se rechaza al escribirla", async () => {
     const response = await api()
       .post(`${base}/environments`)

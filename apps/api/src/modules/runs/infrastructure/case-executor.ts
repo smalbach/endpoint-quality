@@ -247,14 +247,20 @@ export class CaseExecutor {
     // `step.method` is a string on the request because a flow can add a step for an operation
     // the contract types differently; the budget matcher wants the narrowed union.
     const budget = budgetFor(input.config, step.method as HttpMethod, step.operationPath, step.requestPath);
+    // The schema is looked up for the status that actually came back **when that status was one
+    // the case accepted**. A denial case that expects 403 and correctly receives 404 would
+    // otherwise be validated against the 403 schema, and the shape assertion would fail over a
+    // response that is exactly right.
+    const forStatus = (step.alsoAccepted ?? []).includes(actual.status) ? actual.status : step.expectedStatus;
     const declared = input.target.spec
-      ? responseSchema(input.target.spec, step.operationPath, step.method, step.expectedStatus, actual.contentType)
+      ? responseSchema(input.target.spec, step.operationPath, step.method, forStatus, actual.contentType)
       : undefined;
 
     const verdict = evaluateResponse({
       method: step.method,
       operationPath: step.operationPath,
       expectedStatus: step.expectedStatus,
+      ...(step.alsoAccepted?.length ? { alsoAccepted: step.alsoAccepted } : {}),
       expectedShape: step.expectedShape,
       errorShape: input.config.envelope.errorShape,
       actual,

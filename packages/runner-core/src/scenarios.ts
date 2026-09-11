@@ -6,7 +6,7 @@
  * edges, then the authorization matrix, deduplicated by id — because that order is observable
  * in the queue and is pinned by the golden. What changed is where the values come from.
  */
-import type { Operation, ResolvedOperation, ScenarioFlow, TestScenario } from "./types.ts";
+import { ROLE_PREFIX, type Operation, type ResolvedOperation, type ScenarioFlow, type TestScenario } from "./types.ts";
 import type { ConditionalScenario, ProjectConfig, ScenarioTemplate } from "./config.ts";
 import { parametersFor, toSample } from "./config.ts";
 import { interpolate } from "./text.ts";
@@ -153,6 +153,70 @@ function defaultAuthText(credential: string, config: ProjectConfig): { name: str
   if (credential === "insufficient")
     return { name: config.text.authInsufficientName, description: config.text.authInsufficientDescription };
   return { name: config.text.authApiKeyName, description: config.text.authApiKeyDescription };
+}
+
+/**
+ * One case per cell of the permission matrix: this role must reach this operation, that one must
+ * not.
+ *
+ * Generated from what the project **wrote down**, which is the difference from every other block
+ * in this file. The rest derive their cases from the contract — an operation that stops declaring
+ * 403 stops getting the case — and a contract cannot declare *who* may reach it. That sentence is
+ * knowledge about the business, so it is read from `access.rules` and from nowhere else: a role
+ * that appears in neither list generates nothing, because silence is «todavía no se ha dicho» and
+ * not «no debe pasar».
+ *
+ * The allow case asserts the operation's own declared success, so an endpoint that answers 403 to
+ * somebody who should get through fails for the right reason. The deny case asserts a refusal and
+ * accepts every code the project listed as one — both 403 and 404 by default, because a
+ * well-built API hides existence and demanding either alone would put a coding style in red.
+ *
+ * The payload travels with a write, exactly as it does in the 401/403 matrix: «este rol no puede
+ * crear un pedido» is only meaningful if the request is otherwise valid, and one refused for a
+ * malformed body proves nothing about permissions.
+ */
+function accessScenarios(operation: ResolvedOperation, config: ProjectConfig): TestScenario[] {
+  const scenarios: TestScenario[] = [];
+  const denied = config.access.deniedStatuses;
+  const success = operation.statuses.filter((status) => status >= 200 && status < 300).sort((a, b) => a - b);
+
+  for (const rule of config.access.rules) {
+    if (rule.operationId !== operation.id) continue;
+    for (const role of rule.allow) {
+      scenarios.push({
+        id: `access-allow-${role}`,
+        name: interpolate(config.text.accessAllowName, { role }),
+        description: interpolate(config.text.accessAllowDescription, {
+          role,
+          method: operation.method,
+          path: operation.path,
+        }),
+        // The contract's own success code. A hardcoded 200 would fail every allowed role on a POST
+        // that correctly answers 201, and the report would blame the permission.
+        expectedStatus: success[0] ?? 200,
+        flow: "request",
+        auth: `${ROLE_PREFIX}${role}`,
+        ...(operation.body ? { body: operation.body } : {}),
+      });
+    }
+    for (const role of rule.deny) {
+      scenarios.push({
+        id: `access-deny-${role}`,
+        name: interpolate(config.text.accessDenyName, { role }),
+        description: interpolate(config.text.accessDenyDescription, {
+          role,
+          method: operation.method,
+          path: operation.path,
+        }),
+        expectedStatus: denied[0],
+        ...(denied.length > 1 ? { alsoAccepted: denied.slice(1) } : {}),
+        flow: "request",
+        auth: `${ROLE_PREFIX}${role}`,
+        ...(operation.body ? { body: operation.body } : {}),
+      });
+    }
+  }
+  return scenarios;
 }
 
 /** The 404 of a write over a missing id, the 422 of a payload that does not validate, and the
@@ -328,6 +392,7 @@ export function scenariosFor(operation: ResolvedOperation, config: ProjectConfig
     ...functionalScenarios(operation, config),
     ...writeEdgeScenarios(operation, config),
     ...authScenarios(operation, config),
+    ...accessScenarios(operation, config),
   ];
   return all.filter((scenario, index) => all.findIndex((other) => other.id === scenario.id) === index);
 }

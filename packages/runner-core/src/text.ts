@@ -22,6 +22,15 @@ export type TextBundle = {
   authInsufficientDescription: string;
   authApiKeyName: string;
   authApiKeyDescription: string;
+  accessAllowName: string;
+  accessAllowDescription: string;
+  accessDenyName: string;
+  accessDenyDescription: string;
+  crossRoleDeniedName: string;
+  crossRoleDeniedDescription: string;
+  crossRoleAllowedName: string;
+  crossRoleAllowedDescription: string;
+  crossRoleCreateLabel: string;
   notFoundWriteName: string;
   notFoundWriteDescription: string;
   invalidBodyName: string;
@@ -57,6 +66,17 @@ export const es: TextBundle = {
   authInsufficientDescription: "Un token de {{scope}} no alcanza para esta operación.",
   authApiKeyName: "API key en un DELETE",
   authApiKeyDescription: "Los DELETE no declaran ApiKeyAuth: una key válida es 401, no 403 (D-29).",
+  accessAllowName: "{{role}} debe pasar",
+  accessAllowDescription: "El rol {{role}} tiene permiso sobre {{method}} {{path}} y debe alcanzarlo.",
+  accessDenyName: "{{role}} no debe pasar",
+  accessDenyDescription: "El rol {{role}} no tiene permiso sobre {{method}} {{path}}: la API debe rechazarlo.",
+  crossRoleDeniedName: "{{target}} sobre lo de {{source}}",
+  crossRoleDeniedDescription:
+    "Se crea un recurso como {{source}} y se intenta alcanzar como {{target}}, que no debe poder verlo.",
+  crossRoleAllowedName: "{{target}} sobre lo de {{source}}, permitido",
+  crossRoleAllowedDescription:
+    "Se crea un recurso como {{source}} y se alcanza como {{target}}, que sí debe poder verlo.",
+  crossRoleCreateLabel: "Crear el recurso como {{source}}",
   notFoundWriteName: "Recurso inexistente",
   notFoundWriteDescription: "Sobre un identificador que no existe debe responder 404 y no crear nada.",
   invalidBodyName: "Payload inválido",
@@ -94,6 +114,17 @@ export const en: TextBundle = {
   authInsufficientDescription: "A {{scope}} token does not reach this operation.",
   authApiKeyName: "API key on a DELETE",
   authApiKeyDescription: "The operation declares no API key scheme: a valid key is 401, not 403.",
+  accessAllowName: "{{role}} must get through",
+  accessAllowDescription: "The {{role}} role has permission over {{method}} {{path}} and must reach it.",
+  accessDenyName: "{{role}} must not get through",
+  accessDenyDescription: "The {{role}} role has no permission over {{method}} {{path}}: the API must refuse it.",
+  crossRoleDeniedName: "{{target}} over {{source}}'s",
+  crossRoleDeniedDescription:
+    "A resource is created as {{source}} and reached for as {{target}}, which must not be able to see it.",
+  crossRoleAllowedName: "{{target}} over {{source}}'s, allowed",
+  crossRoleAllowedDescription:
+    "A resource is created as {{source}} and reached as {{target}}, which must be able to see it.",
+  crossRoleCreateLabel: "Create the resource as {{source}}",
   notFoundWriteName: "Missing resource",
   notFoundWriteDescription: "Over an identifier that does not exist it must answer 404 and create nothing.",
   invalidBodyName: "Invalid payload",

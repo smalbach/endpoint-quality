@@ -142,6 +142,54 @@ export const operationParametersSchema = z.object({
  * placeholder defaults and the missing-id value belong with the parameter samples because they
  * are all "which values do the cases use", even though they sit in different fields.
  */
+/** The same rule a variable name follows, and for the same reason: a role is written here, read
+ * back inside a case id, and typed again in every environment that supplies its credential. */
+const roleName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,19}$/, "nombre de rol inválido");
+
+/**
+ * `allow` and `deny` are both listed, and neither is the complement of the other.
+ *
+ * A role nobody mentioned is one this project has not decided about; generating a case for it
+ * would be the tool inventing a requirement. The refusal below is what stops a rule from saying
+ * both things about the same role, which is a rule whose meaning depends on which list a reader
+ * happens to look at first.
+ */
+const accessRuleSchema = z
+  .object({
+    operationId: z.string().min(1).max(200),
+    allow: z.array(roleName).default([]),
+    deny: z.array(roleName).default([]),
+  })
+  .superRefine((rule, context) => {
+    const both = rule.allow.filter((role) => rule.deny.includes(role));
+    if (both.length) {
+      context.addIssue({
+        code: "custom",
+        message: `«${both.join(", ")}» está a la vez en allow y en deny`,
+        path: ["deny"],
+      });
+    }
+    if (!rule.allow.length && !rule.deny.length) {
+      context.addIssue({ code: "custom", message: "la regla no dice nada de ningún rol", path: ["allow"] });
+    }
+  });
+
+const crossRoleRuleSchema = z
+  .object({
+    source: roleName,
+    target: roleName,
+    createOperationId: z.string().min(1).max(200),
+    operationId: z.string().min(1).max(200),
+    allowed: z.boolean(),
+  })
+  .superRefine((rule, context) => {
+    // A role reaching its own resource is not a cross-role case, it is the `allow` row of the
+    // matrix above — and written here it would assert the opposite of what it looks like.
+    if (rule.source === rule.target) {
+      context.addIssue({ code: "custom", message: "origen y destino son el mismo rol", path: ["target"] });
+    }
+  });
+
 export const configSections = {
   parameters: z.object({
     parameterSamples: z.record(z.string(), z.array(sampleValueSchema)),
@@ -161,6 +209,19 @@ export const configSections = {
     bulkOperationIdPrefix: z.string().optional(),
   }),
   bodies: z.object({ bodyTemplates: z.record(z.string(), bodyTemplateSchema) }),
+  access: z.object({
+    access: z.object({
+      /** Declared here and not read off an environment's credentials: «esta API tiene estos roles»
+       * is true of the project, «este token es el del vendedor» is true of one environment. */
+      roles: z.array(roleName),
+      // At least one, because a rule that denies nothing asserts nothing. Capped at the codes an
+      // HTTP refusal can actually be: accepting 200 here would let a project write a matrix that
+      // passes by definition.
+      deniedStatuses: z.array(z.number().int().min(400).max(499)).min(1).max(4).default([403, 404]),
+      rules: z.array(accessRuleSchema).default([]),
+      crossRole: z.array(crossRoleRuleSchema).default([]),
+    }),
+  }),
   authorization: z.object({
     authRules: z.array(authRuleSchema),
     authExcludedOperationIds: z.array(z.string()),

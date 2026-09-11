@@ -54,6 +54,8 @@ export type StepRequest = {
    * the generated matrix; only a saved request has any. */
   headers?: Record<string, string>;
   expectedStatus: number;
+  /** Statuses that also pass. Only a denial case has any; see {@link TestScenario.alsoAccepted}. */
+  alsoAccepted?: number[];
   expectedShape: string;
   /** Which credential to present. `default` is the working one. */
   auth: TestScenario["auth"];
@@ -130,6 +132,7 @@ function step(
     ...(partial.body ? { body: partial.body } : {}),
     ...(partial.payload ? { payload: partial.payload } : {}),
     ...(partial.headers ? { headers: partial.headers } : {}),
+    ...(partial.alsoAccepted?.length ? { alsoAccepted: partial.alsoAccepted } : {}),
     expectedStatus: partial.expectedStatus,
     expectedShape: expectedShapeFor(operation, partial.expectedStatus, context.config),
     auth: partial.auth ?? context.scenario.auth ?? "default",
@@ -163,6 +166,7 @@ export function* planFlow(context: FlowContext): Generator<StepRequest, void, St
     ...(scenario.parameters ? { parameters: scenario.parameters } : {}),
     ...(scenario.body ? { body: scenario.body } : {}),
     ...(scenario.payload ? { payload: scenario.payload } : {}),
+    ...(scenario.alsoAccepted?.length ? { alsoAccepted: scenario.alsoAccepted } : {}),
     // On the step the scenario is *about*, and on no other. The prepare and cleanup steps are
     // operations this flow invented to make the case runnable, and a `Content-Type` somebody wrote
     // next to an XML payload is wrong on the JSON create that precedes it. A saved request plans
