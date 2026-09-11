@@ -77,7 +77,12 @@ async function projectAgainst(
     await api()
       .put(`${projectBase}/config/bodies`)
       .set(as(owner))
-      .send({ bodyTemplates: { createThing: { body: { name: "creado", size: 7 } } } });
+      .send({
+        bodyTemplates: {
+          createThing: { body: { name: "creado", size: 7 } },
+          createSession: { body: { email: "quien@ejemplo.com", password: "una-contraseña" } },
+        },
+      });
   }
   await api()
     .put(`${projectBase}/config/parameters`)
@@ -1555,5 +1560,108 @@ describe("conjuntos de datos y suites", () => {
     const rows = await api().get(`${project.projectBase}/datasets/${dataset.body.datasetId}`).set(as(owner));
     assert.deepEqual(rows.body.rows, [{ nombre: "primera" }, { nombre: "segunda" }]);
     await project.target.stop();
+  });
+});
+
+/**
+ * Un paso inicia sesión y los siguientes gastan lo que contestó.
+ *
+ * Lo que sustituye: alguien pega un token en el entorno a mano y lo vuelve a pegar cuando caduca,
+ * con lo que cada suite es algo que hay que vigilar. Un flujo que se autentica contra el destino
+ * que está probando es la forma normal de una API de verdad.
+ */
+describe("la credencial que consigue la propia corrida", () => {
+  async function loginFlow(steps: (ids: Record<string, string>) => Record<string, unknown>[]) {
+    // El destino exige credencial y el entorno no guarda ninguna: sin iniciar sesión, todo es 401.
+    const fixture = await projectAgainst({ enforcesAuth: true });
+    const send = async (body: Record<string, unknown>) => {
+      const response = await api().post(`${fixture.projectBase}/request-templates`).set(as(owner)).send(body);
+      assert.equal(response.status, 201, JSON.stringify(response.body));
+      return response.body.requestTemplateId as string;
+    };
+    const ids = {
+      login: await send({
+        name: "Iniciar sesión",
+        operationId: "createSession",
+        expectedStatus: 201,
+        body: { email: "quien@ejemplo.com", password: "una-contraseña" },
+        auth: "none",
+      }),
+      list: await send({ name: "Listar", operationId: "listThings", expectedStatus: 200 }),
+      anonymous: await send({
+        name: "Listar sin credencial",
+        operationId: "listThings",
+        expectedStatus: 401,
+        auth: "none",
+      }),
+    };
+    const workflow = await api()
+      .post(`${fixture.projectBase}/workflows`)
+      .set(as(owner))
+      .send({ name: "Con sesión", definition: { steps: steps(ids) } });
+    assert.equal(workflow.status, 201, JSON.stringify(workflow.body));
+    return { ...fixture, workflowId: workflow.body.workflowId as string };
+  }
+
+  test("los pasos siguientes presentan el token, sin que nadie lo pegue en el entorno", async () => {
+    const flow = await loginFlow((ids) => [
+      {
+        id: "iniciar",
+        requestTemplateId: ids.login,
+        authorizes: { from: "body", path: "data.token" },
+      },
+      { id: "listar", requestTemplateId: ids.list, dependsOn: ["iniciar"] },
+    ]);
+    const { runId, run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    assert.equal(run.status, "passed", JSON.stringify(run.totals));
+
+    const login = await api().get(`${flow.projectBase}/runs/${runId}/cases/${run.cases[0].id}`).set(as(owner));
+    const obtained = login.body.steps[0].assertions.find(
+      (entry: { label: string }) => entry.label === "Sesión obtenida",
+    );
+    assert.equal(obtained.pass, true);
+    assert.match(obtained.detail, /Authorization/);
+    await flow.target.stop();
+  });
+
+  test("la sesión sustituye la credencial que funciona, y solo esa", async () => {
+    const flow = await loginFlow((ids) => [
+      { id: "iniciar", requestTemplateId: ids.login, authorizes: { from: "body", path: "data.token" } },
+      { id: "sin-credencial", requestTemplateId: ids.anonymous, dependsOn: ["iniciar"] },
+    ]);
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    // El caso que presenta `none` existe para que lo rechacen. Darle una sesión que funciona lo
+    // convertiría en un 200 verde que no demuestra nada.
+    assert.equal(run.status, "passed", JSON.stringify(run.totals));
+    assert.equal(run.cases[1].status, "passed");
+    await flow.target.stop();
+  });
+
+  test("un login que contesta otra cosa se dice en el paso que inició sesión", async () => {
+    const flow = await loginFlow((ids) => [
+      { id: "iniciar", requestTemplateId: ids.login, authorizes: { from: "body", path: "data.accessToken" } },
+      { id: "listar", requestTemplateId: ids.list, dependsOn: ["iniciar"] },
+    ]);
+    const { runId, run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    // El hallazgo es del login, no de los ocho pasos siguientes contestando 401: eso es el mismo
+    // hallazgo repetido ocho veces sin nombrarlo ni una.
+    assert.equal(run.cases[0].status, "failed");
+    const login = await api().get(`${flow.projectBase}/runs/${runId}/cases/${run.cases[0].id}`).set(as(owner));
+    const obtained = login.body.steps[0].assertions.find(
+      (entry: { label: string }) => entry.label === "Sesión obtenida",
+    );
+    assert.equal(obtained.pass, false);
+    assert.match(obtained.detail, /data\.accessToken/);
+    assert.equal(run.cases[1].status, "skipped");
+    await flow.target.stop();
   });
 });

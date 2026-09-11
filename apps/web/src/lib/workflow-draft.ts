@@ -107,6 +107,7 @@ export function toNodes(steps: WorkflowStepView[], templates: RequestTemplateVie
         checks: step.checks?.length ?? 0,
         loops: Boolean(step.forEach),
         conditional: Boolean(step.runIf),
+        authorizes: Boolean(step.authorizes),
       },
     };
   });

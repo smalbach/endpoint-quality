@@ -111,6 +111,32 @@ export type StepForEach = {
   max?: number;
 };
 
+/**
+ * The step that logs in, and what the rest of the run does with what it answered.
+ *
+ * The alternative is the one this replaces: somebody pastes a token into the environment by hand
+ * and re-pastes it when it expires, which makes every suite a thing that has to be babysat. A flow
+ * that authenticates against the target it is testing is the ordinary shape of a real API.
+ *
+ * **It is a property of the step and not a node of its own**, for the same reason the condition
+ * and the loop are: a login is a request, it has a status and a body and a verdict, and it belongs
+ * in the report as the case it is.
+ *
+ * What it publishes replaces the stored `primary` credential for every later step whose template
+ * asks for the default one — and for no other. The cases that present `none`, `insufficient` or
+ * `api-key` exist to be rejected, and handing them a working session would turn each into a green
+ * 200 that proves nothing.
+ */
+export type StepAuthorizes = {
+  /** Where the token is: a dot path into the JSON body, or the name of a response header. */
+  from: "body" | "header";
+  path: string;
+  /** The header it travels in. `Authorization` unless the target calls it something else. */
+  header?: string;
+  /** What goes in front of it. `Bearer ` by default; empty for a raw API key. */
+  scheme?: string;
+};
+
 export type WorkflowStep = {
   id: string;
   requestTemplateId: string;
@@ -120,6 +146,8 @@ export type WorkflowStep = {
   waitMs?: number;
   runIf?: StepCondition;
   forEach?: StepForEach;
+  /** What this step's response yields as the credential the rest of the run presents. */
+  authorizes?: StepAuthorizes;
   /** The visual editor stores graph edges explicitly. Empty means this is a start node. */
   dependsOn?: string[];
   captures?: WorkflowCapture[];
@@ -247,4 +275,28 @@ export function applyCaptures(
     captured.push(capture.variable);
   }
   return { captured, missing };
+}
+
+/**
+ * Reads the credential a step published.
+ *
+ * `null` when the path led nowhere, which is reported on the step rather than thrown: a login that
+ * answered 200 with a body nobody expected is a finding about the target, and the eight steps
+ * after it failing with 401 is the same finding restated eight times without ever naming it.
+ */
+export function readAuthorization(
+  authorizes: StepAuthorizes,
+  response: { body: unknown; headers: Record<string, string> },
+): { header: string; value: string } | null {
+  const found =
+    authorizes.from === "body"
+      ? valueAtPath(response.body, authorizes.path)
+      : (response.headers[authorizes.path.toLowerCase()] ?? response.headers[authorizes.path]);
+  if (found === undefined || found === null || typeof found === "object" || found === "") return null;
+  return {
+    header: authorizes.header?.trim() || "Authorization",
+    // `??` and not `||`: an empty scheme is «send the token raw», which is what an API key wants,
+    // and a default that overrode it would break exactly that case.
+    value: `${authorizes.scheme ?? "Bearer "}${String(found)}`,
+  };
 }

@@ -162,6 +162,9 @@ export type StepCheckView = {
  * it any failure is retried, and a step that writes will write once per attempt. */
 export type StepRetryView = { attempts: number; delayMs: number; backoff?: number; onStatus?: number[] };
 
+/** The token a step's response yields, and the header the rest of the run sends it in. */
+export type StepAuthorizesView = { from: "body" | "header"; path: string; header?: string; scheme?: string };
+
 /** Whether a step runs at all, decided by what a step it depends on answered. */
 export type StepConditionView = { from: string; check: StepCheckView };
 
@@ -179,6 +182,10 @@ export type WorkflowStepView = {
   waitMs?: number;
   runIf?: StepConditionView;
   forEach?: StepForEachView;
+  /** What this step's response yields as the credential the rest of the run presents. It replaces
+   * the stored working credential and nothing else: the cases that present a wrong one on purpose
+   * keep presenting it. */
+  authorizes?: StepAuthorizesView;
   checks?: StepCheckView[];
   retry?: StepRetryView;
   /** What a failure does to the rest of the flow. Absent means `skip-dependents`. */

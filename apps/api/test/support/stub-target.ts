@@ -54,6 +54,18 @@ const SPEC = {
         required: ["data"],
         properties: { data: { type: "array", items: { $ref: "#/components/schemas/Thing" } } },
       },
+      Credentials: {
+        type: "object",
+        required: ["email", "password"],
+        properties: { email: { type: "string" }, password: { type: "string" } },
+      },
+      SessionEnvelope: {
+        type: "object",
+        required: ["data"],
+        properties: {
+          data: { type: "object", required: ["token"], properties: { token: { type: "string" } } },
+        },
+      },
       Problem: {
         type: "object",
         required: ["type", "title", "status"],
@@ -112,8 +124,26 @@ const SPEC = {
       },
       delete: { operationId: "deleteThing", tags: ["Things"], responses: { "204": {}, "404": {} } },
     },
+    /** Lo que hace un destino de verdad: se inicia sesión contra él y lo demás gasta el token. */
+    "/session": {
+      post: {
+        operationId: "createSession",
+        tags: ["Session"],
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/Credentials" } } },
+        },
+        responses: {
+          "201": { content: { "application/json": { schema: { $ref: "#/components/schemas/SessionEnvelope" } } } },
+          "422": { content: { "application/problem+json": { schema: { $ref: "#/components/schemas/Problem" } } } },
+        },
+      },
+    },
   },
 } as const;
+
+/** Lo que devuelve `POST /session`, para que una prueba pueda comprobar qué cabecera se envió. */
+export const SESSION_TOKEN = "sesion-de-la-corrida";
 
 export const STUB_SPEC_YAML = JSON.stringify(SPEC);
 
@@ -167,6 +197,17 @@ export class StubTarget {
         : send(status, { type: `https://stub/problems/${status}`, title, status }, "application/problem+json");
 
     if (url.pathname === "/openapi.json") return send(200, SPEC);
+
+    // Antes de la guarda de autenticación, porque iniciar sesión es lo que se hace sin tenerla.
+    if (url.pathname === "/session" && method === "POST") {
+      const body = await readJson(request);
+      // Rechaza lo que no son credenciales, que es lo que hace que el caso de cuerpo inválido de
+      // la matriz signifique algo: un destino que contesta 201 a cualquier cosa está roto.
+      if (!body || typeof body.email !== "string" || typeof body.password !== "string") {
+        return problem(422, "Credenciales inválidas");
+      }
+      return send(201, { data: { token: SESSION_TOKEN } });
+    }
 
     if (this.faults.enforcesAuth) {
       if (!authorization) return problem(401, "No autenticado");

@@ -29,6 +29,7 @@ type StepNodeData = {
   checks: number;
   loops: boolean;
   conditional: boolean;
+  authorizes: boolean;
 };
 
 function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
@@ -47,6 +48,7 @@ function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
             resto, y el lienzo es donde se mira el flujo antes de abrir ningún panel. */}
         {data.conditional && <span title="Condicional">◇</span>}
         {data.loops && <span title="Una vez por elemento">↻</span>}
+        {data.authorizes && <span title="Inicia sesión para los pasos siguientes">🔑</span>}
       </div>
       <p className="mt-2 truncate font-mono text-[10px] text-slate-500">{data.path}</p>
       <div className="mt-2 flex justify-between text-[10px] text-slate-400">

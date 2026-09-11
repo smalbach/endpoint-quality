@@ -56,6 +56,19 @@ export type ExecutionTarget = {
    * keeps no per-run state of its own: this map travels in the argument.
    */
   variables: RuntimeVariables;
+  /**
+   * The credential a step of this run obtained by logging in, if any.
+   *
+   * Mutable for the same reason and with the same lifetime as `variables`: a flow whose first step
+   * authenticates and whose next eight spend the session is the ordinary shape of a real API, and
+   * the alternative is storing somebody's token in the environment by hand and rotating it there.
+   *
+   * **It replaces `primary`, and only `primary`.** A case asking for `none`, `insufficient` or
+   * `api-key` is testing what the target does with a credential that is wrong on purpose, and
+   * handing it a working session would turn every one of those into a green 200 that proves
+   * nothing.
+   */
+  session: { header: string; value: string } | null;
 };
 
 export type ExecutedStep = {
@@ -139,7 +152,7 @@ export class CaseExecutor {
     input: { config: ProjectConfig; target: ExecutionTarget; operation: ResolvedOperation; scenario: TestScenario },
   ): Promise<ExecutedStep> {
     const url = `${input.target.baseUrl}${step.requestPath}`;
-    const headers = this.headersFor(step, input.target.credentials);
+    const headers = this.headersFor(step, input.target);
     const masked = maskHeaders(headers);
     const sent = { method: step.method, url, headers: masked, body: step.body ?? null };
 
@@ -228,13 +241,16 @@ export class CaseExecutor {
    * authenticates without reaching the required scope — that is the 403. `api-key` sends a
    * scheme the operation does not declare, which is a 401 and not a 403.
    */
-  private headersFor(step: StepRequest, credentials: Credential[]): Record<string, string> {
+  private headersFor(step: StepRequest, target: ExecutionTarget): Record<string, string> {
     const base: Record<string, string> = { Accept: "application/json" };
     if (step.body !== undefined) base["Content-Type"] = "application/json";
     if (step.auth === "none") return base;
 
     const role = step.auth === "insufficient" ? "insufficient" : step.auth === "api-key" ? "alternate" : "primary";
-    const credential = credentials.find((candidate) => candidate.role === role);
+    // A session obtained during this run stands in for the stored working credential, and for
+    // nothing else. The three roles that exist to be rejected keep being rejected.
+    if (role === "primary" && target.session) return { ...base, [target.session.header]: target.session.value };
+    const credential = target.credentials.find((candidate) => candidate.role === role);
     // A missing credential is not silently the working one: sending `primary` where the case
     // asked for `insufficient` would turn a 403 case into a green 200 that proves nothing.
     if (!credential) return base;

@@ -296,6 +296,7 @@ function StepInspector({
         </Button>
       )}
 
+      <SessionEditor step={step} canEdit={canEdit} onChange={onChange} />
       <ScheduleEditor step={step} canEdit={canEdit} onChange={onChange} />
       <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />
       <FailureEditor step={step} canEdit={canEdit} onChange={onChange} />
@@ -767,6 +768,96 @@ function ScheduleEditor({
             </div>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * El paso que inicia sesión.
+ *
+ * Lo que sustituye: pegar un token en el entorno a mano y volver a pegarlo cuando caduca, con lo
+ * que cada suite es algo que hay que vigilar.
+ *
+ * Sustituye la credencial que funciona **y solo esa**. Los casos que presentan `none`,
+ * `insufficient` o `api-key` existen para que los rechacen, y darles una sesión válida convertiría
+ * cada uno en un 200 verde que no demuestra nada. Eso se dice aquí porque es exactamente lo que
+ * alguien espera al revés.
+ */
+function SessionEditor({
+  step,
+  canEdit,
+  onChange,
+}: {
+  step: WorkflowStepView;
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+}) {
+  const auth = step.authorizes;
+  return (
+    <div className="mt-4 border-t border-slate-100 pt-3">
+      <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+        <input
+          type="checkbox"
+          checked={Boolean(auth)}
+          disabled={!canEdit}
+          onChange={(event) =>
+            onChange({ ...step, authorizes: event.target.checked ? { from: "body", path: "data.token" } : undefined })
+          }
+        />
+        Este paso inicia sesión
+      </label>
+      {auth && (
+        <div className="mt-2 rounded-lg border border-slate-200 p-2">
+          <div className="grid grid-cols-[90px_1fr] gap-2">
+            <select
+              aria-label="De dónde sale el token"
+              className={inputClass}
+              value={auth.from}
+              disabled={!canEdit}
+              onChange={(event) =>
+                onChange({ ...step, authorizes: { ...auth, from: event.target.value as "body" | "header" } })
+              }
+            >
+              <option value="body">body</option>
+              <option value="header">header</option>
+            </select>
+            <input
+              aria-label="Ruta del token"
+              className={inputClass}
+              value={auth.path}
+              placeholder="data.token"
+              disabled={!canEdit}
+              onChange={(event) => onChange({ ...step, authorizes: { ...auth, path: event.target.value } })}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Cabecera">
+              <input
+                className={`${inputClass} font-mono text-xs`}
+                value={auth.header ?? ""}
+                placeholder="Authorization"
+                disabled={!canEdit}
+                onChange={(event) =>
+                  onChange({ ...step, authorizes: { ...auth, header: event.target.value || undefined } })
+                }
+              />
+            </Field>
+            <Field label="Prefijo" hint="Vacío envía el token tal cual.">
+              <input
+                className={`${inputClass} font-mono text-xs`}
+                value={auth.scheme ?? "Bearer "}
+                disabled={!canEdit}
+                onChange={(event) => onChange({ ...step, authorizes: { ...auth, scheme: event.target.value } })}
+              />
+            </Field>
+          </div>
+          <p className="text-[11px] leading-5 text-slate-500">
+            Los pasos siguientes la presentan en lugar de la credencial guardada. Los que piden{" "}
+            <span className="font-mono">none</span>, <span className="font-mono">insufficient</span> o{" "}
+            <span className="font-mono">api-key</span> siguen presentando la suya: existen para que los rechacen.
+          </p>
+        </div>
       )}
     </div>
   );

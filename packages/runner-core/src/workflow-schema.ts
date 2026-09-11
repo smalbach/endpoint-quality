@@ -100,6 +100,14 @@ export const workflowStepSchema = z.object({
       max: z.number().int().min(1).max(200).optional(),
     })
     .optional(),
+  authorizes: z
+    .object({
+      from: z.enum(["body", "header"]),
+      path: z.string().min(1).max(500),
+      header: z.string().max(80).optional(),
+      scheme: z.string().max(40).optional(),
+    })
+    .optional(),
   checks: z.array(stepCheckSchema).max(50).optional(),
   retry: stepRetrySchema.optional(),
   onError: z.enum(STEP_ON_ERROR).optional(),

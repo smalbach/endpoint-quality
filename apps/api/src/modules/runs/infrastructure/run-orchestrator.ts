@@ -32,6 +32,7 @@ import {
   holds,
   listAt,
   orderWorkflowSteps,
+  readAuthorization,
   withEnvironmentNamespace,
   withinBudget,
   type Operation,
@@ -130,6 +131,8 @@ export class RunOrchestrator {
       variables: withEnvironmentNamespace(
         resolveVariables(environment.variables, (payload) => this.cipher.decrypt(payload)),
       ),
+      // Nothing has logged in yet. A flow step may publish one while walking.
+      session: null,
       ...(await this.loadSpec(environment.specUrl ?? `${environment.baseUrl}/openapi.json`)),
     };
 
@@ -395,6 +398,9 @@ export class RunOrchestrator {
         // Rebuilt in place rather than reassigned: the executor holds this exact object.
         for (const key of Object.keys(context.target.variables)) delete context.target.variables[key];
         Object.assign(context.target.variables, base, datasetBindings(pass.row));
+        // The session goes with them. A row that passes because the previous row logged in is a
+        // row that would fail on its own, which is the failure a data-driven suite exists to find.
+        context.target.session = null;
       }
       cancelled = await this.walkPrepared(run, context, pass.items, budget);
     }
@@ -563,6 +569,25 @@ export class RunOrchestrator {
         // doing that once per attempt would leave the value of a discarded attempt behind.
         const last = executed.steps.at(-1);
         if (last?.actual) responses.set(item.step.id, { actual: last.actual, durationMs: last.durationMs });
+
+        // The session, published by the step that logged in. Reported as an assertion on that
+        // step, because a login that answered 200 with a body nobody expected is a finding about
+        // the target — and the eight steps after it failing with 401 is the same finding restated
+        // eight times without ever naming it.
+        if (last?.actual && item.step.authorizes) {
+          const session = readAuthorization(item.step.authorizes, last.actual);
+          if (session) context.target.session = session;
+          last.assertions.push({
+            label: "Sesión obtenida",
+            pass: Boolean(session),
+            detail: session
+              ? `Los pasos siguientes presentarán ${session.header}`
+              : `No se encontró la credencial en ${item.step.authorizes.from}.${item.step.authorizes.path}`,
+          });
+          last.ok = last.ok && holds(last.assertions);
+          executed.ok = executed.steps.every((step) => step.ok);
+        }
+
         if (last?.actual && item.step.captures?.length) {
           const capture = applyCaptures(item.step.captures, last.actual, context.target.variables, item.step.id);
           const ok = capture.missing.length === 0;

@@ -42,6 +42,7 @@ export type {
   ScenarioView,
   ScenariosView,
   SuiteView,
+  StepAuthorizesView,
   StepCheckView,
   StepConditionView,
   StepForEachView,
