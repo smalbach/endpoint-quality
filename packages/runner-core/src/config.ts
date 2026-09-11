@@ -278,8 +278,18 @@ export const DEFAULT_CONFIG: ProjectConfig = {
   envelope: { rules: [], fallbackShape: "{ data: Resource }", errorShape: "ProblemDetails" },
 };
 
-/** Fills a partial project configuration with the defaults. Shallow by design except `text`,
- * which merges key by key so a project can reword one case without restating the bundle. */
+/**
+ * Fills a partial project configuration with the defaults.
+ *
+ * Shallow by design except for the two nested objects that are **written in pieces**. `text` is
+ * one: a project reworded one case and must not have to restate the other thirty. `access` is the
+ * other, and it is the one that cost something to learn — its section carries fields with a
+ * schema default, so a saved row can legitimately arrive without `deniedStatuses`, and a shallow
+ * spread replaced the whole object with that partial one. The type still said the field was there;
+ * the generator read it; the matrix answered 500 for every project that had ever saved the
+ * section. A default that only exists at parse time is not a default the rest of the code can
+ * trust, so the merge happens here, where `ProjectConfig` is actually assembled.
+ */
 export function defineProjectConfig(input: ProjectConfigInput = {}): ProjectConfig {
   const locale = input.locale ?? DEFAULT_CONFIG.locale;
   return {
@@ -287,6 +297,7 @@ export function defineProjectConfig(input: ProjectConfigInput = {}): ProjectConf
     ...input,
     locale,
     text: { ...bundles[locale], ...(input.text ?? {}) },
+    access: { ...DEFAULT_CONFIG.access, ...(input.access ?? {}) },
   };
 }
 

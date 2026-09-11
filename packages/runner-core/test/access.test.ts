@@ -70,6 +70,35 @@ const casesFor = (operationId: string, config: ReturnType<typeof defineProjectCo
   return scenariosFor(operation, config).filter((scenario) => scenario.id.startsWith("access-"));
 };
 
+/**
+ * Una sección guardada a medias sigue dando una configuración completa.
+ *
+ * Es lo que costó aprender: los campos de esta sección tienen valor por defecto en el esquema, así
+ * que una fila guardada puede llegar legítimamente sin `deniedStatuses`, y una fusión superficial
+ * sustituía el objeto entero por ese parcial. El tipo seguía diciendo que el campo estaba, el
+ * generador lo leía, y la matriz contestaba 500 a todo proyecto que hubiera guardado la sección.
+ * Un valor por defecto que solo existe al parsear no es un valor por defecto del que el resto del
+ * código pueda fiarse.
+ */
+describe("una sección access escrita en trozos", () => {
+  test("lo que no trae la fila lo pone el valor por defecto, no el vacío", () => {
+    const partial = defineProjectConfig({
+      access: { roles: ["vendedor"], rules: [{ operationId: "getPedido", allow: [], deny: ["vendedor"] }] } as never,
+    });
+    assert.deepEqual(partial.access.deniedStatuses, [403, 404]);
+    assert.deepEqual(partial.access.crossRole, []);
+  });
+
+  test("y con eso la matriz se genera en vez de reventar", () => {
+    const partial = defineProjectConfig({
+      access: { roles: ["vendedor"], rules: [{ operationId: "getPedido", allow: [], deny: ["vendedor"] }] } as never,
+    });
+    const operation = resolveOperations(operations, partial).find((candidate) => candidate.id === "getPedido")!;
+    const [scenario] = scenariosFor(operation, partial).filter((item) => item.id.startsWith("access-"));
+    assert.equal(scenario.expectedStatus, 403);
+  });
+});
+
 describe("un caso por celda de la matriz de permisos", () => {
   test("sin reglas no se genera ningún caso: el silencio no es «no debe pasar»", () => {
     assert.deepEqual(casesFor("getPedido", configOf()), []);

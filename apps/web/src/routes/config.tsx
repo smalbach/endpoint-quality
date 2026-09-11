@@ -17,6 +17,8 @@ const SECTION_HELP: Record<string, string> = {
   bodies:
     "Los payloads por operación. No se pueden derivar del contrato: tienen que respetar las claves ajenas y esquivar las naturales que ya existen.",
   authorization: "Cómo se genera la matriz 401/403 a partir de lo que el contrato declara.",
+  access:
+    "Quién puede llegar a qué. Es lo único de aquí que el contrato no puede decir: declara que 403 es una respuesta posible, nunca a quién.",
   budgets:
     "Los objetivos de latencia, en orden. Gana la primera regla que casa; una operación que no casa con ninguna no recibe ninguna aserción.",
   envelope: "Qué envelope se espera cuando el documento en vivo no declara schema para ese estado.",
@@ -26,12 +28,13 @@ const SECTION_HELP: Record<string, string> = {
 };
 
 /**
- * Importing a contract and editing the eight configuration sections.
+ * Importing a contract and editing the nine configuration sections.
  *
- * Six of the eight have a visual editor; the other two keep a JSON textarea, and which two is a
+ * Seven of the nine have a visual editor; the other two keep a JSON textarea, and which two is a
  * judgement rather than a leftover. `scenarios` and `bodies` hold whole scenario templates and
  * whole request payloads — arbitrary JSON by definition — and a form over those is a worse JSON
- * editor than a JSON editor.
+ * editor than a JSON editor. `access` is the opposite case and the reason the line is worth
+ * drawing: roles by operations is a grid, and writing a grid by hand is counting brackets.
  *
  * The textarea stays reachable everywhere else too. Somebody who knows the shape should not have
  * to click through a form to paste a section, and it is the escape hatch for anything an editor

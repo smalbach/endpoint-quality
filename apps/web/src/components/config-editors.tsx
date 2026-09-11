@@ -792,11 +792,246 @@ function TextEditor({ value, onChange, disabled }: EditorProps) {
 }
 
 /** Which sections have a visual editor, and which deliberately do not. */
+/**
+ * Quién puede llegar a qué, dibujado como lo que es: una rejilla.
+ *
+ * Es la sección que menos se puede dejar en un textarea de JSON. Las otras dos que lo conservan
+ * guardan JSON arbitrario por definición —plantillas de escenario, payloads enteros— y un
+ * formulario sobre eso es un editor de JSON peor que un editor de JSON. Esto es lo contrario: roles
+ * por operaciones, tres estados por celda, y escribirlo a mano es contar corchetes.
+ *
+ * **Tres estados y no dos.** «Sin decidir» no es «no debe pasar»: un rol que no aparece en ninguna
+ * lista es uno sobre el que este proyecto todavía no ha decidido, y el generador no le hace ningún
+ * caso. Una rejilla de casillas —marcada o no— no podría decirlo, y convertiría cada silencio en
+ * una afirmación que nadie escribió.
+ */
+function AccessEditor({ value, onChange, disabled, operationIds }: EditorProps) {
+  const access = (value.access as Record<string, unknown>) ?? {};
+  const roles = (access.roles as string[]) ?? [];
+  const rules = (access.rules as Record<string, unknown>[]) ?? [];
+  const crossRole = (access.crossRole as Record<string, unknown>[]) ?? [];
+  const denied = (access.deniedStatuses as number[]) ?? [403, 404];
+  const edit = (patch: Record<string, unknown>) => onChange({ ...value, access: { ...access, ...patch } });
+
+  /** The three states of a cell, as the two stored lists see them. */
+  const stateOf = (operationId: string, role: string): "allow" | "deny" | "" => {
+    const rule = rules.find((item) => item.operationId === operationId);
+    if ((rule?.allow as string[] | undefined)?.includes(role)) return "allow";
+    if ((rule?.deny as string[] | undefined)?.includes(role)) return "deny";
+    return "";
+  };
+
+  /** Writing a cell rewrites the operation's rule, and drops it when it stops saying anything —
+   * a rule with two empty lists is refused on save, and leaving one behind would make the section
+   * unsavable from a click that looks like an undo. */
+  const setCell = (operationId: string, role: string, state: "allow" | "deny" | "") => {
+    const rest = rules.filter((item) => item.operationId !== operationId);
+    const rule = rules.find((item) => item.operationId === operationId);
+    const without = (list: unknown) => ((list as string[] | undefined) ?? []).filter((name) => name !== role);
+    const allow = state === "allow" ? [...without(rule?.allow), role] : without(rule?.allow);
+    const deny = state === "deny" ? [...without(rule?.deny), role] : without(rule?.deny);
+    const next = allow.length || deny.length ? [...rest, { operationId, allow, deny }] : rest;
+    edit({ rules: next });
+  };
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className={label}>Roles del proyecto</p>
+        <input
+          className={`${field} w-full font-mono`}
+          value={roles.join(", ")}
+          placeholder="vendedor, comprador, admin"
+          disabled={disabled}
+          onChange={(event) =>
+            edit({
+              roles: event.target.value
+                .split(",")
+                .map((role) => role.trim())
+                .filter(Boolean),
+            })
+          }
+        />
+        <p className="mt-1 text-[10px] leading-4 text-slate-400">
+          Se declaran aquí y no se leen de las credenciales de un entorno: «esta API tiene estos roles» es verdad del
+          proyecto, y «este token es el del vendedor» lo es de un entorno. Cada entorno guarda una credencial por rol.
+        </p>
+      </div>
+
+      <div>
+        <p className={label}>Qué cuenta como rechazo</p>
+        <input
+          className={`${field} w-40 font-mono`}
+          value={denied.join(", ")}
+          disabled={disabled}
+          onChange={(event) =>
+            edit({
+              deniedStatuses: event.target.value
+                .split(",")
+                .map((code) => Number(code.trim()))
+                .filter((code) => Number.isInteger(code)),
+            })
+          }
+        />
+        <p className="mt-1 max-w-2xl text-[10px] leading-4 text-slate-400">
+          403 y 404 por defecto. Una API bien hecha esconde la existencia —pedir lo de otro debe ser 404, porque un 403
+          confirma que el id existe—, así que exigir uno solo pondría en rojo un estilo y no un permiso.
+        </p>
+      </div>
+
+      {roles.length === 0 ? (
+        <p className="text-xs text-slate-500">Escribe los roles para dibujar la matriz.</p>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full border-collapse text-xs">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50">
+                <th className="px-2 py-1.5 text-left text-[10px] font-semibold tracking-wide text-slate-500 uppercase">
+                  Operación
+                </th>
+                {roles.map((role) => (
+                  <th
+                    key={role}
+                    className="px-2 py-1.5 text-left text-[10px] font-semibold tracking-wide text-slate-500 uppercase"
+                  >
+                    {role}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {operationIds.map((operationId) => (
+                <tr key={operationId} className="border-b border-slate-100 last:border-b-0">
+                  <td className="px-2 py-1 font-mono text-[11px] text-slate-600">{operationId}</td>
+                  {roles.map((role) => (
+                    <td key={role} className="px-2 py-1">
+                      <select
+                        aria-label={`${operationId} para ${role}`}
+                        className={`${field} w-32`}
+                        value={stateOf(operationId, role)}
+                        disabled={disabled}
+                        onChange={(event) => setCell(operationId, role, event.target.value as "allow" | "deny" | "")}
+                      >
+                        <option value="">sin decidir</option>
+                        <option value="allow">debe pasar</option>
+                        <option value="deny">no debe pasar</option>
+                      </select>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div>
+        <p className={label}>Entre roles</p>
+        <p className="mb-1 max-w-2xl text-[10px] leading-4 text-slate-400">
+          Se crea un recurso como el primer rol y se intenta alcanzar como el segundo. Es el fallo que una petición
+          suelta no enseña: todos los códigos correctos, el esquema válido, y alguien leyendo lo de otro.
+        </p>
+        <RuleRows
+          rows={crossRole}
+          disabled={disabled}
+          empty="Sin reglas entre roles."
+          addLabel="Añadir regla entre roles"
+          onAdd={() => ({
+            source: roles[0] ?? "",
+            target: roles[1] ?? "",
+            createOperationId: operationIds[0] ?? "",
+            operationId: operationIds[0] ?? "",
+            allowed: false,
+          })}
+          onChange={(next) => edit({ crossRole: next })}
+          render={(row, update) => (
+            <>
+              <div>
+                <p className={label}>Lo crea</p>
+                <select
+                  className={`${field} w-28`}
+                  value={String(row.source ?? "")}
+                  disabled={disabled}
+                  onChange={(event) => update({ source: event.target.value })}
+                >
+                  {roles.map((role) => (
+                    <option key={role} value={role}>
+                      {role}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <p className={label}>Creando con</p>
+                <select
+                  className={`${field} w-44`}
+                  value={String(row.createOperationId ?? "")}
+                  disabled={disabled}
+                  onChange={(event) => update({ createOperationId: event.target.value })}
+                >
+                  {operationIds.map((operationId) => (
+                    <option key={operationId} value={operationId}>
+                      {operationId}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <p className={label}>Lo intenta</p>
+                <select
+                  className={`${field} w-28`}
+                  value={String(row.target ?? "")}
+                  disabled={disabled}
+                  onChange={(event) => update({ target: event.target.value })}
+                >
+                  {roles.map((role) => (
+                    <option key={role} value={role}>
+                      {role}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <p className={label}>Sobre</p>
+                <select
+                  className={`${field} w-44`}
+                  value={String(row.operationId ?? "")}
+                  disabled={disabled}
+                  onChange={(event) => update({ operationId: event.target.value })}
+                >
+                  {operationIds.map((operationId) => (
+                    <option key={operationId} value={operationId}>
+                      {operationId}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <p className={label}>Y</p>
+                <select
+                  className={`${field} w-36`}
+                  value={row.allowed === true ? "si" : "no"}
+                  disabled={disabled}
+                  onChange={(event) => update({ allowed: event.target.value === "si" })}
+                >
+                  <option value="no">no debe verlo</option>
+                  <option value="si">sí debe verlo</option>
+                </select>
+              </div>
+            </>
+          )}
+        />
+      </div>
+    </div>
+  );
+}
+
 export const SECTION_EDITORS: Record<string, ((props: EditorProps) => ReactNode) | undefined> = {
   budgets: BudgetsEditor,
   envelope: EnvelopeEditor,
   implemented: ImplementedEditor,
   parameters: ParametersEditor,
   authorization: AuthorizationEditor,
+  access: AccessEditor,
   text: TextEditor,
 };
