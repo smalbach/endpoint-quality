@@ -44,7 +44,7 @@ Aquí había credenciales por rol en el entorno y un `credential: "none" | "insu
 ### 3. Importar de otro proyecto
 
 `GET import/available-projects`, `.../endpoints|flows|environments`, `POST from-project`. Copiar
-configuración y flujos a un proyecto nuevo. → tanda 5.
+configuración y flujos a un proyecto nuevo. → tanda 5 ✔
 
 ### 4. Informes
 
@@ -62,7 +62,7 @@ de imprimir no sale a cuenta. → tanda 3.
   seguridad, y el runner corre en el servidor con los secretos del proyecto en memoria. La
   alternativa sana son valores computados declarativos: `{{$uuid}}`, `{{$now}}`, `{{$randomInt}}`,
   `{{$base64:x}}`, `{{$hmacSha256:clave:texto}}`. Cubre casi todo lo que la gente escribe en esos
-  scripts sin ejecutar código ajeno. → tanda 5.
+  scripts sin ejecutar código ajeno. → tanda 5 ✔
 - **Pruebas de carga** (`perf-plans`, `loadProfile`, `thresholds`, ventanas de métricas), **escáner
   de GitHub** y **análisis con IA**. Otro producto.
 - **Entornos**: ya estaban, y mejor —`initial`/`current`/`sensitive`, `disabledVariables` como mapa
@@ -72,6 +72,9 @@ de imprimir no sale a cuenta. → tanda 3.
 ---
 
 ## Las tandas
+
+Las cinco están cerradas. Lo que queda escrito abajo es por qué cada una quedó con la forma que
+tiene, que es lo que hace falta para tocarlas otra vez.
 
 ### Tanda 1 — Enviar ahora · **cerrada** (`cef90ad`)
 
@@ -164,7 +167,24 @@ fiarse. Las secciones se fusionan superficialmente, así que una guardada sin un
 sustituye al objeto entero. `defineProjectConfig` fusiona `access` clave a clave, como ya hacía con
 `text`; cualquier sección futura con un objeto anidado y campos opcionales necesita lo mismo.
 
-### Tanda 5 — Varios
+### Tanda 5 — Varios · **cerrada** (`efcc44b`, `59b4dd3`, `1c3af48`)
 
-Copiar configuración y flujos entre proyectos. Etiquetas propias sobre operaciones. Valores
-computados `{{$uuid}}` y compañía.
+Valores computados, etiquetas propias sobre operaciones, y copiar entre proyectos.
+
+- **Los computados son valores, no programas**, que es lo que permite no ejecutar el código de
+  nadie. Lo impuro entra como **una semilla por caso** —un identificador, un instante, un número—
+  y la firma como función, así que el motor sigue sin reloj, sin azar y sin criptografía. Una
+  semilla por caso y no por aparición: un flujo que pone `{{$uuid}}` en una cabecera y en el cuerpo
+  quiere decir el mismo valor, y su paso de relectura quiere decirlo otra vez. Las nombradas se
+  sustituyen antes que las computadas, y ese orden es lo que deja que un computado tome una
+  variable como argumento.
+- **Las etiquetas son las del equipo, no las del contrato**, y lo que las hace valer una sección es
+  poder lanzar por ellas. El historial guarda con qué se pidió y no en qué se resolvió aquel día.
+- **Copiar rehace los ids y remapea las referencias** —un flujo nombra sus pruebas dentro de un
+  `jsonb`— y **no cruza ningún secreto**: las credenciales no van y las variables secretas llegan
+  con su nombre y vacías, con `writesAllowed` de vuelta a su valor de partida. Los datasets tampoco
+  van: son datos que pertenecen al proyecto para el que se escribieron.
+
+Queda por hacer, si alguna vez hace falta: el editor de `scenarios` y el de `bodies` siguen siendo
+un textarea de JSON, y ahí la decisión es que un formulario sobre JSON arbitrario es un editor de
+JSON peor que un editor de JSON.
