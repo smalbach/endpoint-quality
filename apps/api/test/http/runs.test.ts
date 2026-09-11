@@ -2644,6 +2644,80 @@ describe("enviar una petición sin lanzar una corrida", () => {
     assert.equal(response.body.response, null);
   });
 
+  /**
+   * Los valores computados, que es lo que la gente escribía en un `preRequestScript`.
+   *
+   * Aquí no se ejecuta código de nadie: son cinco valores, no programas. Lo que hay que comprobar
+   * por HTTP es lo que una prueba pura no puede — que la semilla llega desde el proceso de verdad y
+   * que el valor cruza el cable, no que se quede en el formulario.
+   */
+  test("un {{$uuid}} se resuelve antes de salir y llega al destino", async () => {
+    const before = fixture.target.requests.length;
+    const response = await send({
+      environmentId: fixture.environmentId,
+      operationId: "createThing",
+      expectedStatus: 201,
+      body: { type: "json", json: { name: "{{$uuid}}", size: 3 } },
+      headers: { "Idempotency-Key": "{{$uuid}}" },
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    // Objeto y no texto: un cuerpo JSON vuelve como árbol, que es lo que el panel enseña.
+    const sentBody = response.body.request.body as { name: string };
+    assert.match(sentBody.name, /^[0-9a-f-]{36}$/);
+    // El mismo dentro del caso: la cabecera de idempotencia y el cuerpo quieren decir el mismo
+    // valor, y uno nuevo por aparición rompería justo los flujos para los que esto existe.
+    assert.equal(response.body.request.headers["Idempotency-Key"], sentBody.name);
+    const received = fixture.target.requests.slice(before).find((item) => item.path === "/things");
+    assert.equal(received?.headers["idempotency-key"], sentBody.name);
+  });
+
+  test("dos envíos no comparten el valor: es lo que evita el 409 de la segunda corrida", async () => {
+    const body = {
+      environmentId: fixture.environmentId,
+      operationId: "createThing",
+      expectedStatus: 201,
+      body: { type: "json", json: { name: "{{$uuid}}", size: 3 } },
+    };
+    const first = await send(body);
+    const second = await send(body);
+    // Comparados como texto: dos objetos distintos nunca son iguales por referencia, así que la
+    // comparación directa pasaría aunque el valor fuera el mismo.
+    assert.notEqual(JSON.stringify(first.body.request.body), JSON.stringify(second.body.request.body));
+  });
+
+  test("una firma se calcula con la clave que sale de una variable del entorno", async () => {
+    // El argumento del computado es una variable, que solo funciona porque las nombradas se
+    // sustituyen primero: si no, las llaves de dentro terminarían la coincidencia de fuera.
+    const signing = await projectAgainst({}, { variables: { secreto: "clave-de-firma" } });
+    const response = await api()
+      .post(`${signing.projectBase}/request-preview`)
+      .set(as(owner))
+      .send({
+        environmentId: signing.environmentId,
+        operationId: "listThings",
+        expectedStatus: 200,
+        headers: { "X-Signature": "{{$hmacSha256:{{secreto}}:GET:/things}}" },
+      });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    // 64 caracteres hexadecimales: un SHA-256 de verdad, y la clave no aparece por ningún lado.
+    assert.match(response.body.request.headers["X-Signature"], /^[0-9a-f]{64}$/);
+    assert.ok(!JSON.stringify(response.body.request).includes("clave-de-firma"));
+    await signing.target.stop();
+  });
+
+  test("un computado mal escrito detiene la petición en vez de mandarlo como literal", async () => {
+    const response = await send({
+      environmentId: fixture.environmentId,
+      operationId: "listThings",
+      expectedStatus: 200,
+      headers: { "X-Raro": "{{$uuidd}}" },
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.failure, "config");
+    assert.equal(response.body.response, null);
+    assert.match(response.body.assertions[0].detail, /\$uuidd/);
+  });
+
   test("una operación que el contrato no declara se dice, con su campo", async () => {
     const response = await send({
       environmentId: fixture.environmentId,

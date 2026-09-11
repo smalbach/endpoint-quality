@@ -15,6 +15,7 @@
  * - **the live document is fetched once per run**, not once per case. Re-fetching it mid-run
  *   would mean asserting the last case against a contract the first one never saw.
  */
+import { createHmac, randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import {
   evaluateResponse,
@@ -34,6 +35,7 @@ import {
   type TestScenario,
   interpolateValue,
   payloadFor,
+  type ComputedSeed,
   roleOf,
   type RuntimeVariables,
   type SerializedBody,
@@ -122,12 +124,24 @@ export class CaseExecutor {
     // Interpolate before requestPathFor URL-encodes parameter values. Doing it after planning
     // would turn `{{userId}}` into `%7B%7BuserId%7D%7D`, which is no longer a token.
     //
-    // Skipped entirely when the environment defines no variables, which is most of them: the
-    // substitution walks the whole `ProjectConfig` — the text bundle, every sample, every budget
-    // rule — and a 311-case matrix was deep-copying all of it 311 times to replace nothing.
-    const substituting = Object.keys(input.target.variables).length > 0;
+    // It used to be skipped when the environment defined no variables — the walk covers the whole
+    // `ProjectConfig`, and a 311-case matrix was deep-copying all of it 311 times to replace
+    // nothing. Computed values took that shortcut away: `{{$uuid}}` needs no environment, so a
+    // project with no variables is exactly the one the skip would have broken.
+    // One seed for the whole case, so `{{$uuid}}` in an idempotency header and in the payload is
+    // the same value, and the read-back step of a flow sees that same value again. A fresh one per
+    // occurrence would break exactly the flows computed values exist for.
+    const seed: ComputedSeed = {
+      uuid: randomUUID(),
+      now: new Date(),
+      random: Math.random(),
+      hmacSha256: (key, text) => createHmac("sha256", key).update(text).digest("hex"),
+    };
+    // The substitution pass now runs for every case and not only when the environment defines
+    // variables: a project with no variables at all can still write `{{$uuid}}`, and skipping the
+    // walk would send the token to the target as a literal.
     const source = { operation: input.operation, scenario: input.scenario, config: input.config };
-    const runtime = substituting ? interpolateValue(source, input.target.variables) : source;
+    const runtime = interpolateValue(source, input.target.variables, seed);
     const flow = planFlow({
       operation: runtime.operation,
       scenario: runtime.scenario,
@@ -138,7 +152,7 @@ export class CaseExecutor {
 
     let cursor = flow.next();
     while (!cursor.done) {
-      const step = substituting ? interpolateValue(cursor.value, input.target.variables) : cursor.value;
+      const step = interpolateValue(cursor.value, input.target.variables, seed);
       const executed = await this.perform(step, { ...input, config: runtime.config, scenario: runtime.scenario });
       steps.push(executed);
       const outcome: StepOutcome = {

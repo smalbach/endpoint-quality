@@ -192,12 +192,29 @@ describe("las variables que un paso puede gastar", () => {
     { id: "aparte", requestTemplateId: "t3", captures: [{ variable: "otro", from: "body", path: "data.id" }] },
   ];
 
+  /** Los valores computados van siempre al final y no dependen del flujo, así que lo que estas
+   * pruebas miran es la parte de delante: los nombres que sí salen del entorno y de las capturas. */
+  const namesFor = (stepId: string, environment: string[]) =>
+    variablesFor(flow(), stepId, environment).filter((name) => !name.startsWith("$"));
+
   test("las del entorno valen para cualquier paso", () => {
-    expect(variablesFor(flow(), "login", ["tenant"])).toEqual(["tenant"]);
+    expect(namesFor("login", ["tenant"])).toEqual(["tenant"]);
   });
 
   test("las capturas llegan por la cadena entera, no solo del paso anterior", () => {
-    expect(variablesFor(flow(), "leer", ["tenant"])).toEqual(["tenant", "pedidoId", "token"]);
+    expect(namesFor("leer", ["tenant"])).toEqual(["tenant", "pedidoId", "token"]);
+  });
+
+  test("los valores computados están siempre, porque no dependen de ningún entorno", () => {
+    // `{{$uuid}}` funciona en un proyecto que nunca ha definido una variable, y no hay ninguna
+    // pantalla que los liste: este menú es donde se descubren.
+    expect(variablesFor(flow(), "login", [])).toContain("$uuid");
+    expect(variablesFor(flow(), "login", [])).toContain("$hmacSha256:clave:texto");
+  });
+
+  test("y van los últimos: lo que alguien busca nueve de cada diez veces es una variable suya", () => {
+    const all = variablesFor(flow(), "leer", ["tenant"]);
+    expect(all.findIndex((name) => name.startsWith("$"))).toBe(3);
   });
 
   test("lo que captura un paso que no está arriba no se ofrece: estaría vacío al enviar", () => {
@@ -205,7 +222,7 @@ describe("las variables que un paso puede gastar", () => {
   });
 
   test("un nombre repetido sale una vez: la captura pisa el valor del entorno, no convive con él", () => {
-    expect(variablesFor(flow(), "leer", ["pedidoId"])).toEqual(["pedidoId", "token"]);
+    expect(namesFor("leer", ["pedidoId"])).toEqual(["pedidoId", "token"]);
   });
 
   test("un ciclo a medio dibujar no cuelga el editor", () => {
@@ -213,6 +230,6 @@ describe("las variables que un paso puede gastar", () => {
       { id: "a", requestTemplateId: "t1", dependsOn: ["b"] },
       { id: "b", requestTemplateId: "t2", dependsOn: ["a"], captures: [{ variable: "x", from: "body", path: "d" }] },
     ];
-    expect(variablesFor(cyclic, "a", [])).toEqual(["x"]);
+    expect(variablesFor(cyclic, "a", []).filter((name) => !name.startsWith("$"))).toEqual(["x"]);
   });
 });

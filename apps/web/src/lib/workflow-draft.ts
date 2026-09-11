@@ -154,7 +154,32 @@ export function toNodes(steps: WorkflowStepView[], templates: RequestTemplateVie
  * Duplicates collapse to the first occurrence, which is the environment's: a capture with the same
  * name overwrites the environment value for the rest of the run, so the two are one name and
  * showing it twice would only raise the question of which is which.
+ *
+ * The computed values come last and are always there. They need no environment and no upstream
+ * step — `{{$uuid}}` works in a project that has never defined a variable — which is also why they
+ * cannot be discovered any other way.
  */
+/**
+ * The computed values, offered alongside the names.
+ *
+ * They are the declarative answer to a pre-request script, and a feature nobody can use if nobody
+ * knows it exists: there is no screen that lists them, so the `{{` menu is where they are found.
+ * The two that take arguments are offered **with a sample argument in them** — `{{$base64}}` alone
+ * does nothing, and a menu entry that inserts something inert teaches the wrong shape.
+ *
+ * Last in the list on purpose. What somebody is reaching for nine times out of ten is a variable
+ * of their own, and these would otherwise sit on top of it.
+ */
+export const COMPUTED_VALUES = [
+  "$uuid",
+  "$now",
+  "$now:unix",
+  "$randomInt",
+  "$randomInt:1:100",
+  "$base64:texto",
+  "$hmacSha256:clave:texto",
+];
+
 export function variablesFor(steps: WorkflowStepView[], stepId: string, environment: string[]): string[] {
   const byId = new Map(steps.map((step) => [step.id, step]));
   const upstream: string[] = [];
@@ -171,7 +196,7 @@ export function variablesFor(steps: WorkflowStepView[], stepId: string, environm
     upstream.push(...(step.captures ?? []).map((capture) => capture.variable).filter(Boolean));
     pending.push(...(step.dependsOn ?? []));
   }
-  return [...new Set([...environment, ...upstream])];
+  return [...new Set([...environment, ...upstream, ...COMPUTED_VALUES])];
 }
 
 /**
