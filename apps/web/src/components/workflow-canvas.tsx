@@ -16,7 +16,7 @@ import "@xyflow/react/dist/style.css";
 
 import { Badge } from "@/components/ui";
 import { cn, methodStyle } from "@/lib/format";
-import { applyPositions, connectStep, disconnectEdges, toEdges, toNodes } from "@/lib/workflow-draft";
+import { applyPositions, connectStep, disconnectEdges, mergeNodes, toEdges, toNodes } from "@/lib/workflow-draft";
 import type { OperationSummary } from "@/lib/workflow-draft";
 import type { RequestTemplateView, WorkflowStepView } from "@/lib/types";
 
@@ -93,16 +93,10 @@ export function WorkflowCanvas({
   );
   const [nodes, setNodes] = useState<Node<StepNodeData>[]>(fromDocument);
 
-  // The document decides which nodes exist and what they say; the canvas keeps where each one is
-  // and what it measured. A node that is still here keeps both.
+  // The document decides which nodes exist, what they say and where they are; the canvas keeps
+  // what it measured of each one. `mergeNodes` is where that division is written down and tested.
   useEffect(() => {
-    setNodes((current) => {
-      const seen = new Map(current.map((node) => [node.id, node]));
-      return fromDocument.map((node) => {
-        const previous = seen.get(node.id);
-        return previous ? { ...previous, data: node.data } : node;
-      });
-    });
+    setNodes((current) => mergeNodes(current, fromDocument));
   }, [fromDocument]);
 
   const edges: Edge[] = toEdges(steps);

@@ -88,6 +88,35 @@ export function toEdges(steps: WorkflowStepView[]) {
   );
 }
 
+/**
+ * The canvas's nodes, refreshed from the document without throwing away what was measured.
+ *
+ * React Flow keeps its own copy of each node, and it is not duplication: it stores the size it
+ * measured, and a node it has not measured yet stays `visibility: hidden`. Rebuilding the array
+ * from the document on every render threw that away and made the whole graph invisible, which is
+ * why the carry-over exists at all.
+ *
+ * **What it must not carry over is the position.** That belongs to the document — it is
+ * `step.position`, written on drag end and read back here — and keeping the previous node's
+ * instead made switching between two flows show the wrong layout, silently, whenever they shared
+ * a step id. `salud`, `crear` and `listar` are the names anybody gives those steps, so two flows
+ * in the same project share them as a matter of course. And it did not stop at looking wrong:
+ * dragging any node afterwards wrote the *other* flow's coordinates into this one's document.
+ *
+ * So: identity and measurement from the canvas, everything the document is authoritative about
+ * from the document.
+ */
+export function mergeNodes<T extends { id: string; position: { x: number; y: number }; data: unknown }>(
+  current: T[],
+  fromDocument: T[],
+): T[] {
+  const measured = new Map(current.map((node) => [node.id, node]));
+  return fromDocument.map((node) => {
+    const previous = measured.get(node.id);
+    return previous ? { ...previous, position: node.position, data: node.data } : node;
+  });
+}
+
 export function toNodes(steps: WorkflowStepView[], templates: RequestTemplateView[], operations: OperationSummary[]) {
   const templateById = new Map(templates.map((template) => [template.id, template]));
   const operationById = new Map(operations.map((operation) => [operation.id, operation]));

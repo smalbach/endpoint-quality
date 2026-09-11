@@ -4,6 +4,7 @@ import {
   applyPositions,
   connectStep,
   disconnectEdges,
+  mergeNodes,
   positionFor,
   problemsWith,
   removeStep,
@@ -109,5 +110,59 @@ describe("lo que el editor avisa antes de guardar", () => {
 
   test("un grafo sano no dice nada", () => {
     expect(problemsWith(steps())).toEqual([]);
+  });
+});
+
+/**
+ * Lo que el lienzo conserva de un render al siguiente, y lo que no.
+ *
+ * React Flow guarda de cada nodo lo que **midió**, y uno que no ha medido se queda invisible: por
+ * eso hay que conservar algo en vez de reconstruir el array. Lo que no se puede conservar es la
+ * posición, que es del documento — y conservarla hacía que cambiar de flujo pintara el anterior,
+ * en silencio, siempre que los dos compartieran el id de un paso. «salud», «crear» y «listar» son
+ * los nombres que le pone cualquiera, así que dos flujos del mismo proyecto los comparten sin
+ * proponérselo.
+ */
+describe("los nodos del lienzo, entre un documento y el siguiente", () => {
+  const node = (id: string, x: number, y: number, extra: Record<string, unknown> = {}) => ({
+    id,
+    position: { x, y },
+    data: { name: id },
+    ...extra,
+  });
+
+  test("la posición la manda el documento, no lo que había en el lienzo", () => {
+    const current = [node("salud", 20, 40, { measured: { width: 256, height: 96 } })];
+    const [merged] = mergeNodes(current, [node("salud", 340, 120)]);
+    expect(merged.position).toEqual({ x: 340, y: 120 });
+  });
+
+  test("lo medido sí se conserva, que es para lo que existe la mezcla", () => {
+    const current = [node("salud", 20, 40, { measured: { width: 256, height: 96 } })];
+    const [merged] = mergeNodes(current, [node("salud", 340, 120)]);
+    expect((merged as { measured?: unknown }).measured).toEqual({ width: 256, height: 96 });
+  });
+
+  test("un nodo que el documento ya no tiene desaparece", () => {
+    const merged = mergeNodes([node("salud", 0, 0), node("viejo", 0, 0)], [node("salud", 10, 10)]);
+    expect(merged.map((entry) => entry.id)).toEqual(["salud"]);
+  });
+
+  test("un nodo nuevo entra tal cual, sin medir", () => {
+    const merged = mergeNodes([node("salud", 0, 0)], [node("salud", 0, 0), node("nuevo", 300, 0)]);
+    expect(merged[1].position).toEqual({ x: 300, y: 0 });
+  });
+
+  test("cambiar de flujo no arrastra las posiciones del anterior", () => {
+    // El caso real: dos flujos con los mismos ids, y el segundo pintado con las coordenadas del
+    // primero. Se veía mal, y al arrastrar cualquier nodo escribía esas coordenadas ajenas en el
+    // documento de este.
+    const anterior = [node("salud", 20, 40), node("crear", 320, 40), node("listar", 620, 40)];
+    const otro = [node("salud", 20, 40), node("listar", 20, 200), node("crear", 340, 120)];
+    expect(mergeNodes(anterior, otro).map((entry) => entry.position)).toEqual([
+      { x: 20, y: 40 },
+      { x: 20, y: 200 },
+      { x: 340, y: 120 },
+    ]);
   });
 });
