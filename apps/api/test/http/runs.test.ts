@@ -508,6 +508,54 @@ describe("flujos reutilizables y variables de entorno", () => {
     await fixture.target.stop();
   });
 
+  /**
+   * Las etiquetas propias, que son lo que hace lanzable «corre lo crítico».
+   *
+   * Un contrato ya trae un `tag` y es el vocabulario de quien lo escribió. Lo que hace que las
+   * propias merezcan una sección en vez de un wiki es exactamente esto: una tubería las nombra y no
+   * enumera treinta ids que se quedan viejos en cuanto alguien añade una operación.
+   */
+  test("una corrida se puede seleccionar por etiqueta propia", async () => {
+    const fixture = await projectAgainst({});
+    const written = await api()
+      .put(`${fixture.projectBase}/config/labels`)
+      .set(as(owner))
+      .send({ labels: { listThings: ["critico"], createThing: ["critico", "pagos"] } });
+    assert.equal(written.status, 204, JSON.stringify(written.body));
+
+    const { run } = await runAndWait(fixture.projectBase, {
+      environmentId: fixture.environmentId,
+      labels: ["pagos"],
+    });
+    // Solo `createThing` lleva «pagos», así que la corrida es suya y de nadie más.
+    assert.deepEqual([...new Set(run.cases.map((item: RunCaseRow) => item.operationId))], ["createThing"]);
+    // Y el historial guarda con qué se pidió, no en qué se resolvió aquel día: «lo crítico» en marzo
+    // y «lo crítico» en junio son la misma instrucción sobre conjuntos distintos.
+    assert.deepEqual(run.source, { kind: "matrix", operationIds: [], labels: ["pagos"] });
+    await fixture.target.stop();
+  });
+
+  test("sin etiquetas pedidas la corrida es la de siempre", async () => {
+    const fixture = await projectAgainst({});
+    await api()
+      .put(`${fixture.projectBase}/config/labels`)
+      .set(as(owner))
+      .send({ labels: { listThings: ["critico"] } });
+    const { run } = await runAndWait(fixture.projectBase, { environmentId: fixture.environmentId });
+    assert.ok(new Set(run.cases.map((item: RunCaseRow) => item.operationId)).size > 1);
+    await fixture.target.stop();
+  });
+
+  test("una etiqueta con una coma no se guarda: no se podría pedir desde una línea de comandos", async () => {
+    const fixture = await projectAgainst({});
+    const response = await api()
+      .put(`${fixture.projectBase}/config/labels`)
+      .set(as(owner))
+      .send({ labels: { listThings: ["uno,dos"] } });
+    assert.equal(response.status, 422, JSON.stringify(response.body));
+    await fixture.target.stop();
+  });
+
   test("dos pruebas del mismo proyecto no pueden llamarse igual", async () => {
     const fixture = await projectAgainst({});
     const body = { name: "Crear", operationId: "createThing", expectedStatus: 201 };

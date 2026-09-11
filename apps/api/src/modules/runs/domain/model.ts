@@ -10,6 +10,10 @@ export type RunPlan = {
   customOrder: string[];
   /** The operations to include. Empty means every one the contract declares. */
   operationIds: string[];
+  /** Own labels to select by. Empty means «no filtres por etiqueta»; with both this and
+   * `operationIds`, the two narrow together. Optional because runs written before it exists have
+   * no such field, and a plan read back without one is a plan that filtered by nothing. */
+  labels?: string[];
   caseSelection: Record<string, string[]>;
   samples: number;
   /** Pause between cases. Not a nicety: some targets rate-limit, and a matrix of 311 cases fired

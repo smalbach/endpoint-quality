@@ -134,6 +134,7 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
       order: (command.input.order ?? "safe") as OrderMode,
       customOrder: command.input.customOrder ?? [],
       operationIds: command.input.operationIds ?? [],
+      labels: command.input.labels ?? [],
       caseSelection: command.input.caseSelection ?? {},
       samples,
       delayMs,

@@ -81,14 +81,28 @@ export type QueueOptions = {
   customOrder?: string[];
   /** The subset to include. `undefined` means every operation the list carries. */
   operationIds?: string[];
+  /**
+   * Include only operations carrying one of these own labels.
+   *
+   * **Any**, not all: «corre lo crítico o lo que toque pagos» is the sentence somebody writes, and
+   * requiring every label at once would make two of them select almost nothing.
+   *
+   * With `operationIds` as well, the two narrow together. Each one is a filter and reading them as
+   * a union would make adding a second one *widen* the run, which is the opposite of what somebody
+   * typing a second filter means.
+   */
+  labels?: string[];
   caseSelection?: CaseSelection;
   authEnabled: boolean;
 };
 
 export function buildQueue(list: ResolvedOperation[], config: ProjectConfig, options: QueueOptions): QueueItem[] {
   const included = options.operationIds ? new Set(options.operationIds) : undefined;
+  const wanted = options.labels?.length ? new Set(options.labels) : undefined;
+  const labelled = (operation: ResolvedOperation) =>
+    !wanted || (config.labels[operation.id] ?? []).some((label) => wanted.has(label));
   return orderOperations(list, options.mode, options.customOrder ?? [])
-    .filter((operation) => !included || included.has(operation.id))
+    .filter((operation) => (!included || included.has(operation.id)) && labelled(operation))
     .flatMap((operation) =>
       selectedCases(operation, config, options.caseSelection ?? {}, options.authEnabled).map((scenario) => ({
         operation,

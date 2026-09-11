@@ -24,13 +24,15 @@ const SECTION_HELP: Record<string, string> = {
   envelope: "Qué envelope se espera cuando el documento en vivo no declara schema para ese estado.",
   implemented:
     "Qué operaciones enruta la API hoy. Es un hecho sobre el código, no sobre el contrato: ningún schema puede derivarlo.",
+  labels:
+    "Las palabras del equipo sobre cada operación, al lado de las del contrato. Sirven para lanzar una corrida por ellas.",
   text: "El texto de los casos generados.",
 };
 
 /**
- * Importing a contract and editing the nine configuration sections.
+ * Importing a contract and editing the ten configuration sections.
  *
- * Seven of the nine have a visual editor; the other two keep a JSON textarea, and which two is a
+ * Eight of the ten have a visual editor; the other two keep a JSON textarea, and which two is a
  * judgement rather than a leftover. `scenarios` and `bodies` hold whole scenario templates and
  * whole request payloads — arbitrary JSON by definition — and a form over those is a worse JSON
  * editor than a JSON editor. `access` is the opposite case and the reason the line is worth

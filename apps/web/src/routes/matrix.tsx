@@ -23,6 +23,7 @@ export function MatrixPage() {
 
   const [environmentId, setEnvironmentId] = useState<string>("");
   const [tag, setTag] = useState("Todos");
+  const [labelFilter, setLabelFilter] = useState("Todas");
   const [search, setSearch] = useState("");
   const [selectedOperation, setSelectedOperation] = useState<string | null>(null);
   const [selectedCase, setSelectedCase] = useState<string | null>(null);
@@ -62,14 +63,33 @@ export function MatrixPage() {
     mutationFn: () =>
       api<{ runId: string }>(`${base}/runs`, {
         method: "POST",
-        body: { environmentId, order, ...(selection.length ? { operationIds: selection } : {}) },
+        body: {
+          environmentId,
+          order,
+          ...(selection.length ? { operationIds: selection } : {}),
+          // What is on screen is what gets run. Resolving the filter into the ids it matches today
+          // would record «estas treinta» where somebody meant «lo crítico», and the two stop being
+          // the same thing the next time an operation is added.
+          ...(labelFilter === "Todas" ? {} : { labels: [labelFilter] }),
+        },
       }),
     onSuccess: (result) => navigate(`/p/${projectId}/runs/${result.runId}`),
   });
 
-  const operations = scenarios.data?.operations ?? [];
+  // Memoised, and not merely tidier: `?? []` builds a new array on every render, so every `useMemo`
+  // below it had `operations` in its dependency list and recomputed every time anyway. Three
+  // filtered lists over forty-six operations is cheap; a dependency that is never equal to itself
+  // is the kind of thing that stops being cheap silently.
+  const operations = useMemo(() => scenarios.data?.operations ?? [], [scenarios.data]);
   const tags = useMemo(
     () => ["Todos", ...new Set(operations.map((operation) => operation.tag).filter(Boolean))],
+    [operations],
+  );
+  /** The team's own words, kept in their own control and never merged into the tag list: they
+   * answer different questions, and one dropdown holding both would make «Pedidos» and «crítico»
+   * look like alternatives. Drawn only when the project has written some. */
+  const labels = useMemo(
+    () => [...new Set(operations.flatMap((operation) => operation.labels ?? []))].sort(),
     [operations],
   );
   const visible = useMemo(
@@ -77,9 +97,11 @@ export function MatrixPage() {
       operations.filter(
         (operation) =>
           (tag === "Todos" || operation.tag === tag) &&
+          // Both filters narrow together, exactly as they do when a run is selected by them.
+          (labelFilter === "Todas" || (operation.labels ?? []).includes(labelFilter)) &&
           `${operation.method} ${operation.path} ${operation.summary}`.toLowerCase().includes(search.toLowerCase()),
       ),
-    [operations, tag, search],
+    [operations, tag, labelFilter, search],
   );
 
   const current = operations.find((operation) => operation.id === selectedOperation) ?? visible[0];
@@ -199,6 +221,7 @@ export function MatrixPage() {
               onChange={(event) => setSearch(event.target.value)}
             />
             <select
+              aria-label="Etiqueta del contrato"
               className="h-8 rounded-lg border border-slate-200 px-2 text-xs"
               value={tag}
               onChange={(event) => setTag(event.target.value)}
@@ -207,6 +230,18 @@ export function MatrixPage() {
                 <option key={option}>{option}</option>
               ))}
             </select>
+            {labels.length > 0 && (
+              <select
+                aria-label="Etiqueta propia"
+                className="h-8 rounded-lg border border-slate-200 px-2 text-xs"
+                value={labelFilter}
+                onChange={(event) => setLabelFilter(event.target.value)}
+              >
+                {["Todas", ...labels].map((option) => (
+                  <option key={option}>{option}</option>
+                ))}
+              </select>
+            )}
           </div>
 
           <div className="max-h-[70vh] overflow-y-auto">

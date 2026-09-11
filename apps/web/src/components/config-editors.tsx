@@ -1026,6 +1026,76 @@ function AccessEditor({ value, onChange, disabled, operationIds }: EditorProps) 
   );
 }
 
+/**
+ * Las palabras propias del equipo sobre cada operación.
+ *
+ * A comma-separated line per operation, and nothing cleverer. A chip editor with an autocomplete
+ * would be a nicer thing to look at and a worse thing to use for the job this has: somebody sits
+ * down once and labels forty operations, and typing `critico, pagos` and moving on with the
+ * keyboard is faster than picking from a menu forty times.
+ *
+ * The operations that already carry one float to the top. It is a list of forty and the ones worth
+ * re-reading are the ones somebody decided about; the rest is a long tail of «todavía no».
+ */
+function LabelsEditor({ value, onChange, disabled, operationIds }: EditorProps) {
+  const labels = (value.labels as Record<string, string[]>) ?? {};
+  const [filter, setFilter] = useState("");
+  const edit = (operationId: string, line: string) => {
+    const parsed = line
+      .split(",")
+      .map((label) => label.trim())
+      .filter(Boolean);
+    // An operation with no labels is dropped rather than stored as an empty list: «sin etiquetar»
+    // is the absence of a row, and keeping one would make the section grow by every operation
+    // somebody ever clicked into.
+    const { [operationId]: _gone, ...rest } = labels;
+    onChange({ ...value, labels: parsed.length ? { ...rest, [operationId]: parsed } : rest });
+  };
+
+  const shown = operationIds
+    .filter((id) => id.toLowerCase().includes(filter.toLowerCase()))
+    .sort((left, right) => Number((labels[right] ?? []).length > 0) - Number((labels[left] ?? []).length > 0));
+  const used = [...new Set(Object.values(labels).flat())].sort();
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          className={`${field} w-48`}
+          placeholder="Filtrar"
+          value={filter}
+          disabled={disabled}
+          onChange={(event) => setFilter(event.target.value)}
+        />
+        <p className="text-[11px] text-slate-400">{used.length ? `En uso: ${used.join(", ")}` : "Ninguna todavía."}</p>
+      </div>
+      <p className="mt-1 max-w-2xl text-[11px] leading-5 text-slate-500">
+        Separadas por comas. Son las del equipo y no las del contrato —«crítico», «legacy»— y sirven para lanzar una
+        corrida por ellas: «corre lo crítico» desde una tubería, sin enumerar treinta ids que se quedan viejos en cuanto
+        alguien añade una operación.
+      </p>
+      <div className="mt-2 max-h-80 overflow-y-auto rounded-xl border border-slate-200">
+        {shown.map((operationId) => (
+          <div
+            key={operationId}
+            className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] items-center gap-2 border-b border-slate-100 px-2 py-1 last:border-b-0"
+          >
+            <span className="truncate font-mono text-[11px] text-slate-600">{operationId}</span>
+            <input
+              aria-label={`Etiquetas de ${operationId}`}
+              className={`${field} w-full font-mono`}
+              placeholder="critico, pagos"
+              value={(labels[operationId] ?? []).join(", ")}
+              disabled={disabled}
+              onChange={(event) => edit(operationId, event.target.value)}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export const SECTION_EDITORS: Record<string, ((props: EditorProps) => ReactNode) | undefined> = {
   budgets: BudgetsEditor,
   envelope: EnvelopeEditor,
@@ -1033,5 +1103,6 @@ export const SECTION_EDITORS: Record<string, ((props: EditorProps) => ReactNode)
   parameters: ParametersEditor,
   authorization: AuthorizationEditor,
   access: AccessEditor,
+  labels: LabelsEditor,
   text: TextEditor,
 };

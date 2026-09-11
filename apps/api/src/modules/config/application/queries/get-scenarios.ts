@@ -110,6 +110,7 @@ export class GetScenariosHandler implements IQueryHandler<GetScenariosQuery, Sce
       method: operation.method,
       path: operation.path,
       tag: operation.tag,
+      labels: projectConfig.labels[operation.id] ?? [],
       summary: operation.summary,
       implemented: operation.implemented,
       responseShape: operation.responseShape,

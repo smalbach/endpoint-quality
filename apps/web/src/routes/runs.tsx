@@ -87,7 +87,13 @@ function sourceLabel(source: RunSource): string {
     if (!source.datasetId) return flow;
     return `${flow} · ${source.datasetName ?? "(datos eliminados)"}, ${source.rows} filas`;
   }
-  return source.operationIds.length ? `Matriz · ${source.operationIds.length} operaciones` : "Matriz completa";
+  // The labels come first because they are what somebody typed. «Matriz · crítico» says what the
+  // run was *asked for*; the operation count says how big the answer was that day.
+  const parts = [
+    ...(source.labels?.length ? [source.labels.join(", ")] : []),
+    ...(source.operationIds.length ? [`${source.operationIds.length} operaciones`] : []),
+  ];
+  return parts.length ? `Matriz · ${parts.join(" · ")}` : "Matriz completa";
 }
 
 /**

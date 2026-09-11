@@ -72,7 +72,11 @@ function sourceLabel(run: RunReport["run"]): string {
     return `Flujo ${source.name ?? "eliminado"}${dataset}`;
   }
   if (source.kind === "suite") return `Suite ${source.name ?? "eliminada"} · ${source.flowNames.length} flujos`;
-  return `Matriz · ${source.operationIds.length || "todas las"} operaciones`;
+  const selection = [
+    ...(source.labels?.length ? [source.labels.join(", ")] : []),
+    `${source.operationIds.length || "todas las"} operaciones`,
+  ];
+  return `Matriz · ${selection.join(" · ")}`;
 }
 
 /**

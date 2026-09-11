@@ -197,6 +197,21 @@ export type ProjectConfig = {
   implemented: string[] | null;
 
   /**
+   * §5 — the words this team uses for its own operations, keyed by operationId.
+   *
+   * A contract already carries a `tag`, and it is the author's vocabulary: «Pedidos», «Catálogo».
+   * What a team needs beside it is its own — «crítico», «legacy», «cara al cliente» — and those are
+   * not facts about the document, so they cannot come from it. Several per operation, because an
+   * operation is critical *and* legacy more often than it is only one thing, and a single label
+   * would force a choice nobody meant to make.
+   *
+   * What makes them worth storing rather than writing in a wiki is that a run can be selected by
+   * them: «corre lo crítico» from a pipeline, without listing thirty operation ids that go stale
+   * the next time somebody adds one.
+   */
+  labels: Record<string, string[]>;
+
+  /**
    * §4 — who may reach what, which the contract does not say.
    *
    * `roles` is declared here and not read off the environment's credentials, because «esta API
@@ -259,6 +274,7 @@ export const DEFAULT_CONFIG: ProjectConfig = {
   // Empty, like every other list here: a project that has not written down who its roles are has
   // not decided, and generating a permission case from silence would be inventing a requirement.
   access: { roles: [], deniedStatuses: [403, 404], rules: [], crossRole: [] },
+  labels: {},
   authRules: [
     { id: "auth-none", credential: "none", expectedStatus: 401, when: { declaredStatus: 401 }, sendBody: true },
     {

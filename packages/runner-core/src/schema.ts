@@ -142,6 +142,17 @@ export const operationParametersSchema = z.object({
  * placeholder defaults and the missing-id value belong with the parameter samples because they
  * are all "which values do the cases use", even though they sit in different fields.
  */
+/**
+ * What a label may be called.
+ *
+ * Looser than a role or a variable — it is never substituted into anything, so it does not have to
+ * survive a URL or a shell — but not free text either: it is typed into a `?labels=` on a CI
+ * command line, and a label with a comma in it could never be selected there.
+ */
+const labelName = z
+  .string()
+  .regex(/^[^\s,][^,]{0,39}$/, "una etiqueta no puede llevar comas ni empezar por un espacio");
+
 /** The same rule a variable name follows, and for the same reason: a role is written here, read
  * back inside a case id, and typed again in every environment that supplies its credential. */
 const roleName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,19}$/, "nombre de rol inválido");
@@ -239,6 +250,11 @@ export const configSections = {
     }),
   }),
   implemented: z.object({ implemented: z.array(z.string()).nullable() }),
+  /** Its own section and not a field inside another, because labelling the operations is a thing
+   * somebody sits down and does — which is what every section here is grouped by. */
+  labels: z.object({
+    labels: z.record(z.string().min(1).max(200), z.array(labelName).max(20)).default({}),
+  }),
   text: z.object({ locale: z.enum(["es", "en"]), text: z.record(z.string(), z.string()) }),
 } as const;
 

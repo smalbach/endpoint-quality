@@ -66,5 +66,5 @@ export function describeSource(run: Run, catalog: SourceCatalog): RunSource {
   }
   // An empty `operationIds` is the whole contract, which is a different statement from a subset of
   // zero and is what the interface has to be able to tell apart.
-  return { kind: "matrix", operationIds: run.plan.operationIds };
+  return { kind: "matrix", operationIds: run.plan.operationIds, labels: run.plan.labels ?? [] };
 }

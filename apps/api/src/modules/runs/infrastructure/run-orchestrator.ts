@@ -115,6 +115,7 @@ export class RunOrchestrator {
       mode: run.plan.order,
       customOrder: run.plan.customOrder,
       ...(run.plan.operationIds.length ? { operationIds: run.plan.operationIds } : {}),
+      ...(run.plan.labels?.length ? { labels: run.plan.labels } : {}),
       caseSelection: run.plan.caseSelection,
       authEnabled: context.authEnabled,
     });

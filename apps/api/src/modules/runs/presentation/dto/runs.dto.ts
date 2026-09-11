@@ -22,6 +22,9 @@ export class StartRunDto {
   /** Empty or absent means the whole contract. A subset button that silently means everything is
    * how a 46-operation write run gets started by accident. */
   @IsOptional() @IsArray() @IsString({ each: true }) operationIds?: string[];
+  /** «Corre lo crítico», from a pipeline, without listing thirty ids that go stale the next time
+   * somebody adds an operation. */
+  @IsOptional() @IsArray() @IsString({ each: true }) labels?: string[];
   @IsOptional() @IsObject() caseSelection?: Record<string, string[]>;
 
   /** One sample is a measurement, not a percentile — the latency assertion says so. Capped at 50

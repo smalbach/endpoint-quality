@@ -341,7 +341,12 @@ export type OperationScenarios = {
   id: string;
   method: string;
   path: string;
+  /** The author's vocabulary, from the contract. */
   tag: string;
+  /** This team's, from the `labels` section. Kept beside `tag` and never merged into it: they
+   * answer different questions, and a screen that mixed them would make «Pedidos» and «crítico»
+   * look like alternatives. */
+  labels: string[];
   summary: string;
   implemented: boolean;
   responseShape: string;
@@ -419,7 +424,11 @@ export type RunCaseOf<T> = {
  * into a lie about a flow that still exists.
  */
 export type RunSource =
-  | { kind: "matrix"; operationIds: string[] }
+  /** `labels` is what the run was *selected by*, and it is kept beside the ids rather than
+   * resolved into them: «lo crítico» in March and «lo crítico» in June are the same instruction
+   * over a different set, and a history that replaced the words with the list of the day could not
+   * say that. */
+  | { kind: "matrix"; operationIds: string[]; labels: string[] }
   | {
       kind: "workflow";
       workflowId: string;

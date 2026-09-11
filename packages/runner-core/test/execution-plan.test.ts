@@ -100,3 +100,72 @@ test("sin subconjunto la cola cubre todas las operaciones", () => {
   const queue = buildQueue(resolved, config, { mode: "contract", authEnabled: false });
   assert.equal(new Set(queue.map((item) => item.operation.id)).size, resolved.length);
 });
+
+/**
+ * Las etiquetas propias del equipo, que son lo que un contrato no puede dar.
+ *
+ * Un contrato ya trae un `tag` y es el vocabulario de quien lo escribió. Lo que un equipo necesita
+ * al lado es el suyo —«crítico», «legacy», «cara al cliente»— y lo que hace que merezca la pena
+ * guardarlo en vez de escribirlo en un wiki es poder lanzar una corrida por ahí: «corre lo crítico»
+ * desde una tubería, sin enumerar treinta ids que se quedan viejos en cuanto alguien añade uno.
+ */
+const labelled = defineProjectConfig({
+  parameterSamples: { q: ["a"] },
+  bodyTemplates: { createThing: { body: { name: "x" } } },
+  labels: { listThings: ["critico"], createThing: ["critico", "pagos"], getThing: ["legacy"] },
+});
+const labelledOperations = resolveOperations(operations, labelled);
+
+test("sin etiquetas pedidas entra todo, como antes de que esto existiera", () => {
+  const queue = buildQueue(labelledOperations, labelled, { mode: "contract", authEnabled: false });
+  assert.equal(new Set(queue.map((item) => item.operation.id)).size, 4);
+});
+
+test("pedir una etiqueta deja solo lo que la lleva", () => {
+  const queue = buildQueue(labelledOperations, labelled, {
+    mode: "contract",
+    labels: ["critico"],
+    authEnabled: false,
+  });
+  assert.deepEqual([...new Set(queue.map((item) => item.operation.id))].sort(), ["createThing", "listThings"]);
+});
+
+test("dos etiquetas es «cualquiera de las dos», que es la frase que alguien escribe", () => {
+  // Exigirlas todas a la vez haría que añadir una segunda seleccionara casi nada, que es lo
+  // contrario de lo que significa escribir una segunda.
+  const queue = buildQueue(labelledOperations, labelled, {
+    mode: "contract",
+    labels: ["critico", "legacy"],
+    authEnabled: false,
+  });
+  assert.equal(new Set(queue.map((item) => item.operation.id)).size, 3);
+});
+
+test("una operación sin etiquetar no entra cuando se pide una", () => {
+  const queue = buildQueue(labelledOperations, labelled, {
+    mode: "contract",
+    labels: ["critico"],
+    authEnabled: false,
+  });
+  assert.ok(!queue.some((item) => item.operation.id === "deleteThing"));
+});
+
+test("con ids y etiquetas a la vez, los dos estrechan", () => {
+  // Cada uno es un filtro, y leerlos como unión haría que añadir un segundo *ampliara* la corrida.
+  const queue = buildQueue(labelledOperations, labelled, {
+    mode: "contract",
+    operationIds: ["createThing", "getThing"],
+    labels: ["critico"],
+    authEnabled: false,
+  });
+  assert.deepEqual([...new Set(queue.map((item) => item.operation.id))], ["createThing"]);
+});
+
+test("una etiqueta que nadie lleva deja la cola vacía en vez de llena", () => {
+  const queue = buildQueue(labelledOperations, labelled, {
+    mode: "contract",
+    labels: ["no-existe"],
+    authEnabled: false,
+  });
+  assert.equal(queue.length, 0);
+});
