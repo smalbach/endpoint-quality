@@ -37,9 +37,9 @@ Security Rules**, panel de respuesta **Body · Headers · Console**, y un botón
 `CrossRoleDataRule { sourceRole, targetRole, endpoint, canRead/canWrite/canDelete }`. De ahí salen
 sus casos BOLA/IDOR.
 
-Aquí hay credenciales por rol en el entorno y un `credential: "none" | "insufficient" | "api-key"`
-**global**. No se puede decir «el rol _vendedor_ no debe poder leer `getPedido` de otro». Es la
-única función de seguridad del analizador que encaja con lo que este producto es. → tanda 4.
+Aquí había credenciales por rol en el entorno y un `credential: "none" | "insufficient" | "api-key"`
+**global**. Era la única función de seguridad del analizador que encaja con lo que este producto es.
+→ tanda 4 ✔
 
 ### 3. Importar de otro proyecto
 
@@ -132,11 +132,37 @@ Lo que conviene no volver a discutir:
   estilos, sin script y sin imagen, porque acaba de artefacto en un CI o abierta desde el disco.
   Un `?format=` que no se reconoce cae en JSON en vez de romper la tubería.
 
-### Tanda 4 — Permisos por operación
+### Tanda 4 — Permisos por operación · **cerrada** (`3f3004e`, `c967fd4`, `41874a3`, `97698b7`)
 
-Sección de configuración nueva, `access`: por operación, qué roles deben pasar y cuáles deben
-recibir 403, más las reglas entre roles. La matriz genera un caso por celda. Es la más grande y la
-única con diseño que discutir antes de escribir.
+Sección `access`, la novena: por operación, qué roles deben pasar y cuáles deben recibir un
+rechazo, más las reglas entre roles. Un caso por celda.
+
+Las decisiones, que se discutieron antes de escribir:
+
+- **Un rol es una credencial con nombre.** `primary`, `insufficient` y `alternate` describen en qué
+  _falla_ una credencial; un rol describe quién la tiene. Pasan a ser nombres reservados y el resto
+  lo declara el proyecto. Sin migración: la columna ya era `varchar(20)`, lo que lo cerraba era un
+  enum en el DTO. En el motor, `auth` gana la forma `role:<nombre>` — un campo con prefijo y no un
+  segundo campo al lado, porque hay una sola respuesta por caso a «con qué credencial sale esto».
+- **Los roles se declaran en la configuración**, no se leen de las credenciales de un entorno.
+  «Esta API tiene estos roles» es del proyecto; «este token es el del vendedor» es del entorno.
+  Leerlos del entorno haría que la matriz cambiara de forma según dónde se lanzara. Un rol sin
+  credencial en este entorno deja el caso en `config`, nunca en un veredicto sobre el endpoint.
+- **`allow` y `deny` se guardan las dos**, y ninguna es el complemento de la otra. El silencio es
+  «todavía no se ha dicho», nunca «no debe pasar».
+- **Un rechazo acepta 403 y 404.** Una API bien hecha esconde la existencia; exigir uno solo
+  pondría en rojo un estilo y no un permiso. Para eso el motor aprende `alsoAccepted`, vacío en
+  todo lo que genera la matriz derivada del contrato.
+- **El caso entre roles es un flujo de dos pasos**, y el recurso se crea durante la corrida: ir a
+  por un id semilla no prueba nada, porque una fixture es de quien digan las fixtures. El paso de
+  preparación no es el caso — si falla, el flujo para en vez de anotar un hallazgo sobre algo que
+  nunca existió. La limpieza va como el dueño, no como el rol del caso.
+
+Una trampa que salió al abrirlo en el navegador y conviene no repetir: un valor por defecto que
+solo existe en el esquema de zod **no** es un valor por defecto del que el resto del código pueda
+fiarse. Las secciones se fusionan superficialmente, así que una guardada sin un campo opcional
+sustituye al objeto entero. `defineProjectConfig` fusiona `access` clave a clave, como ya hacía con
+`text`; cualquier sección futura con un objeto anidado y campos opcionales necesita lo mismo.
 
 ### Tanda 5 — Varios
 
