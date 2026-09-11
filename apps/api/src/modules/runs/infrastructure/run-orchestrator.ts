@@ -360,21 +360,28 @@ export class RunOrchestrator {
     templates: Map<string, RequestTemplateRow>,
     rows: (Record<string, string> | null)[],
   ): Promise<void> {
-    let position = 0;
+    // Two counters, because they measure different things. `cursor` hands out `position`, which is
+    // unique per run in the database — and a step that loops needs one slot per element, reserved
+    // before anything runs because the elements do not exist yet. `cases` is how many rows were
+    // actually written, which is what the budget and the progress total are about. The difference
+    // between them is the gaps the unused reservations leave, and a gap costs nothing.
+    let cursor = 0;
+    let cases = 0;
     const passes = rows.flatMap((row, rowIndex) =>
       flows.map((flow) => {
         // The suffix only appears when there is more than one row: `…:crear@0` on a run with no
         // dataset would be noise in every report that shows a scenario id.
-        const items = this.prepareWorkflow(
+        const prepared = this.prepareWorkflow(
           run,
           flow,
           templates,
           context.resolved,
           rows.length > 1 ? `@${rowIndex}` : "",
-          position,
+          cursor,
         );
-        position += items.length;
-        return { row, rowIndex, items };
+        cursor = prepared.next;
+        cases += prepared.items.length;
+        return { row, rowIndex, items: prepared.items };
       }),
     );
 
@@ -382,12 +389,12 @@ export class RunOrchestrator {
     await this.runs.updateStatus(run.id, "running", this.clock.now());
     // A lower bound rather than a count: a step that loops adds cases while the run is walking,
     // and the totals a follower shows are recomputed from the rows on every event anyway.
-    this.eventBus.publish(new RunStartedEvent(run.projectId, run.id, position));
+    this.eventBus.publish(new RunStartedEvent(run.projectId, run.id, cases));
 
     // What the loops may still add. The static half — flows times rows times steps — was refused
     // at the click if it did not fit; this is what is left of the ceiling for the half the target
     // decides.
-    const budget = { extra: this.env.MAX_RUN_CASES - position };
+    const budget = { extra: this.env.MAX_RUN_CASES - cases };
     const base = { ...context.target.variables };
     let cancelled = false;
     let walkedRow = -1;
@@ -417,7 +424,13 @@ export class RunOrchestrator {
     offset: number,
   ) {
     const ordered = orderWorkflowSteps(workflow.definition, `El flujo "${workflow.name}"`);
-    return ordered.map((step, position) => {
+    let cursor = offset;
+    const items = ordered.map((step) => {
+      const position = cursor;
+      // A looping step reserves a slot per element it may walk. They cannot be handed out while
+      // walking — the ceiling is what the author wrote, the length is what the target answers, and
+      // `position` has to be unique across the whole run either way.
+      cursor += step.forEach ? (step.forEach.max ?? 50) : 1;
       const template = templates.get(step.requestTemplateId);
       if (!template)
         throw new Error(`El paso "${step.id}" referencia la prueba inexistente "${step.requestTemplateId}"`);
@@ -437,20 +450,21 @@ export class RunOrchestrator {
           method: operation.method,
           path: operation.path,
           status: "queued" as const,
-          position: offset + position,
+          position,
           durationMs: null,
           startedAt: null,
           finishedAt: null,
         } satisfies RunCase,
       };
     });
+    return { items, next: cursor };
   }
 
   /** One walk of one graph. Returns whether the run was cancelled while it was walking. */
   private async walkPrepared(
     run: Run,
     context: { config: ProjectConfig; resolved: ResolvedOperation[]; target: ExecutionTarget; authEnabled: boolean },
-    prepared: ReturnType<RunOrchestrator["prepareWorkflow"]>,
+    prepared: ReturnType<RunOrchestrator["prepareWorkflow"]>["items"],
     budget: { extra: number },
   ): Promise<boolean> {
     const passed = new Map<string, boolean>();
@@ -535,14 +549,17 @@ export class RunOrchestrator {
       let allPassed = true;
       let status: RunCase["status"] = "passed";
       for (const [iteration, element] of iterations.entries()) {
+        // The first element **reuses the row that was already queued for the step**, and the rest
+        // take the slots it reserved. Giving the first one a new id instead leaves the queued row
+        // behind with no verdict and two rows fighting over one `position`, which the unique index
+        // on `run_cases` refuses — the run dies with a constraint name and nothing else.
         const runCase =
           elements === null
             ? item.runCase
             : {
                 ...item.runCase,
-                id: randomUUID(),
+                ...(iteration === 0 ? {} : { id: randomUUID(), position: item.runCase.position + iteration }),
                 scenarioId: `${item.runCase.scenarioId}#${iteration}`,
-                position: item.runCase.position,
               };
         const boundAt = this.clock.now();
         if (elements !== null && item.step.forEach) {

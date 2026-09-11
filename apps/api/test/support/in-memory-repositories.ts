@@ -321,7 +321,7 @@ export class InMemoryRunRepository implements RunRepositoryPort {
     this.runs.set(run.id, { ...run });
   }
   async saveCases(cases: RunCase[]): Promise<void> {
-    for (const runCase of cases) this.cases.set(runCase.id, { ...runCase });
+    for (const runCase of cases) await this.saveCase(runCase);
   }
   async listCases(runId: string): Promise<RunCase[]> {
     return [...this.cases.values()]
@@ -332,6 +332,19 @@ export class InMemoryRunRepository implements RunRepositoryPort {
     return this.cases.get(id) ?? null;
   }
   async saveCase(runCase: RunCase): Promise<void> {
+    // `ux_run_cases_run_position`, which the real table has and this fake did not. It was not an
+    // oversight worth shrugging at: a step that loops writes one case per element, the obvious
+    // implementation gives them all the position of the step, and every fast test passed while
+    // Postgres refused the second element — the run died with a constraint name in `error` and no
+    // test anywhere had a chance to say so.
+    const clash = [...this.cases.values()].find(
+      (other) => other.runId === runCase.runId && other.position === runCase.position && other.id !== runCase.id,
+    );
+    if (clash) {
+      throw new Error(
+        `duplicate key value violates unique constraint "ux_run_cases_run_position" (posición ${runCase.position})`,
+      );
+    }
     this.cases.set(runCase.id, { ...runCase });
   }
   async saveSteps(steps: RunStep[]): Promise<void> {
