@@ -38,7 +38,7 @@ const report = (overrides: { cases?: ReportCase[]; run?: Partial<RunReport["run"
       environmentId: "e1",
       status: "failed",
       totals: { cases: 2, completed: 2, passed: 1, failed: 1, skipped: 0 },
-      source: { kind: "matrix", operationIds: ["listWidgets"] },
+      source: { kind: "matrix", operationIds: ["listWidgets"], labels: [] },
       startedAt: new Date("2026-09-11T10:00:00.000Z"),
       finishedAt: new Date("2026-09-11T10:00:02.500Z"),
       error: null,
@@ -134,6 +134,14 @@ describe("el informe en JUnit XML", () => {
   test("un nombre de operación con caracteres de XML no rompe el documento", () => {
     const xml = toJUnitXml(report({ cases: [runCase({ operationId: 'a<b&c"d' })] }));
     assert.ok(xml.includes('<testsuite name="a&lt;b&amp;c&quot;d"'), xml);
+  });
+
+  test("el título dice por qué se seleccionó, y no se contradice", () => {
+    // «pagos · todas las operaciones» serían dos afirmaciones y una estaría mal.
+    const byLabel = report({ run: { source: { kind: "matrix", operationIds: [], labels: ["pagos"] } } });
+    assert.ok(toJUnitXml(byLabel).includes('name="Matriz · pagos"'), toJUnitXml(byLabel).slice(0, 200));
+    const whole = report({ run: { source: { kind: "matrix", operationIds: [], labels: [] } } });
+    assert.ok(toJUnitXml(whole).includes("Matriz · todas las operaciones"));
   });
 
   test("el tiempo es el del reloj de pared, no la suma de los casos", () => {

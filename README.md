@@ -103,6 +103,25 @@ faltan argumentos, el token no vale, la API no responde. Los casos _saltados_ �
 un entorno de solo lectura— no rompen la build salvo que se lo pidas con `--fail-on-skip`: no son
 un hallazgo sobre la API, y reportarlos como tal enseña a la gente a ignorar el rojo.
 
+Dos banderas que existen para una tubería y no para una persona:
+
+```bash
+node tools/eq-run.mjs --project "Digital Catalog" --environment staging \
+  --labels critico,pagos \
+  --junit informe.xml
+```
+
+`--labels` corre solo las operaciones con alguna de esas etiquetas —las del equipo, escritas en la
+sección `labels`, no las del contrato—, así que una tubería dice «corre lo crítico» una vez y sigue
+diciéndolo, en vez de arrastrar una lista de ids que caduca en cuanto alguien añade una operación.
+Cualquiera de las dos, nunca todas: es lo que significa escribir dos.
+
+`--junit` escribe el informe en el formato que todos los runners leen, con el texto del fallo al
+lado del test que lo produjo. Sin él, una tubería puede decir «la corrida falló» y nada sobre cuál
+de 311 casos lo hizo. El mismo informe sale por HTTP con `GET :runId/report?format=junit`, y hay
+también `?format=html` para una página que se abre —sin hoja de estilos, sin script y sin imagen,
+porque acaba de artefacto en un CI o abierta desde el disco seis meses después—.
+
 El token se emite desde la organización (`POST /orgs/:id/tokens`) y se enseña **una vez**: se
 guarda con hash.
 

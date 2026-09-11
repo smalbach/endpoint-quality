@@ -72,11 +72,14 @@ function sourceLabel(run: RunReport["run"]): string {
     return `Flujo ${source.name ?? "eliminado"}${dataset}`;
   }
   if (source.kind === "suite") return `Suite ${source.name ?? "eliminada"} · ${source.flowNames.length} flujos`;
+  // «todas las operaciones» only when nothing narrowed the run. Appending it after a label would
+  // make the report's own title contradict itself: «pagos · todas las operaciones» is two claims
+  // and one of them is wrong.
   const selection = [
     ...(source.labels?.length ? [source.labels.join(", ")] : []),
-    `${source.operationIds.length || "todas las"} operaciones`,
+    ...(source.operationIds.length ? [`${source.operationIds.length} operaciones`] : []),
   ];
-  return `Matriz · ${selection.join(" · ")}`;
+  return selection.length ? `Matriz · ${selection.join(" · ")}` : "Matriz · todas las operaciones";
 }
 
 /**

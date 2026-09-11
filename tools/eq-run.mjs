@@ -20,6 +20,7 @@
  * any Node 22 runs. It is also what `docker compose` uses to fire the demo run, so the path a
  * newcomer sees on day one is the same one their pipeline uses.
  */
+import { writeFile } from "node:fs/promises";
 
 const args = process.argv.slice(2);
 const flag = (name) => {
@@ -33,6 +34,26 @@ const TOKEN = process.env.EQ_TOKEN ?? flag("token");
 const PROJECT = flag("project");
 const ENVIRONMENT = flag("environment");
 const ORDER = flag("order") ?? "safe";
+/**
+ * The project's own labels to select by, comma-separated.
+ *
+ * The reason the labels exist at all: a pipeline says «corre lo crítico» once and keeps saying it,
+ * instead of carrying a list of operation ids that goes stale the next time somebody adds one. Any
+ * of them, never all — that is what somebody writing two of them means.
+ */
+const LABELS = (flag("labels") ?? "")
+  .split(",")
+  .map((label) => label.trim())
+  .filter(Boolean);
+/**
+ * Where to write the JUnit XML, when a job wants one.
+ *
+ * Every runner on the market reads it and draws the red cases in its own UI, with the failure text
+ * next to the test that produced it. Written to a file rather than to stdout because that is what
+ * a runner collects — `--json` already owns stdout, and a job that asked for both would get an XML
+ * document with a JSON report in the middle of it.
+ */
+const JUNIT = flag("junit");
 const SAMPLES = Number(flag("samples") ?? 1);
 const DELAY = Number(flag("delay") ?? 0);
 /** A skipped case is one the environment refused to run — a write against a read-only target. It
@@ -49,6 +70,8 @@ function usage(message) {
     --api <url>          o EQ_API           (por defecto http://localhost:3001)
     --token <token>      o EQ_TOKEN         token de servicio de la organización
     --order safe|contract                   por defecto safe: lecturas primero, DELETE al final
+    --labels <a,b>                          solo las operaciones con alguna de esas etiquetas
+    --junit <fichero>                       escribe el informe en JUnit XML para que el CI lo pinte
     --samples <n>                           muestras de latencia por caso (1 = sin p95)
     --delay <ms>                            pausa entre casos, para destinos con rate limit
     --timeout <segundos>                    por defecto 1800
@@ -62,7 +85,14 @@ if (!TOKEN) usage("Falta el token: EQ_TOKEN o --token.");
 if (!PROJECT) usage("Falta --project.");
 if (!ENVIRONMENT) usage("Falta --environment.");
 
-async function call(method, path, body) {
+/**
+ * `as` is `"json"` for everything but the JUnit report, which is XML.
+ *
+ * Named rather than inferred from the path, because the failure it prevents is silent: parsing an
+ * XML document as JSON throws inside this helper, and the message would be about a syntax error
+ * rather than about the report the job asked for.
+ */
+async function call(method, path, body, as = "json") {
   let response;
   try {
     response = await fetch(`${API}${path}`, {
@@ -76,12 +106,19 @@ async function call(method, path, body) {
     fail(2, `No se pudo contactar con ${API}: ${error instanceof Error ? error.message : error}`);
   }
   const text = await response.text();
-  const parsed = text ? JSON.parse(text) : null;
+  // Parsed even when the caller asked for text, but only to report an error: this API answers a
+  // problem document in JSON whatever the request wanted, so the failure message stays useful.
+  let parsed = null;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    if (as === "json") fail(2, `${method} ${path} → respuesta ilegible`);
+  }
   if (!response.ok) {
     const fields = parsed?.errors?.map((error) => `\n    ${error.field}: ${error.detail}`).join("") ?? "";
     fail(2, `${method} ${path} → ${response.status}: ${parsed?.detail ?? response.statusText}${fields}`);
   }
-  return parsed;
+  return as === "text" ? text : parsed;
 }
 
 function fail(code, message) {
@@ -121,8 +158,9 @@ const { runId } = await call("POST", `${base}/runs`, {
   order: ORDER,
   samples: SAMPLES,
   delayMs: DELAY,
+  ...(LABELS.length ? { labels: LABELS } : {}),
 });
-log(`corrida ${runId}`);
+log(`corrida ${runId}${LABELS.length ? ` · etiquetas ${LABELS.join(", ")}` : ""}`);
 
 const deadline = Date.now() + TIMEOUT_MS;
 let run;
@@ -152,6 +190,14 @@ const report = await call("GET", `${base}/runs/${runId}/report`);
 
 if (has("json")) {
   console.log(JSON.stringify(report, null, 2));
+}
+
+if (JUNIT) {
+  // Asked for as XML rather than rendered here: the same run in two shapes must not be two pieces
+  // of code that can disagree, and the one the API already writes is the one the report tests pin.
+  const xml = await call("GET", `${base}/runs/${runId}/report?format=junit`, undefined, "text");
+  await writeFile(JUNIT, xml, "utf8");
+  log(`informe JUnit en ${JUNIT}`);
 }
 
 const failed = report.cases.filter((runCase) => runCase.status === "failed");
