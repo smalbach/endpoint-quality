@@ -17,7 +17,16 @@ import globals from "globals";
 
 export default tseslint.config(
   {
-    ignores: ["**/dist/**", "**/dist-test/**", ".parity-cut/**", "tools/parity-cut/legacy/**", "**/node_modules/**"],
+    ignores: [
+      "**/dist/**",
+      "**/dist-test/**",
+      ".parity-cut/**",
+      "tools/parity-cut/legacy/**",
+      "**/node_modules/**",
+      // Clones enteros de este repo, creados por los agentes en segundo plano. Linterlos es
+      // linter el proyecto otra vez, con un `tsconfig` que se resuelve desde otra raíz.
+      ".claude/worktrees/**",
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

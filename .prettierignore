@@ -3,3 +3,6 @@
 **/dist-test
 pnpm-lock.yaml
 .parity-cut
+
+# Clones del repo creados por los agentes en segundo plano.
+.claude/worktrees/
