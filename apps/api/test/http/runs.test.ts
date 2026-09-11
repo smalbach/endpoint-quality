@@ -962,6 +962,67 @@ describe("guardas del entorno", () => {
     await fixture.target.stop();
   });
 
+  /**
+   * Una credencial deja de ser una de tres y pasa a ser la de un rol con nombre.
+   *
+   * `primary`, `insufficient` y `alternate` describen **en qué falla** una credencial, y una
+   * matriz de autorización se hace de otra pregunta: quién la está presentando. `vendedor` no es
+   * «insuficiente» —lo es para unas operaciones y no para otras—, así que los tres nombres no
+   * podían expresarlo por mucho que se estiraran.
+   */
+  test("una plantilla puede presentarse como un rol con nombre, y sale su credencial", async () => {
+    const fixture = await projectAgainst({ enforcesAuth: true }, { authEnforced: true });
+    await api()
+      .put(`${fixture.projectBase}/environments/${fixture.environmentId}/credentials`)
+      .set(as(owner))
+      .send({ name: "Vendedor", role: "vendedor", kind: "bearer", secret: "token-de-vendedor" });
+
+    const template = await api()
+      .post(`${fixture.projectBase}/request-templates`)
+      .set(as(owner))
+      .send({ name: "Listar como vendedor", operationId: "listThings", expectedStatus: 200, auth: "role:vendedor" });
+    assert.equal(template.status, 201, JSON.stringify(template.body));
+
+    const before = fixture.target.requests.length;
+    const preview = await api().post(`${fixture.projectBase}/request-preview`).set(as(owner)).send({
+      environmentId: fixture.environmentId,
+      operationId: "listThings",
+      expectedStatus: 200,
+      auth: "role:vendedor",
+    });
+    assert.equal(preview.status, 200, JSON.stringify(preview.body));
+    const sent = fixture.target.requests.slice(before).find((item) => item.path === "/things");
+    assert.equal(sent?.authorization, "Bearer token-de-vendedor");
+    await fixture.target.stop();
+  });
+
+  test("un rol sin credencial en este entorno es «config», no un veredicto sobre el endpoint", async () => {
+    const fixture = await projectAgainst({});
+    const preview = await api().post(`${fixture.projectBase}/request-preview`).set(as(owner)).send({
+      environmentId: fixture.environmentId,
+      operationId: "listThings",
+      expectedStatus: 200,
+      auth: "role:vendedor",
+    });
+    assert.equal(preview.status, 200, JSON.stringify(preview.body));
+    assert.equal(preview.body.failure, "config");
+    // Nada salió: mandar la petición sin credencial daría un 401 que se lee como «el endpoint
+    // rechaza al vendedor», que es el hallazgo equivocado anotado como si fuera el bueno.
+    assert.equal(preview.body.response, null);
+    assert.match(preview.body.assertions[0].detail, /vendedor/);
+    await fixture.target.stop();
+  });
+
+  test("un nombre de rol que no se puede repetir a mano no se guarda", async () => {
+    const fixture = await projectAgainst({});
+    const response = await api()
+      .put(`${fixture.projectBase}/environments/${fixture.environmentId}/credentials`)
+      .set(as(owner))
+      .send({ name: "Malo", role: "un rol", kind: "bearer", secret: "x" });
+    assert.equal(response.status, 422, JSON.stringify(response.body));
+    await fixture.target.stop();
+  });
+
   test("con autorización aplicada, la matriz 401/403 se ejecuta de verdad", async () => {
     const fixture = await projectAgainst({ enforcesAuth: true }, { authEnforced: true });
     await api().put(`${fixture.projectBase}/environments/${fixture.environmentId}/credentials`).set(as(owner)).send({

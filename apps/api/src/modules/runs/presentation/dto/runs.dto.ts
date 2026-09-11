@@ -2,6 +2,7 @@ import {
   IsArray,
   IsIn,
   IsInt,
+  Matches,
   IsObject,
   IsOptional,
   IsString,
@@ -11,7 +12,7 @@ import {
   Min,
   MinLength,
 } from "class-validator";
-import type { OrderMode, RequestBody, ScenarioAuth } from "@eq/runner-core";
+import type { OrderMode, RequestBody, ScenarioCredential } from "@eq/runner-core";
 
 export class StartRunDto {
   @IsUUID() environmentId: string;
@@ -40,7 +41,10 @@ export class StartRunDto {
   @IsOptional() @IsUUID() suiteId?: string;
 }
 
-const AUTH = ["default", "none", "insufficient", "api-key"];
+/** The four fixed selectors, or `role:<nombre>`. The shape is checked here and the rule about
+ * which names a project knows lives in the engine's schema, checked inside the command — a second
+ * list of role names in a decorator is a list that would be free to disagree. */
+const CREDENTIAL = /^(default|none|insufficient|api-key|role:[A-Za-z_][A-Za-z0-9_.-]{0,39})$/;
 
 /**
  * The request to send, flat: what the form has on screen, plus the environment to send it against.
@@ -60,5 +64,7 @@ export class PreviewRequestDto {
    * what is switched off is simply not in it. The editor drops them before it calls. */
   @IsOptional() @IsObject() headers?: Record<string, string>;
   @IsOptional() @IsObject() body?: RequestBody;
-  @IsOptional() @IsIn(AUTH, { message: `auth debe ser uno de: ${AUTH.join(", ")}` }) auth?: ScenarioAuth;
+  @IsOptional()
+  @Matches(CREDENTIAL, { message: "auth es default, none, insufficient, api-key o role:<nombre>" })
+  auth?: ScenarioCredential;
 }

@@ -21,6 +21,7 @@
  */
 import { z } from "zod";
 import type { ProjectConfig } from "./config.ts";
+import { ROLE_PREFIX, SCENARIO_AUTH } from "./types.ts";
 
 const httpMethod = z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 const jsonObject = z.record(z.string(), z.unknown());
@@ -44,7 +45,23 @@ export const scenarioFlowSchema = z.enum([
   "deleted-read",
   "bulk-read",
 ]);
-export const scenarioAuthSchema = z.enum(["default", "none", "insufficient", "api-key"]);
+export const scenarioAuthSchema = z.enum(SCENARIO_AUTH);
+
+/**
+ * What a case may name as the credential it presents: one of the four fixed selectors, or a role.
+ *
+ * The role name is checked against the same rule a variable name follows, and for the same reason:
+ * it is written by hand in a configuration section, read back in a case id, and typed again in the
+ * environment that supplies its credential. Three places to spell it, so the spelling has to be
+ * something a person can repeat.
+ */
+export const scenarioCredentialSchema = z.union([
+  scenarioAuthSchema,
+  z
+    .string()
+    .regex(new RegExp(`^${ROLE_PREFIX}[A-Za-z_][A-Za-z0-9_.-]{0,39}$`), "nombre de rol inválido")
+    .transform((value) => value as `${typeof ROLE_PREFIX}${string}`),
+]);
 
 export const scenarioTemplateSchema = z.object({
   id: z.string().min(1),

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Inject } from "@nestjs/common";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
-import { safeParseRequestTemplate, type RequestBody, type ScenarioAuth } from "@eq/runner-core";
+import { safeParseRequestTemplate, type RequestBody, type ScenarioCredential } from "@eq/runner-core";
 
 import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
@@ -20,7 +20,7 @@ export type RequestTemplateInput = {
   headers?: Record<string, string>;
   disabledHeaders?: Record<string, string>;
   body?: RequestBody;
-  auth?: ScenarioAuth;
+  auth?: ScenarioCredential;
 };
 
 export class CreateRequestTemplateCommand implements ICommand {
@@ -82,7 +82,7 @@ type TemplateFields = {
   headers: Record<string, string>;
   disabledHeaders: Record<string, string>;
   body: RequestBody;
-  auth: ScenarioAuth;
+  auth: ScenarioCredential;
 };
 
 function validated(input: RequestTemplateInput, previous?: RequestTemplateRow): TemplateFields {

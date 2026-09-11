@@ -11,7 +11,7 @@
  */
 import { z } from "zod";
 
-import { scenarioAuthSchema } from "./schema.ts";
+import { scenarioCredentialSchema } from "./schema.ts";
 import type { WorkflowStep } from "./workflows.ts";
 import { VARIABLE_NAME } from "./variables.ts";
 import { CHECK_OPERATORS, CHECK_SOURCES } from "./checks.ts";
@@ -80,7 +80,7 @@ export const requestTemplateBodySchema = z.object({
   headers: z.record(headerName, headerValue).optional(),
   disabledHeaders: z.record(headerName, headerValue).optional(),
   body: requestBodySchema.optional(),
-  auth: scenarioAuthSchema.optional(),
+  auth: scenarioCredentialSchema.optional(),
 });
 
 export const workflowCaptureSchema = z

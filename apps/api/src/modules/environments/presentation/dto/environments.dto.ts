@@ -1,5 +1,5 @@
-import { IsBoolean, IsIn, IsObject, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
-import { CREDENTIAL_KINDS, CREDENTIAL_ROLES, type CredentialKind, type CredentialRole } from "../../domain/model";
+import { IsBoolean, IsIn, IsObject, IsOptional, IsString, Matches, MaxLength, MinLength } from "class-validator";
+import { CREDENTIAL_KINDS, CREDENTIAL_ROLE_NAME, type CredentialKind, type CredentialRole } from "../../domain/model";
 import type { VariableInput } from "../../application/commands/manage-environment";
 
 /**
@@ -43,7 +43,12 @@ export class UpdateEnvironmentDto {
 
 export class CredentialDto {
   @IsString() @MaxLength(80) name: string;
-  @IsIn(CREDENTIAL_ROLES as unknown as string[], { message: `role debe ser uno de: ${CREDENTIAL_ROLES.join(", ")}` })
+  /** Not a closed list any more: besides the three reserved names, a role is whatever the
+   * project's `access` section declared. The shape is checked; whether this project knows the
+   * name is checked in the command, which is the only place that can read the section. */
+  @Matches(CREDENTIAL_ROLE_NAME, {
+    message: "role empieza por letra o «_» y sigue con letras, cifras, «_», «-» o «.»",
+  })
   role: CredentialRole;
   @IsIn(CREDENTIAL_KINDS as unknown as string[], { message: `kind debe ser uno de: ${CREDENTIAL_KINDS.join(", ")}` })
   kind: CredentialKind;

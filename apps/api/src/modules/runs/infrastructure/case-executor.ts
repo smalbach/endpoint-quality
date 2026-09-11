@@ -34,6 +34,7 @@ import {
   type TestScenario,
   interpolateValue,
   payloadFor,
+  roleOf,
   type RuntimeVariables,
   type SerializedBody,
   unresolvedVariables,
@@ -190,6 +191,21 @@ export class CaseExecutor {
       return blocked(step, sent, `Faltan variables: ${missingVariables.join(", ")}`, "Variables del entorno", "config");
     }
 
+    // Refused before anything leaves, and as `config` rather than as a failed case. A matrix cell
+    // that asks «¿qué hace este endpoint ante un vendedor?» against an environment with no
+    // vendedor credential has no answer — and sending nothing would produce a 401 that reads as
+    // «el endpoint rechaza al vendedor», which is the wrong finding recorded as if it were right.
+    const named = roleOf(step.auth);
+    if (named && !input.target.credentials.some((candidate) => candidate.role === named)) {
+      return blocked(
+        step,
+        sent,
+        `El entorno no tiene credencial para el rol «${named}»`,
+        "Credencial del rol",
+        "config",
+      );
+    }
+
     if (!input.target.writesAllowed && !IDEMPOTENT.has(step.method)) {
       // Refused before anything leaves the process. The check lives here and not in the UI
       // because CI never sees the UI.
@@ -297,15 +313,24 @@ export class CaseExecutor {
     if (payload) base["Content-Type"] = payload.contentType;
     if (step.auth === "none") return { ...base, ...own };
 
-    const role = step.auth === "insufficient" ? "insufficient" : step.auth === "api-key" ? "alternate" : "primary";
+    // A named role resolves to the credential stored under that name; the four fixed selectors
+    // resolve to the three roles they always meant. One lookup either way, because that is what
+    // `auth` has always been — a selector over this environment's credentials.
+    const named = roleOf(step.auth);
+    const role =
+      named ?? (step.auth === "insufficient" ? "insufficient" : step.auth === "api-key" ? "alternate" : "primary");
     // A session obtained during this run stands in for the stored working credential, and for
-    // nothing else. The three roles that exist to be rejected keep being rejected.
-    if (role === "primary" && target.session) {
+    // nothing else. The three roles that exist to be rejected keep being rejected — and so does
+    // every named one: a run that logged in as somebody must not turn «como vendedor» into «como
+    // quien inició sesión», which would make an authorization matrix agree with itself.
+    if (role === "primary" && !named && target.session) {
       return { ...base, [target.session.header]: target.session.value, ...own };
     }
     const credential = target.credentials.find((candidate) => candidate.role === role);
     // A missing credential is not silently the working one: sending `primary` where the case
-    // asked for `insufficient` would turn a 403 case into a green 200 that proves nothing.
+    // asked for `insufficient` would turn a 403 case into a green 200 that proves nothing. For a
+    // named role the case is refused outright further up, because «este entorno no tiene
+    // credencial de vendedor» is a configuration answer and not a verdict about the endpoint.
     if (!credential) return { ...base, ...own };
     return { ...base, ...credentialHeader(credential, this.cipher.decrypt(credential.secretCiphertext)), ...own };
   }

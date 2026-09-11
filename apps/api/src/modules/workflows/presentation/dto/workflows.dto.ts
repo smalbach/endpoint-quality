@@ -2,6 +2,7 @@ import {
   ArrayMaxSize,
   IsArray,
   IsIn,
+  Matches,
   IsInt,
   IsObject,
   IsOptional,
@@ -12,11 +13,14 @@ import {
   Min,
   MinLength,
 } from "class-validator";
-import type { RequestBody, ScenarioAuth, WorkflowDocument } from "@eq/runner-core";
+import type { RequestBody, ScenarioCredential, WorkflowDocument } from "@eq/runner-core";
 
 import { IMPORT_FORMATS, type ImportFormat } from "../../application/commands/import-request-templates";
 
-const AUTH = ["default", "none", "insufficient", "api-key"];
+/** The four fixed selectors, or `role:<nombre>`. The shape is checked here and the rule about
+ * which names a project knows lives in the engine's schema, checked inside the command — a second
+ * list of role names in a decorator is a list that would be free to disagree. */
+const CREDENTIAL = /^(default|none|insufficient|api-key|role:[A-Za-z_][A-Za-z0-9_.-]{0,39})$/;
 
 /**
  * Thin on purpose. What a request template or a flow may say is a zod schema in `@eq/runner-core`,
@@ -40,7 +44,9 @@ export class CreateRequestTemplateDto {
    * `@eq/runner-core`, checked inside the command — a second copy of a five-way union in
    * decorators is a copy that would be free to disagree. */
   @IsOptional() @IsObject() body?: RequestBody;
-  @IsOptional() @IsIn(AUTH, { message: `auth debe ser uno de: ${AUTH.join(", ")}` }) auth?: ScenarioAuth;
+  @IsOptional()
+  @Matches(CREDENTIAL, { message: "auth es default, none, insufficient, api-key o role:<nombre>" })
+  auth?: ScenarioCredential;
 }
 
 /** Every field optional, which is what a partial update *is*. */
@@ -57,7 +63,9 @@ export class UpdateRequestTemplateDto {
    * `@eq/runner-core`, checked inside the command — a second copy of a five-way union in
    * decorators is a copy that would be free to disagree. */
   @IsOptional() @IsObject() body?: RequestBody;
-  @IsOptional() @IsIn(AUTH, { message: `auth debe ser uno de: ${AUTH.join(", ")}` }) auth?: ScenarioAuth;
+  @IsOptional()
+  @Matches(CREDENTIAL, { message: "auth es default, none, insufficient, api-key o role:<nombre>" })
+  auth?: ScenarioCredential;
 }
 
 /**

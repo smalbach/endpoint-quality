@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
-import type { ScenarioAuth, WorkflowDocument } from "@eq/runner-core";
+import type { ScenarioCredential, WorkflowDocument } from "@eq/runner-core";
 
 import {
   RequestTemplateEntity,
@@ -21,7 +21,7 @@ import type { WorkflowRepositoryPort } from "../../domain/ports";
  */
 const toTemplate = (row: RequestTemplateEntity): RequestTemplateRow => ({
   ...row,
-  auth: row.auth as ScenarioAuth,
+  auth: row.auth as ScenarioCredential,
 });
 
 const toWorkflow = (row: WorkflowEntity): WorkflowRow => ({

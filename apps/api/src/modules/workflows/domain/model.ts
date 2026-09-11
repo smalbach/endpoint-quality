@@ -1,4 +1,4 @@
-import type { RequestBody, ScenarioAuth, TestScenario, WorkflowDocument } from "@eq/runner-core";
+import type { RequestBody, ScenarioCredential, TestScenario, WorkflowDocument } from "@eq/runner-core";
 
 /**
  * What a project owns beyond the generated matrix: named requests, and the graphs built from them.
@@ -33,7 +33,7 @@ export type RequestTemplateRow = {
   /** `{ type: "none" }` is «no payload»; a `json` body of `{}` is «an empty one on purpose», and
    * the engine sends the second. */
   body: RequestBody;
-  auth: ScenarioAuth;
+  auth: ScenarioCredential;
   createdAt: Date;
   updatedAt: Date;
   updatedBy: string;

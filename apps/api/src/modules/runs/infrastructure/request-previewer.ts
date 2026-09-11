@@ -14,7 +14,7 @@ import { Injectable } from "@nestjs/common";
 
 import { InvalidInputError } from "@/shared/errors/domain-error";
 import { scenarioFor } from "@/modules/workflows/domain/model";
-import type { ScenarioAuth } from "@eq/runner-core";
+import type { ScenarioCredential } from "@eq/runner-core";
 import type { RequestPreview } from "../domain/model";
 import type { PreviewTemplate, RequestPreviewerPort } from "../domain/ports";
 import { CaseExecutor } from "./case-executor";
@@ -56,7 +56,7 @@ export class RequestPreviewer implements RequestPreviewerPort {
         parameters: input.template.parameters,
         headers: input.template.headers,
         body: input.template.body,
-        auth: input.template.auth as ScenarioAuth,
+        auth: input.template.auth as ScenarioCredential,
       }),
       operations: context.resolved,
       config: context.config,

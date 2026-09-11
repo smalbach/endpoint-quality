@@ -109,9 +109,26 @@ export type Environment = {
  *   without a second credential it cannot be tested at all.
  * - `alternate`: a scheme the operation does not declare — an API key on an endpoint that only
  *   accepts bearer. The contract answers 401 and not 403, because it is not a permission problem.
+ *
+ * A fourth kind exists and has no fixed name: a **role of the business**. `vendedor` and
+ * `comprador` are not «what a credential fails at», they are who is holding it, and an
+ * authorization matrix is made of exactly that question. So the three above are *reserved* names
+ * rather than the only ones, and an environment supplies one credential per role the project's
+ * `access` section declares.
  */
-export const CREDENTIAL_ROLES = ["primary", "insufficient", "alternate"] as const;
-export type CredentialRole = (typeof CREDENTIAL_ROLES)[number];
+export const RESERVED_CREDENTIAL_ROLES = ["primary", "insufficient", "alternate"] as const;
+/** Any name, not a closed set. The three reserved ones are still spelled exactly like this. */
+export type CredentialRole = string;
+
+/**
+ * What a role may be called: the same rule a variable name follows.
+ *
+ * It is written by hand in the `access` section, read back inside a case id, and typed again in
+ * every environment that supplies its credential — three places to spell it, so the spelling has
+ * to be something a person can repeat. Capped at the column's width, which is what makes an
+ * over-long name a 422 and not a truncated row.
+ */
+export const CREDENTIAL_ROLE_NAME = /^[A-Za-z_][A-Za-z0-9_.-]{0,19}$/;
 
 export const CREDENTIAL_KINDS = ["bearer", "api_key", "basic"] as const;
 export type CredentialKind = (typeof CREDENTIAL_KINDS)[number];

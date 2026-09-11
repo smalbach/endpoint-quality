@@ -45,8 +45,38 @@ export type ScenarioFlow =
  * `none` sends nothing on purpose — that is the 401. `insufficient` authenticates but does not
  * reach the required scope — that is the 403. `api-key` sends a key to an operation that does
  * not declare that security scheme, which is a 401 and not a 403.
+ *
+ * All four are **selectors over the environment's credentials**, which is what they always were:
+ * `default` is the one stored as `primary`, `insufficient` is the one stored as `insufficient`,
+ * `api-key` is the one stored as `alternate`, and `none` is the absence of one.
  */
-export type ScenarioAuth = "default" | "none" | "insufficient" | "api-key";
+export const SCENARIO_AUTH = ["default", "none", "insufficient", "api-key"] as const;
+export type ScenarioAuth = (typeof SCENARIO_AUTH)[number];
+
+/** How a named role is spelled when a case presents it. */
+export const ROLE_PREFIX = "role:";
+
+/**
+ * The credential a case presents, generalized from four fixed names to any role a project declares.
+ *
+ * The four above answer «¿qué pasa con una credencial que está mal a propósito?». They cannot
+ * answer «¿qué pasa cuando la presenta el rol *vendedor*?», which is a different question and the
+ * one an authorization matrix is made of — and the fixed names could never answer it, because
+ * `insufficient` describes what a credential *fails at* rather than who is holding it.
+ *
+ * One field and a prefix rather than a second field beside `auth`, because there is exactly one
+ * answer per case to «con qué credencial sale esta petición», and two fields would let a case
+ * carry two — a state the executor would have to pick a winner for, silently.
+ *
+ * The generated matrix never emits a `role:` form: a matrix derived from a contract knows what the
+ * contract declares, and who the roles of a business are is not in it. They come from the `access`
+ * section, which is where somebody writes them down.
+ */
+export type ScenarioCredential = ScenarioAuth | `${typeof ROLE_PREFIX}${string}`;
+
+/** The role name inside a `role:` selector, or `null` for the four fixed ones. */
+export const roleOf = (credential: ScenarioCredential | undefined): string | null =>
+  credential?.startsWith(ROLE_PREFIX) ? credential.slice(ROLE_PREFIX.length) : null;
 
 export type TestScenario = {
   id: string;
@@ -89,7 +119,7 @@ export type TestScenario = {
    */
   headers?: Record<string, string>;
   flow: ScenarioFlow;
-  auth?: ScenarioAuth;
+  auth?: ScenarioCredential;
 };
 
 export type Budget = { ms: number; label: string; source: string };
