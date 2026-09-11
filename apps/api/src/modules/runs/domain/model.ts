@@ -15,6 +15,16 @@ export type RunPlan = {
   /** Pause between cases. Not a nicety: some targets rate-limit, and a matrix of 311 cases fired
    * flat out is indistinguishable from an attack. */
   delayMs: number;
+  /**
+   * How many steps of a flow may be in flight at once. `1` — the default — walks them one at a
+   * time, which is what every run did before this existed.
+   *
+   * Only steps with no path between them ever run together, and what makes that safe is checked
+   * when the flow is saved: two of them cannot capture the same variable, and the step that
+   * obtains a session is a barrier. Without those rules this number would silently turn a
+   * correct flow into a race.
+   */
+  concurrency?: number;
   /** When set, the run executes this project-defined graph instead of the generated matrix. */
   workflowId?: string;
   /** With a `workflowId`, the flow is walked once per row of this dataset, and the row's columns

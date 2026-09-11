@@ -466,209 +466,81 @@ export class RunOrchestrator {
     return { items, next: cursor };
   }
 
-  /** One walk of one graph. Returns whether the run was cancelled while it was walking. */
+  /**
+   * One walk of one graph, with as many steps in flight as the plan allows.
+   *
+   * Ready-driven rather than a loop over the topological order: what can start is decided by the
+   * edges, so two steps with no path between them start together when the concurrency allows it
+   * and the order they were listed in stops mattering. With `concurrency: 1` — the default — it
+   * dispatches one at a time and behaves exactly as the loop it replaces.
+   *
+   * **What makes this safe is checked when the flow is saved, not here.** A run's variables are
+   * one map: two steps that could run at the same time must not capture the same name, and the
+   * step that obtains a session is a barrier. Enforcing it at write time is what stops somebody
+   * raising a number on the run panel from turning a flow saved years ago into a race.
+   *
+   * Returns whether the run was cancelled while it was walking.
+   */
   private async walkPrepared(
     run: Run,
     context: { config: ProjectConfig; resolved: ResolvedOperation[]; target: ExecutionTarget; authEnabled: boolean },
     prepared: ReturnType<RunOrchestrator["prepareWorkflow"]>["items"],
     budget: { extra: number },
   ): Promise<boolean> {
-    const passed = new Map<string, boolean>();
-    // The last answer of each step, which is what a condition judges and a loop walks. Kept for
-    // the duration of one run and never beyond it: two runs of the same flow must not be able to
-    // read each other's responses, for the same reason their variables are a copy.
-    const responses = new Map<string, { actual: ActualResponse; durationMs: number }>();
-    // What a failed step lets through. `continue` is the step whose failure the rest does not
-    // actually depend on — a cleanup that 404s because there was nothing to clean.
-    const permissive = new Set(prepared.filter((item) => item.step.onError === "continue").map((item) => item.step.id));
+    const state: WalkState = {
+      passed: new Map(),
+      // The last answer of each step, which is what a condition judges and a loop walks. Kept for
+      // the duration of one run and never beyond it: two runs of the same flow must not be able to
+      // read each other's responses, for the same reason their variables are a copy.
+      responses: new Map(),
+      // What a failed step lets through. `continue` is the step whose failure the rest does not
+      // actually depend on — a cleanup that 404s because there was nothing to clean.
+      permissive: new Set(prepared.filter((item) => item.step.onError === "continue").map((item) => item.step.id)),
+      budget,
+      stopped: false,
+    };
+
+    const concurrency = Math.max(1, run.plan.concurrency ?? 1);
+    const remaining = new Map(prepared.map((item) => [item.step.id, item]));
+    const running = new Map<string, Promise<string>>();
     let cancelled = false;
-    let stopped = false;
-    for (const [index, item] of prepared.entries()) {
+    let dispatched = 0;
+
+    while ((remaining.size || running.size) && !state.stopped) {
+      // Between dispatches and never inside a step, for the same reason it always was: stopping
+      // mid-flow leaves a created resource with no cleanup.
       if (await this.queue.isCancelled(run.id)) {
         cancelled = true;
         break;
       }
-      if (index > 0 && run.plan.delayMs > 0) await delay(run.plan.delayMs);
 
-      const startedAt = this.clock.now();
-      if ((item.step.dependsOn ?? []).some((id) => passed.get(id) !== true && !permissive.has(id))) {
-        const skipped: RunCase = {
-          ...item.runCase,
-          status: "skipped",
-          startedAt,
-          finishedAt: startedAt,
-          durationMs: 0,
-        };
-        passed.set(item.step.id, false);
-        await this.runs.saveCase(skipped);
-        await this.announce(run, skipped);
-        continue;
-      }
-
-      // A condition over what a dependency answered. The step is skipped, not failed: «no había
-      // nada que borrar» is a flow behaving correctly, and a red case would say otherwise.
-      const condition = item.step.runIf;
-      if (condition) {
-        const source = responses.get(condition.from);
-        const [verdict] = source
-          ? evaluateChecks([condition.check], { response: source.actual, durationMs: source.durationMs })
-          : [{ label: "condición", pass: false, detail: `El paso ${condition.from} no respondió` }];
-        if (!verdict.pass) {
-          const skipped: RunCase = {
-            ...item.runCase,
-            status: "skipped",
-            startedAt,
-            finishedAt: startedAt,
-            durationMs: 0,
-          };
-          // Skipped by a condition counts as «did not fail» for what depends on it: the flow did
-          // what it was told, and marking its dependents skipped too would report a decision as a
-          // problem.
-          passed.set(item.step.id, true);
-          await this.runs.saveCase(skipped);
-          await this.announce(run, skipped);
-          continue;
-        }
-      }
-
-      // Not the same thing as a retry, and worth the second knob. A retry says «that failure was
-      // not real»; this says «it was not time yet», which is the honest description of a target
-      // that accepts a write and takes a moment to make it readable.
-      if (item.step.waitMs) await delay(item.step.waitMs);
-
-      const walked = this.elementsFor(item.step, responses, budget);
-      const elements = walked?.elements ?? null;
-      if (elements && elements.length === 0) {
-        // A loop over nothing is not a failure and is not silence either: a case that says the
-        // list was empty is what tells the next person the flow ran and had nothing to walk.
-        const empty: RunCase = { ...item.runCase, status: "skipped", startedAt, finishedAt: startedAt, durationMs: 0 };
-        passed.set(item.step.id, true);
-        await this.runs.saveCase(empty);
-        await this.announce(run, empty);
-        continue;
-      }
-
-      // One case per element, each with its own request, response and verdict. «Los 40 productos
-      // responden» is forty findings; one case hiding thirty-nine results is the report this
-      // product replaces.
-      const iterations = elements ?? [null];
-      let allPassed = true;
-      let status: RunCase["status"] = "passed";
-      for (const [iteration, element] of iterations.entries()) {
-        // The first element **reuses the row that was already queued for the step**, and the rest
-        // take the slots it reserved. Giving the first one a new id instead leaves the queued row
-        // behind with no verdict and two rows fighting over one `position`, which the unique index
-        // on `run_cases` refuses — the run dies with a constraint name and nothing else.
-        const runCase =
-          elements === null
-            ? item.runCase
-            : {
-                ...item.runCase,
-                ...(iteration === 0 ? {} : { id: randomUUID(), position: item.runCase.position + iteration }),
-                scenarioId: `${item.runCase.scenarioId}#${iteration}`,
-              };
-        const boundAt = this.clock.now();
-        if (elements !== null && item.step.forEach) {
-          Object.assign(context.target.variables, bindElement(item.step.forEach.as, element));
-        }
-
-        await this.runs.saveCase({ ...runCase, status: "running", startedAt: boundAt });
-        const executed = await this.attempt(item.step, () =>
-          this.executor.run({
-            operation: item.operation,
-            scenario: scenarioFor(item.template),
-            operations: context.resolved,
-            config: context.config,
-            target: context.target,
-            samples: run.plan.samples,
-          }),
+      for (const item of [...remaining.values()]) {
+        if (running.size >= concurrency) break;
+        if (!readyToRun(item.step, state.passed)) continue;
+        remaining.delete(item.step.id);
+        // The pause is between dispatches rather than between finishes: what it is for is the
+        // target's rate limit, and that counts requests leaving, not answers arriving.
+        if (dispatched > 0 && run.plan.delayMs > 0) await delay(run.plan.delayMs);
+        dispatched += 1;
+        running.set(
+          item.step.id,
+          this.runStep(run, context, item, state).then(() => item.step.id),
         );
-
-        // The capture is an assertion of its own, on the step that was supposed to yield the value.
-        // Writing it into the variables without saying so would make the next case fail for a reason
-        // recorded nowhere.
-        //
-        // After the retries and not inside them: a capture writes into the run's variables, and
-        // doing that once per attempt would leave the value of a discarded attempt behind.
-        const last = executed.steps.at(-1);
-        if (last?.actual) responses.set(item.step.id, { actual: last.actual, durationMs: last.durationMs });
-
-        // The session, published by the step that logged in. Reported as an assertion on that
-        // step, because a login that answered 200 with a body nobody expected is a finding about
-        // the target — and the eight steps after it failing with 401 is the same finding restated
-        // eight times without ever naming it.
-        if (last?.actual && item.step.authorizes) {
-          const session = readAuthorization(item.step.authorizes, last.actual);
-          if (session) context.target.session = session;
-          last.assertions.push({
-            label: "Sesión obtenida",
-            pass: Boolean(session),
-            detail: session
-              ? `Los pasos siguientes presentarán ${session.header}`
-              : `No se encontró la credencial en ${item.step.authorizes.from}.${item.step.authorizes.path}`,
-          });
-          last.ok = last.ok && holds(last.assertions);
-          if (!last.ok) last.failure ??= "flow";
-          executed.ok = executed.steps.every((step) => step.ok);
-        }
-
-        if (last?.actual && item.step.captures?.length) {
-          const capture = applyCaptures(item.step.captures, last.actual, context.target.variables, item.step.id);
-          const ok = capture.missing.length === 0;
-          last.assertions.push({
-            label: "Variables capturadas",
-            pass: ok,
-            detail: ok ? capture.captured.join(", ") : `No se encontraron: ${capture.missing.join(", ")}`,
-          });
-          last.ok = last.ok && holds(last.assertions);
-          if (!last.ok) last.failure ??= "flow";
-          executed.ok = executed.steps.every((step) => step.ok);
-        }
-
-        // Said on the first element, which is the case somebody opens to find out why a loop of
-        // forty produced nine. A warning: the run hit the ceiling, which is not a finding about
-        // the target.
-        if (iteration === 0 && walked?.dropped) {
-          last?.assertions.push({
-            label: "Bucle recortado",
-            pass: false,
-            severity: "warning",
-            detail: `Se recorrieron ${elements?.length ?? 0} de ${(elements?.length ?? 0) + walked.dropped} elementos: la corrida llegó al tope de ${this.env.MAX_RUN_CASES} casos`,
-          });
-          if (last) last.ok = last.ok && holds(last.assertions);
-        }
-
-        await this.runs.saveSteps(toRunSteps(runCase.id, executed.steps));
-        status = caseStatusFor(executed);
-        allPassed = allPassed && status === "passed";
-        const finished: RunCase = {
-          ...runCase,
-          status,
-          failure: failureFor(executed),
-          startedAt: boundAt,
-          finishedAt: this.clock.now(),
-          durationMs: executed.durationMs,
-        };
-        await this.runs.saveCase(finished);
-        await this.announce(run, finished);
       }
 
-      // A looped step passes when every element did. One product out of forty failing is the step
-      // failing, and what depends on it has to know.
-      passed.set(item.step.id, allPassed);
-      if (!allPassed) status = "failed";
-
-      // `stop` is for the step whose failure makes everything after it report something other than
-      // what it is testing: with no session, every later 401 is the same fact restated. The rest
-      // are marked skipped rather than left queued — a case with no verdict is not a result.
-      if (!allPassed && item.step.onError === "stop") {
-        stopped = true;
-        break;
-      }
+      // Nothing ready and nothing in flight. On an acyclic graph every step eventually resolves,
+      // so this is a guard against a state that should not exist rather than an expected exit —
+      // and hanging would be the worse way to discover it.
+      if (!running.size) break;
+      running.delete(await Promise.race(running.values()));
     }
 
-    if (stopped) {
-      const done = new Set(passed.keys());
+    // Whatever was in flight when the walk stopped still has to finish writing its own rows: a
+    // case left half-written is a row that says `running` forever.
+    await Promise.all(running.values());
+
+    if (state.stopped) {
+      const done = new Set(state.passed.keys());
       for (const item of prepared) {
         if (done.has(item.step.id)) continue;
         const at = this.clock.now();
@@ -679,6 +551,188 @@ export class RunOrchestrator {
     }
 
     return cancelled;
+  }
+
+  /** One step: its dependencies, its condition, its wait, its elements and its retries. */
+  private async runStep(
+    run: Run,
+    context: { config: ProjectConfig; resolved: ResolvedOperation[]; target: ExecutionTarget; authEnabled: boolean },
+    item: ReturnType<RunOrchestrator["prepareWorkflow"]>["items"][number],
+    state: WalkState,
+  ): Promise<void> {
+    const { passed, responses, permissive, budget } = state;
+    const startedAt = this.clock.now();
+    if (!dependenciesHeld(item.step, passed, permissive)) {
+      const skipped: RunCase = {
+        ...item.runCase,
+        status: "skipped",
+        startedAt,
+        finishedAt: startedAt,
+        durationMs: 0,
+      };
+      passed.set(item.step.id, false);
+      await this.runs.saveCase(skipped);
+      await this.announce(run, skipped);
+      return;
+    }
+
+    // A condition over what a dependency answered. The step is skipped, not failed: «no había
+    // nada que borrar» is a flow behaving correctly, and a red case would say otherwise.
+    const condition = item.step.runIf;
+    if (condition) {
+      const source = responses.get(condition.from);
+      const [verdict] = source
+        ? evaluateChecks([condition.check], { response: source.actual, durationMs: source.durationMs })
+        : [{ label: "condición", pass: false, detail: `El paso ${condition.from} no respondió` }];
+      if (!verdict.pass) {
+        const skipped: RunCase = {
+          ...item.runCase,
+          status: "skipped",
+          startedAt,
+          finishedAt: startedAt,
+          durationMs: 0,
+        };
+        // Skipped by a condition counts as «did not fail» for what depends on it: the flow did
+        // what it was told, and marking its dependents skipped too would report a decision as a
+        // problem.
+        passed.set(item.step.id, true);
+        await this.runs.saveCase(skipped);
+        await this.announce(run, skipped);
+        return;
+      }
+    }
+
+    // Not the same thing as a retry, and worth the second knob. A retry says «that failure was
+    // not real»; this says «it was not time yet», which is the honest description of a target
+    // that accepts a write and takes a moment to make it readable.
+    if (item.step.waitMs) await delay(item.step.waitMs);
+
+    const walked = this.elementsFor(item.step, responses, budget);
+    const elements = walked?.elements ?? null;
+    if (elements && elements.length === 0) {
+      // A loop over nothing is not a failure and is not silence either: a case that says the
+      // list was empty is what tells the next person the flow ran and had nothing to walk.
+      const empty: RunCase = { ...item.runCase, status: "skipped", startedAt, finishedAt: startedAt, durationMs: 0 };
+      passed.set(item.step.id, true);
+      await this.runs.saveCase(empty);
+      await this.announce(run, empty);
+      return;
+    }
+
+    // One case per element, each with its own request, response and verdict. «Los 40 productos
+    // responden» is forty findings; one case hiding thirty-nine results is the report this
+    // product replaces.
+    const iterations = elements ?? [null];
+    let allPassed = true;
+    let status: RunCase["status"] = "passed";
+    for (const [iteration, element] of iterations.entries()) {
+      // The first element **reuses the row that was already queued for the step**, and the rest
+      // take the slots it reserved. Giving the first one a new id instead leaves the queued row
+      // behind with no verdict and two rows fighting over one `position`, which the unique index
+      // on `run_cases` refuses — the run dies with a constraint name and nothing else.
+      const runCase =
+        elements === null
+          ? item.runCase
+          : {
+              ...item.runCase,
+              ...(iteration === 0 ? {} : { id: randomUUID(), position: item.runCase.position + iteration }),
+              scenarioId: `${item.runCase.scenarioId}#${iteration}`,
+            };
+      const boundAt = this.clock.now();
+      if (elements !== null && item.step.forEach) {
+        Object.assign(context.target.variables, bindElement(item.step.forEach.as, element));
+      }
+
+      await this.runs.saveCase({ ...runCase, status: "running", startedAt: boundAt });
+      const executed = await this.attempt(item.step, () =>
+        this.executor.run({
+          operation: item.operation,
+          scenario: scenarioFor(item.template),
+          operations: context.resolved,
+          config: context.config,
+          target: context.target,
+          samples: run.plan.samples,
+        }),
+      );
+
+      // The capture is an assertion of its own, on the step that was supposed to yield the value.
+      // Writing it into the variables without saying so would make the next case fail for a reason
+      // recorded nowhere.
+      //
+      // After the retries and not inside them: a capture writes into the run's variables, and
+      // doing that once per attempt would leave the value of a discarded attempt behind.
+      const last = executed.steps.at(-1);
+      if (last?.actual) responses.set(item.step.id, { actual: last.actual, durationMs: last.durationMs });
+
+      // The session, published by the step that logged in. Reported as an assertion on that
+      // step, because a login that answered 200 with a body nobody expected is a finding about
+      // the target — and the eight steps after it failing with 401 is the same finding restated
+      // eight times without ever naming it.
+      if (last?.actual && item.step.authorizes) {
+        const session = readAuthorization(item.step.authorizes, last.actual);
+        if (session) context.target.session = session;
+        last.assertions.push({
+          label: "Sesión obtenida",
+          pass: Boolean(session),
+          detail: session
+            ? `Los pasos siguientes presentarán ${session.header}`
+            : `No se encontró la credencial en ${item.step.authorizes.from}.${item.step.authorizes.path}`,
+        });
+        last.ok = last.ok && holds(last.assertions);
+        if (!last.ok) last.failure ??= "flow";
+        executed.ok = executed.steps.every((step) => step.ok);
+      }
+
+      if (last?.actual && item.step.captures?.length) {
+        const capture = applyCaptures(item.step.captures, last.actual, context.target.variables, item.step.id);
+        const ok = capture.missing.length === 0;
+        last.assertions.push({
+          label: "Variables capturadas",
+          pass: ok,
+          detail: ok ? capture.captured.join(", ") : `No se encontraron: ${capture.missing.join(", ")}`,
+        });
+        last.ok = last.ok && holds(last.assertions);
+        if (!last.ok) last.failure ??= "flow";
+        executed.ok = executed.steps.every((step) => step.ok);
+      }
+
+      // Said on the first element, which is the case somebody opens to find out why a loop of
+      // forty produced nine. A warning: the run hit the ceiling, which is not a finding about
+      // the target.
+      if (iteration === 0 && walked?.dropped) {
+        last?.assertions.push({
+          label: "Bucle recortado",
+          pass: false,
+          severity: "warning",
+          detail: `Se recorrieron ${elements?.length ?? 0} de ${(elements?.length ?? 0) + walked.dropped} elementos: la corrida llegó al tope de ${this.env.MAX_RUN_CASES} casos`,
+        });
+        if (last) last.ok = last.ok && holds(last.assertions);
+      }
+
+      await this.runs.saveSteps(toRunSteps(runCase.id, executed.steps));
+      status = caseStatusFor(executed);
+      allPassed = allPassed && status === "passed";
+      const finished: RunCase = {
+        ...runCase,
+        status,
+        failure: failureFor(executed),
+        startedAt: boundAt,
+        finishedAt: this.clock.now(),
+        durationMs: executed.durationMs,
+      };
+      await this.runs.saveCase(finished);
+      await this.announce(run, finished);
+    }
+
+    // A looped step passes when every element did. One product out of forty failing is the step
+    // failing, and what depends on it has to know.
+    passed.set(item.step.id, allPassed);
+    if (!allPassed) status = "failed";
+
+    // `stop` is for the step whose failure makes everything after it report something other than
+    // what it is testing: with no session, every later 401 is the same fact restated. The rest are
+    // marked skipped rather than left queued — a case with no verdict is not a result.
+    if (!allPassed && item.step.onError === "stop") state.stopped = true;
   }
 
   /** Progress, per case, so a follower sees it happening instead of a result at the end. */
@@ -694,6 +748,39 @@ export class RunOrchestrator {
     await this.runs.updateStatus(run.id, status, this.clock.now());
     this.eventBus.publish(new RunFinishedEvent(run.projectId, run.id, status, totals));
   }
+}
+
+/** What a walk carries between its steps. One object rather than five arguments, because with
+ * several in flight they are one shared thing and passing them apart invites copying one. */
+type WalkState = {
+  passed: Map<string, boolean>;
+  responses: Map<string, { actual: ActualResponse; durationMs: number }>;
+  permissive: Set<string>;
+  budget: { extra: number };
+  stopped: boolean;
+};
+
+/**
+ * Whether a step may start.
+ *
+ * `all` is what a dependency means and is the default. `any` is the merge: the step that needs
+ * only one of several routes to have arrived, and starts as soon as the first does — which is
+ * also why it does not wait for the rest to disagree with it.
+ */
+function readyToRun(step: WorkflowStep, passed: Map<string, boolean>): boolean {
+  const dependencies = step.dependsOn ?? [];
+  if (!dependencies.length) return true;
+  const resolved = dependencies.filter((id) => passed.has(id));
+  return step.waits === "any" ? resolved.length > 0 : resolved.length === dependencies.length;
+}
+
+/** Whether what it depends on actually held. Same «all or any» reading as starting: a step that
+ * only needed one route to arrive is not failed by the other one having failed. */
+function dependenciesHeld(step: WorkflowStep, passed: Map<string, boolean>, permissive: Set<string>): boolean {
+  const dependencies = step.dependsOn ?? [];
+  if (!dependencies.length) return true;
+  const held = dependencies.filter((id) => passed.get(id) === true || permissive.has(id));
+  return step.waits === "any" ? held.length > 0 : held.length === dependencies.length;
 }
 
 /** A saved request, as the engine wants it. The row keeps `null` for absent; the engine wants the

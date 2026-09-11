@@ -16,6 +16,9 @@ export class StartRunDto {
   @IsOptional() @IsInt() @Min(1) @Max(50) samples?: number;
   /** Some targets rate-limit, and 311 cases fired flat out are indistinguishable from an attack. */
   @IsOptional() @IsInt() @Min(0) @Max(30_000) delayMs?: number;
+  /** Pasos de un flujo a la vez. Capado bajo a propósito: lo que hay al otro lado es el entorno de
+   * pruebas de alguien, y una corrida que abre veinte conexiones a la vez mide su rate limiter. */
+  @IsOptional() @IsInt() @Min(1) @Max(10) concurrency?: number;
   /** A row's id, so it is a uuid. When present the run executes that graph instead of the
    * generated matrix. */
   @IsOptional() @IsUUID() workflowId?: string;

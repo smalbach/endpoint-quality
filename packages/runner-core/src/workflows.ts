@@ -154,9 +154,22 @@ export type StepAuthorizes = {
   scheme?: string;
 };
 
+/**
+ * When a step with several dependencies may start.
+ *
+ * `all` is the default and is what a dependency means: this needs what those produced. `any` is
+ * the reference's «merge waitFirst» — the step that only needs one of several routes to have
+ * arrived, which is how a flow says «whichever of these two ways of creating it worked».
+ *
+ * It changes nothing when a step has one dependency, which is almost all of them.
+ */
+export const STEP_WAITS = ["all", "any"] as const;
+export type StepWaits = (typeof STEP_WAITS)[number];
+
 export type WorkflowStep = {
   id: string;
   requestTemplateId: string;
+  waits?: StepWaits;
   /** Wait before this step, in milliseconds. For the target that accepts a write and takes a
    * moment to make it readable — a retry says «that failure was not real», and this says «it was
    * not time yet», which are different claims about the same target. */
@@ -358,4 +371,38 @@ export function readAuthorization(
     // and a default that overrode it would break exactly that case.
     value: `${authorizes.scheme ?? "Bearer "}${String(found)}`,
   };
+}
+
+/**
+ * Which steps could be running at the same time as which.
+ *
+ * Two steps are concurrent unless one is an ancestor of the other: the edges are the only thing
+ * that orders anything, and without a path between them nothing says which goes first. With a
+ * concurrency of one that is still true in principle and irrelevant in practice — but the rules
+ * that keep a parallel run honest have to be checked when the flow is **written**, not when
+ * somebody later raises a number on the run panel and turns a saved flow into a race.
+ *
+ * Returned as pairs of ids, both orders excluded, so a caller reports each conflict once.
+ */
+export function concurrentPairs(steps: WorkflowStep[]): [WorkflowStep, WorkflowStep][] {
+  const ancestors = new Map<string, Set<string>>();
+  // The document is already acyclic — the schema refuses a cycle before this runs — so one pass in
+  // topological order is enough: a step's ancestors are its parents plus its parents' ancestors.
+  for (const step of orderWorkflowSteps({ steps })) {
+    const reached = new Set<string>();
+    for (const parent of step.dependsOn ?? []) {
+      reached.add(parent);
+      for (const older of ancestors.get(parent) ?? []) reached.add(older);
+    }
+    ancestors.set(step.id, reached);
+  }
+
+  const pairs: [WorkflowStep, WorkflowStep][] = [];
+  for (const [index, left] of steps.entries()) {
+    for (const right of steps.slice(index + 1)) {
+      const ordered = ancestors.get(left.id)?.has(right.id) || ancestors.get(right.id)?.has(left.id);
+      if (!ordered) pairs.push([left, right]);
+    }
+  }
+  return pairs;
 }

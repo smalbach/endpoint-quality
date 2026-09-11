@@ -12,9 +12,10 @@
 import { z } from "zod";
 
 import { scenarioAuthSchema } from "./schema.ts";
+import type { WorkflowStep } from "./workflows.ts";
 import { VARIABLE_NAME } from "./variables.ts";
 import { CHECK_OPERATORS, CHECK_SOURCES } from "./checks.ts";
-import { CAPTURE_SOURCES, STEP_ON_ERROR } from "./workflows.ts";
+import { CAPTURE_SOURCES, STEP_ON_ERROR, STEP_WAITS, concurrentPairs } from "./workflows.ts";
 
 const jsonValue: z.ZodType<unknown> = z.lazy(() =>
   z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(jsonValue), z.record(z.string(), jsonValue)]),
@@ -98,6 +99,7 @@ export const workflowStepSchema = z.object({
   id: z.string().min(1).max(60),
   requestTemplateId: z.string().uuid(),
   dependsOn: z.array(z.string()).optional(),
+  waits: z.enum(STEP_WAITS).optional(),
   captures: z.array(workflowCaptureSchema).optional(),
   waitMs: z.number().int().min(0).max(60_000).optional(),
   runIf: z.object({ from: z.string().min(1).max(60), check: stepCheckSchema }).optional(),
@@ -142,9 +144,14 @@ export const datasetRowsSchema = z
 export const workflowDocumentSchema = z
   .object({ steps: z.array(workflowStepSchema) })
   .superRefine((document, context) => {
+    // Everything below the cycle check reads the graph as if its edges resolved. When one of them
+    // does not, they do not, and an analysis run over it invents conflicts on top of the one real
+    // problem.
+    let broken = false;
     const ids = new Set(document.steps.map((step) => step.id));
     if (ids.size !== document.steps.length) {
       context.addIssue({ code: "custom", message: "los ids de los pasos deben ser únicos", path: ["steps"] });
+      broken = true;
     }
     for (const [index, step] of document.steps.entries()) {
       for (const dependency of step.dependsOn ?? []) {
@@ -154,12 +161,14 @@ export const workflowDocumentSchema = z
             message: "un paso no puede depender de sí mismo",
             path: ["steps", index, "dependsOn"],
           });
+          broken = true;
         } else if (!ids.has(dependency)) {
           context.addIssue({
             code: "custom",
             message: `el paso depende de un id inexistente: ${dependency}`,
             path: ["steps", index, "dependsOn"],
           });
+          broken = true;
         }
       }
 
@@ -196,9 +205,49 @@ export const workflowDocumentSchema = z
       );
       if (!ready.length) {
         context.addIssue({ code: "custom", message: "el flujo contiene dependencias cíclicas", path: ["steps"] });
-        break;
+        // Everything below reads the graph as if it were ordered, and it is not. Reporting a
+        // hundred invented conflicts on top of the one real problem helps nobody.
+        return;
       }
       ready.forEach((step) => pending.delete(step.id));
+    }
+
+    /**
+     * The two rules that make running steps at the same time safe, checked where the flow is
+     * written rather than where it is run.
+     *
+     * A run's variables are one map. Two steps with no path between them have no order, so what
+     * they write into it races — and the day somebody raises the concurrency on the run panel, a
+     * flow that was saved years earlier becomes wrong without being edited. That is why this is
+     * refused on the way in and not gated on a number chosen later.
+     */
+    if (broken) return;
+    const concurrent = concurrentPairs(document.steps as WorkflowStep[]);
+    for (const [left, right] of concurrent) {
+      const shared = (left.captures ?? [])
+        .map((capture) => capture.variable)
+        .filter((name) => (right.captures ?? []).some((capture) => capture.variable === name));
+      if (shared.length) {
+        context.addIssue({
+          code: "custom",
+          message: `«${left.id}» y «${right.id}» pueden ejecutarse a la vez y los dos capturan ${shared.join(", ")}`,
+          path: ["steps", document.steps.indexOf(right), "captures"],
+        });
+      }
+      // A session is one credential for the whole run, so the step that obtains it is a barrier:
+      // anything that could run beside it might send its request with the old credential or the
+      // new one, and which of the two would depend on the scheduler.
+      for (const [barrier, other] of [
+        [left, right],
+        [right, left],
+      ] as const) {
+        if (!barrier.authorizes) continue;
+        context.addIssue({
+          code: "custom",
+          message: `«${barrier.id}» inicia sesión y «${other.id}» puede ejecutarse a la vez: haz que uno dependa del otro`,
+          path: ["steps", document.steps.indexOf(barrier), "authorizes"],
+        });
+      }
     }
   });
 

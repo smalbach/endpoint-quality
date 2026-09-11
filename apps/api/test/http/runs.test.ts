@@ -1769,3 +1769,161 @@ describe("la credencial que consigue la propia corrida", () => {
     await flow.target.stop();
   });
 });
+
+/**
+ * Dos pasos que no dependen el uno del otro pueden ir a la vez.
+ *
+ * Lo que decide qué puede empezar son las aristas, no el orden en el que alguien listó los pasos.
+ * Con `concurrency: 1` —lo de siempre— se despacha uno cada vez; con más, los que no tienen camino
+ * entre ellos salen juntos.
+ *
+ * Lo que hace que eso sea seguro **se comprueba al guardar el flujo, no al ejecutarlo**: las
+ * variables de una corrida son un solo mapa, así que dos pasos que puedan coincidir no pueden
+ * capturar el mismo nombre, y el que inicia sesión es una barrera. Comprobarlo al escribir es lo
+ * que impide que subir un número en el panel convierta en una carrera un flujo guardado hace años.
+ */
+describe("pasos en paralelo", () => {
+  async function twoIndependent(steps: (listId: string) => Record<string, unknown>[]) {
+    // 250 ms por petición: con dos pasos en serie son 500, y dos llegadas más juntas que eso solo
+    // pueden haber estado en vuelo a la vez.
+    const fixture = await projectAgainst({ slowMs: 250 });
+    const list = await api()
+      .post(`${fixture.projectBase}/request-templates`)
+      .set(as(owner))
+      .send({ name: "Listar", operationId: "listThings", expectedStatus: 200 });
+    const workflow = await api()
+      .post(`${fixture.projectBase}/workflows`)
+      .set(as(owner))
+      .send({ name: "A la vez", definition: { steps: steps(list.body.requestTemplateId) } });
+    assert.equal(workflow.status, 201, JSON.stringify(workflow.body));
+    return { ...fixture, workflowId: workflow.body.workflowId as string };
+  }
+
+  const independent = (list: string) => [
+    { id: "uno", requestTemplateId: list },
+    { id: "dos", requestTemplateId: list },
+  ];
+
+  const arrivals = (target: { requests: { path: string; at: number }[] }) =>
+    target.requests.filter((request) => request.path === "/things").map((request) => request.at);
+
+  test("por defecto van de uno en uno, como siempre", async () => {
+    const flow = await twoIndependent(independent);
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    assert.equal(run.status, "passed");
+    const [first, second] = arrivals(flow.target);
+    assert.ok(second - first >= 200, `las dos peticiones se solaparon sin pedirlo: ${second - first} ms`);
+    await flow.target.stop();
+  });
+
+  test("con concurrencia 2 salen juntos", async () => {
+    const flow = await twoIndependent(independent);
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+      concurrency: 2,
+    });
+    assert.equal(run.status, "passed");
+    const [first, second] = arrivals(flow.target);
+    assert.ok(second - first < 200, `no se solaparon: ${second - first} ms entre las dos llegadas`);
+    await flow.target.stop();
+  });
+
+  test("una arista sigue siendo una arista: lo que depende espera", async () => {
+    const flow = await twoIndependent((list) => [
+      { id: "uno", requestTemplateId: list },
+      { id: "dos", requestTemplateId: list, dependsOn: ["uno"] },
+    ]);
+    await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+      concurrency: 4,
+    });
+    const [first, second] = arrivals(flow.target);
+    assert.ok(second - first >= 200, `la dependencia no se respetó: ${second - first} ms`);
+    await flow.target.stop();
+  });
+
+  test("con «any», el que junta dos caminos arranca con el primero que llegue", async () => {
+    const flow = await twoIndependent((list) => [
+      { id: "uno", requestTemplateId: list },
+      { id: "dos", requestTemplateId: list },
+      { id: "junta", requestTemplateId: list, dependsOn: ["uno", "dos"], waits: "any" },
+    ]);
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+      concurrency: 3,
+    });
+    assert.equal(run.status, "passed");
+    const times = arrivals(flow.target);
+    // Los dos primeros salen juntos; el tercero, en cuanto uno de ellos contesta, sin esperar al
+    // otro —que es lo único que «any» significa—.
+    assert.ok(times[2] - times[0] < 450, `esperó a los dos: ${times[2] - times[0]} ms`);
+    await flow.target.stop();
+  });
+
+  test("dos pasos que pueden coincidir no pueden capturar la misma variable", async () => {
+    const fixture = await projectAgainst({});
+    const list = await api()
+      .post(`${fixture.projectBase}/request-templates`)
+      .set(as(owner))
+      .send({ name: "Listar", operationId: "listThings", expectedStatus: 200 });
+    const capture = [{ variable: "primero", from: "body", path: "data.0.id" }];
+    const response = await api()
+      .post(`${fixture.projectBase}/workflows`)
+      .set(as(owner))
+      .send({
+        name: "Carrera",
+        definition: {
+          steps: [
+            { id: "uno", requestTemplateId: list.body.requestTemplateId, captures: capture },
+            { id: "dos", requestTemplateId: list.body.requestTemplateId, captures: capture },
+          ],
+        },
+      });
+    // Rechazado al escribirlo y no al ejecutarlo: si dependiera del número de concurrencia, el
+    // flujo sería correcto hoy e incorrecto el día que alguien lo suba, sin haberlo tocado.
+    assert.equal(response.status, 422, JSON.stringify(response.body));
+    assert.ok(
+      response.body.errors.some((error: { detail: string }) => error.detail.includes("capturan primero")),
+      JSON.stringify(response.body.errors),
+    );
+    await fixture.target.stop();
+  });
+
+  test("el paso que inicia sesión es una barrera", async () => {
+    const fixture = await projectAgainst({});
+    const list = await api()
+      .post(`${fixture.projectBase}/request-templates`)
+      .set(as(owner))
+      .send({ name: "Listar", operationId: "listThings", expectedStatus: 200 });
+    const response = await api()
+      .post(`${fixture.projectBase}/workflows`)
+      .set(as(owner))
+      .send({
+        name: "Sesión suelta",
+        definition: {
+          steps: [
+            {
+              id: "iniciar",
+              requestTemplateId: list.body.requestTemplateId,
+              authorizes: { from: "body", path: "data.0.id" },
+            },
+            { id: "otro", requestTemplateId: list.body.requestTemplateId },
+          ],
+        },
+      });
+    // Una sesión es una credencial para toda la corrida: lo que pudiera correr a su lado mandaría
+    // su petición con la vieja o con la nueva según le tocara al planificador.
+    assert.equal(response.status, 422, JSON.stringify(response.body));
+    assert.ok(
+      response.body.errors.some((error: { detail: string }) => error.detail.includes("inicia sesión")),
+      JSON.stringify(response.body.errors),
+    );
+    await fixture.target.stop();
+  });
+});

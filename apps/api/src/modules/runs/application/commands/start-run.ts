@@ -137,6 +137,7 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
       caseSelection: command.input.caseSelection ?? {},
       samples,
       delayMs,
+      concurrency: clamp(command.input.concurrency ?? 1, 1, 10),
       ...(command.input.workflowId ? { workflowId: command.input.workflowId } : {}),
       ...(command.input.datasetId ? { datasetId: command.input.datasetId } : {}),
       ...(command.input.suiteId ? { suiteId: command.input.suiteId } : {}),

@@ -58,8 +58,10 @@ export function WorkflowInspector({
   operations,
   environments,
   environmentId,
+  concurrency,
   canEdit,
   onEnvironment,
+  onConcurrency,
   onWorkflow,
   onSteps,
   onTemplate,
@@ -74,8 +76,10 @@ export function WorkflowInspector({
   operations: OperationSummary[];
   environments: Environment[];
   environmentId: string;
+  concurrency: number;
   canEdit: boolean;
   onEnvironment: (id: string) => void;
+  onConcurrency: (value: number) => void;
   onWorkflow: (change: Partial<Pick<WorkflowView, "name" | "description">>) => void;
   onSteps: (steps: WorkflowStepView[]) => void;
   onTemplate: (template: RequestTemplateView) => void;
@@ -131,6 +135,19 @@ export function WorkflowInspector({
               </option>
             ))}
           </select>
+        </Field>
+        <Field
+          label="Pasos a la vez"
+          hint="Solo corren juntos los que no dependen unos de otros. Lo que hace que sea seguro se comprueba al guardar."
+        >
+          <input
+            className={inputClass}
+            type="number"
+            min={1}
+            max={10}
+            value={concurrency}
+            onChange={(event) => onConcurrency(Math.min(10, Math.max(1, Number(event.target.value) || 1)))}
+          />
         </Field>
         <Button className="mt-2 w-full" disabled={!environmentId || !steps.length || running} onClick={onRun}>
           Ejecutar flujo

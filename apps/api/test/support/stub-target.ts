@@ -152,7 +152,9 @@ export class StubTarget {
   private things = new Map<string, Record<string, unknown>>();
   private nextId = 100;
   private flakedWrites = 0;
-  readonly requests: { method: string; path: string; authorization: string | undefined }[] = [];
+  /** `at` es lo que permite afirmar que dos peticiones se solaparon sin cronometrar la corrida
+   * entera: con `slowMs`, dos llegadas más juntas que ese retardo estuvieron en vuelo a la vez. */
+  readonly requests: { method: string; path: string; authorization: string | undefined; at: number }[] = [];
 
   constructor(private readonly faults: StubFaults = {}) {}
 
@@ -185,7 +187,7 @@ export class StubTarget {
     // destino, y la única forma de pasar la guarda sería fingir que la cookie es un bearer.
     const cookie = request.headers.cookie;
     const authorization = request.headers.authorization ?? (cookie?.includes("session=") ? cookie : undefined);
-    this.requests.push({ method, path: url.pathname, authorization });
+    this.requests.push({ method, path: url.pathname, authorization, at: Date.now() });
 
     const send = (status: number, body?: unknown, contentType = "application/json") => {
       if (body === undefined) {

@@ -185,6 +185,9 @@ export type WorkflowStepView = {
   id: string;
   requestTemplateId: string;
   dependsOn?: string[];
+  /** With several dependencies, whether the step needs all of them or just the first to arrive.
+   * Absent means all, which is what a dependency means. */
+  waits?: "all" | "any";
   captures?: WorkflowCaptureView[];
   /** Milliseconds to wait before this step. Not a retry: «it was not time yet», not «that failure
    * was not real». */

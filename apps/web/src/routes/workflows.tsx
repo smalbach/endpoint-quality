@@ -49,6 +49,7 @@ export function WorkflowsPage() {
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [environmentId, setEnvironmentId] = useState("");
   const [datasetId, setDatasetId] = useState("");
+  const [concurrency, setConcurrency] = useState(1);
 
   const enabled = Boolean(organization && projectId);
   const workflows = useQuery({
@@ -149,14 +150,14 @@ export function WorkflowsPage() {
     mutationFn: () =>
       api<{ runId: string }>(`${base}/runs`, {
         method: "POST",
-        body: { environmentId, workflowId: draft?.id, ...(datasetId ? { datasetId } : {}) },
+        body: { environmentId, workflowId: draft?.id, concurrency, ...(datasetId ? { datasetId } : {}) },
       }),
     onSuccess: ({ runId }) => void navigate(`/p/${projectId}/runs/${runId}`),
   });
 
   const runSuite = useMutation({
     mutationFn: (suiteId: string) =>
-      api<{ runId: string }>(`${base}/runs`, { method: "POST", body: { environmentId, suiteId } }),
+      api<{ runId: string }>(`${base}/runs`, { method: "POST", body: { environmentId, suiteId, concurrency } }),
     onSuccess: ({ runId }) => void navigate(`/p/${projectId}/runs/${runId}`),
   });
 
@@ -376,6 +377,8 @@ export function WorkflowsPage() {
                 onWorkflow={(change) => setDraft((current) => (current ? { ...current, ...change } : current))}
                 onSteps={setSteps}
                 onTemplate={(template) => setTemplateEdits((current) => ({ ...current, [template.id]: template }))}
+                concurrency={concurrency}
+                onConcurrency={setConcurrency}
                 onRun={() => run.mutate()}
                 onDelete={() => deleteWorkflow.mutate(draft.id)}
                 running={run.isPending}
