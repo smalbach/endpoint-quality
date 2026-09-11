@@ -1,4 +1,4 @@
-import type { Assertion, OrderMode } from "@eq/runner-core";
+import type { Assertion, FailureKind, OrderMode } from "@eq/runner-core";
 
 export type RunStatus = "queued" | "running" | "passed" | "failed" | "cancelled" | "error";
 export type CaseStatus = "queued" | "running" | "passed" | "failed" | "skipped";
@@ -45,6 +45,8 @@ export type RunTotals = { cases: number; completed: number; passed: number; fail
 export type RunCase = {
   id: string;
   runId: string;
+  /** Whose problem it is. Null while it passed, was skipped, or has not run. */
+  failure: FailureKind | null;
   operationId: string;
   scenarioId: string;
   method: string;
@@ -108,6 +110,16 @@ export const isFinished = (status: RunStatus): boolean => ["passed", "failed", "
  */
 export const caseStatusFor = (executed: { ok: boolean; steps: unknown[] }): CaseStatus =>
   executed.steps.length === 0 ? "skipped" : executed.ok ? "passed" : "failed";
+
+/**
+ * Whose problem a red case is: the kind of the **first** step that did not hold.
+ *
+ * The first and not the worst, because a flow stops meaning anything after its first failure — a
+ * `create-read` whose POST never happened reports the read as broken too, and filing the case
+ * under the second failure would name the consequence instead of the cause.
+ */
+export const failureFor = (executed: { steps: { ok: boolean; failure: FailureKind | null }[] }): FailureKind | null =>
+  executed.steps.find((step) => !step.ok)?.failure ?? null;
 
 export function verdictFor(totals: RunTotals): RunStatus {
   return totals.failed > 0 ? "failed" : "passed";

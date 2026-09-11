@@ -11,7 +11,7 @@
  * passes only when every one of them that *applies* holds. The ones that do not apply produce
  * nothing at all rather than a green tick — a tick that asserts nothing is what this replaced.
  */
-import { holds, type Assertion, type Budget } from "./types.ts";
+import { holds, type Assertion, type Budget, type FailureKind } from "./types.ts";
 import { latencyAssertion } from "./budgets.ts";
 import { undeclaredPaths, validateJson } from "./json-schema.ts";
 
@@ -45,6 +45,8 @@ export type EvaluateInput = {
 
 export type Evaluation = {
   ok: boolean;
+  /** Whose problem this is, when it is a problem. `null` when every assertion held. */
+  failure: FailureKind | null;
   assertions: Assertion[];
   /** True when the API answered 405 to an operation the contract declares. It is its own
    * diagnosis and it suppresses the rest. */
@@ -137,9 +139,34 @@ export function evaluateResponse(input: EvaluateInput): Evaluation {
     // in the list, and without one `schemaPass` already *is* `envelopeMatches` — so this is
     // visibility, not leniency.
     ok: holds(assertions),
+    // Read off the assertions rather than recomputed from the response, so it cannot disagree
+    // with the list underneath it. The order is the triage order: a 500 is a 500 whatever else is
+    // wrong with the body, and a latency miss only means anything once the rest held.
+    failure: classify(assertions, actual.status, statusMatches, latency),
     assertions,
     notImplemented,
   };
+}
+
+/**
+ * Which of the failing assertions names the culprit.
+ *
+ * `latency` last and only on its own: a response that missed the budget *and* broke its schema is
+ * a broken response, and filing it under «tardó» would send it to whoever tunes the database
+ * instead of whoever owns the endpoint.
+ */
+function classify(
+  assertions: Assertion[],
+  status: number,
+  statusMatches: boolean,
+  latency: Assertion | null,
+): FailureKind | null {
+  if (holds(assertions)) return null;
+  if (!statusMatches) return status >= 500 ? "server" : "status";
+  if (assertions.some((assertion) => !assertion.pass && assertion.severity !== "warning" && assertion !== latency)) {
+    return "contract";
+  }
+  return "latency";
 }
 
 /**

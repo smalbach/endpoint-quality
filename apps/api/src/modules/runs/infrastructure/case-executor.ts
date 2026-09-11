@@ -25,6 +25,7 @@ import {
   holds,
   type ActualResponse,
   type Assertion,
+  type FailureKind,
   type ProjectConfig,
   type HttpMethod,
   type ResolvedOperation,
@@ -74,6 +75,8 @@ export type ExecutionTarget = {
 export type ExecutedStep = {
   request: StepRequest;
   ok: boolean;
+  /** Whose problem it is, when it is one. `null` while the step holds. */
+  failure: FailureKind | null;
   assertions: Assertion[];
   actual: ActualResponse | null;
   latency: { samples: number[]; budgetMs: number | null };
@@ -158,13 +161,13 @@ export class CaseExecutor {
 
     const missingVariables = unresolvedVariables({ requestPath: step.requestPath, body: step.body });
     if (missingVariables.length) {
-      return blocked(step, sent, `Faltan variables: ${missingVariables.join(", ")}`, "Variables del entorno");
+      return blocked(step, sent, `Faltan variables: ${missingVariables.join(", ")}`, "Variables del entorno", "config");
     }
 
     if (!input.target.writesAllowed && !IDEMPOTENT.has(step.method)) {
       // Refused before anything leaves the process. The check lives here and not in the UI
       // because CI never sees the UI.
-      return blocked(step, sent, "El entorno no permite escrituras: la operación no se ejecutó");
+      return blocked(step, sent, "El entorno no permite escrituras: la operación no se ejecutó", "Ejecución", "config");
     }
 
     const samples: number[] = [];
@@ -183,7 +186,7 @@ export class CaseExecutor {
           : error instanceof Error
             ? error.message
             : "La petición falló";
-      return blocked(step, sent, detail, "Conexión con la API");
+      return blocked(step, sent, detail, "Conexión con la API", "network");
     }
 
     // Extra samples only on a safe method, and only of the request that was already made: a p95
@@ -226,6 +229,10 @@ export class CaseExecutor {
     return {
       request: step,
       ok: verdict.ok && holds(assertions),
+      // `persistence` is added after the verdict, so a step that only fails there has no kind of
+      // its own yet: the write was accepted and the fields were not kept, which is the contract
+      // being broken in the most expensive way there is to notice.
+      failure: verdict.failure ?? (holds(assertions) ? null : "contract"),
       assertions,
       actual,
       latency: { samples, budgetMs: budget?.ms ?? null },
@@ -273,10 +280,17 @@ function toActualResponse(response: { status: number; headers: Record<string, st
   return { status: response.status, statusText: "", contentType, headers: response.headers, body, raw: response.body };
 }
 
-function blocked(step: StepRequest, sent: ExecutedStep["sent"], detail: string, label = "Ejecución"): ExecutedStep {
+function blocked(
+  step: StepRequest,
+  sent: ExecutedStep["sent"],
+  detail: string,
+  label: string,
+  failure: FailureKind,
+): ExecutedStep {
   return {
     request: step,
     ok: false,
+    failure,
     assertions: [{ label, pass: false, detail }],
     actual: null,
     latency: { samples: [], budgetMs: null },

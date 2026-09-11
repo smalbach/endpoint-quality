@@ -70,6 +70,28 @@ export type Budget = { ms: number; label: string; source: string };
 export type Assertion = { label: string; pass: boolean; detail: string; severity?: "error" | "warning" };
 
 /**
+ * Whose problem a red case is.
+ *
+ * A run of 311 cases with 40 in red is a list nobody reads, because every row costs the same to
+ * triage as the last. These are the answers that make the list sortable: a `network` and a
+ * `contract` are the same colour and they go to different people on different days.
+ *
+ * - `network` — no hubo respuesta. La API no contestó, o la guarda de red se negó a llamarla.
+ * - `config` — la corrida no llegó a enviar: faltaba una variable, o el entorno prohíbe escribir.
+ * - `server` — contestó 5xx. El destino se rompió, sin más que decir sobre el contrato.
+ * - `status` — contestó otro estado del esperado. El caso y la API no están de acuerdo en qué
+ *   tenía que pasar, y esa discusión es sobre el contrato, no sobre la forma de la respuesta.
+ * - `contract` — el estado era el esperado y la forma no: el envelope, el esquema declarado, el
+ *   content-type, o los campos que un POST aceptó y no guardó.
+ * - `check` — una comprobación que escribió quien montó el flujo.
+ * - `flow` — la respuesta llegó y el flujo no pudo sacar de ella lo que necesitaba: una captura
+ *   sin su campo, un login sin su token.
+ * - `latency` — el presupuesto publicado. Lo único que falla sin que nada esté *mal*.
+ */
+export const FAILURE_KINDS = ["network", "config", "server", "status", "contract", "check", "flow", "latency"] as const;
+export type FailureKind = (typeof FAILURE_KINDS)[number];
+
+/**
  * Whether a list of assertions amounts to a pass.
  *
  * A single function rather than `.every((assertion) => assertion.pass)` written in four places,

@@ -38,6 +38,7 @@ export type {
   RunTotals,
   RunView,
   DatasetRowsView,
+  FailureKind,
   DatasetView,
   ScenarioView,
   ScenariosView,

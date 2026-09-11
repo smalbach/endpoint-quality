@@ -1075,6 +1075,56 @@ describe("comprobaciones, reintentos y política de error de un paso", () => {
     await flow.target.stop();
   });
 
+  test("cada caso rojo dice de quién es el fallo", async () => {
+    const flow = await flowWith(({ list }) => [
+      {
+        id: "listar",
+        requestTemplateId: list,
+        checks: [{ label: "imposible", source: "body", path: "data", operator: "has_length", value: 99 }],
+      },
+    ]);
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    // La comprobación la escribió quien montó el flujo, y la respuesta estaba bien: el fallo es
+    // suyo y no del destino.
+    assert.equal(run.cases[0].failure, "check");
+    await flow.target.stop();
+  });
+
+  test("un 405 es un desacuerdo sobre el estado, y una variable que falta ni sale de casa", async () => {
+    const notImplemented = await flowWith(({ create }) => [{ id: "crear", requestTemplateId: create }], {
+      notImplemented: true,
+    });
+    const first = await runAndWait(notImplemented.projectBase, {
+      environmentId: notImplemented.environmentId,
+      workflowId: notImplemented.workflowId,
+    });
+    assert.equal(first.run.cases[0].failure, "status");
+    await notImplemented.target.stop();
+
+    // Una variable sin resolver no es un hallazgo sobre la API: la corrida no llegó a llamarla.
+    const fixture = await projectAgainst({});
+    const template = await api()
+      .post(`${fixture.projectBase}/request-templates`)
+      .set(as(owner))
+      .send({ name: "Leer", operationId: "getThing", expectedStatus: 200, parameters: { id: "{{noExiste}}" } });
+    const workflow = await api()
+      .post(`${fixture.projectBase}/workflows`)
+      .set(as(owner))
+      .send({
+        name: "Sin variable",
+        definition: { steps: [{ id: "leer", requestTemplateId: template.body.requestTemplateId }] },
+      });
+    const second = await runAndWait(fixture.projectBase, {
+      environmentId: fixture.environmentId,
+      workflowId: workflow.body.workflowId,
+    });
+    assert.equal(second.run.cases[0].failure, "config");
+    await fixture.target.stop();
+  });
+
   test("una comprobación mal escrita se rechaza al guardar el flujo, no a mitad de corrida", async () => {
     const fixture = await projectAgainst({});
     const list = await api()

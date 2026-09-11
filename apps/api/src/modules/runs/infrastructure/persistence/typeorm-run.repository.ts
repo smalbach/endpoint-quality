@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
+import type { FailureKind } from "@eq/runner-core";
 
 import { RunCaseEntity, RunEntity, RunStepEntity } from "@/shared/database/entities";
 import type { CaseStatus, Run, RunCase, RunPlan, RunStatus, RunStep, RunTotals } from "../../domain/model";
@@ -150,7 +151,11 @@ function toRun(row: RunEntity | null): Run | null {
       }
     : null;
 }
-const toCase = (row: RunCaseEntity): RunCase => ({ ...row, status: row.status as CaseStatus });
+const toCase = (row: RunCaseEntity): RunCase => ({
+  ...row,
+  status: row.status as CaseStatus,
+  failure: (row.failure as FailureKind | null) ?? null,
+});
 
 /**
  * The jsonb boundary, and the only place these columns are asserted into a shape.

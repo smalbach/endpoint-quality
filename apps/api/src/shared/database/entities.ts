@@ -300,6 +300,10 @@ export class RunCaseEntity {
   @Column({ type: "varchar", length: 10 }) method: string;
   @Column({ type: "text" }) path: string;
   @Column({ type: "varchar", length: 20 }) status: string;
+  /** Whose problem it is: `network`, `config`, `server`, `status`, `contract`, `check`, `flow` or
+   * `latency`. Null while it passed, was skipped, or has not run. A column and not something
+   * derived at read time, because it is what a list of forty red rows is sorted and counted by. */
+  @Column({ type: "varchar", length: 20, nullable: true }) failure: string | null;
   @Column({ type: "int" }) position: number;
   @Column({ type: "int", nullable: true }) durationMs: number | null;
   @Column({ type: "timestamptz", nullable: true }) startedAt: Date | null;

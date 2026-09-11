@@ -55,7 +55,7 @@ import { assembleProjectConfig } from "@/modules/config/application/queries/get-
 import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
 import type { RequestTemplateRow, WorkflowRow } from "@/modules/workflows/domain/model";
 import { SECRET_CIPHER, type SecretCipherPort } from "@/shared/crypto/secret-cipher";
-import { caseStatusFor, verdictFor, type Run, type RunCase, type RunStep } from "../domain/model";
+import { caseStatusFor, failureFor, verdictFor, type Run, type RunCase, type RunStep } from "../domain/model";
 import { RUN_QUEUE, RUN_REPOSITORY, type RunQueuePort, type RunRepositoryPort } from "../domain/ports";
 import { CaseExecutor, type ExecutedCase, type ExecutedStep, type ExecutionTarget } from "./case-executor";
 import { RunCaseFinishedEvent, RunFinishedEvent, RunStartedEvent } from "../application/events/run.events";
@@ -192,6 +192,7 @@ export class RunOrchestrator {
     const cases: RunCase[] = queue.map((item, position) => ({
       id: randomUUID(),
       runId: run.id,
+      failure: null,
       operationId: item.operation.id,
       scenarioId: item.scenario.id,
       method: item.operation.method,
@@ -236,6 +237,7 @@ export class RunOrchestrator {
       const finished: RunCase = {
         ...runCase,
         status: caseStatusFor(executed),
+        failure: failureFor(executed),
         startedAt,
         finishedAt,
         durationMs: executed.durationMs,
@@ -316,6 +318,9 @@ export class RunOrchestrator {
     if (!step.checks?.length || !last?.actual) return executed;
     last.assertions.push(...evaluateChecks(step.checks, { response: last.actual, durationMs: last.durationMs }));
     last.ok = holds(last.assertions);
+    // `??`: a check failing on a response that was already a 500 is the 500's fault, and filing it
+    // under «comprobación» would send it to whoever wrote the check.
+    if (!last.ok) last.failure ??= "check";
     return { ...executed, ok: executed.steps.every((item) => item.ok) };
   }
 
@@ -450,6 +455,7 @@ export class RunOrchestrator {
           method: operation.method,
           path: operation.path,
           status: "queued" as const,
+          failure: null,
           position,
           durationMs: null,
           startedAt: null,
@@ -602,6 +608,7 @@ export class RunOrchestrator {
               : `No se encontró la credencial en ${item.step.authorizes.from}.${item.step.authorizes.path}`,
           });
           last.ok = last.ok && holds(last.assertions);
+          if (!last.ok) last.failure ??= "flow";
           executed.ok = executed.steps.every((step) => step.ok);
         }
 
@@ -614,6 +621,7 @@ export class RunOrchestrator {
             detail: ok ? capture.captured.join(", ") : `No se encontraron: ${capture.missing.join(", ")}`,
           });
           last.ok = last.ok && holds(last.assertions);
+          if (!last.ok) last.failure ??= "flow";
           executed.ok = executed.steps.every((step) => step.ok);
         }
 
@@ -636,6 +644,7 @@ export class RunOrchestrator {
         const finished: RunCase = {
           ...runCase,
           status,
+          failure: failureFor(executed),
           startedAt: boundAt,
           finishedAt: this.clock.now(),
           durationMs: executed.durationMs,

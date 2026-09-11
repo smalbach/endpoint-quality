@@ -5,7 +5,7 @@ import { api, streamRun } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { AssertionRow, Badge, Button, Card, Empty, Json } from "@/components/ui";
 import { cn, formatDate, formatDuration, methodStyle, statusClass } from "@/lib/format";
-import type { Run, RunCase, RunCaseView, RunSource, RunTotals, RunView } from "@/lib/types";
+import type { FailureKind, Run, RunCase, RunCaseView, RunSource, RunTotals, RunView } from "@/lib/types";
 
 export function RunsPage() {
   const { projectId } = useParams();
@@ -88,6 +88,32 @@ function sourceLabel(source: RunSource): string {
     return `${flow} · ${source.datasetName ?? "(datos eliminados)"}, ${source.rows} filas`;
   }
   return source.operationIds.length ? `Matriz · ${source.operationIds.length} operaciones` : "Matriz completa";
+}
+
+/**
+ * De quién es el fallo, en una palabra.
+ *
+ * Una lista de cuarenta rojos cuesta lo mismo por fila hasta que esto existe: un destino que
+ * contestó 5xx, una respuesta cuya forma rompe su propio contrato y una corrida que no salió
+ * porque faltaba una variable son tres conversaciones con tres personas distintas.
+ *
+ * Los colores no son decoración. El ámbar es «no es del destino» —la corrida no llegó a llamarlo,
+ * o el presupuesto es nuestro—; el rojo es «sí lo es».
+ */
+const FAILURE_LABEL: Record<FailureKind, { text: string; className: string }> = {
+  network: { text: "red", className: "bg-rose-50 text-rose-700" },
+  config: { text: "configuración", className: "bg-amber-50 text-amber-700" },
+  server: { text: "5xx", className: "bg-rose-100 text-rose-800" },
+  status: { text: "estado", className: "bg-rose-50 text-rose-700" },
+  contract: { text: "contrato", className: "bg-rose-50 text-rose-700" },
+  check: { text: "comprobación", className: "bg-violet-50 text-violet-700" },
+  flow: { text: "flujo", className: "bg-amber-50 text-amber-700" },
+  latency: { text: "presupuesto", className: "bg-amber-50 text-amber-700" },
+};
+
+function FailureTag({ failure }: { failure: FailureKind }) {
+  const { text, className } = FAILURE_LABEL[failure];
+  return <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-[10px]", className)}>{text}</span>;
 }
 
 function Totals({ totals }: { totals: RunTotals }) {
@@ -193,6 +219,12 @@ export function RunDetailPage() {
   const totals = live?.totals ?? run.data.totals;
   const running = run.data.status === "queued" || run.data.status === "running";
   const progress = totals.cases ? Math.round((totals.completed / totals.cases) * 100) : 0;
+  // Counted from the rows and not from the totals, because the totals count verdicts and this
+  // counts reasons — and a run whose forty failures are one reason is a different morning from one
+  // whose forty are eight.
+  const counts = new Map<FailureKind, number>();
+  for (const runCase of cases) if (runCase.failure) counts.set(runCase.failure, (counts.get(runCase.failure) ?? 0) + 1);
+  const breakdown = [...counts.entries()].sort((left, right) => right[1] - left[1]);
 
   return (
     <div className="space-y-4">
@@ -234,6 +266,12 @@ export function RunDetailPage() {
                 {totals.passed} correctos
               </span>
               <span className="rounded-full bg-rose-400/10 px-2.5 py-1 text-rose-300">{totals.failed} fallidos</span>
+              {/* El desglose por culpable, que es lo que convierte «40 fallidos» en un plan. */}
+              {breakdown.map(([failure, count]) => (
+                <span key={failure} className="rounded-full bg-white/5 px-2.5 py-1 text-slate-300">
+                  {count} {FAILURE_LABEL[failure].text}
+                </span>
+              ))}
               <span className="rounded-full bg-amber-400/10 px-2.5 py-1 text-amber-300">
                 {totals.skipped} no ejecutados
               </span>
@@ -270,6 +308,7 @@ export function RunDetailPage() {
                 <span className="block truncate font-mono text-[11px] text-slate-700">{runCase.path}</span>
                 <span className="block truncate text-[10px] text-slate-400">{runCase.scenarioId}</span>
               </span>
+              {runCase.failure && <FailureTag failure={runCase.failure} />}
               <span className="shrink-0 text-[10px] text-slate-400">{formatDuration(runCase.durationMs)}</span>
               <Badge className={cn("shrink-0 border-transparent", statusClass[runCase.status])}>{runCase.status}</Badge>
             </button>

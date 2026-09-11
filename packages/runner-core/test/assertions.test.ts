@@ -12,7 +12,7 @@
  * envelope, so the case failed with four green assertions and no explanation available short of
  * reading the engine.
  */
-import { test } from "node:test";
+import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
 import { evaluateResponse, type ActualResponse } from "../src/assertions.ts";
@@ -99,4 +99,63 @@ test("un 405 silencia el resto y dice por qué", () => {
   assert.equal(evaluation.ok, false);
   assert.ok(failed(evaluation.assertions).length > 0);
   assert.match(evaluation.assertions[0].detail, /no está implementado/);
+});
+
+/**
+ * De quién es el fallo.
+ *
+ * Una corrida de 311 casos con 40 en rojo es una lista que nadie lee: cada fila cuesta lo mismo de
+ * triar que la anterior. Lo que se prueba aquí es el orden de esa clasificación, que es donde
+ * están las decisiones: un 500 es un 500 aunque además traiga el cuerpo mal, y tardar de más solo
+ * significa algo cuando todo lo demás se cumplió.
+ */
+describe("la clasificación de un caso rojo", () => {
+  test("lo que se cumple no tiene culpable", () => {
+    assert.equal(evaluate().failure, null);
+  });
+
+  test("un 5xx es del destino, no del contrato", () => {
+    const evaluation = evaluate({ actual: response({ status: 500, statusText: "Internal Server Error" }) });
+    assert.equal(evaluation.failure, "server");
+  });
+
+  test("otro estado del esperado es un desacuerdo sobre qué tenía que pasar", () => {
+    assert.equal(evaluate({ actual: response({ status: 404 }) }).failure, "status");
+  });
+
+  test("el estado correcto y la forma mal es del contrato", () => {
+    const evaluation = evaluate({
+      expectedShape: "{ data }",
+      actual: response({ body: { items: [] }, raw: '{"items":[]}' }),
+    });
+    assert.equal(evaluation.failure, "contract");
+  });
+
+  test("el presupuesto solo se lleva la culpa cuando no hay nada más roto", () => {
+    const budget = { ms: 10, label: "Presupuesto", source: "prueba" };
+    assert.equal(evaluate({ budget, latencySamples: [900] }).failure, "latency");
+
+    // Y deja de llevársela en cuanto lo hay: una respuesta lenta *y* con el esquema roto es una
+    // respuesta rota, y archivarla bajo «tardó» la manda a quien afina la base de datos en vez de
+    // a quien mantiene el endpoint.
+    const both = evaluate({
+      budget,
+      latencySamples: [900],
+      expectedShape: "{ data }",
+      actual: response({ body: { items: [] }, raw: '{"items":[]}' }),
+    });
+    assert.equal(both.failure, "contract");
+  });
+
+  test("un aviso no hace culpable a nadie", () => {
+    // La deriva del contrato es un aviso: el endpoint funciona y su documento se quedó atrás.
+    const schema = { type: "object", required: ["data"], properties: { data: { type: "object", properties: {} } } };
+    const evaluation = evaluate({
+      schema,
+      expectedShape: "{ data }",
+      actual: response({ body: { data: { extra: 1 } }, raw: '{"data":{"extra":1}}' }),
+    });
+    assert.equal(evaluation.ok, true);
+    assert.equal(evaluation.failure, null);
+  });
 });

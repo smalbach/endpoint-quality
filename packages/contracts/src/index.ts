@@ -327,6 +327,16 @@ export type RunTotals = { cases: number; completed: number; passed: number; fail
 export type CaseStatus = "queued" | "running" | "passed" | "failed" | "skipped";
 export type RunStatus = "queued" | "running" | "passed" | "failed" | "cancelled" | "error";
 
+/**
+ * Whose problem a red case is.
+ *
+ * A list of forty red rows costs the same to triage per row until this exists: a target that
+ * answered 5xx, a response whose shape broke its own contract, and a run that never left because a
+ * variable was missing are three conversations with three different people, and they were all the
+ * same colour.
+ */
+export type FailureKind = "network" | "config" | "server" | "status" | "contract" | "check" | "flow" | "latency";
+
 export type RunCaseOf<T> = {
   id: string;
   operationId: string;
@@ -334,6 +344,9 @@ export type RunCaseOf<T> = {
   method: string;
   path: string;
   status: CaseStatus;
+  /** Null while it passed, was skipped, or has not run. Absent on rows written before this
+   * existed, which is why it is optional rather than `FailureKind | null`. */
+  failure?: FailureKind | null;
   position: number;
   durationMs: number | null;
   startedAt?: T | null;
