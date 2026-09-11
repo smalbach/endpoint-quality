@@ -9,7 +9,8 @@
  * Launching a run is `editor`, and the environment decides whether it may write — the run itself
  * is not where that authority lives.
  */
-import { Body, Controller, Get, HttpCode, Param, Post, Query, Sse, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Post, Query, Res, Sse, UseGuards } from "@nestjs/common";
+import type { Response } from "express";
 import { CommandBus, QueryBus } from "@nestjs/cqrs";
 import { SkipThrottle } from "@nestjs/throttler";
 import { Observable, concat, from, map, takeWhile } from "rxjs";
@@ -27,10 +28,28 @@ import {
   GetRunQuery,
   GetRunReportQuery,
   ListRunsQuery,
+  type RunReport,
   type RunView,
 } from "../application/queries/get-run";
 import { RunProgressStream } from "../infrastructure/run-progress.stream";
 import { StartRunDto } from "./dto/runs.dto";
+import { REPORT_CONTENT_TYPE, REPORT_FORMATS, toHtmlReport, toJUnitXml, type ReportFormat } from "./report-formats";
+
+/**
+ * `?format=` as a query parameter and not as a suffix on the path, because it is the same
+ * resource: `.../report` is one run's result, and `json`, `html` and `junit` are three renderings
+ * of it. A `report.xml` route would be a second URL for the same thing, and the day a third
+ * format arrives there would be three.
+ *
+ * Anything unrecognised falls back to JSON rather than answering 400. The parameter is typed by
+ * hand into a CI script far more often than it is generated, and a report that answers «formato
+ * inválido» to `?format=JUnit` fails the pipeline for a reason that has nothing to do with the
+ * API being tested.
+ */
+function reportFormat(value: string | undefined): ReportFormat {
+  const wanted = (value ?? "json").trim().toLowerCase();
+  return (REPORT_FORMATS as readonly string[]).includes(wanted) ? (wanted as ReportFormat) : "json";
+}
 
 @Controller("orgs/:organizationId/projects/:projectId/runs")
 @UseGuards(OrgRoleGuard)
@@ -91,8 +110,26 @@ export class RunsController {
     @Param("organizationId") organizationId: string,
     @Param("projectId") projectId: string,
     @Param("runId") runId: string,
+    @Query("format") format: string | undefined,
+    @Res({ passthrough: true }) response: Response,
   ) {
-    return this.queryBus.execute(new GetRunReportQuery(organizationId, projectId, runId));
+    const chosen = reportFormat(format);
+    const report = await this.queryBus.execute<GetRunReportQuery, RunReport>(
+      new GetRunReportQuery(organizationId, projectId, runId),
+    );
+    if (chosen === "json") return report;
+
+    // `passthrough` so Nest still applies the guards and the exception filter; only the body and
+    // the content type are taken over. Returning the string from the handler would publish it as
+    // JSON — a quoted, escaped blob that no CI runner and no browser can read.
+    response.type(REPORT_CONTENT_TYPE[chosen]);
+    // Named so a browser saves something recognisable and a CI job can collect it by pattern. The
+    // run id is in the name because two of them in one artifact directory is the ordinary case.
+    response.header(
+      "Content-Disposition",
+      `inline; filename="corrida-${runId}.${chosen === "junit" ? "xml" : "html"}"`,
+    );
+    return chosen === "junit" ? toJUnitXml(report) : toHtmlReport(report);
   }
 
   @Get(":runId/cases/:caseId")

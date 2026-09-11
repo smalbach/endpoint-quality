@@ -482,6 +482,39 @@ describe("una corrida completa contra un destino correcto", () => {
     assert.equal(JSON.stringify(detail.body).includes("Bearer "), false);
   });
 
+  /**
+   * El mismo informe en los dos formatos que no son JSON.
+   *
+   * Lo que se comprueba aquí no es el texto —eso son funciones puras con su propia suite— sino que
+   * la ruta lo sirve como lo que es: un XML que un runner de CI acepta y una página que un
+   * navegador abre. Devolverlo desde el handler sin tocar la respuesta lo publicaría como JSON, es
+   * decir, como una cadena entrecomillada y escapada que no sirve para ninguna de las dos cosas.
+   */
+  test("el informe sale también en JUnit XML y en HTML, con su tipo de contenido", async () => {
+    const { run } = await runAndWait(fixture.projectBase, { environmentId: fixture.environmentId });
+    const junit = await api().get(`${fixture.projectBase}/runs/${run.id}/report?format=junit`).set(as(owner));
+    assert.equal(junit.status, 200);
+    assert.match(junit.headers["content-type"], /application\/xml/);
+    assert.match(junit.headers["content-disposition"], /corrida-.*\.xml/);
+    assert.ok(junit.text.startsWith('<?xml version="1.0"'), junit.text.slice(0, 80));
+    assert.ok(junit.text.includes("<testsuites "), junit.text.slice(0, 200));
+
+    const html = await api().get(`${fixture.projectBase}/runs/${run.id}/report?format=html`).set(as(owner));
+    assert.equal(html.status, 200);
+    assert.match(html.headers["content-type"], /text\/html/);
+    assert.ok(html.text.startsWith("<!doctype html>"), html.text.slice(0, 80));
+  });
+
+  test("un formato que no existe cae en JSON, que es lo que ya devolvía", async () => {
+    // El parámetro se teclea a mano en un script de CI mucho más de lo que se genera, y un informe
+    // que contesta «formato inválido» a `?format=JUnit` rompe la tubería por algo que no tiene que
+    // ver con la API que se está probando.
+    const { run } = await runAndWait(fixture.projectBase, { environmentId: fixture.environmentId });
+    const response = await api().get(`${fixture.projectBase}/runs/${run.id}/report?format=pdf`).set(as(owner));
+    assert.equal(response.status, 200);
+    assert.equal(response.body.run.id, run.id);
+  });
+
   test("el informe trae todos los casos con sus aserciones en una sola petición", async () => {
     // The per-case view is the evidence view and carries whole response bodies; reading a whole
     // run through it is one request per case, which against the 120-per-minute limit turns a
