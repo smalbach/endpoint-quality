@@ -130,7 +130,12 @@ export class StubSafeFetch implements SafeFetchPort {
     this.calls.push({ url, headers });
     const stored = this.responses.get(url);
     if (stored) {
-      const reply = { headers: { "content-type": "application/yaml" }, finalUrl: url, durationMs: 1 };
+      const reply = {
+        headers: { "content-type": "application/yaml" },
+        finalUrl: url,
+        durationMs: 1,
+        timing: { dnsMs: 0, ttfbMs: 1, downloadMs: 0 },
+      };
       if (stored.requires && headers[stored.requires.header] !== stored.requires.value) {
         return { ...reply, status: 401, body: "no autorizado" };
       }

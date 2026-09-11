@@ -371,6 +371,15 @@ function CaseDetail({ runCase }: { runCase: RunCaseView }) {
                 muestras: {step.latency.samples.join(", ")} ms
               </p>
             )}
+            {/* El desglose solo cuando alguna parte es visible: en local el DNS es 0 y la descarga
+                también, y tres ceros al pie de cada paso son ruido en todas las corridas para que
+                una lo agradezca. */}
+            {step.latency?.timing && step.latency.timing.dnsMs + step.latency.timing.downloadMs > 0 && (
+              <p className="mt-1 font-mono text-[10px] text-slate-400">
+                dns {step.latency.timing.dnsMs} ms · respuesta {step.latency.timing.ttfbMs} ms · descarga{" "}
+                {step.latency.timing.downloadMs} ms
+              </p>
+            )}
             {step.prunedAt ? (
               // Sin esto, una corrida vieja se lee como una pared de timeouts: `actual` en null
               // significa «no contestó», y aquí significa «se retiró el cuerpo». Son dos cosas.

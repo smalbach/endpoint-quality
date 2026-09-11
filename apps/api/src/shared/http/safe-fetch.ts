@@ -36,6 +36,27 @@ export type SafeFetchPolicy = {
   maxResponseBytes: number;
 };
 
+/**
+ * Where the milliseconds went.
+ *
+ * «Tardó 900 ms» is not actionable and «el DNS tardó 850» is. The three that are measurable from
+ * here are worth having for exactly that reason: a name that resolves slowly, a server that takes
+ * its time before answering, and a response body large enough that reading it is the wait.
+ *
+ * **`connect` and `tls` are deliberately absent.** Getting them out of `fetch` means a custom
+ * `undici` dispatcher hooked into diagnostics channels — a lot of machinery, tied to the internals
+ * of a library, to split a number this code would then have to keep honest. Three numbers that are
+ * certainly right beat five where two are guesses.
+ */
+export type RequestTiming = {
+  /** Resolving the name. Zero when the URL already carried a literal address. */
+  dnsMs: number;
+  /** From sending the request to the response headers arriving: the target's own thinking time. */
+  ttfbMs: number;
+  /** Reading the body after that, which is the part that grows with the payload. */
+  downloadMs: number;
+};
+
 export type SafeFetchResult = {
   status: number;
   headers: Record<string, string>;
@@ -43,6 +64,7 @@ export type SafeFetchResult = {
   finalUrl: string;
   /** Milliseconds for the request that produced this response, redirects excluded. */
   durationMs: number;
+  timing: RequestTiming;
 };
 
 export class BlockedTargetError extends Error {
@@ -173,7 +195,9 @@ export async function safeFetch(
     if (visited.has(current)) throw new BlockedTargetError(current, "bucle de redirecciones");
     visited.add(current);
 
+    const resolvingAt = Date.now();
     const { url, address, family } = await resolveTarget(current, policy);
+    const dnsMs = Date.now() - resolvingAt;
     const started = Date.now();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), policy.timeoutMs);
@@ -220,12 +244,19 @@ export async function safeFetch(
       continue;
     }
 
+    // The split is taken here, between `fetch` resolving — which is the headers having arrived —
+    // and the body having been read. Those are the two halves of a slow response and they have
+    // different owners.
+    const headersAt = Date.now();
+    const body = await readCapped(response, policy.maxResponseBytes, current);
+    const readAt = Date.now();
     return {
       status: response.status,
       headers: Object.fromEntries(response.headers.entries()),
-      body: await readCapped(response, policy.maxResponseBytes, current),
+      body,
       finalUrl: url.toString(),
-      durationMs: Date.now() - started,
+      durationMs: readAt - started,
+      timing: { dnsMs, ttfbMs: headersAt - started, downloadMs: readAt - headersAt },
     };
   }
 

@@ -37,7 +37,7 @@ import {
   unresolvedVariables,
 } from "@eq/runner-core";
 
-import { SAFE_FETCH, BlockedTargetError, type SafeFetchPort } from "@/shared/http/safe-fetch";
+import { SAFE_FETCH, BlockedTargetError, type RequestTiming, type SafeFetchPort } from "@/shared/http/safe-fetch";
 import { SECRET_CIPHER, type SecretCipherPort } from "@/shared/crypto/secret-cipher";
 import { credentialHeader, type Credential } from "@/modules/environments/domain/model";
 
@@ -79,7 +79,14 @@ export type ExecutedStep = {
   failure: FailureKind | null;
   assertions: Assertion[];
   actual: ActualResponse | null;
-  latency: { samples: number[]; budgetMs: number | null };
+  latency: {
+    samples: number[];
+    budgetMs: number | null;
+    /** Where the milliseconds of the **first** request went. The extra samples exist to measure a
+     * percentile of the total; splitting each of them would be four numbers about the same second
+     * of the same endpoint, and the first one is the one the report shows. */
+    timing?: RequestTiming;
+  };
   durationMs: number;
   /** What was actually sent, credentials masked. This is what gets stored. */
   sent: { method: string; url: string; headers: Record<string, string>; body: unknown };
@@ -171,6 +178,7 @@ export class CaseExecutor {
     }
 
     const samples: number[] = [];
+    let timing: RequestTiming | undefined;
     let response: Awaited<ReturnType<SafeFetchPort["request"]>>;
     try {
       response = await this.http.request(url, {
@@ -179,6 +187,7 @@ export class CaseExecutor {
         ...(step.body === undefined ? {} : { body: JSON.stringify(step.body) }),
       });
       samples.push(response.durationMs);
+      timing = response.timing;
     } catch (error) {
       const detail =
         error instanceof BlockedTargetError
@@ -235,7 +244,7 @@ export class CaseExecutor {
       failure: verdict.failure ?? (holds(assertions) ? null : "contract"),
       assertions,
       actual,
-      latency: { samples, budgetMs: budget?.ms ?? null },
+      latency: { samples, budgetMs: budget?.ms ?? null, ...(timing ? { timing } : {}) },
       durationMs: samples[0] ?? 0,
       sent,
     };

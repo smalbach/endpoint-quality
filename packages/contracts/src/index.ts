@@ -411,7 +411,18 @@ export type RunStepOf<T> = {
   expected: { status: number; shape: string; operationPath: string } | null;
   actual: { status: number; contentType: string; headers: Record<string, string>; body: unknown } | null;
   assertions: Assertion[];
-  latency: { samples: number[]; budgetMs: number | null } | null;
+  /**
+   * What the request cost, and where.
+   *
+   * `samples` is the total per repetition — several only on a safe method, because a p95 over a
+   * POST would create N resources and change what it measures. `timing` splits the first of them:
+   * «tardó 900 ms» is not actionable and «el DNS tardó 850» is.
+   */
+  latency: {
+    samples: number[];
+    budgetMs: number | null;
+    timing?: { dnsMs: number; ttfbMs: number; downloadMs: number };
+  } | null;
   ok: boolean;
   durationMs: number;
   prunedAt?: T | null;
