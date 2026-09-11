@@ -56,6 +56,9 @@ export class PreviewRequestDto {
   @IsOptional() @IsString() @MaxLength(120) name?: string;
   @IsInt() @Min(100) @Max(599) expectedStatus: number;
   @IsOptional() @IsObject() parameters?: Record<string, string>;
+  /** No `disabled…` counterpart: this is not a row being saved, it is a request being sent, and
+   * what is switched off is simply not in it. The editor drops them before it calls. */
+  @IsOptional() @IsObject() headers?: Record<string, string>;
   @IsOptional() @IsObject() body?: Record<string, unknown> | null;
   @IsOptional() @IsIn(AUTH, { message: `auth debe ser uno de: ${AUTH.join(", ")}` }) auth?: ScenarioAuth;
 }

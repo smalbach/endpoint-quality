@@ -9,6 +9,9 @@ const template = (overrides: Partial<RequestTemplateView> = {}): RequestTemplate
   description: null,
   expectedStatus: 200,
   parameters: {},
+  disabledParameters: {},
+  headers: {},
+  disabledHeaders: {},
   body: null,
   auth: "default",
   updatedAt: "2026-03-01T10:00:00.000Z",
@@ -35,6 +38,14 @@ describe("el cuerpo de una petición de prueba", () => {
   test("un parámetro a medio escribir no se manda", () => {
     const built = previewBodyFor(template({ parameters: { status: "activo", "": "1", page: "" } }), "env-1");
     expect(built.parameters).toEqual({ status: "activo" });
+  });
+
+  test("una cabecera apagada no está en lo que se manda: vive en el otro mapa", () => {
+    const built = previewBodyFor(
+      template({ headers: { "X-Tenant": "acme" }, disabledHeaders: { "X-Debug": "1" } }),
+      "env-1",
+    );
+    expect(built.headers).toEqual({ "X-Tenant": "acme" });
   });
 
   test("lleva el entorno y el resto del formulario", () => {

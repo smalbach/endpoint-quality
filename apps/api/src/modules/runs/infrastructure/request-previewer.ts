@@ -54,6 +54,7 @@ export class RequestPreviewer implements RequestPreviewerPort {
         description: null,
         expectedStatus: input.template.expectedStatus,
         parameters: input.template.parameters,
+        headers: input.template.headers,
         body: input.template.body,
         auth: input.template.auth as ScenarioAuth,
       }),

@@ -16,6 +16,20 @@ export type RequestTemplateRow = {
   description: string | null;
   expectedStatus: number;
   parameters: Record<string, string>;
+  /**
+   * The rows somebody switched off: kept, and not sent.
+   *
+   * A second map beside the first, exactly as an environment stores its disabled variables and for
+   * the same reason — a parameter you are not sending this week is not one you want to retype next
+   * week, and the only way to say so used to be deleting it. Keeping them apart means `parameters`
+   * and `headers` go on meaning what a request sends, everywhere, and {@link scenarioFor} has
+   * nothing to filter: the engine never learns the concept.
+   */
+  disabledParameters: Record<string, string>;
+  /** What the contract cannot declare and the request still needs: an `X-Tenant`, an
+   * `Accept-Language`, the idempotency key a POST is supposed to carry. */
+  headers: Record<string, string>;
+  disabledHeaders: Record<string, string>;
   /** `null` is «no payload», `{}` is «an empty one on purpose». The engine sends the second. */
   body: Record<string, unknown> | null;
   auth: ScenarioAuth;
@@ -99,6 +113,7 @@ export function scenarioFor(template: TemplateScenarioFields): TestScenario {
     description: template.description ?? "Paso de un flujo reutilizable",
     expectedStatus: template.expectedStatus,
     ...(Object.keys(template.parameters ?? {}).length ? { parameters: template.parameters } : {}),
+    ...(Object.keys(template.headers ?? {}).length ? { headers: template.headers } : {}),
     ...(template.body ? { body: template.body } : {}),
     flow: "request",
     auth: template.auth,
@@ -107,5 +122,5 @@ export function scenarioFor(template: TemplateScenarioFields): TestScenario {
 
 export type TemplateScenarioFields = Pick<
   RequestTemplateRow,
-  "id" | "name" | "description" | "expectedStatus" | "parameters" | "body" | "auth"
+  "id" | "name" | "description" | "expectedStatus" | "parameters" | "headers" | "body" | "auth"
 >;

@@ -17,6 +17,7 @@ import { DisabledEnvironmentVariables1700000007000 } from "./migrations/17000000
 import { SensitiveEnvironmentVariables1700000008000 } from "./migrations/1700000008000-SensitiveEnvironmentVariables";
 import { DatasetsAndSuites1700000009000 } from "./migrations/1700000009000-DatasetsAndSuites";
 import { CaseFailureKind1700000010000 } from "./migrations/1700000010000-CaseFailureKind";
+import { RequestTemplateHeaders1700000011000 } from "./migrations/1700000011000-RequestTemplateHeaders";
 
 // Ordered. TypeORM runs them by the timestamp in the class name, and the second one adds a
 // foreign key into a table the first creates.
@@ -32,6 +33,7 @@ export const MIGRATIONS = [
   SensitiveEnvironmentVariables1700000008000,
   DatasetsAndSuites1700000009000,
   CaseFailureKind1700000010000,
+  RequestTemplateHeaders1700000011000,
 ];
 
 export function buildDataSourceOptions(databaseUrl: string) {

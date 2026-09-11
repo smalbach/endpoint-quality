@@ -207,7 +207,20 @@ export type WorkflowStepView = {
   position?: { x: number; y: number };
 };
 
-/** A saved request. `body` is null when there is none, which is not the same as an empty one. */
+/**
+ * A saved request. `body` is null when there is none, which is not the same as an empty one.
+ *
+ * The rows somebody switched off live in a **second map beside the first**, never as a flag inside
+ * it. It is the shape an environment's `disabledVariables` already has, for the same reason: a
+ * parameter you are not sending this week is not one you want to retype next week, and the only
+ * way to say so used to be deleting it. Keeping the two apart means `parameters` and `headers` go
+ * on meaning everywhere else exactly what they mean here — what gets sent — so nothing downstream
+ * has to remember to filter, and the engine never learns the concept at all.
+ *
+ * `headers` is what a contract cannot declare and a request still needs: an `Accept-Language`, an
+ * `X-Tenant`, the idempotency key a POST is supposed to carry. They are merged over the ones the
+ * executor builds, so writing one by hand wins — which is what writing one by hand means.
+ */
 export type RequestTemplateViewOf<T> = {
   id: string;
   name: string;
@@ -215,6 +228,10 @@ export type RequestTemplateViewOf<T> = {
   description: string | null;
   expectedStatus: number;
   parameters: Record<string, string>;
+  /** Kept, and not sent. A name is in one map or the other, never in both. */
+  disabledParameters: Record<string, string>;
+  headers: Record<string, string>;
+  disabledHeaders: Record<string, string>;
   body: Record<string, unknown> | null;
   auth: string;
   updatedAt: T;

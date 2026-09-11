@@ -16,6 +16,9 @@ export type RequestTemplateInput = {
   description?: string | null;
   expectedStatus?: number;
   parameters?: Record<string, string>;
+  disabledParameters?: Record<string, string>;
+  headers?: Record<string, string>;
+  disabledHeaders?: Record<string, string>;
   body?: Record<string, unknown> | null;
   auth?: ScenarioAuth;
 };
@@ -74,6 +77,9 @@ type TemplateFields = {
   description: string | null;
   expectedStatus: number;
   parameters: Record<string, string>;
+  disabledParameters: Record<string, string>;
+  headers: Record<string, string>;
+  disabledHeaders: Record<string, string>;
   body: Record<string, unknown> | null;
   auth: ScenarioAuth;
 };
@@ -85,15 +91,38 @@ function validated(input: RequestTemplateInput, previous?: RequestTemplateRow): 
     description: input.description === undefined ? (previous?.description ?? null) : input.description || null,
     expectedStatus: input.expectedStatus ?? previous?.expectedStatus ?? 0,
     parameters: input.parameters ?? previous?.parameters ?? {},
+    disabledParameters: input.disabledParameters ?? previous?.disabledParameters ?? {},
+    headers: input.headers ?? previous?.headers ?? {},
+    disabledHeaders: input.disabledHeaders ?? previous?.disabledHeaders ?? {},
     body: input.body === undefined ? (previous?.body ?? null) : input.body,
     auth: input.auth ?? previous?.auth ?? "default",
   };
+  // The same name on both sides of the switch would make «se envía» depend on which map a reader
+  // happened to look at first. Refused rather than resolved: the editor never produces it, so a
+  // request that carries it came from somewhere that has already lost track of what it means.
+  for (const [enabled, disabled, what] of [
+    [fields.parameters, fields.disabledParameters, "parámetro"],
+    [fields.headers, fields.disabledHeaders, "cabecera"],
+  ] as const) {
+    const both = Object.keys(enabled).filter((name) => name in disabled);
+    if (both.length) {
+      throw new InvalidInputError(
+        `Hay un ${what} encendido y apagado a la vez: ${both.join(", ")}`,
+        both.map((name) => ({ field: what === "parámetro" ? "parameters" : "headers", detail: name })),
+        "request-template-invalid",
+      );
+    }
+  }
+
   const parsed = safeParseRequestTemplate({
     name: fields.name,
     operationId: fields.operationId,
     ...(fields.description ? { description: fields.description } : {}),
     expectedStatus: fields.expectedStatus,
     parameters: fields.parameters,
+    disabledParameters: fields.disabledParameters,
+    headers: fields.headers,
+    disabledHeaders: fields.disabledHeaders,
     ...(fields.body ? { body: fields.body } : {}),
     auth: fields.auth,
   });

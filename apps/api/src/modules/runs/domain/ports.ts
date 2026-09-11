@@ -82,6 +82,7 @@ export type PreviewTemplate = {
   operationId: string;
   expectedStatus: number;
   parameters: Record<string, string>;
+  headers: Record<string, string>;
   body: Record<string, unknown> | null;
   auth: string;
 };

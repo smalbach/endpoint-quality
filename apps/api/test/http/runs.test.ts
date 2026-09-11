@@ -327,6 +327,94 @@ describe("flujos reutilizables y variables de entorno", () => {
     assert.equal(repeated.status, 409, JSON.stringify(repeated.body));
     await fixture.target.stop();
   });
+
+  /**
+   * Apagar una fila no es borrarla, y lo apagado se guarda aparte.
+   *
+   * Los dos mapas son la misma forma que ya tienen las variables de un entorno, y por el mismo
+   * motivo: `parameters` y `headers` siguen significando en todas partes lo que se envía, así que
+   * `scenarioFor` no filtra nada y el motor no aprende el concepto. Lo que queda por comprobar
+   * aquí es que la fila apagada sobrevive a la vuelta y que el mismo nombre en los dos mapas se
+   * rechaza —porque «se envía» no puede depender de en qué mapa mire primero quien lo lea—.
+   */
+  test("una fila apagada se guarda, se devuelve y no se envía", async () => {
+    const fixture = await projectAgainst({});
+    const created = await api()
+      .post(`${fixture.projectBase}/request-templates`)
+      .set(as(owner))
+      .send({
+        name: "Listar",
+        operationId: "listThings",
+        expectedStatus: 200,
+        parameters: { estado: "activo" },
+        disabledParameters: { pagina: "2" },
+        headers: { "X-Tenant": "acme" },
+        disabledHeaders: { "X-Debug": "1" },
+      });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+
+    const listed = await api().get(`${fixture.projectBase}/workflows`).set(as(owner));
+    const template = listed.body.requestTemplates.find(
+      (item: { id: string }) => item.id === created.body.requestTemplateId,
+    );
+    assert.deepEqual(template.parameters, { estado: "activo" });
+    assert.deepEqual(template.disabledParameters, { pagina: "2" });
+    assert.deepEqual(template.headers, { "X-Tenant": "acme" });
+    assert.deepEqual(template.disabledHeaders, { "X-Debug": "1" });
+
+    const before = fixture.target.requests.length;
+    const workflow = await api()
+      .post(`${fixture.projectBase}/workflows`)
+      .set(as(owner))
+      .send({
+        name: "Solo listar",
+        definition: { steps: [{ id: "listar", requestTemplateId: created.body.requestTemplateId }] },
+      });
+    assert.equal(workflow.status, 201, JSON.stringify(workflow.body));
+    await runAndWait(fixture.projectBase, {
+      environmentId: fixture.environmentId,
+      workflowId: workflow.body.workflowId,
+    });
+    const sent = fixture.target.requests.slice(before).find((item) => item.path === "/things");
+    assert.ok(sent, "el destino no recibió la petición");
+    assert.equal(sent.headers["x-tenant"], "acme");
+    assert.equal(sent.headers["x-debug"], undefined);
+    await fixture.target.stop();
+  });
+
+  test("el mismo nombre encendido y apagado a la vez es 422", async () => {
+    const fixture = await projectAgainst({});
+    const response = await api()
+      .post(`${fixture.projectBase}/request-templates`)
+      .set(as(owner))
+      .send({
+        name: "Listar",
+        operationId: "listThings",
+        expectedStatus: 200,
+        parameters: { estado: "activo" },
+        disabledParameters: { estado: "archivado" },
+      });
+    assert.equal(response.status, 422, JSON.stringify(response.body));
+    assert.equal(response.body.errors[0].field, "parameters");
+    await fixture.target.stop();
+  });
+
+  test("una cabecera con un salto de línea dentro no se guarda", async () => {
+    const fixture = await projectAgainst({});
+    const response = await api()
+      .post(`${fixture.projectBase}/request-templates`)
+      .set(as(owner))
+      .send({
+        name: "Listar",
+        operationId: "listThings",
+        expectedStatus: 200,
+        // Partir una petición en dos es lo que hay al otro lado de este salto de línea, y el valor
+        // sale de un campo de texto donde además se sustituye una variable.
+        headers: { "X-Tenant": "acme\r\nX-Admin: 1" },
+      });
+    assert.equal(response.status, 422, JSON.stringify(response.body));
+    await fixture.target.stop();
+  });
 });
 
 after(async () => {
@@ -2032,6 +2120,52 @@ describe("enviar una petición sin lanzar una corrida", () => {
     assert.equal(response.status, 200, JSON.stringify(response.body));
     assert.deepEqual(response.body.request.body, { name: "escrito a mano", size: 3 });
     assert.equal(response.body.response.status, 201);
+  });
+
+  test("una cabecera escrita a mano llega al destino y gana sobre la que pone el motor", async () => {
+    const before = fixture.target.requests.length;
+    const response = await send({
+      environmentId: fixture.environmentId,
+      operationId: "listThings",
+      expectedStatus: 200,
+      headers: { "X-Tenant": "acme", Accept: "application/vnd.acme+json" },
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    // Buscada por ruta y no por posición: la primera petición que este envío provoca es la del
+    // documento en vivo, que sale al mismo destino.
+    const received = fixture.target.requests.slice(before).find((item) => item.path === "/things");
+    assert.ok(received, "el destino no recibió la petición");
+    assert.equal(received.headers["x-tenant"], "acme");
+    // The executor puts `Accept: application/json` on every request. Somebody who typed another
+    // one meant it, and an editor that quietly kept its own guess would be lying about what it
+    // sent — the «Petición» panel is where that request gets copied from.
+    assert.equal(received.headers["accept"], "application/vnd.acme+json");
+    assert.equal(response.body.request.headers["Accept"], "application/vnd.acme+json");
+  });
+
+  test("una cabecera con pinta de credencial vuelve enmascarada, la escriba quien la escriba", async () => {
+    const response = await send({
+      environmentId: fixture.environmentId,
+      operationId: "listThings",
+      expectedStatus: 200,
+      headers: { "X-Api-Key": "una-clave-de-verdad" },
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.request.headers["X-Api-Key"], "••••••••");
+  });
+
+  test("una variable sin definir en una cabecera detiene la petición antes de enviarla", async () => {
+    const response = await send({
+      environmentId: fixture.environmentId,
+      operationId: "listThings",
+      expectedStatus: 200,
+      headers: { "X-Tenant": "{{noExiste}}" },
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.failure, "config");
+    // Nada salió: un `{{noExiste}}` literal en la cabecera sería un 400 del destino que el informe
+    // enseñaría como si se hubiera mandado a propósito.
+    assert.equal(response.body.response, null);
   });
 
   test("una operación que el contrato no declara se dice, con su campo", async () => {

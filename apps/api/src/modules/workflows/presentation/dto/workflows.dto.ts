@@ -31,6 +31,9 @@ export class CreateRequestTemplateDto {
   @IsOptional() @IsString() @MaxLength(500) description?: string | null;
   @IsInt() @Min(100) @Max(599) expectedStatus: number;
   @IsOptional() @IsObject() parameters?: Record<string, string>;
+  @IsOptional() @IsObject() disabledParameters?: Record<string, string>;
+  @IsOptional() @IsObject() headers?: Record<string, string>;
+  @IsOptional() @IsObject() disabledHeaders?: Record<string, string>;
   @IsOptional() @IsObject() body?: Record<string, unknown> | null;
   @IsOptional() @IsIn(AUTH, { message: `auth debe ser uno de: ${AUTH.join(", ")}` }) auth?: ScenarioAuth;
 }
@@ -42,6 +45,9 @@ export class UpdateRequestTemplateDto {
   @IsOptional() @IsString() @MaxLength(500) description?: string | null;
   @IsOptional() @IsInt() @Min(100) @Max(599) expectedStatus?: number;
   @IsOptional() @IsObject() parameters?: Record<string, string>;
+  @IsOptional() @IsObject() disabledParameters?: Record<string, string>;
+  @IsOptional() @IsObject() headers?: Record<string, string>;
+  @IsOptional() @IsObject() disabledHeaders?: Record<string, string>;
   @IsOptional() @IsObject() body?: Record<string, unknown> | null;
   @IsOptional() @IsIn(AUTH, { message: `auth debe ser uno de: ${AUTH.join(", ")}` }) auth?: ScenarioAuth;
 }

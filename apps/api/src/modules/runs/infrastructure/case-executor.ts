@@ -166,7 +166,14 @@ export class CaseExecutor {
     const masked = maskHeaders(headers);
     const sent = { method: step.method, url, headers: masked, body: step.body ?? null };
 
-    const missingVariables = unresolvedVariables({ requestPath: step.requestPath, body: step.body });
+    // The headers are walked with the rest: a `{{tenant}}` nobody defined would otherwise travel
+    // to the target verbatim, and the answer would be a 400 about a value the report shows as if
+    // it had been sent on purpose.
+    const missingVariables = unresolvedVariables({
+      requestPath: step.requestPath,
+      body: step.body,
+      headers: step.headers,
+    });
     if (missingVariables.length) {
       return blocked(step, sent, `Faltan variables: ${missingVariables.join(", ")}`, "Variables del entorno", "config");
     }
@@ -256,21 +263,33 @@ export class CaseExecutor {
    * `none` sends nothing on purpose — that is the 401. `insufficient` sends a token that
    * authenticates without reaching the required scope — that is the 403. `api-key` sends a
    * scheme the operation does not declare, which is a 401 and not a 403.
+   *
+   * The step's own headers are applied **last**, over everything this builds. A header somebody
+   * typed into the editor is knowledge about the target that the contract does not carry, and the
+   * three defaults it can collide with are all guesses next to it: `Accept` and `Content-Type` are
+   * what the executor assumes of an API it has only read a JSON document about, and the credential
+   * header is the one case worth spelling out — writing `Authorization` by hand in a request that
+   * also asks for the working credential is a contradiction, and the honest resolution is the one
+   * the person can see in the «Petición» panel afterwards. It is masked there either way, because
+   * {@link maskHeaders} matches on the name and not on where the value came from.
    */
   private headersFor(step: StepRequest, target: ExecutionTarget): Record<string, string> {
+    const own = step.headers ?? {};
     const base: Record<string, string> = { Accept: "application/json" };
     if (step.body !== undefined) base["Content-Type"] = "application/json";
-    if (step.auth === "none") return base;
+    if (step.auth === "none") return { ...base, ...own };
 
     const role = step.auth === "insufficient" ? "insufficient" : step.auth === "api-key" ? "alternate" : "primary";
     // A session obtained during this run stands in for the stored working credential, and for
     // nothing else. The three roles that exist to be rejected keep being rejected.
-    if (role === "primary" && target.session) return { ...base, [target.session.header]: target.session.value };
+    if (role === "primary" && target.session) {
+      return { ...base, [target.session.header]: target.session.value, ...own };
+    }
     const credential = target.credentials.find((candidate) => candidate.role === role);
     // A missing credential is not silently the working one: sending `primary` where the case
     // asked for `insufficient` would turn a 403 case into a green 200 that proves nothing.
-    if (!credential) return base;
-    return { ...base, ...credentialHeader(credential, this.cipher.decrypt(credential.secretCiphertext)) };
+    if (!credential) return { ...base, ...own };
+    return { ...base, ...credentialHeader(credential, this.cipher.decrypt(credential.secretCiphertext)), ...own };
   }
 }
 

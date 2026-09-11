@@ -133,9 +133,14 @@ export function WorkflowsPage() {
             operationId: edited.operationId,
             expectedStatus: edited.expectedStatus,
             parameters: edited.parameters,
+            // Listed field by field rather than spread, so a field the editor learns to change and
+            // this list does not is a compile error and not an edit that silently does not save.
+            disabledParameters: edited.disabledParameters,
+            headers: edited.headers,
+            disabledHeaders: edited.disabledHeaders,
             body: edited.body,
             auth: edited.auth,
-          },
+          } satisfies Omit<RequestTemplateView, "id" | "description" | "updatedAt">,
         });
       }
       await api<void>(`${base}/workflows/${draft.id}`, {

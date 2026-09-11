@@ -15,6 +15,7 @@ export type PreviewRequestBody = {
   operationId: string;
   expectedStatus: number;
   parameters: Record<string, string>;
+  headers: Record<string, string>;
   body: Record<string, unknown> | null;
   auth: string;
 };
@@ -29,6 +30,12 @@ export function previewBodyFor(template: RequestTemplateView, environmentId: str
     // value is a form in progress, not an instruction to send `?=`.
     parameters: Object.fromEntries(
       Object.entries(template.parameters ?? {}).filter(([name, value]) => name.trim() !== "" && value !== ""),
+    ),
+    // Only the switched-on ones travel, and that needs no filtering here: what is off is stored in
+    // `disabledHeaders`, a map this function never reads. A blank name is still dropped, for the
+    // same reason a blank parameter is — it is a row being typed, not an instruction.
+    headers: Object.fromEntries(
+      Object.entries(template.headers ?? {}).filter(([name, value]) => name.trim() !== "" && value !== ""),
     ),
     body: template.body && Object.keys(template.body).length ? template.body : null,
     auth: template.auth,

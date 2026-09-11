@@ -41,6 +41,7 @@ export class RequestPreviewController {
           operationId: body.operationId,
           expectedStatus: body.expectedStatus,
           parameters: body.parameters ?? {},
+          headers: body.headers ?? {},
           body: body.body ?? null,
           auth: body.auth ?? "default",
         },

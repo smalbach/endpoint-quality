@@ -1,6 +1,8 @@
 import { Button, Field, inputClass } from "@/components/ui";
 import { JsonObjectField } from "@/components/json-object-field";
+import { RequestFieldsEditor } from "@/components/request-fields-editor";
 import { RequestPreviewPanel } from "@/components/request-preview";
+import { fieldMapsFrom, fieldProblems, fieldRowsFrom, type FieldRow } from "@/lib/request-fields";
 import { removeStep, replaceStep } from "@/lib/workflow-draft";
 import type { OperationSummary } from "@/lib/workflow-draft";
 import type {
@@ -248,10 +250,29 @@ function StepInspector({
               </select>
             </Field>
           </div>
-          <JsonObjectField
+          <RequestFieldsRows
             label="Parámetros"
-            value={template.parameters}
-            onChange={(value) => onTemplate({ ...template, parameters: value as Record<string, string> })}
+            kind="parameter"
+            hint="De ruta y de consulta. Acepta {{variables}} del entorno o capturadas antes."
+            namePlaceholder="id"
+            valuePlaceholder="{{thingId}}"
+            enabled={template.parameters}
+            disabledMap={template.disabledParameters}
+            canEdit={canEdit}
+            onChange={(maps) =>
+              onTemplate({ ...template, parameters: maps.enabled, disabledParameters: maps.disabled })
+            }
+          />
+          <RequestFieldsRows
+            label="Cabeceras"
+            kind="header"
+            hint="Lo que el contrato no declara y la petición necesita igual. Ganan sobre las que pone el motor."
+            namePlaceholder="X-Tenant"
+            valuePlaceholder="acme"
+            enabled={template.headers}
+            disabledMap={template.disabledHeaders}
+            canEdit={canEdit}
+            onChange={(maps) => onTemplate({ ...template, headers: maps.enabled, disabledHeaders: maps.disabled })}
           />
           <JsonObjectField
             label="Body"
@@ -358,6 +379,54 @@ function StepInspector({
         </Button>
       )}
     </div>
+  );
+}
+
+/**
+ * The bridge between the two stored maps and the rows the table draws.
+ *
+ * It holds no state: the rows are derived from the maps on every render and converted back on
+ * every edit. A local copy would be a second source of truth for the same thing, and the bug it
+ * causes is the one that is hardest to see — a row typed after a save that silently reverts,
+ * because the copy was made before the save and never told about it.
+ *
+ * What that costs is the order: the rows come back sorted by name, so a row being typed does not
+ * jump, but one that is renamed does. The alternative is keeping order in the database, and a
+ * `jsonb` column cannot — Postgres orders its keys by length and then bytewise.
+ */
+function RequestFieldsRows({
+  label,
+  kind,
+  hint,
+  namePlaceholder,
+  valuePlaceholder,
+  enabled,
+  disabledMap,
+  canEdit,
+  onChange,
+}: {
+  label: string;
+  kind: "parameter" | "header";
+  hint: string;
+  namePlaceholder: string;
+  valuePlaceholder: string;
+  enabled: Record<string, string>;
+  disabledMap: Record<string, string>;
+  canEdit: boolean;
+  onChange: (maps: { enabled: Record<string, string>; disabled: Record<string, string> }) => void;
+}) {
+  const rows = fieldRowsFrom(enabled ?? {}, disabledMap ?? {});
+  return (
+    <RequestFieldsEditor
+      label={label}
+      hint={hint}
+      rows={rows}
+      problems={fieldProblems(rows, kind)}
+      namePlaceholder={namePlaceholder}
+      valuePlaceholder={valuePlaceholder}
+      disabled={!canEdit}
+      onChange={(next: FieldRow[]) => onChange(fieldMapsFrom(next))}
+    />
   );
 }
 

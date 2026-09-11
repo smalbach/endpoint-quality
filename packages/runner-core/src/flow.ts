@@ -46,6 +46,9 @@ export type StepRequest = {
   /** The resolved path with its query string, which is what actually gets requested. */
   requestPath: string;
   body?: Record<string, unknown>;
+  /** What the scenario adds on top of the headers the executor builds. Absent on every step of
+   * the generated matrix; only a saved request has any. */
+  headers?: Record<string, string>;
   expectedStatus: number;
   expectedShape: string;
   /** Which credential to present. `default` is the working one. */
@@ -121,6 +124,7 @@ function step(
     operationPath: partial.operationPath,
     requestPath,
     ...(partial.body ? { body: partial.body } : {}),
+    ...(partial.headers ? { headers: partial.headers } : {}),
     expectedStatus: partial.expectedStatus,
     expectedShape: expectedShapeFor(operation, partial.expectedStatus, context.config),
     auth: partial.auth ?? context.scenario.auth ?? "default",
@@ -153,6 +157,11 @@ export function* planFlow(context: FlowContext): Generator<StepRequest, void, St
     operationPath: operation.path,
     ...(scenario.parameters ? { parameters: scenario.parameters } : {}),
     ...(scenario.body ? { body: scenario.body } : {}),
+    // On the step the scenario is *about*, and on no other. The prepare and cleanup steps are
+    // operations this flow invented to make the case runnable, and a `Content-Type` somebody wrote
+    // next to an XML payload is wrong on the JSON create that precedes it. A saved request plans
+    // exactly one step anyway — `flow: "request"` — so this is the only step that ever has any.
+    ...(scenario.headers ? { headers: scenario.headers } : {}),
     expectedStatus: scenario.expectedStatus,
   });
 

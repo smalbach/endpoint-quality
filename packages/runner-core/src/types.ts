@@ -53,6 +53,17 @@ export type TestScenario = {
   expectedStatus: number;
   parameters?: Record<string, string>;
   body?: Record<string, unknown>;
+  /**
+   * Headers this case adds to the ones the executor builds, and which win where they collide.
+   *
+   * Nothing the matrix generates carries any: a case derived from a contract sends what the
+   * contract implies, and a header that is not in the document is by definition somebody's
+   * knowledge about the target rather than the document's. So this only ever arrives from a saved
+   * request, and that is why overriding is the right resolution — a person who typed
+   * `Content-Type: application/xml` next to a payload meant it, and silently keeping the
+   * executor's guess would make the editor lie about what it sent.
+   */
+  headers?: Record<string, string>;
   flow: ScenarioFlow;
   auth?: ScenarioAuth;
 };

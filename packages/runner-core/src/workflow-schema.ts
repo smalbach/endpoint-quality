@@ -22,12 +22,33 @@ const jsonValue: z.ZodType<unknown> = z.lazy(() =>
 );
 const jsonObject = z.record(z.string(), jsonValue);
 
+/** RFC 9110's token, and a value with no control character in it. */
+const headerName = z
+  .string()
+  .regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/, "nombre de cabecera inválido")
+  .max(120);
+const headerValue = z
+  .string()
+  .regex(/^[^\r\n]*$/, "una cabecera no puede llevar un salto de línea")
+  .max(4000);
+
 export const requestTemplateBodySchema = z.object({
   name: z.string().min(1).max(120),
   operationId: z.string().min(1).max(200),
   description: z.string().max(500).optional(),
   expectedStatus: z.number().int().min(100).max(599),
   parameters: z.record(z.string(), z.string()).optional(),
+  disabledParameters: z.record(z.string(), z.string()).optional(),
+  /**
+   * Header names as HTTP defines them, and values without a line break in them.
+   *
+   * The pattern is not decoration: a newline inside a header value is request splitting, and the
+   * value here comes from a text field that a `{{variable}}` can also be substituted into. Refused
+   * on write rather than escaped on send, because a header somebody cannot save is a message they
+   * can act on and a header quietly rewritten at 3am is not.
+   */
+  headers: z.record(headerName, headerValue).optional(),
+  disabledHeaders: z.record(headerName, headerValue).optional(),
   body: jsonObject.optional(),
   auth: scenarioAuthSchema.optional(),
 });
