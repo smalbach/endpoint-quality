@@ -1024,3 +1024,80 @@ Suites: runner-core **132** · spec-import 35 · api **233** · api/Postgres 22 
   un 401 al crear un proyecto, un 400 al importar el contrato— y ninguno reproduce en solitario.
 - La interfaz de todo esto está comprobada por tipos y por las funciones puras que la sostienen,
   pero **no se ha abierto en un navegador**.
+
+## Cerrar la lista
+
+Lo que quedaba después de traer el analizador, hecho de una vez. Dos trabajos en
+paralelo —el CSV y el intermitente— y el resto en serie, porque se pisaban en el
+orquestador y en el contrato.
+
+### El intermitente no era el throttler, era el puerto
+
+La suite fallaba una de cada tres, cada vez en otro test, y nunca en solitario.
+La causa resultó no tener nada que ver con el producto: `createTestApp`
+terminaba en `app.init()` y dejaba el servidor **sin escuchar**. Supertest,
+cuando recibe un servidor sin dirección, abre uno por CADA petición con
+`listen(0)`… que sin host bindea el comodín **IPv6** `::`, mientras supertest
+compone la URL contra el literal `127.0.0.1`. Dos direcciones distintas, así que
+el kernel reparte un puerto efímero en `::` sin saber que otro proceso ya tiene
+ese número en IPv4.
+
+Cuando coincidían, la petición se iba a un extraño y volvía con lo que ese
+extraño contestara: un 404 pelado, un 401 con `{"error":"Unauthorized"}`, un 400
+diciendo «WebSockets request was expected» —un servidor de desarrollo ajeno de la
+propia máquina—. 889 binds al comodín en una sola ejecución.
+
+Explica las tres cosas que no encajaban: por qué los síntomas cambiaban, por qué
+nada reproducía solo, y por qué los cuerpos venían vacíos o eran de otra
+aplicación. Escuchar una vez en `127.0.0.1` lo cierra, y `harness.test.ts`
+afirma esa decisión porque nada más en la suite notaría que alguien vuelve a
+`init()`: el fallo se parecía a una suite verde cuatro veces de cada cinco.
+
+### Paralelismo, y dónde se comprueba que es seguro
+
+El recorrido pasa de ser un bucle sobre el orden topológico a estar guiado por lo
+que está listo. Con `concurrency: 1` se comporta exactamente igual que antes, que
+es la propiedad que permitió cambiarlo sin tocar una sola prueba de las 244 que
+ya había.
+
+La decisión que importa no es el planificador, es **dónde se comprueba que
+paralelizar no rompe nada**. Las variables de una corrida son un solo mapa y dos
+pasos sin camino entre ellos no tienen orden, así que dos que puedan coincidir no
+pueden capturar el mismo nombre, y el que obtiene una sesión es una barrera. Se
+rechaza **al guardar el flujo**: si dependiera del número de concurrencia, un
+flujo correcto hoy sería una carrera el día que alguien lo suba, sin haberlo
+tocado.
+
+Lo que queda fuera a propósito: las vueltas de un bucle siguen en serie. Cada una
+ata el mismo nombre en el mismo mapa, y paralelizarlas pide darle a cada vuelta
+su propio ámbito de variables.
+
+### Lo demás
+
+- **De quién es el fallo.** Ocho clases en `run_cases.failure`, leídas de las
+  aserciones para que no puedan contradecirlas. El orden es donde están las
+  decisiones: un 5xx lo es aunque además traiga el cuerpo mal, y el presupuesto
+  va el último porque una respuesta lenta _y_ rota es una respuesta rota.
+- **Capturas por cookie y por expresión regular**, compartidas con el paso que
+  publica la sesión: «dónde está el valor» es una sola pregunta.
+- **CSV pegado** en los conjuntos de datos, con el separador contado en la
+  cabecera y comillas RFC 4180 de verdad. Una fila descuadrada es un error y no
+  algo que rellenar: las dos reparaciones son silenciosas y las dos son una
+  conjetura.
+- **A dónde se fueron los milisegundos**: DNS, espera del destino y descarga.
+  `connect` y `tls` no están a propósito — sacarlos de `fetch` es atarse a las
+  tripas de `undici` para partir un número que luego hay que mantener honesto.
+- **Un aviso mientras se reintenta**, que es lo único que una corrida hace que
+  tarda y no produce nada que mirar.
+
+Suites: runner-core **150** · spec-import 35 · api **253** · api/Postgres 22 ·
+web **97**.
+
+### Lo que queda
+
+- La interfaz de lo último —paralelismo, clasificación del fallo, CSV— está
+  comprobada por tipos y por sus funciones puras; la de las tajadas anteriores sí
+  se abrió en un navegador.
+- Las vueltas de un bucle, en serie, por lo dicho arriba.
+- El módulo de rendimiento del analizador (planes, ventanas, comparativas) sigue
+  sin traerse: nunca entró en el alcance.
