@@ -319,6 +319,195 @@ describe("flujos reutilizables y variables de entorno", () => {
     await other.target.stop();
   });
 
+  /**
+   * Lo que la gente ya tiene, traído sin dejar que se invente un endpoint.
+   *
+   * El diseño entero está en la segunda mitad de esa frase. Un `curl` de un ticket o la colección
+   * de Postman de un compañero es la forma más rápida de apuntar esta herramienta a algo real, y
+   * también la más rápida de romper la propiedad sobre la que se sostiene: que los endpoints son
+   * los del contrato. Así que una petición que no cae sobre ninguna operación declarada vuelve
+   * nombrada en `skipped` —que es información útil por sí sola— en vez de entrar como algo nuevo.
+   */
+  test("un curl entra como prueba reutilizable, con su operación y su cuerpo", async () => {
+    const fixture = await projectAgainst({});
+    const response = await api()
+      .post(`${fixture.projectBase}/request-templates/import`)
+      .set(as(owner))
+      .send({
+        format: "curl",
+        text: `curl -X POST https://cualquier-host/api/v1/things \\
+  -H 'Content-Type: application/json' \\
+  -H 'X-Tenant: acme' \\
+  -H 'Authorization: Bearer secreto' \\
+  -d '{"name":"uno","size":7}'`,
+      });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.imported.length, 1);
+    assert.equal(response.body.imported[0].operationId, "createThing");
+
+    const listed = await api().get(`${fixture.projectBase}/workflows`).set(as(owner));
+    const template = listed.body.requestTemplates.find(
+      (item: { id: string }) => item.id === response.body.imported[0].id,
+    );
+    assert.deepEqual(template.body, { type: "json", json: { name: "uno", size: 7 } });
+    // El prefijo `/api/v1` no está en el contrato y aun así encontró la operación: una colección
+    // exportada lleva la base que usara su autor.
+    assert.equal(template.operationId, "createThing");
+    // Del contrato, no de un 200 fijo: `createThing` declara 201, y un 200 haría fallar su primera
+    // corrida culpando al endpoint.
+    assert.equal(template.expectedStatus, 201);
+    // La cabecera propia se queda; la credencial no, porque es del entorno —y porque pisaría la
+    // que la corrida iba a presentar, dejando en verde todos los casos de autorización—.
+    assert.deepEqual(template.headers, { "X-Tenant": "acme" });
+    assert.ok(!JSON.stringify(template).includes("secreto"));
+    await fixture.target.stop();
+  });
+
+  test("una petición que el contrato no declara se dice por su nombre en vez de importarse", async () => {
+    const fixture = await projectAgainst({});
+    const response = await api()
+      .post(`${fixture.projectBase}/request-templates/import`)
+      .set(as(owner))
+      .send({ format: "curl", text: "curl https://api/facturas" });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.imported.length, 0);
+    assert.equal(response.body.skipped.length, 1);
+    assert.match(response.body.skipped[0].reason, /no declara GET \/facturas/);
+    await fixture.target.stop();
+  });
+
+  test("un runbook con varios comandos entra entero", async () => {
+    const fixture = await projectAgainst({});
+    const response = await api().post(`${fixture.projectBase}/request-templates/import`).set(as(owner)).send({
+      format: "curl",
+      text: "# Runbook\n\n```bash\ncurl https://api/things\n```\n\nY luego:\n\n```\ncurl https://api/things/42\n```\n",
+    });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.imported.length, 2);
+    const ids = response.body.imported.map((item: { operationId: string }) => item.operationId);
+    assert.deepEqual(ids, ["listThings", "getThing"]);
+    await fixture.target.stop();
+  });
+
+  test("una colección de Postman entra con los nombres de sus carpetas", async () => {
+    const fixture = await projectAgainst({});
+    const collection = {
+      info: { name: "Catálogo", schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+      item: [
+        {
+          name: "Things",
+          item: [
+            {
+              name: "Crear",
+              request: {
+                method: "POST",
+                header: [
+                  { key: "X-Tenant", value: "acme" },
+                  { key: "X-Off", value: "1", disabled: true },
+                ],
+                url: { raw: "{{baseUrl}}/things" },
+                body: { mode: "raw", raw: '{"name":"uno","size":7}', options: { raw: { language: "json" } } },
+              },
+            },
+            { name: "Listar", request: { method: "GET", url: { raw: "{{baseUrl}}/things?estado=activo" } } },
+          ],
+        },
+      ],
+    };
+    const response = await api()
+      .post(`${fixture.projectBase}/request-templates/import`)
+      .set(as(owner))
+      .send({ format: "postman", text: JSON.stringify(collection) });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.imported.length, 2);
+    // El nombre lleva la carpeta: es lo que hace distinguibles dos peticiones llamadas «Crear» en
+    // una lista de cuarenta.
+    assert.equal(response.body.imported[0].name, "Things / Crear");
+
+    const listed = await api().get(`${fixture.projectBase}/workflows`).set(as(owner));
+    const crear = listed.body.requestTemplates.find((item: { name: string }) => item.name === "Things / Crear");
+    assert.deepEqual(crear.body, { type: "json", json: { name: "uno", size: 7 } });
+    // Una fila que su autor tenía apagada llega apagada: es la misma idea y el mismo motivo, y
+    // traerla encendida mandaría algo que nadie pidió.
+    assert.deepEqual(crear.headers, { "X-Tenant": "acme" });
+    const listar = listed.body.requestTemplates.find((item: { name: string }) => item.name === "Things / Listar");
+    assert.deepEqual(listar.parameters, { estado: "activo" });
+    await fixture.target.stop();
+  });
+
+  test("una exportación de Insomnia entra con su consulta, que allí vive fuera de la URL", async () => {
+    const fixture = await projectAgainst({});
+    const workspace = {
+      _type: "export",
+      resources: [
+        { _id: "wrk_1", _type: "workspace", name: "Catálogo", parentId: "" },
+        { _id: "fld_1", _type: "request_group", name: "Things", parentId: "wrk_1" },
+        {
+          _id: "req_1",
+          _type: "request",
+          name: "Listar",
+          method: "GET",
+          url: "{{ _.base }}/things",
+          parentId: "fld_1",
+          parameters: [{ name: "estado", value: "activo" }],
+          headers: [{ name: "X-Tenant", value: "acme" }],
+        },
+      ],
+    };
+    const response = await api()
+      .post(`${fixture.projectBase}/request-templates/import`)
+      .set(as(owner))
+      .send({ format: "insomnia", text: JSON.stringify(workspace) });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.imported.length, 1);
+    assert.equal(response.body.imported[0].name, "Things / Listar");
+
+    const listed = await api().get(`${fixture.projectBase}/workflows`).set(as(owner));
+    const template = listed.body.requestTemplates.find((item: { name: string }) => item.name === "Things / Listar");
+    assert.deepEqual(template.parameters, { estado: "activo" });
+    await fixture.target.stop();
+  });
+
+  test("un nombre que ya existe se numera en vez de fallar a mitad de la colección", async () => {
+    const fixture = await projectAgainst({});
+    const once = { format: "curl", text: "curl https://api/things" };
+    assert.equal(
+      (await api().post(`${fixture.projectBase}/request-templates/import`).set(as(owner)).send(once)).status,
+      201,
+    );
+    const twice = await api().post(`${fixture.projectBase}/request-templates/import`).set(as(owner)).send(once);
+    assert.equal(twice.status, 201, JSON.stringify(twice.body));
+    assert.equal(twice.body.imported[0].name, "GET /things (2)");
+    await fixture.target.stop();
+  });
+
+  test("un viewer no importa nada: sale una fila por cada petición", async () => {
+    const fixture = await projectAgainst({});
+    const viewer = await signUp("import-viewer@example.com");
+    await context.repositories.memberships.save({
+      organizationId: owner.organizationId,
+      userId: viewer.userId,
+      role: "viewer",
+      createdAt: new Date(),
+    });
+    const response = await api()
+      .post(`${fixture.projectBase}/request-templates/import`)
+      .set(as(viewer))
+      .send({ format: "curl", text: "curl https://api/things" });
+    assert.equal(response.status, 403);
+    await fixture.target.stop();
+  });
+
+  test("un formato que no existe es 422 antes de leer nada", async () => {
+    const fixture = await projectAgainst({});
+    const response = await api()
+      .post(`${fixture.projectBase}/request-templates/import`)
+      .set(as(owner))
+      .send({ format: "har", text: "curl https://api/things" });
+    assert.equal(response.status, 422, JSON.stringify(response.body));
+    await fixture.target.stop();
+  });
+
   test("dos pruebas del mismo proyecto no pueden llamarse igual", async () => {
     const fixture = await projectAgainst({});
     const body = { name: "Crear", operationId: "createThing", expectedStatus: 201 };

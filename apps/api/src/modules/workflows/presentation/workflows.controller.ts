@@ -21,6 +21,7 @@ import {
   DeleteRequestTemplateCommand,
   UpdateRequestTemplateCommand,
 } from "../application/commands/manage-request-template";
+import { ImportRequestTemplatesCommand } from "../application/commands/import-request-templates";
 import {
   CreateWorkflowCommand,
   DeleteWorkflowCommand,
@@ -37,6 +38,7 @@ import { CreateSuiteCommand, DeleteSuiteCommand, UpdateSuiteCommand } from "../a
 import {
   CreateDatasetDto,
   CreateRequestTemplateDto,
+  ImportRequestTemplatesDto,
   CreateSuiteDto,
   CreateWorkflowDto,
   UpdateDatasetDto,
@@ -72,6 +74,26 @@ export class WorkflowsController {
   ) {
     return this.commandBus.execute(
       new CreateRequestTemplateCommand(organizationId, projectId, body, actorId(principal)),
+    );
+  }
+
+  /**
+   * Requests somebody already has, as saved requests of this project.
+   *
+   * `editor`, like every other write here, and **nothing leaves the process**: the text is parsed
+   * and matched against the contract, and no request in it is ever sent. Importing a collection is
+   * not rehearsing it.
+   */
+  @Post("request-templates/import")
+  @RequireRole("editor")
+  async importTemplates(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Body() body: ImportRequestTemplatesDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.commandBus.execute(
+      new ImportRequestTemplatesCommand(organizationId, projectId, body, actorId(principal)),
     );
   }
 

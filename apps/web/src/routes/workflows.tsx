@@ -18,6 +18,7 @@ import { addStep, problemsWith, type OperationSummary } from "@/lib/workflow-dra
 import { WorkflowCanvas } from "@/components/workflow-canvas";
 import { WorkflowInspector } from "@/components/workflow-inspector";
 import { TemplateLibrary, type NewTemplate } from "@/components/template-library";
+import { ImportRequests } from "@/components/import-requests";
 import { DatasetsPanel } from "@/components/datasets-panel";
 import { SuitesPanel } from "@/components/suites-panel";
 import type {
@@ -350,6 +351,7 @@ export function WorkflowsPage() {
                 onDelete={(template) => deleteTemplate.mutate(template.id)}
                 onAdd={(template) => setSteps(addStep(steps, template))}
               />
+              {canEdit && <ImportRequests base={base} onImported={() => void invalidate()} />}
             </div>
           </Card>
 

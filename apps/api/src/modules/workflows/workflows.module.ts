@@ -11,6 +11,7 @@ import {
 import { AuthModule } from "@/modules/auth/auth.module";
 import { IamModule } from "@/modules/iam/iam.module";
 import { ProjectsModule } from "@/modules/projects/projects.module";
+import { SpecsModule } from "@/modules/specs/specs.module";
 import { WORKFLOW_REPOSITORY } from "./domain/ports";
 import { TypeOrmWorkflowRepository } from "./infrastructure/persistence/typeorm-workflow.repository";
 import {
@@ -18,6 +19,7 @@ import {
   DeleteRequestTemplateHandler,
   UpdateRequestTemplateHandler,
 } from "./application/commands/manage-request-template";
+import { ImportRequestTemplatesHandler } from "./application/commands/import-request-templates";
 import {
   CreateWorkflowHandler,
   DeleteWorkflowHandler,
@@ -37,6 +39,7 @@ export const WORKFLOW_COMMAND_HANDLERS = [
   CreateRequestTemplateHandler,
   UpdateRequestTemplateHandler,
   DeleteRequestTemplateHandler,
+  ImportRequestTemplatesHandler,
   CreateWorkflowHandler,
   UpdateWorkflowHandler,
   DeleteWorkflowHandler,
@@ -57,6 +60,9 @@ export const WORKFLOW_ADAPTERS = [{ provide: WORKFLOW_REPOSITORY, useClass: Type
     IamModule,
     TypeOrmModule.forFeature([RequestTemplateEntity, WorkflowEntity, WorkflowDatasetEntity, WorkflowSuiteEntity]),
     forwardRef(() => ProjectsModule),
+    // The importer reads the active contract's operations: a request that lands on no operation is
+    // reported rather than imported, which is what keeps the contract the source of the endpoints.
+    forwardRef(() => SpecsModule),
   ],
   controllers: [WorkflowsController],
   providers: [...WORKFLOW_ADAPTERS, ...WORKFLOW_COMMAND_HANDLERS, ...WORKFLOW_QUERY_HANDLERS],

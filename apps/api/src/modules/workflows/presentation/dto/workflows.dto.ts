@@ -14,6 +14,8 @@ import {
 } from "class-validator";
 import type { RequestBody, ScenarioAuth, WorkflowDocument } from "@eq/runner-core";
 
+import { IMPORT_FORMATS, type ImportFormat } from "../../application/commands/import-request-templates";
+
 const AUTH = ["default", "none", "insufficient", "api-key"];
 
 /**
@@ -56,6 +58,19 @@ export class UpdateRequestTemplateDto {
    * decorators is a copy that would be free to disagree. */
   @IsOptional() @IsObject() body?: RequestBody;
   @IsOptional() @IsIn(AUTH, { message: `auth debe ser uno de: ${AUTH.join(", ")}` }) auth?: ScenarioAuth;
+}
+
+/**
+ * A collection, a runbook, or one `curl`, as text.
+ *
+ * Text and not a file upload, deliberately: what people have is almost always on a clipboard, and
+ * a form that only accepts a file makes somebody save a paste to disk first. The ceiling is
+ * generous because a Postman collection of two hundred requests is a megabyte of JSON and refusing
+ * it would make the feature useless for the collections most worth importing.
+ */
+export class ImportRequestTemplatesDto {
+  @IsIn(IMPORT_FORMATS, { message: `format debe ser uno de: ${IMPORT_FORMATS.join(", ")}` }) format: ImportFormat;
+  @IsString() @MinLength(1) @MaxLength(4_000_000) text: string;
 }
 
 export class CreateWorkflowDto {
