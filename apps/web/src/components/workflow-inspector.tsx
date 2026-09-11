@@ -1,5 +1,6 @@
 import { Button, Field, inputClass } from "@/components/ui";
 import { JsonObjectField } from "@/components/json-object-field";
+import { RequestPreviewPanel } from "@/components/request-preview";
 import { removeStep, replaceStep } from "@/lib/workflow-draft";
 import type { OperationSummary } from "@/lib/workflow-draft";
 import type {
@@ -51,6 +52,7 @@ const ON_ERROR: { value: NonNullable<WorkflowStepView["onError"]>; label: string
 
 /** The panel on the right: the flow itself, the selected node, and the button that runs it. */
 export function WorkflowInspector({
+  base,
   workflow,
   steps,
   selectedStep,
@@ -69,6 +71,9 @@ export function WorkflowInspector({
   onDelete,
   running,
 }: {
+  /** `/orgs/x/projects/y`. Passed down rather than rebuilt here: the panel below sends a real
+   * request, and a second place that assembles this path is a second place to get it wrong. */
+  base: string;
   workflow: WorkflowView;
   steps: WorkflowStepView[];
   selectedStep: string;
@@ -112,9 +117,11 @@ export function WorkflowInspector({
       <div className="mt-4 border-t border-slate-100 pt-3">
         {step ? (
           <StepInspector
+            base={base}
             step={step}
             template={template}
             operations={operations}
+            environmentId={environmentId}
             canEdit={canEdit}
             onTemplate={onTemplate}
             onChange={(next) => onSteps(replaceStep(steps, next))}
@@ -163,17 +170,21 @@ export function WorkflowInspector({
 }
 
 function StepInspector({
+  base,
   step,
   template,
   operations,
+  environmentId,
   canEdit,
   onTemplate,
   onChange,
   onRemove,
 }: {
+  base: string;
   step: WorkflowStepView;
   template: RequestTemplateView | undefined;
   operations: OperationSummary[];
+  environmentId: string;
   canEdit: boolean;
   onTemplate: (template: RequestTemplateView) => void;
   onChange: (step: WorkflowStepView) => void;
@@ -247,6 +258,9 @@ function StepInspector({
             value={template.body ?? {}}
             onChange={(value) => onTemplate({ ...template, body: Object.keys(value).length ? value : null })}
           />
+          {/* Lo que hay en el formulario, enviado de verdad. No hace falta guardar antes: lo que
+              se manda es lo que se está mirando. */}
+          <RequestPreviewPanel base={base} template={template} environmentId={environmentId} canSend={canEdit} />
         </div>
       ) : (
         <p className="mt-2 text-[11px] text-rose-600">

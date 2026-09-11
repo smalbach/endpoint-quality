@@ -51,7 +51,7 @@ import {
   SpecSourceDto,
   UpdateProjectDto,
 } from "@/modules/projects/presentation/dto/projects.dto";
-import { StartRunDto } from "@/modules/runs/presentation/dto/runs.dto";
+import { PreviewRequestDto, StartRunDto } from "@/modules/runs/presentation/dto/runs.dto";
 import {
   CreateDatasetDto,
   CreateRequestTemplateDto,
@@ -99,6 +99,7 @@ const DTOS = [
   CreateSuiteDto,
   UpdateSuiteDto,
   StartRunDto,
+  PreviewRequestDto,
 ];
 
 type Schema = Record<string, unknown>;

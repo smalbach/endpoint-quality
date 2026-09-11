@@ -42,3 +42,31 @@ export function formatDate(value: string | null): string {
   if (!value) return "—";
   return new Date(value).toLocaleString();
 }
+
+/**
+ * The colour of an HTTP status code, by class.
+ *
+ * By class and not by «pasó o no pasó», which is a different question this must not answer: a
+ * case that expected a 404 and got one is green in the verdict above and the 404 here stays
+ * amber. Conflating the two would make every negative case look like a failure.
+ */
+export function httpStatusStyle(status: number): string {
+  if (status < 300) return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  if (status < 400) return "bg-sky-50 text-sky-700 border-sky-200";
+  if (status < 500) return "bg-amber-50 text-amber-700 border-amber-200";
+  return "bg-rose-50 text-rose-700 border-rose-200";
+}
+
+/**
+ * How much came back.
+ *
+ * Worth showing next to the duration because the two together say something neither says alone:
+ * «200 en 40 ms» is fine and «200 en 40 ms con 3 MB» is an endpoint that will be slow for
+ * somebody on a worse connection. Decimal units, which is what every browser's network panel
+ * shows — a reader comparing the two numbers should not have to notice they disagree by 2,4 %.
+ */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1000) return `${bytes} B`;
+  if (bytes < 1000 * 1000) return `${(bytes / 1000).toFixed(1)} kB`;
+  return `${(bytes / 1000 / 1000).toFixed(1)} MB`;
+}

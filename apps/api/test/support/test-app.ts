@@ -61,12 +61,15 @@ import { ProjectConfigController } from "@/modules/config/presentation/config.co
 import { WORKFLOW_REPOSITORY } from "@/modules/workflows/domain/ports";
 import { WORKFLOW_COMMAND_HANDLERS, WORKFLOW_QUERY_HANDLERS } from "@/modules/workflows/workflows.module";
 import { WorkflowsController } from "@/modules/workflows/presentation/workflows.controller";
-import { RUN_QUEUE, RUN_REPOSITORY } from "@/modules/runs/domain/ports";
+import { REQUEST_PREVIEWER, RUN_QUEUE, RUN_REPOSITORY } from "@/modules/runs/domain/ports";
 import { PROGRESS_RELAY } from "@/modules/runs/domain/progress";
 import { InProcessRelay } from "@/modules/runs/infrastructure/progress/in-process-relay";
 import { RunsController } from "@/modules/runs/presentation/runs.controller";
+import { RequestPreviewController } from "@/modules/runs/presentation/request-preview.controller";
 import { RUN_COMMAND_HANDLERS, RUN_PROJECTORS, RUN_QUERY_HANDLERS } from "@/modules/runs/runs.module";
 import { CaseExecutor } from "@/modules/runs/infrastructure/case-executor";
+import { ExecutionContextFactory } from "@/modules/runs/infrastructure/execution-context";
+import { RequestPreviewer } from "@/modules/runs/infrastructure/request-previewer";
 import { RunOrchestrator } from "@/modules/runs/infrastructure/run-orchestrator";
 import { RunProgressStream } from "@/modules/runs/infrastructure/run-progress.stream";
 import { InMemoryRunQueue } from "@/modules/runs/infrastructure/queue/in-memory-queue";
@@ -215,6 +218,7 @@ export async function createTestApp(): Promise<TestContext> {
       ProjectConfigController,
       WorkflowsController,
       RunsController,
+      RequestPreviewController,
     ],
     providers: [
       { provide: ENV, useValue: env },
@@ -236,6 +240,8 @@ export async function createTestApp(): Promise<TestContext> {
       // es lo correcto cuando el sujeto en memoria ya alcanza a todos los seguidores que hay.
       { provide: PROGRESS_RELAY, useClass: InProcessRelay },
       CaseExecutor,
+      ExecutionContextFactory,
+      { provide: REQUEST_PREVIEWER, useClass: RequestPreviewer },
       RunOrchestrator,
       RunProgressStream,
       ...RUN_PROJECTORS,

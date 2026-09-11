@@ -134,3 +134,30 @@ export const failureFor = (executed: { steps: { ok: boolean; failure: FailureKin
 export function verdictFor(totals: RunTotals): RunStatus {
   return totals.failed > 0 ? "failed" : "passed";
 }
+
+/**
+ * One request sent on purpose, answered, judged — and not recorded.
+ *
+ * The gap it fills: until now the only way to make this product touch an API was to start a run,
+ * and a run is a matrix, a history row and a verdict. Somebody writing a step wants to know
+ * whether *this* request works, and the loop «guardar, lanzar, esperar, abrir el caso» is long
+ * enough that people go and use another tool for it — then come back with a request that works
+ * there and not here, and no way to compare the two.
+ *
+ * It is deliberately **not** a `Run`: nothing is queued, nothing is stored, no totals move. What
+ * makes it worth trusting is the opposite — that it goes through the same executor, the same
+ * credentials and the same `writesAllowed` as the run it is rehearsing.
+ */
+export type RequestPreview = {
+  ok: boolean;
+  failure: FailureKind | null;
+  /** What was sent, credentials masked, exactly as a stored step records it. */
+  request: StepRequestRecord;
+  expected: StepExpectation;
+  /** `null` when nothing answered: the target refused the connection, or the request never left
+   * because a variable was unresolved or the environment forbids writes. The assertions say which. */
+  response: (StepResult & { sizeBytes: number }) | null;
+  assertions: Assertion[];
+  latency: StepLatency;
+  durationMs: number;
+};

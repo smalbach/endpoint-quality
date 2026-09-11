@@ -365,6 +365,7 @@ export function WorkflowsPage() {
           <Card className="p-3">
             {draft && (
               <WorkflowInspector
+                base={base}
                 workflow={draft}
                 steps={steps}
                 selectedStep={selectedStep}

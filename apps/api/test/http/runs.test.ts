@@ -1966,3 +1966,121 @@ describe("pasos en paralelo", () => {
     await fixture.target.stop();
   });
 });
+
+/**
+ * «Enviar»: una petición suelta, ahora, contra un destino de verdad.
+ *
+ * What these check is the promise the feature makes — that it is the same engine. The response
+ * comes back in the same call, the assertions are the ones a run would have made, the environment
+ * still decides whether a write leaves the process, and nothing is recorded. That last one is not
+ * cosmetic: people rehearse a lot, and a history full of rehearsals is a history nobody reads.
+ */
+describe("enviar una petición sin lanzar una corrida", () => {
+  let fixture: Awaited<ReturnType<typeof projectAgainst>>;
+  before(async () => {
+    fixture = await projectAgainst({});
+  });
+  after(async () => {
+    await fixture.target.stop();
+  });
+
+  const send = (body: Record<string, unknown>) =>
+    api().post(`${fixture.projectBase}/request-preview`).set(as(owner)).send(body);
+
+  test("contesta en la misma llamada con lo que respondió el destino", async () => {
+    const response = await send({
+      environmentId: fixture.environmentId,
+      operationId: "listThings",
+      expectedStatus: 200,
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.ok, true);
+    assert.equal(response.body.response.status, 200);
+    assert.ok(response.body.response.sizeBytes > 0, "el tamaño de la respuesta no llegó");
+    assert.ok(response.body.assertions.length > 0, "no se evaluó ninguna comprobación");
+    // Masked, like a stored step: this is the panel somebody copies a request out of.
+    assert.equal(response.body.request.method, "GET");
+  });
+
+  test("no deja corrida ninguna detrás", async () => {
+    const before = await api().get(`${fixture.projectBase}/runs`).set(as(owner));
+    await send({ environmentId: fixture.environmentId, operationId: "listThings", expectedStatus: 200 });
+    const after = await api().get(`${fixture.projectBase}/runs`).set(as(owner));
+    assert.equal(after.body.length, before.body.length);
+  });
+
+  test("las comprobaciones son las de una corrida: un estado que no es el esperado sale en rojo", async () => {
+    const response = await send({
+      environmentId: fixture.environmentId,
+      operationId: "listThings",
+      // The endpoint answers 200. Asking for 404 is the cheapest way to prove the verdict is
+      // computed here and not copied from the status code.
+      expectedStatus: 404,
+    });
+    assert.equal(response.body.ok, false);
+    assert.equal(response.body.failure, "status");
+    assert.equal(response.body.response.status, 200);
+  });
+
+  test("el cuerpo del formulario viaja tal cual", async () => {
+    const response = await send({
+      environmentId: fixture.environmentId,
+      operationId: "createThing",
+      expectedStatus: 201,
+      body: { name: "escrito a mano", size: 3 },
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.deepEqual(response.body.request.body, { name: "escrito a mano", size: 3 });
+    assert.equal(response.body.response.status, 201);
+  });
+
+  test("una operación que el contrato no declara se dice, con su campo", async () => {
+    const response = await send({
+      environmentId: fixture.environmentId,
+      operationId: "noExiste",
+      expectedStatus: 200,
+    });
+    assert.equal(response.status, 422);
+    assert.equal(response.body.errors[0].field, "operationId");
+  });
+
+  test("un entorno de solo lectura la detiene antes de que salga", async () => {
+    const readOnly = await projectAgainst({}, { writesAllowed: false });
+    const response = await api()
+      .post(`${readOnly.projectBase}/request-preview`)
+      .set(as(owner))
+      .send({ environmentId: readOnly.environmentId, operationId: "createThing", expectedStatus: 201 });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.ok, false);
+    assert.equal(response.body.failure, "config");
+    // Nothing answered because nothing was sent, which is not the same as an empty answer.
+    assert.equal(response.body.response, null);
+    await readOnly.target.stop();
+  });
+
+  test("un viewer no la envía: al otro lado hay una API que puede escribir", async () => {
+    const viewer = await signUp("preview-viewer@example.com");
+    await context.repositories.memberships.save({
+      organizationId: owner.organizationId,
+      userId: viewer.userId,
+      role: "viewer",
+      createdAt: new Date(),
+    });
+    const response = await api()
+      .post(`${fixture.projectBase}/request-preview`)
+      .set(as(viewer))
+      .send({ environmentId: fixture.environmentId, operationId: "listThings", expectedStatus: 200 });
+    assert.equal(response.status, 403);
+  });
+
+  test("un entorno de otro proyecto es 404", async () => {
+    const other = await projectAgainst({});
+    const response = await send({
+      environmentId: other.environmentId,
+      operationId: "listThings",
+      expectedStatus: 200,
+    });
+    assert.equal(response.status, 404);
+    await other.target.stop();
+  });
+});

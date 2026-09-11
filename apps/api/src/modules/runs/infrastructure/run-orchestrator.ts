@@ -24,8 +24,6 @@ import { Inject, Injectable, Logger } from "@nestjs/common";
 import { EventBus } from "@nestjs/cqrs";
 import {
   buildQueue,
-  dereference,
-  resolveOperations,
   applyCaptures,
   bindElement,
   evaluateChecks,
@@ -33,31 +31,20 @@ import {
   listAt,
   orderWorkflowSteps,
   readAuthorization,
-  withEnvironmentNamespace,
   withinBudget,
-  type Operation,
-  type ProjectConfig,
   type ActualResponse,
   type ResolvedOperation,
-  type TestScenario,
   type WorkflowStep,
 } from "@eq/runner-core";
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { ENV, type Env } from "@/shared/config/env";
-import { SAFE_FETCH, type SafeFetchPort } from "@/shared/http/safe-fetch";
-import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
-import { SPEC_REPOSITORY, type SpecRepositoryPort } from "@/modules/specs/domain/ports";
-import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
-import { resolveVariables } from "@/modules/environments/domain/model";
-import { CONFIG_REPOSITORY, type ConfigRepositoryPort } from "@/modules/config/domain/ports";
-import { assembleProjectConfig } from "@/modules/config/application/queries/get-project-config";
 import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
-import type { RequestTemplateRow, WorkflowRow } from "@/modules/workflows/domain/model";
-import { SECRET_CIPHER, type SecretCipherPort } from "@/shared/crypto/secret-cipher";
+import { scenarioFor, type RequestTemplateRow, type WorkflowRow } from "@/modules/workflows/domain/model";
 import { caseStatusFor, failureFor, verdictFor, type Run, type RunCase, type RunStep } from "../domain/model";
 import { RUN_QUEUE, RUN_REPOSITORY, type RunQueuePort, type RunRepositoryPort } from "../domain/ports";
-import { CaseExecutor, type ExecutedCase, type ExecutedStep, type ExecutionTarget } from "./case-executor";
+import { CaseExecutor, type ExecutedCase, type ExecutedStep } from "./case-executor";
+import { ExecutionContextFactory, type ExecutionContext } from "./execution-context";
 import {
   RunCaseFinishedEvent,
   RunCaseRetryingEvent,
@@ -72,16 +59,11 @@ export class RunOrchestrator {
   constructor(
     @Inject(RUN_REPOSITORY) private readonly runs: RunRepositoryPort,
     @Inject(RUN_QUEUE) private readonly queue: RunQueuePort,
-    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
-    @Inject(SPEC_REPOSITORY) private readonly specs: SpecRepositoryPort,
-    @Inject(ENVIRONMENT_REPOSITORY) private readonly environments: EnvironmentRepositoryPort,
-    @Inject(CONFIG_REPOSITORY) private readonly config: ConfigRepositoryPort,
     @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
-    @Inject(SAFE_FETCH) private readonly http: SafeFetchPort,
-    @Inject(SECRET_CIPHER) private readonly cipher: SecretCipherPort,
     @Inject(ENV) private readonly env: Env,
     private readonly executor: CaseExecutor,
+    private readonly contexts: ExecutionContextFactory,
     private readonly eventBus: EventBus,
   ) {}
 
@@ -96,7 +78,7 @@ export class RunOrchestrator {
     if (!run) return;
 
     try {
-      const context = await this.prepare(run);
+      const context = await this.contexts.build(run);
       await this.walk(run, context);
     } catch (error) {
       // A run that cannot be set up — no environment, an unreadable contract — is `error` and not
@@ -111,64 +93,7 @@ export class RunOrchestrator {
     }
   }
 
-  private async prepare(run: Run) {
-    const project = await this.projects.findById(run.projectId);
-    if (!project) throw new Error("El proyecto ya no existe");
-
-    const environment = run.environmentId ? await this.environments.findById(run.environmentId) : null;
-    if (!environment) throw new Error("La corrida necesita un entorno con URL base");
-
-    const stored = await this.specs.listOperations(run.specVersionId);
-    if (stored.length === 0) throw new Error("La versión del contrato no tiene operaciones");
-
-    const config = await assembleProjectConfig(this.config, project.id);
-    const operations: Operation[] = stored.map(
-      ({ rowId, specVersionId, position, derivedId, security, ...operation }) => operation,
-    );
-    const resolved = resolveOperations(operations, config);
-
-    const target: ExecutionTarget = {
-      baseUrl: environment.baseUrl,
-      writesAllowed: environment.writesAllowed,
-      credentials: await this.environments.listCredentials(environment.id),
-      // Resolved, not copied: `current` over `initial`, and a sensitive one decrypted here so that
-      // nothing further down the run has to know the concept exists.
-      variables: withEnvironmentNamespace(
-        resolveVariables(environment.variables, (payload) => this.cipher.decrypt(payload)),
-      ),
-      // Nothing has logged in yet. A flow step may publish one while walking.
-      session: null,
-      ...(await this.loadSpec(environment.specUrl ?? `${environment.baseUrl}/openapi.json`)),
-    };
-
-    return { config, resolved, target, authEnabled: environment.authEnforced };
-  }
-
-  /**
-   * The document the schema assertion reads, fetched once.
-   *
-   * A failure here is **not** fatal: the run continues and every case falls back to the envelope
-   * check, saying so in its detail. A target that does not publish its contract is worth testing
-   * with what is available rather than not at all — and the operator is told which assertion
-   * they are not getting.
-   */
-  private async loadSpec(specUrl: string): Promise<{ spec: Record<string, unknown> | null; specError: string | null }> {
-    try {
-      const response = await this.http.get(specUrl);
-      if (response.status >= 400) return { spec: null, specError: `El contrato en vivo respondió ${response.status}` };
-      const parsed = JSON.parse(response.body) as Record<string, unknown>;
-      // Dereferenced once for the whole run: resolving `$ref` per case over a 3 000-line document
-      // is the same work done 311 times.
-      return { spec: dereference(parsed, parsed) as Record<string, unknown>, specError: null };
-    } catch (error) {
-      return { spec: null, specError: error instanceof Error ? error.message : "No se pudo leer el contrato en vivo" };
-    }
-  }
-
-  private async walk(
-    run: Run,
-    context: { config: ProjectConfig; resolved: ResolvedOperation[]; target: ExecutionTarget; authEnabled: boolean },
-  ): Promise<void> {
+  private async walk(run: Run, context: ExecutionContext): Promise<void> {
     if (run.plan.workflowId || run.plan.suiteId) {
       // Read with the project id, so a flow that belongs to another tenant is indistinguishable
       // from one that does not exist. `StartRunHandler` already refused these at 422; getting here
@@ -373,7 +298,7 @@ export class RunOrchestrator {
    */
   private async walkFlows(
     run: Run,
-    context: { config: ProjectConfig; resolved: ResolvedOperation[]; target: ExecutionTarget; authEnabled: boolean },
+    context: ExecutionContext,
     flows: WorkflowRow[],
     templates: Map<string, RequestTemplateRow>,
     rows: (Record<string, string> | null)[],
@@ -496,7 +421,7 @@ export class RunOrchestrator {
    */
   private async walkPrepared(
     run: Run,
-    context: { config: ProjectConfig; resolved: ResolvedOperation[]; target: ExecutionTarget; authEnabled: boolean },
+    context: ExecutionContext,
     prepared: ReturnType<RunOrchestrator["prepareWorkflow"]>["items"],
     budget: { extra: number },
   ): Promise<boolean> {
@@ -569,7 +494,7 @@ export class RunOrchestrator {
   /** One step: its dependencies, its condition, its wait, its elements and its retries. */
   private async runStep(
     run: Run,
-    context: { config: ProjectConfig; resolved: ResolvedOperation[]; target: ExecutionTarget; authEnabled: boolean },
+    context: ExecutionContext,
     item: ReturnType<RunOrchestrator["prepareWorkflow"]>["items"][number],
     state: WalkState,
   ): Promise<void> {
@@ -814,19 +739,6 @@ function datasetBindings(row: Record<string, string> | null): Record<string, str
       [`dataset.${name}`, value],
     ]),
   );
-}
-
-function scenarioFor(template: RequestTemplateRow): TestScenario {
-  return {
-    id: template.id,
-    name: template.name,
-    description: template.description ?? "Paso de un flujo reutilizable",
-    expectedStatus: template.expectedStatus,
-    ...(Object.keys(template.parameters ?? {}).length ? { parameters: template.parameters } : {}),
-    ...(template.body ? { body: template.body } : {}),
-    flow: "request",
-    auth: template.auth,
-  };
 }
 
 /** The one mapping from what the executor produced to what the repository stores. It was written

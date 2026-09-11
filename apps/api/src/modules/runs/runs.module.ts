@@ -11,7 +11,7 @@ import { SpecsModule } from "@/modules/specs/specs.module";
 import { EnvironmentsModule } from "@/modules/environments/environments.module";
 import { ProjectConfigModule } from "@/modules/config/config.module";
 import { WorkflowsModule } from "@/modules/workflows/workflows.module";
-import { RUN_QUEUE, RUN_REPOSITORY } from "./domain/ports";
+import { REQUEST_PREVIEWER, RUN_QUEUE, RUN_REPOSITORY } from "./domain/ports";
 import { PROGRESS_RELAY } from "./domain/progress";
 import { TypeOrmRunRepository } from "./infrastructure/persistence/typeorm-run.repository";
 import { InMemoryRunQueue } from "./infrastructure/queue/in-memory-queue";
@@ -19,6 +19,8 @@ import { RedisRunQueue } from "./infrastructure/queue/redis-queue";
 import { InProcessRelay } from "./infrastructure/progress/in-process-relay";
 import { RedisProgressRelay } from "./infrastructure/progress/redis-relay";
 import { CaseExecutor } from "./infrastructure/case-executor";
+import { ExecutionContextFactory } from "./infrastructure/execution-context";
+import { RequestPreviewer } from "./infrastructure/request-previewer";
 import { RunOrchestrator } from "./infrastructure/run-orchestrator";
 import {
   RunCaseProjector,
@@ -29,12 +31,14 @@ import {
 } from "./infrastructure/run-progress.stream";
 import { RetentionScheduler } from "./infrastructure/retention.scheduler";
 import { StartRunHandler } from "./application/commands/start-run";
+import { PreviewRequestHandler } from "./application/commands/preview-request";
 import { CancelRunHandler } from "./application/commands/cancel-run";
 import { PruneRunsHandler } from "./application/commands/prune-runs";
 import { GetRunCaseHandler, GetRunHandler, GetRunReportHandler, ListRunsHandler } from "./application/queries/get-run";
 import { RunsController } from "./presentation/runs.controller";
+import { RequestPreviewController } from "./presentation/request-preview.controller";
 
-export const RUN_COMMAND_HANDLERS = [StartRunHandler, CancelRunHandler, PruneRunsHandler];
+export const RUN_COMMAND_HANDLERS = [StartRunHandler, CancelRunHandler, PruneRunsHandler, PreviewRequestHandler];
 export const RUN_QUERY_HANDLERS = [ListRunsHandler, GetRunHandler, GetRunCaseHandler, GetRunReportHandler];
 export const RUN_PROJECTORS = [RunStartedProjector, RunCaseProjector, RunCaseRetryingProjector, RunFinishedProjector];
 
@@ -81,12 +85,14 @@ export const PROGRESS_RELAY_PROVIDER = {
     forwardRef(() => ProjectConfigModule),
     forwardRef(() => WorkflowsModule),
   ],
-  controllers: [RunsController],
+  controllers: [RunsController, RequestPreviewController],
   providers: [
     { provide: RUN_REPOSITORY, useClass: TypeOrmRunRepository },
     RUN_QUEUE_PROVIDER,
     PROGRESS_RELAY_PROVIDER,
     CaseExecutor,
+    ExecutionContextFactory,
+    { provide: REQUEST_PREVIEWER, useClass: RequestPreviewer },
     RunOrchestrator,
     RunProgressStream,
     RetentionScheduler,

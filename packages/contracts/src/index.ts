@@ -431,6 +431,42 @@ export type RunStepOf<T> = {
   prunedAt?: T | null;
 };
 
+/**
+ * One request sent from the editor, answered and judged — and not recorded anywhere.
+ *
+ * The same shape a stored step has, minus everything that only means something inside a run: no
+ * id, no index, no purpose, no `prunedAt`. What it adds is `sizeBytes`, which a run does not
+ * store and somebody watching a single response wants: «200 en 40 ms» and «200 en 40 ms con 3 MB»
+ * are different answers.
+ *
+ * `response` is null when nothing answered — the connection was refused, or the request never
+ * left because a variable was unresolved or the environment forbids writes. The assertions say
+ * which, and a reader that cannot tell this from «vino vacío» reports a block as a timeout.
+ *
+ * Not parameterised over a date type like its neighbours: nothing here was ever stored, so there
+ * is no timestamp to serialise. It reads the same on both sides.
+ */
+export type RequestPreviewView = {
+  ok: boolean;
+  failure: FailureKind | null;
+  request: { method: string; url: string; headers: Record<string, string>; body: unknown };
+  expected: { status: number; shape: string; operationPath: string };
+  response: {
+    status: number;
+    contentType: string;
+    headers: Record<string, string>;
+    body: unknown;
+    sizeBytes: number;
+  } | null;
+  assertions: Assertion[];
+  latency: {
+    samples: number[];
+    budgetMs: number | null;
+    timing?: { dnsMs: number; ttfbMs: number; downloadMs: number };
+  };
+  durationMs: number;
+};
+
 /** A run with its case list and **without the steps**: the progress screen polls this, and the
  * steps hold whole response bodies. */
 export type RunViewOf<T> = RunOf<T> & { cases: RunCaseOf<T>[] };

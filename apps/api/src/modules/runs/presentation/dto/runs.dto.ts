@@ -1,5 +1,17 @@
-import { IsArray, IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, Max, Min } from "class-validator";
-import type { OrderMode } from "@eq/runner-core";
+import {
+  IsArray,
+  IsIn,
+  IsInt,
+  IsObject,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+} from "class-validator";
+import type { OrderMode, ScenarioAuth } from "@eq/runner-core";
 
 export class StartRunDto {
   @IsUUID() environmentId: string;
@@ -26,4 +38,24 @@ export class StartRunDto {
   @IsOptional() @IsUUID() datasetId?: string;
   /** Walks every flow of the suite, in order, as one run. Exclusive with `workflowId`. */
   @IsOptional() @IsUUID() suiteId?: string;
+}
+
+const AUTH = ["default", "none", "insufficient", "api-key"];
+
+/**
+ * The request to send, flat: what the form has on screen, plus the environment to send it against.
+ *
+ * Flat and not a nested `template` object because there is no template row involved. Naming one
+ * would invite a `templateId` that means «send the saved version», and two meanings of «enviar»
+ * is exactly the surprise this avoids — what gets sent is what is being looked at.
+ */
+export class PreviewRequestDto {
+  @IsUUID() environmentId: string;
+  @IsString() @MinLength(1) @MaxLength(200) operationId: string;
+  /** Only ever shown back in an assertion's text. Absent is fine: the request is not being saved. */
+  @IsOptional() @IsString() @MaxLength(120) name?: string;
+  @IsInt() @Min(100) @Max(599) expectedStatus: number;
+  @IsOptional() @IsObject() parameters?: Record<string, string>;
+  @IsOptional() @IsObject() body?: Record<string, unknown> | null;
+  @IsOptional() @IsIn(AUTH, { message: `auth debe ser uno de: ${AUTH.join(", ")}` }) auth?: ScenarioAuth;
 }

@@ -1,7 +1,8 @@
-import type { Run, RunCase, RunStatus, RunStep, RunTotals } from "./model";
+import type { RequestPreview, Run, RunCase, RunStatus, RunStep, RunTotals } from "./model";
 
 export const RUN_REPOSITORY = Symbol("RUN_REPOSITORY");
 export const RUN_QUEUE = Symbol("RUN_QUEUE");
+export const REQUEST_PREVIEWER = Symbol("REQUEST_PREVIEWER");
 
 export interface RunRepositoryPort {
   findById(id: string): Promise<Run | null>;
@@ -57,3 +58,30 @@ export interface RunQueuePort {
   cancel(runId: string): Promise<void>;
   isCancelled(runId: string): Promise<boolean>;
 }
+
+/**
+ * Sending one request now, against a real environment.
+ *
+ * A port rather than a direct call because what implements it lives in infrastructure — it opens
+ * sockets, decrypts credentials and reads the live contract — and the handler that validates the
+ * request belongs in the application layer, which is not allowed to know any of that.
+ */
+export interface RequestPreviewerPort {
+  preview(input: {
+    projectId: string;
+    environmentId: string;
+    specVersionId: string;
+    template: PreviewTemplate;
+  }): Promise<RequestPreview>;
+}
+
+/** The request as the editor has it on screen, saved or not. There is no `templateId`: what gets
+ * sent is what is in the form, which is the only reading of «enviar» that is not a surprise. */
+export type PreviewTemplate = {
+  name: string;
+  operationId: string;
+  expectedStatus: number;
+  parameters: Record<string, string>;
+  body: Record<string, unknown> | null;
+  auth: string;
+};

@@ -1,4 +1,4 @@
-import type { ScenarioAuth, WorkflowDocument } from "@eq/runner-core";
+import type { ScenarioAuth, TestScenario, WorkflowDocument } from "@eq/runner-core";
 
 /**
  * What a project owns beyond the generated matrix: named requests, and the graphs built from them.
@@ -76,3 +76,36 @@ export type SuiteRow = {
   updatedAt: Date;
   updatedBy: string;
 };
+
+/**
+ * A saved request as the scenario the engine executes.
+ *
+ * Lives here, next to the row it converts, because two callers need it and they must not disagree
+ * about what a template means: the orchestrator walking a flow, and the preview that sends one
+ * request from the editor. An editor that built the scenario slightly differently would be a
+ * second engine, and the symptom would be a request that passes on screen and fails in the run.
+ *
+ * The two spreads are the reason this is a function and not an object literal. The row says
+ * absence with `null` and an empty map; the engine says it by leaving the field out. Forwarding
+ * `body: null` would send a payload of `null`, which is not the same as sending none.
+ *
+ * It takes the fields of a row and not the row, so the editor can rehearse a request that has
+ * never been saved and therefore has no id, no author and no timestamps.
+ */
+export function scenarioFor(template: TemplateScenarioFields): TestScenario {
+  return {
+    id: template.id,
+    name: template.name,
+    description: template.description ?? "Paso de un flujo reutilizable",
+    expectedStatus: template.expectedStatus,
+    ...(Object.keys(template.parameters ?? {}).length ? { parameters: template.parameters } : {}),
+    ...(template.body ? { body: template.body } : {}),
+    flow: "request",
+    auth: template.auth,
+  };
+}
+
+export type TemplateScenarioFields = Pick<
+  RequestTemplateRow,
+  "id" | "name" | "description" | "expectedStatus" | "parameters" | "body" | "auth"
+>;
