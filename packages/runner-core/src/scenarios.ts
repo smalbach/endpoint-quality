@@ -216,6 +216,32 @@ function accessScenarios(operation: ResolvedOperation, config: ProjectConfig): T
       });
     }
   }
+
+  for (const [index, rule] of config.access.crossRole.entries()) {
+    if (rule.operationId !== operation.id) continue;
+    const text = rule.allowed
+      ? { name: config.text.crossRoleAllowedName, description: config.text.crossRoleAllowedDescription }
+      : { name: config.text.crossRoleDeniedName, description: config.text.crossRoleDeniedDescription };
+    scenarios.push({
+      // The index is in the id because a project can write two rules over the same pair — «leer sí,
+      // borrar no» — and two cases sharing an id would overwrite each other's verdict in the run.
+      id: `access-cross-${rule.source}-${rule.target}-${index}`,
+      name: interpolate(text.name, { source: rule.source, target: rule.target }),
+      description: interpolate(text.description, {
+        source: rule.source,
+        target: rule.target,
+        method: operation.method,
+        path: operation.path,
+      }),
+      ...(rule.allowed
+        ? { expectedStatus: success[0] ?? 200 }
+        : { expectedStatus: denied[0], ...(denied.length > 1 ? { alsoAccepted: denied.slice(1) } : {}) }),
+      flow: "cross-role",
+      prepare: { operationId: rule.createOperationId, auth: `${ROLE_PREFIX}${rule.source}` },
+      auth: `${ROLE_PREFIX}${rule.target}`,
+    });
+  }
+
   return scenarios;
 }
 

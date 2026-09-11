@@ -27,6 +27,8 @@
  */
 import type { Assertion, ResolvedOperation, TestScenario } from "./types.ts";
 import type { RequestBody } from "./request-body.ts";
+import { roleOf } from "./types.ts";
+import { interpolate } from "./text.ts";
 import type { ProjectConfig } from "./config.ts";
 import { capturedId, verifyPersistedFields, type ActualResponse } from "./assertions.ts";
 import { expectedShapeFor } from "./envelope.ts";
@@ -179,6 +181,71 @@ export function* planFlow(context: FlowContext): Generator<StepRequest, void, St
   // read back and no cleanup step, because it is one request over a natural key.
   if (scenario.flow === "request" || scenario.flow === "bulk-read") {
     yield primary;
+    return;
+  }
+
+  /**
+   * Create something as one role, then reach for it as another.
+   *
+   * The case a single request cannot make. Every other flow here works on a resource whose owner
+   * does not matter; this one is entirely about the owner, so the resource has to be created
+   * *during the run*, by the role the scenario names, with an id nobody guessed. Reaching for a
+   * seed id would prove nothing — a fixture belongs to whoever the fixtures say, and half the time
+   * that is the role doing the asking.
+   *
+   * The prepare step is **not** the case. It runs as the owner and is expected to succeed; if it
+   * does not, there is nothing to reach for and the flow stops rather than reporting a permission
+   * finding about a resource that was never created. That distinction is the whole reliability of
+   * the result: «vendedor no pudo leerlo» means nothing if nobody created it.
+   */
+  if (scenario.flow === "cross-role") {
+    const create = operations.find((candidate) => candidate.id === scenario.prepare?.operationId);
+    const field = idFieldOf(operation);
+    if (!create || !field || !scenario.prepare) return;
+
+    const prepared = yield next({
+      purpose: "prepare",
+      label: interpolate(config.text.crossRoleCreateLabel, { source: roleOf(scenario.prepare.auth) ?? "" }),
+      operationId: create.id,
+      method: create.method,
+      operationPath: create.path,
+      ...(create.body ? { body: create.body } : {}),
+      expectedStatus: create.statuses.includes(201) ? 201 : 200,
+      auth: scenario.prepare.auth,
+    });
+    if (!prepared.ok || !prepared.actual) return;
+
+    const id = capturedId(prepared.actual.body, create.responseShape, field);
+    if (!id) return;
+
+    yield next({
+      purpose: "act",
+      label: scenario.name,
+      operationId: operation.id,
+      method: operation.method,
+      operationPath: operation.path,
+      parameters: { [field]: id },
+      ...(operation.body && operation.method !== "GET" ? { body: operation.body } : {}),
+      expectedStatus: scenario.expectedStatus,
+      ...(scenario.alsoAccepted?.length ? { alsoAccepted: scenario.alsoAccepted } : {}),
+    });
+
+    // Cleaned up **as the owner**, which is the only role that is certainly allowed to. Running it
+    // as the case's own role would be a second permission assertion hidden inside a cleanup, and a
+    // red one would report a tidy-up failure as if the case had found something.
+    const remove = operations.find((candidate) => candidate.method === "DELETE" && candidate.path === operation.path);
+    if (remove) {
+      yield next({
+        purpose: "cleanup",
+        label: "Eliminar el recurso creado",
+        operationId: remove.id,
+        method: "DELETE",
+        operationPath: remove.path,
+        parameters: { [field]: id },
+        expectedStatus: 204,
+        auth: scenario.prepare.auth,
+      });
+    }
     return;
   }
 

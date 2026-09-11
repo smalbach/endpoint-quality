@@ -1023,6 +1023,115 @@ describe("guardas del entorno", () => {
     await fixture.target.stop();
   });
 
+  /**
+   * La matriz de permisos, ejecutada contra un destino que sí tiene dueños.
+   *
+   * Es el único fallo de esta familia que una petición suelta no puede enseñar: todos los códigos
+   * son correctos, el esquema valida, y alguien está leyendo el pedido de otro. Hacen falta dos
+   * pasos —crear como el dueño, alcanzar como el otro— y un recurso creado en esta corrida, porque
+   * ir a por un id semilla no prueba nada: una fixture es de quien digan las fixtures.
+   */
+  async function accessFixture(ownership: "enforced" | "leaky") {
+    const fixture = await projectAgainst({ enforcesAuth: true, ownership }, { authEnforced: true });
+    for (const [role, secret] of [
+      ["primary", "token-completo"],
+      ["comprador", "token-de-comprador"],
+      ["vendedor", "token-de-vendedor"],
+    ]) {
+      const written = await api()
+        .put(`${fixture.projectBase}/environments/${fixture.environmentId}/credentials`)
+        .set(as(owner))
+        .send({ name: role, role, kind: "bearer", secret });
+      assert.ok(written.body.credentialId, JSON.stringify(written.body));
+    }
+    const section = await api()
+      .put(`${fixture.projectBase}/config/access`)
+      .set(as(owner))
+      .send({
+        access: {
+          roles: ["comprador", "vendedor"],
+          deniedStatuses: [403, 404],
+          rules: [],
+          crossRole: [
+            {
+              source: "comprador",
+              target: "vendedor",
+              createOperationId: "createThing",
+              operationId: "getThing",
+              allowed: false,
+            },
+          ],
+        },
+      });
+    assert.equal(section.status, 204, JSON.stringify(section.body));
+    return fixture;
+  }
+
+  test("un destino que esconde lo ajeno pasa el caso entre roles", async () => {
+    const fixture = await accessFixture("enforced");
+    const { run } = await runAndWait(fixture.projectBase, {
+      environmentId: fixture.environmentId,
+      operationIds: ["getThing"],
+    });
+    const crossRole = run.cases.filter((item: RunCaseRow) => item.scenarioId.startsWith("access-cross-"));
+    assert.equal(crossRole.length, 1, JSON.stringify(run.cases.map((item: RunCaseRow) => item.scenarioId)));
+    assert.equal(crossRole[0].status, "passed", JSON.stringify(run.totals));
+    await fixture.target.stop();
+  });
+
+  test("un destino que entrega lo ajeno lo pone en rojo, con todos los códigos correctos", async () => {
+    // Ese es el hallazgo: el 200 es un 200 válido, el esquema valida, y quien pregunta no era el
+    // dueño. Ninguna aserción del contrato lo habría visto.
+    const fixture = await accessFixture("leaky");
+    const { run } = await runAndWait(fixture.projectBase, {
+      environmentId: fixture.environmentId,
+      operationIds: ["getThing"],
+    });
+    const crossRole = run.cases.find((item: RunCaseRow) => item.scenarioId.startsWith("access-cross-"))!;
+    assert.equal(crossRole.status, "failed", JSON.stringify(run.totals));
+
+    const detail = await api().get(`${fixture.projectBase}/runs/${run.id}/cases/${crossRole.id}`).set(as(owner));
+    const steps = detail.body.steps as { purpose: string; request: { headers: Record<string, string> } | null }[];
+    // Tres pasos y cada uno con su credencial: crear como el dueño, preguntar como el otro, y
+    // recoger como el dueño otra vez.
+    assert.deepEqual(
+      steps.map((step) => step.purpose),
+      ["prepare", "act", "cleanup"],
+    );
+    // Enmascarada al escribir la fila, como cualquier otra: lo que se comprueba es que la hubo.
+    assert.ok(steps.every((step) => step.request?.headers.Authorization));
+    await fixture.target.stop();
+  });
+
+  test("un rol sin credencial deja el caso en «config» en vez de en un veredicto", async () => {
+    const fixture = await projectAgainst({ enforcesAuth: true, ownership: "enforced" }, { authEnforced: true });
+    await api()
+      .put(`${fixture.projectBase}/environments/${fixture.environmentId}/credentials`)
+      .set(as(owner))
+      .send({ name: "comprador", role: "comprador", kind: "bearer", secret: "token-de-comprador" });
+    await api()
+      .put(`${fixture.projectBase}/config/access`)
+      .set(as(owner))
+      .send({
+        access: {
+          roles: ["comprador", "vendedor"],
+          deniedStatuses: [403, 404],
+          rules: [{ operationId: "listThings", allow: [], deny: ["vendedor"] }],
+          crossRole: [],
+        },
+      });
+    const { run } = await runAndWait(fixture.projectBase, {
+      environmentId: fixture.environmentId,
+      operationIds: ["listThings"],
+    });
+    const denied = run.cases.find((item: RunCaseRow) => item.scenarioId === "access-deny-vendedor")!;
+    assert.equal(denied.status, "failed");
+    // `config` y no un veredicto sobre el endpoint: sin credencial la petición saldría sin nada y
+    // el 401 se leería como «el endpoint rechaza al vendedor», que es el hallazgo equivocado.
+    assert.equal(denied.failure, "config");
+    await fixture.target.stop();
+  });
+
   test("con autorización aplicada, la matriz 401/403 se ejecuta de verdad", async () => {
     const fixture = await projectAgainst({ enforcesAuth: true }, { authEnforced: true });
     await api().put(`${fixture.projectBase}/environments/${fixture.environmentId}/credentials`).set(as(owner)).send({

@@ -16,6 +16,8 @@ import assert from "node:assert/strict";
 
 import { defineProjectConfig } from "../src/config.ts";
 import { resolveOperations, scenariosFor } from "../src/scenarios.ts";
+import { planFlow, type StepRequest } from "../src/flow.ts";
+import type { ActualResponse } from "../src/assertions.ts";
 import type { Operation, TestScenario } from "../src/types.ts";
 
 const operations: Operation[] = [
@@ -36,6 +38,17 @@ const operations: Operation[] = [
     tag: "Pedidos",
     statuses: [201, 403],
     parameters: [],
+  },
+  // Aquí para que el caso entre roles tenga con qué recoger lo que creó: sin un DELETE el flujo
+  // deja la fila puesta, que es correcto y es lo que se comprueba más abajo.
+  {
+    id: "borrarPedido",
+    method: "DELETE",
+    path: "/pedidos/{id}",
+    summary: "Baja de pedido",
+    tag: "Pedidos",
+    statuses: [204, 404],
+    parameters: ["id"],
   },
 ];
 
@@ -128,5 +141,155 @@ describe("un caso por celda de la matriz de permisos", () => {
     );
     assert.match(scenario.name, /vendedor/);
     assert.match(scenario.description, /GET \/pedidos\/\{id\}/);
+  });
+});
+
+/**
+ * Crear como un rol y alcanzarlo como otro, que es el caso que una petición suelta no puede hacer.
+ *
+ * Todo lo demás en `flow.ts` trabaja sobre un recurso cuyo dueño da igual; este va justo de eso, así
+ * que el recurso tiene que crearse **durante la corrida**, por el rol que la regla nombra y con un
+ * id que nadie adivinó. Ir a por un id semilla no probaría nada: una fixture es de quien digan las
+ * fixtures, y la mitad de las veces es del rol que pregunta.
+ *
+ * Y el paso de preparación no es el caso. Si falla no hay nada que alcanzar, así que el flujo para
+ * en vez de anotar un hallazgo de permisos sobre un recurso que nunca existió — «vendedor no pudo
+ * leerlo» no significa nada si nadie lo creó.
+ */
+describe("el caso entre roles", () => {
+  const config = configOf({
+    crossRole: [
+      {
+        source: "comprador",
+        target: "vendedor",
+        createOperationId: "crearPedido",
+        operationId: "getPedido",
+        allowed: false,
+      },
+    ],
+  });
+  const resolved = resolveOperations(operations, config);
+  const operation = resolved.find((candidate) => candidate.id === "getPedido")!;
+  const scenario = scenariosFor(operation, config).find((item) => item.flow === "cross-role")!;
+
+  /** Walks the generator, answering every step with a created resource so the flow proceeds. */
+  const walk = (outcome: (step: StepRequest) => { ok: boolean; body?: unknown }): StepRequest[] => {
+    const flow = planFlow({ operation, scenario, config, operations: resolved, samples: 1 });
+    const steps: StepRequest[] = [];
+    let cursor = flow.next();
+    while (!cursor.done) {
+      steps.push(cursor.value);
+      const answered = outcome(cursor.value);
+      const actual: ActualResponse = {
+        status: 201,
+        statusText: "",
+        contentType: "application/json",
+        headers: {},
+        body: answered.body ?? { data: { id: "pedido-de-comprador" } },
+        raw: "",
+      };
+      cursor = flow.next({ request: cursor.value, actual, ok: answered.ok, assertions: [] });
+    }
+    return steps;
+  };
+
+  test("el caso existe y espera un rechazo", () => {
+    assert.equal(scenario.expectedStatus, 403);
+    assert.deepEqual(scenario.alsoAccepted, [404]);
+    assert.equal(scenario.auth, "role:vendedor");
+  });
+
+  test("primero crea como el dueño, y solo después pregunta como el otro", () => {
+    const steps = walk(() => ({ ok: true }));
+    assert.deepEqual(
+      steps.map((step) => [step.purpose, step.auth]),
+      [
+        ["prepare", "role:comprador"],
+        ["act", "role:vendedor"],
+        ["cleanup", "role:comprador"],
+      ],
+    );
+  });
+
+  test("el paso que pregunta va contra el id que se acaba de crear, no contra una semilla", () => {
+    // Es la diferencia entre probar que un rol no ve lo ajeno y probar que no ve la fila 1, que
+    // puede ser suya.
+    const act = walk(() => ({ ok: true })).find((step) => step.purpose === "act")!;
+    assert.match(act.requestPath, /pedido-de-comprador/);
+  });
+
+  test("si la creación falla no se pregunta nada", () => {
+    // Sin recurso no hay caso: anotar «vendedor no pudo leerlo» sobre algo que nunca existió sería
+    // un verde que no prueba nada.
+    const steps = walk((step) => ({ ok: step.purpose !== "prepare" }));
+    assert.deepEqual(
+      steps.map((step) => step.purpose),
+      ["prepare"],
+    );
+  });
+
+  test("si la respuesta de la creación no trae id tampoco", () => {
+    const steps = walk((step) => (step.purpose === "prepare" ? { ok: true, body: { data: {} } } : { ok: true }));
+    assert.deepEqual(
+      steps.map((step) => step.purpose),
+      ["prepare"],
+    );
+  });
+
+  test("la limpieza va como el dueño, que es el único rol seguro para borrarlo", () => {
+    // Borrar como el rol del caso sería una segunda aserción de permisos escondida en una limpieza,
+    // y un rojo ahí contaría un fallo de recogida como si el caso hubiera encontrado algo.
+    const cleanup = walk(() => ({ ok: true })).find((step) => step.purpose === "cleanup")!;
+    assert.equal(cleanup.auth, "role:comprador");
+  });
+
+  test("una regla permitida espera el éxito que el contrato declara", () => {
+    const allowed = configOf({
+      crossRole: [
+        {
+          source: "comprador",
+          target: "admin",
+          createOperationId: "crearPedido",
+          operationId: "getPedido",
+          allowed: true,
+        },
+      ],
+    });
+    const built = scenariosFor(
+      resolveOperations(operations, allowed).find((candidate) => candidate.id === "getPedido")!,
+      allowed,
+    ).find((item) => item.flow === "cross-role")!;
+    assert.equal(built.expectedStatus, 200);
+    assert.equal(built.alsoAccepted, undefined);
+  });
+
+  test("dos reglas sobre el mismo par no colisionan de id", () => {
+    // Un proyecto puede escribir «leer sí, borrar no» sobre los mismos dos roles, y dos casos con
+    // el mismo id se pisarían el veredicto en la corrida.
+    const twice = configOf({
+      crossRole: [
+        {
+          source: "comprador",
+          target: "vendedor",
+          createOperationId: "crearPedido",
+          operationId: "getPedido",
+          allowed: false,
+        },
+        {
+          source: "comprador",
+          target: "vendedor",
+          createOperationId: "crearPedido",
+          operationId: "getPedido",
+          allowed: true,
+        },
+      ],
+    });
+    const ids = scenariosFor(
+      resolveOperations(operations, twice).find((candidate) => candidate.id === "getPedido")!,
+      twice,
+    )
+      .filter((item) => item.flow === "cross-role")
+      .map((item) => item.id);
+    assert.equal(new Set(ids).size, 2);
   });
 });

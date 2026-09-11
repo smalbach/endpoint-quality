@@ -37,7 +37,15 @@ export type ResolvedOperation = Operation & {
 };
 
 export type ScenarioFlow =
-  "request" | "create-read" | "replace-read" | "patch-read" | "delete-read" | "deleted-read" | "bulk-read";
+  | "request"
+  | "create-read"
+  | "replace-read"
+  | "patch-read"
+  | "delete-read"
+  | "deleted-read"
+  | "bulk-read"
+  /** Create something as one role, then reach for it as another. The BOLA/IDOR case. */
+  | "cross-role";
 
 /**
  * Which credential a case presents, which is the thing the case is testing.
@@ -130,6 +138,16 @@ export type TestScenario = {
    * executor's guess would make the editor lie about what it sent.
    */
   headers?: Record<string, string>;
+  /**
+   * The step that has to happen before this one, run as somebody else.
+   *
+   * Only a `cross-role` case carries one, and it is what makes that case possible at all: to prove
+   * that `vendedor` cannot read `comprador`'s order there has to *be* an order of `comprador`'s,
+   * created in this run, with an id nobody guessed. Reaching for id `1` instead would prove
+   * nothing — a seed row belongs to whoever the fixtures say, and half the time that is the role
+   * doing the asking.
+   */
+  prepare?: { operationId: string; auth: ScenarioCredential };
   flow: ScenarioFlow;
   auth?: ScenarioCredential;
 };

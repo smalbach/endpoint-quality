@@ -29,6 +29,15 @@ export type StubFaults = {
   plainErrors?: boolean;
   /** Rejects everything without a credential, and 403 for the read-only token. */
   enforcesAuth?: boolean;
+  /**
+   * Whether a resource belongs to whoever created it, and whether the target honours that.
+   *
+   * The one fault a single request can never expose. `enforced` answers 404 to anybody else —
+   * which is what a well-built API does, because a 403 would confirm the id exists. `leaky` hands
+   * it over to anyone who asks, which is the BOLA/IDOR bug: every status code is correct, the
+   * schema validates, and somebody is reading somebody else's order.
+   */
+  ownership?: "enforced" | "leaky";
   /** Answers 503 to the first N writes and then behaves. A target that is cold, rate-limited or
    * behind a queue that has not caught up — the only failure a retry is honest about. */
   flakyWrites?: number;
@@ -150,6 +159,9 @@ export const STUB_SPEC_YAML = JSON.stringify(SPEC);
 export class StubTarget {
   private server!: Server;
   private things = new Map<string, Record<string, unknown>>();
+  /** Who created each thing, by the credential they presented. Only consulted when `ownership`
+   * is set, so every test that does not care about it sees exactly what it saw before. */
+  private owners = new Map<string, string>();
   private nextId = 100;
   private flakedWrites = 0;
   /** `at` es lo que permite afirmar que dos peticiones se solaparon sin cronometrar la corrida
@@ -266,6 +278,7 @@ export class StubTarget {
       // The failure a 201 hides: the write is accepted and the fields are not kept.
       const stored = this.faults.dropsFields ? { id, name: "otra-cosa" } : { id, ...body };
       this.things.set(id, stored);
+      if (authorization) this.owners.set(id, authorization);
       return send(201, { data: stored });
     }
 
@@ -274,7 +287,14 @@ export class StubTarget {
       const id = decodeURIComponent(detail[1]);
       if (method === "GET") {
         const thing = this.things.get(id);
-        return thing ? send(200, { data: thing }) : problem(404, "No encontrado");
+        if (!thing) return problem(404, "No encontrado");
+        const owner = this.owners.get(id);
+        // Hidden rather than refused: a 403 over somebody else's resource confirms that the id
+        // exists, which is half of what the person asking wanted to know.
+        if (this.faults.ownership === "enforced" && owner && owner !== authorization) {
+          return problem(404, "No encontrado");
+        }
+        return send(200, { data: thing });
       }
       if (method === "DELETE") {
         if (this.faults.notImplemented) return send(405);
