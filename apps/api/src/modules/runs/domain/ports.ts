@@ -1,3 +1,5 @@
+import type { RequestBody } from "@eq/runner-core";
+
 import type { RequestPreview, Run, RunCase, RunStatus, RunStep, RunTotals } from "./model";
 
 export const RUN_REPOSITORY = Symbol("RUN_REPOSITORY");
@@ -83,6 +85,6 @@ export type PreviewTemplate = {
   expectedStatus: number;
   parameters: Record<string, string>;
   headers: Record<string, string>;
-  body: Record<string, unknown> | null;
+  body: RequestBody;
   auth: string;
 };

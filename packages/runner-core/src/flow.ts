@@ -26,6 +26,7 @@
  * reports the state the previous run left behind rather than whether the endpoint works.
  */
 import type { Assertion, ResolvedOperation, TestScenario } from "./types.ts";
+import type { RequestBody } from "./request-body.ts";
 import type { ProjectConfig } from "./config.ts";
 import { capturedId, verifyPersistedFields, type ActualResponse } from "./assertions.ts";
 import { expectedShapeFor } from "./envelope.ts";
@@ -46,6 +47,9 @@ export type StepRequest = {
   /** The resolved path with its query string, which is what actually gets requested. */
   requestPath: string;
   body?: Record<string, unknown>;
+  /** The payload a saved request describes when it is not a JSON object. Never both this and
+   * `body`; see {@link TestScenario.payload}. */
+  payload?: RequestBody;
   /** What the scenario adds on top of the headers the executor builds. Absent on every step of
    * the generated matrix; only a saved request has any. */
   headers?: Record<string, string>;
@@ -124,6 +128,7 @@ function step(
     operationPath: partial.operationPath,
     requestPath,
     ...(partial.body ? { body: partial.body } : {}),
+    ...(partial.payload ? { payload: partial.payload } : {}),
     ...(partial.headers ? { headers: partial.headers } : {}),
     expectedStatus: partial.expectedStatus,
     expectedShape: expectedShapeFor(operation, partial.expectedStatus, context.config),
@@ -157,6 +162,7 @@ export function* planFlow(context: FlowContext): Generator<StepRequest, void, St
     operationPath: operation.path,
     ...(scenario.parameters ? { parameters: scenario.parameters } : {}),
     ...(scenario.body ? { body: scenario.body } : {}),
+    ...(scenario.payload ? { payload: scenario.payload } : {}),
     // On the step the scenario is *about*, and on no other. The prepare and cleanup steps are
     // operations this flow invented to make the case runnable, and a `Content-Type` somebody wrote
     // next to an XML payload is wrong on the JSON create that precedes it. A saved request plans

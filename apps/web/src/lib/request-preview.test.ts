@@ -12,7 +12,7 @@ const template = (overrides: Partial<RequestTemplateView> = {}): RequestTemplate
   disabledParameters: {},
   headers: {},
   disabledHeaders: {},
-  body: null,
+  body: { type: "none" },
   auth: "default",
   updatedAt: "2026-03-01T10:00:00.000Z",
   ...overrides,
@@ -21,18 +21,26 @@ const template = (overrides: Partial<RequestTemplateView> = {}): RequestTemplate
 /**
  * Lo que se manda cuando alguien pulsa «Enviar».
  *
- * El caso que justifica el módulo es el del cuerpo: el formulario guarda `{}` cuando nadie lo ha
- * tocado, y el motor lee `{}` como «manda un cuerpo vacío» y `null` como «no mandes ninguno». Un
- * GET con cuerpo vacío es una petición que algunos destinos rechazan, y el error no diría nada
- * de por qué.
+ * El módulo existe porque aquí es donde el formulario deja de ser un formulario y pasa a ser una
+ * petición, y los dos bordes de esa conversión no se ven hasta que el destino la rechaza: una fila
+ * a medio escribir no es una instrucción de mandar `?=`, y el tipo del cuerpo viaja con él porque
+ * «sin cuerpo» y «un JSON vacío» son dos peticiones distintas contra bastantes destinos.
  */
 describe("el cuerpo de una petición de prueba", () => {
-  test("un body sin claves es «sin cuerpo», no un cuerpo vacío", () => {
-    expect(previewBodyFor(template({ body: {} }), "env-1").body).toBeNull();
+  test("«sin cuerpo» viaja como tal y no como un objeto vacío", () => {
+    expect(previewBodyFor(template({ body: { type: "none" } }), "env-1").body).toEqual({ type: "none" });
   });
 
-  test("un body con claves viaja tal cual", () => {
-    expect(previewBodyFor(template({ body: { name: "x" } }), "env-1").body).toEqual({ name: "x" });
+  test("un JSON sin claves sigue siendo un cuerpo: alguien eligió mandarlo vacío", () => {
+    expect(previewBodyFor(template({ body: { type: "json", json: {} } }), "env-1").body).toEqual({
+      type: "json",
+      json: {},
+    });
+  });
+
+  test("un cuerpo en texto viaja con su content-type, que es lo que el motor no puede adivinar", () => {
+    const body = { type: "raw", text: "<pedido/>", contentType: "application/xml" } as const;
+    expect(previewBodyFor(template({ body }), "env-1").body).toEqual(body);
   });
 
   test("un parámetro a medio escribir no se manda", () => {

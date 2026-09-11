@@ -42,7 +42,7 @@ export class RequestPreviewController {
           expectedStatus: body.expectedStatus,
           parameters: body.parameters ?? {},
           headers: body.headers ?? {},
-          body: body.body ?? null,
+          body: body.body ?? { type: "none" },
           auth: body.auth ?? "default",
         },
       }),

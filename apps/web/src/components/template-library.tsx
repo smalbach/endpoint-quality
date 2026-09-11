@@ -2,14 +2,14 @@ import { useEffect, useState } from "react";
 
 import { Button, Field, inputClass } from "@/components/ui";
 import type { OperationSummary } from "@/lib/workflow-draft";
-import type { RequestTemplateView } from "@/lib/types";
+import type { RequestBodyView, RequestTemplateView } from "@/lib/types";
 
 export type NewTemplate = {
   name: string;
   operationId: string;
   expectedStatus: number;
   parameters: Record<string, string>;
-  body: Record<string, unknown> | null;
+  body: RequestBodyView;
 };
 
 /**
@@ -152,8 +152,11 @@ function TemplateCreator({
               operationId,
               expectedStatus,
               parameters: parsedParameters,
-              // An empty object is «send an empty payload»; no payload at all is null.
-              body: Object.keys(parsedBody).length ? parsedBody : null,
+              // JSON or nothing, which is what this two-field form can honestly offer. The other
+              // three types need a selector and a content type, and they are one click away in the
+              // inspector — where the request is actually written, and where the «Enviar» button
+              // is that says whether it worked.
+              body: Object.keys(parsedBody).length ? { type: "json", json: parsedBody } : { type: "none" },
             });
             setName("");
             setError(null);

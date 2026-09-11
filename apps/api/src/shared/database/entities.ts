@@ -14,6 +14,7 @@
  *   `token` invites somebody to return it; `tokenHash` does not.
  */
 import { Column, Entity, Index, PrimaryColumn } from "typeorm";
+import type { RequestBody } from "@eq/runner-core";
 
 @Entity({ name: "users" })
 export class UserEntity {
@@ -363,8 +364,10 @@ export class RequestTemplateEntity {
   @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) disabledParameters: Record<string, string>;
   @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) headers: Record<string, string>;
   @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) disabledHeaders: Record<string, string>;
-  /** Null and `{}` are different: no payload at all, versus an empty one somebody chose to send. */
-  @Column({ type: "jsonb", nullable: true }) body: Record<string, unknown> | null;
+  /** `{ type: "none" }` and a `json` body of `{}` are different: no payload at all, versus an
+   * empty one somebody chose to send. Not nullable — «none» is a value, and two ways to say it is
+   * how the two end up meaning something slightly different. */
+  @Column({ type: "jsonb", default: () => `'{"type":"none"}'::jsonb` }) body: RequestBody;
   @Column({ type: "varchar", length: 20, default: "default" }) auth: string;
   @Column({ type: "timestamptz" }) createdAt: Date;
   @Column({ type: "timestamptz" }) updatedAt: Date;

@@ -8,6 +8,7 @@ export * from "./budgets.ts";
 export * from "./envelope.ts";
 export * from "./json-schema.ts";
 export * from "./request-path.ts";
+export * from "./request-body.ts";
 export * from "./example.ts";
 export * from "./pattern.ts";
 export * from "./assertions.ts";

@@ -208,7 +208,30 @@ export type WorkflowStepView = {
 };
 
 /**
- * A saved request. `body` is null when there is none, which is not the same as an empty one.
+ * What a saved request sends as its payload.
+ *
+ * It used to be `Record<string, unknown> | null`, which could only say «this JSON» or «nothing».
+ * That is everything the generated matrix has — it derives its payloads from JSON Schema — and it
+ * is not everything an API asks for: plenty still take a login as `x-www-form-urlencoded`, and a
+ * webhook is tested by posting the exact XML its provider sends.
+ *
+ * A tagged union and not four optional fields, because «no payload», «this JSON», «these bytes»
+ * and «these form fields» are four different things and an object carrying both a `text` and a
+ * `json` is a state that must not exist. The switched-off form fields sit in a second map beside
+ * the first, like the parameters and the headers above: `fields` means what is sent, everywhere.
+ */
+export type RequestBodyView =
+  | { type: "none" }
+  | { type: "json"; json: Record<string, unknown> }
+  /** `contentType` travels with the text because this is the case the engine cannot guess: the
+   * same three lines could be XML, NDJSON or a CSV, and only the author knows which. */
+  | { type: "raw"; text: string; contentType: string }
+  | { type: "form-data"; fields: Record<string, string>; disabledFields: Record<string, string> }
+  | { type: "x-www-form-urlencoded"; fields: Record<string, string>; disabledFields: Record<string, string> };
+
+/**
+ * A saved request. `body` says «none» when there is no payload, which is not the same as an empty
+ * one — a JSON body of `{}` is a zero-field object somebody chose to send.
  *
  * The rows somebody switched off live in a **second map beside the first**, never as a flag inside
  * it. It is the shape an environment's `disabledVariables` already has, for the same reason: a
@@ -232,7 +255,7 @@ export type RequestTemplateViewOf<T> = {
   disabledParameters: Record<string, string>;
   headers: Record<string, string>;
   disabledHeaders: Record<string, string>;
-  body: Record<string, unknown> | null;
+  body: RequestBodyView;
   auth: string;
   updatedAt: T;
 };

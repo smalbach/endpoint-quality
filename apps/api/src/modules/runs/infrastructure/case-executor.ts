@@ -33,7 +33,9 @@ import {
   type StepRequest,
   type TestScenario,
   interpolateValue,
+  payloadFor,
   type RuntimeVariables,
+  type SerializedBody,
   unresolvedVariables,
 } from "@eq/runner-core";
 
@@ -162,16 +164,26 @@ export class CaseExecutor {
     input: { config: ProjectConfig; target: ExecutionTarget; operation: ResolvedOperation; scenario: TestScenario },
   ): Promise<ExecutedStep> {
     const url = `${input.target.baseUrl}${step.requestPath}`;
-    const headers = this.headersFor(step, input.target);
+    // Serialised here rather than where the template was converted, because the variables have
+    // been substituted by now: a `{{nombre}}` encoded first and replaced second would put a raw
+    // space or ampersand into a form payload, and the target would read one field where two were
+    // meant.
+    const payload = payloadFor(step);
+    const headers = this.headersFor(step, input.target, payload);
     const masked = maskHeaders(headers);
-    const sent = { method: step.method, url, headers: masked, body: step.body ?? null };
+    // The JSON object when there is one, so the panel and the stored step keep showing a payload
+    // that can be read as a tree. Anything else is the text that crossed the wire, which is the
+    // only honest representation of a form or of somebody's XML.
+    const sent = { method: step.method, url, headers: masked, body: step.body ?? payload?.text ?? null };
 
-    // The headers are walked with the rest: a `{{tenant}}` nobody defined would otherwise travel
-    // to the target verbatim, and the answer would be a 400 about a value the report shows as if
-    // it had been sent on purpose.
+    // The headers and the serialised payload are walked with the rest: a `{{tenant}}` nobody
+    // defined would otherwise travel to the target verbatim, and the answer would be a 400 about a
+    // value the report shows as if it had been sent on purpose. The payload is checked as the text
+    // it became, so a variable left inside a form field somebody switched off is not a blocker.
     const missingVariables = unresolvedVariables({
       requestPath: step.requestPath,
       body: step.body,
+      payload: payload?.text,
       headers: step.headers,
     });
     if (missingVariables.length) {
@@ -191,7 +203,7 @@ export class CaseExecutor {
       response = await this.http.request(url, {
         method: step.method,
         headers,
-        ...(step.body === undefined ? {} : { body: JSON.stringify(step.body) }),
+        ...(payload ? { body: payload.text } : {}),
       });
       samples.push(response.durationMs);
       timing = response.timing;
@@ -273,10 +285,16 @@ export class CaseExecutor {
    * the person can see in the «Petición» panel afterwards. It is masked there either way, because
    * {@link maskHeaders} matches on the name and not on where the value came from.
    */
-  private headersFor(step: StepRequest, target: ExecutionTarget): Record<string, string> {
+  private headersFor(
+    step: StepRequest,
+    target: ExecutionTarget,
+    payload: SerializedBody | null,
+  ): Record<string, string> {
     const own = step.headers ?? {};
     const base: Record<string, string> = { Accept: "application/json" };
-    if (step.body !== undefined) base["Content-Type"] = "application/json";
+    // From the payload and not from a guess: a form body carries the boundary its own serialisation
+    // chose, and a `Content-Type` naming a different one is a request no target can parse.
+    if (payload) base["Content-Type"] = payload.contentType;
     if (step.auth === "none") return { ...base, ...own };
 
     const role = step.auth === "insufficient" ? "insufficient" : step.auth === "api-key" ? "alternate" : "primary";

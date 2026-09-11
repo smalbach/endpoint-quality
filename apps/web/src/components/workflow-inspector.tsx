@@ -1,5 +1,5 @@
 import { Button, Field, inputClass } from "@/components/ui";
-import { JsonObjectField } from "@/components/json-object-field";
+import { RequestBodyEditor } from "@/components/request-body-editor";
 import { RequestFieldsEditor } from "@/components/request-fields-editor";
 import { RequestPreviewPanel } from "@/components/request-preview";
 import { fieldMapsFrom, fieldProblems, fieldRowsFrom, type FieldRow } from "@/lib/request-fields";
@@ -274,10 +274,10 @@ function StepInspector({
             canEdit={canEdit}
             onChange={(maps) => onTemplate({ ...template, headers: maps.enabled, disabledHeaders: maps.disabled })}
           />
-          <JsonObjectField
-            label="Body"
-            value={template.body ?? {}}
-            onChange={(value) => onTemplate({ ...template, body: Object.keys(value).length ? value : null })}
+          <RequestBodyEditor
+            body={template.body}
+            canEdit={canEdit}
+            onChange={(body) => onTemplate({ ...template, body })}
           />
           {/* Lo que hay en el formulario, enviado de verdad. No hace falta guardar antes: lo que
               se manda es lo que se está mirando. */}

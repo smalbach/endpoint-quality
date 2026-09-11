@@ -32,6 +32,36 @@ const headerValue = z
   .regex(/^[^\r\n]*$/, "una cabecera no puede llevar un salto de línea")
   .max(4000);
 
+/**
+ * The payload of a saved request, as the five things it can be.
+ *
+ * A discriminated union and not an object with everything optional, so the 422 names the variant:
+ * «raw necesita contentType» is a message somebody can act on, and «body inválido» over a union of
+ * five shapes is not.
+ *
+ * The ceilings are the editor's, not the storage's. A raw body is something a person typed or
+ * pasted; a megabyte of it is a fixture that belongs in a dataset, and letting it into a `jsonb`
+ * column means every list of requests carries it.
+ */
+const formFields = z.record(z.string().min(1).max(200), z.string().max(100_000));
+export const requestBodySchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("none") }),
+  z.object({ type: z.literal("json"), json: jsonObject }),
+  z.object({
+    type: z.literal("raw"),
+    text: z.string().max(1_000_000),
+    // A media type and nothing else: it goes straight into a header, so the same line-break rule
+    // that protects the others protects this one.
+    contentType: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/^[^\r\n]+$/, "el content-type no puede llevar un salto de línea"),
+  }),
+  z.object({ type: z.literal("form-data"), fields: formFields, disabledFields: formFields }),
+  z.object({ type: z.literal("x-www-form-urlencoded"), fields: formFields, disabledFields: formFields }),
+]);
+
 export const requestTemplateBodySchema = z.object({
   name: z.string().min(1).max(120),
   operationId: z.string().min(1).max(200),
@@ -49,7 +79,7 @@ export const requestTemplateBodySchema = z.object({
    */
   headers: z.record(headerName, headerValue).optional(),
   disabledHeaders: z.record(headerName, headerValue).optional(),
-  body: jsonObject.optional(),
+  body: requestBodySchema.optional(),
   auth: scenarioAuthSchema.optional(),
 });
 
@@ -296,3 +326,13 @@ export const safeParseRequestTemplate = (data: unknown): ParseResult =>
   report(requestTemplateBodySchema.safeParse(data), "requestTemplate");
 
 export const safeParseDatasetRows = (data: unknown): ParseResult => report(datasetRowsSchema.safeParse(data), "rows");
+
+/**
+ * The body on its own, for the one caller that has a body and no template around it.
+ *
+ * «Enviar» sends what is on the form, saved or not, so there is no row to validate — and without
+ * this the union would reach the serialiser unchecked, where a `type` nobody declared is a 500
+ * about a request somebody typed. The rule is the same object either way, so the two cannot
+ * disagree about what a payload may be.
+ */
+export const safeParseRequestBody = (data: unknown): ParseResult => report(requestBodySchema.safeParse(data), "body");

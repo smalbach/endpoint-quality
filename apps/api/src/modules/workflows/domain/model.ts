@@ -1,4 +1,4 @@
-import type { ScenarioAuth, TestScenario, WorkflowDocument } from "@eq/runner-core";
+import type { RequestBody, ScenarioAuth, TestScenario, WorkflowDocument } from "@eq/runner-core";
 
 /**
  * What a project owns beyond the generated matrix: named requests, and the graphs built from them.
@@ -30,8 +30,9 @@ export type RequestTemplateRow = {
    * `Accept-Language`, the idempotency key a POST is supposed to carry. */
   headers: Record<string, string>;
   disabledHeaders: Record<string, string>;
-  /** `null` is «no payload», `{}` is «an empty one on purpose». The engine sends the second. */
-  body: Record<string, unknown> | null;
+  /** `{ type: "none" }` is «no payload»; a `json` body of `{}` is «an empty one on purpose», and
+   * the engine sends the second. */
+  body: RequestBody;
   auth: ScenarioAuth;
   createdAt: Date;
   updatedAt: Date;
@@ -99,9 +100,14 @@ export type SuiteRow = {
  * request from the editor. An editor that built the scenario slightly differently would be a
  * second engine, and the symptom would be a request that passes on screen and fails in the run.
  *
- * The two spreads are the reason this is a function and not an object literal. The row says
- * absence with `null` and an empty map; the engine says it by leaving the field out. Forwarding
- * `body: null` would send a payload of `null`, which is not the same as sending none.
+ * The spreads are the reason this is a function and not an object literal. The row says absence
+ * with an empty map and with `{ type: "none" }`; the engine says it by leaving the field out.
+ *
+ * The body is also the one place the conversion is not a rename. A JSON payload becomes
+ * `scenario.body`, because that is the field the persistence assertion reads back field by field;
+ * anything else becomes `scenario.payload`, which the executor serialises once the variables in it
+ * have been substituted. **This is the single place that decides which**, which is what keeps the
+ * orchestrator and the preview from disagreeing about what a saved request means.
  *
  * It takes the fields of a row and not the row, so the editor can rehearse a request that has
  * never been saved and therefore has no id, no author and no timestamps.
@@ -114,10 +120,16 @@ export function scenarioFor(template: TemplateScenarioFields): TestScenario {
     expectedStatus: template.expectedStatus,
     ...(Object.keys(template.parameters ?? {}).length ? { parameters: template.parameters } : {}),
     ...(Object.keys(template.headers ?? {}).length ? { headers: template.headers } : {}),
-    ...(template.body ? { body: template.body } : {}),
+    ...bodyOf(template.body),
     flow: "request",
     auth: template.auth,
   };
+}
+
+/** JSON is `body`, everything else is `payload`, and «none» is neither. See {@link scenarioFor}. */
+function bodyOf(body: RequestBody | null): Pick<TestScenario, "body" | "payload"> {
+  if (!body || body.type === "none") return {};
+  return body.type === "json" ? { body: body.json } : { payload: body };
 }
 
 export type TemplateScenarioFields = Pick<

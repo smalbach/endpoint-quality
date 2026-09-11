@@ -12,7 +12,7 @@ import {
   Min,
   MinLength,
 } from "class-validator";
-import type { ScenarioAuth, WorkflowDocument } from "@eq/runner-core";
+import type { RequestBody, ScenarioAuth, WorkflowDocument } from "@eq/runner-core";
 
 const AUTH = ["default", "none", "insufficient", "api-key"];
 
@@ -34,7 +34,10 @@ export class CreateRequestTemplateDto {
   @IsOptional() @IsObject() disabledParameters?: Record<string, string>;
   @IsOptional() @IsObject() headers?: Record<string, string>;
   @IsOptional() @IsObject() disabledHeaders?: Record<string, string>;
-  @IsOptional() @IsObject() body?: Record<string, unknown> | null;
+  /** `{ type, … }`. Which variants exist and what each one carries is the zod schema in
+   * `@eq/runner-core`, checked inside the command — a second copy of a five-way union in
+   * decorators is a copy that would be free to disagree. */
+  @IsOptional() @IsObject() body?: RequestBody;
   @IsOptional() @IsIn(AUTH, { message: `auth debe ser uno de: ${AUTH.join(", ")}` }) auth?: ScenarioAuth;
 }
 
@@ -48,7 +51,10 @@ export class UpdateRequestTemplateDto {
   @IsOptional() @IsObject() disabledParameters?: Record<string, string>;
   @IsOptional() @IsObject() headers?: Record<string, string>;
   @IsOptional() @IsObject() disabledHeaders?: Record<string, string>;
-  @IsOptional() @IsObject() body?: Record<string, unknown> | null;
+  /** `{ type, … }`. Which variants exist and what each one carries is the zod schema in
+   * `@eq/runner-core`, checked inside the command — a second copy of a five-way union in
+   * decorators is a copy that would be free to disagree. */
+  @IsOptional() @IsObject() body?: RequestBody;
   @IsOptional() @IsIn(AUTH, { message: `auth debe ser uno de: ${AUTH.join(", ")}` }) auth?: ScenarioAuth;
 }
 

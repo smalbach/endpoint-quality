@@ -1,13 +1,16 @@
 /**
  * The request the editor sends when somebody presses «Enviar».
  *
- * A module of its own for one function, because that function is where two absences have to be
- * told apart and getting it wrong is invisible until a target rejects the request: the API reads
- * `body: null` as «no envíes cuerpo» and `body: {}` as «envía uno vacío», and a form that has
- * never been touched holds `{}` for both. The editor's rule is the same one the row uses — an
- * object with no keys is no body.
+ * A module of its own for one function, because that function is where the form stops being a form
+ * and becomes a request, and the two edges of that are invisible until a target rejects it: a
+ * half-typed parameter name with no value is a row in progress and not an instruction to send
+ * `?=`, and a row somebody switched off is simply not in what gets sent — it lives in the
+ * `disabled…` map, which nothing here reads.
+ *
+ * The body travels whole, tag and all: `{ type: "none" }` is «no envíes cuerpo» and a `json` body
+ * of `{}` is «envía uno vacío», and those are two different requests against plenty of targets.
  */
-import type { RequestTemplateView } from "@/lib/types";
+import type { RequestBodyView, RequestTemplateView } from "@/lib/types";
 
 export type PreviewRequestBody = {
   environmentId: string;
@@ -16,7 +19,7 @@ export type PreviewRequestBody = {
   expectedStatus: number;
   parameters: Record<string, string>;
   headers: Record<string, string>;
-  body: Record<string, unknown> | null;
+  body: RequestBodyView;
   auth: string;
 };
 
@@ -37,7 +40,7 @@ export function previewBodyFor(template: RequestTemplateView, environmentId: str
     headers: Object.fromEntries(
       Object.entries(template.headers ?? {}).filter(([name, value]) => name.trim() !== "" && value !== ""),
     ),
-    body: template.body && Object.keys(template.body).length ? template.body : null,
+    body: template.body,
     auth: template.auth,
   };
 }

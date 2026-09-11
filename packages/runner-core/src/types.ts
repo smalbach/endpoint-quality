@@ -6,6 +6,8 @@
  * bundle, here it is whatever `spec-import` read at runtime.
  */
 
+import type { RequestBody } from "./request-body.ts";
+
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
 
 export type Operation = {
@@ -52,7 +54,29 @@ export type TestScenario = {
   description: string;
   expectedStatus: number;
   parameters?: Record<string, string>;
+  /**
+   * The JSON payload, which is the only kind the generated matrix has.
+   *
+   * It derives what it sends from JSON Schema and from the project's `bodies` section, so by
+   * construction there is nothing else for it to send — and this is also the field
+   * `verifyPersistedFields` reads, because comparing what a write sent against what the read-back
+   * returned is a question about *fields*, which only a JSON object has.
+   */
   body?: Record<string, unknown>;
+  /**
+   * The payload a saved request describes, when that is not a JSON object.
+   *
+   * A second field rather than a union with `body` because the two are not the same idea: one is
+   * a field map that later assertions read into, the other is «send this, exactly». Exactly one of
+   * them is ever set, and the single place that decides which is `scenarioFor` — already the one
+   * converter the orchestrator and the preview both go through, so they cannot disagree about what
+   * a saved request means.
+   *
+   * Kept structured here and serialised in the executor, not before: a `{{nombre}}` inside a form
+   * field has to be substituted while it is still a value, or a space in it would end up splitting
+   * a form-encoded payload into a field the author never wrote.
+   */
+  payload?: RequestBody;
   /**
    * Headers this case adds to the ones the executor builds, and which win where they collide.
    *

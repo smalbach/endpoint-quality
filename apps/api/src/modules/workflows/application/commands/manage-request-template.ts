@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Inject } from "@nestjs/common";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
-import { safeParseRequestTemplate, type ScenarioAuth } from "@eq/runner-core";
+import { safeParseRequestTemplate, type RequestBody, type ScenarioAuth } from "@eq/runner-core";
 
 import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
@@ -19,7 +19,7 @@ export type RequestTemplateInput = {
   disabledParameters?: Record<string, string>;
   headers?: Record<string, string>;
   disabledHeaders?: Record<string, string>;
-  body?: Record<string, unknown> | null;
+  body?: RequestBody;
   auth?: ScenarioAuth;
 };
 
@@ -68,8 +68,9 @@ async function ownedTemplate(
  * The rule about what a request may say belongs next to the code that will send it; a second,
  * weaker copy of it in a decorator is how the two end up disagreeing.
  *
- * `undefined` leaves a field as it was and `null` clears it — the distinction matters for the two
- * optional ones: a PATCH that omits `body` must not erase the payload somebody wrote.
+ * `undefined` leaves a field as it was, which is what makes a PATCH that omits `body` keep the
+ * payload somebody wrote. Clearing one is `{ type: "none" }` and not `null`: «sin cuerpo» is a
+ * value the column holds, so there is one way to say it rather than two that can drift apart.
  */
 type TemplateFields = {
   name: string;
@@ -80,7 +81,7 @@ type TemplateFields = {
   disabledParameters: Record<string, string>;
   headers: Record<string, string>;
   disabledHeaders: Record<string, string>;
-  body: Record<string, unknown> | null;
+  body: RequestBody;
   auth: ScenarioAuth;
 };
 
@@ -94,7 +95,7 @@ function validated(input: RequestTemplateInput, previous?: RequestTemplateRow): 
     disabledParameters: input.disabledParameters ?? previous?.disabledParameters ?? {},
     headers: input.headers ?? previous?.headers ?? {},
     disabledHeaders: input.disabledHeaders ?? previous?.disabledHeaders ?? {},
-    body: input.body === undefined ? (previous?.body ?? null) : input.body,
+    body: input.body ?? previous?.body ?? { type: "none" },
     auth: input.auth ?? previous?.auth ?? "default",
   };
   // The same name on both sides of the switch would make «se envía» depend on which map a reader
@@ -123,7 +124,7 @@ function validated(input: RequestTemplateInput, previous?: RequestTemplateRow): 
     disabledParameters: fields.disabledParameters,
     headers: fields.headers,
     disabledHeaders: fields.disabledHeaders,
-    ...(fields.body ? { body: fields.body } : {}),
+    body: fields.body,
     auth: fields.auth,
   });
   if (!parsed.ok) throw new InvalidInputError("La prueba no es válida", parsed.issues, "request-template-invalid");

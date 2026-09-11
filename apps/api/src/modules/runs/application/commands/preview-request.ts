@@ -1,7 +1,9 @@
 import { Inject } from "@nestjs/common";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 
-import { ConflictError, NotFoundError } from "@/shared/errors/domain-error";
+import { safeParseRequestBody } from "@eq/runner-core";
+
+import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
 import type { RequestPreview } from "../../domain/model";
@@ -38,6 +40,12 @@ export class PreviewRequestHandler implements ICommandHandler<PreviewRequestComm
   ) {}
 
   async execute(command: PreviewRequestCommand): Promise<RequestPreview> {
+    // The same schema a saved request goes through, applied to a request that is not being saved.
+    // There is no row here to validate on the way in, and without this a `type` nobody declared
+    // reaches the serialiser as a 500 about something the person in front of it typed.
+    const body = safeParseRequestBody(command.input.template.body);
+    if (!body.ok) throw new InvalidInputError("El cuerpo no es válido", body.issues, "request-body-invalid");
+
     const project = await this.projects.findById(command.projectId);
     if (!project || project.organizationId !== command.organizationId)
       throw new NotFoundError("El proyecto no existe", "project-not-found");

@@ -24,7 +24,7 @@ export const templateView = (row: RequestTemplateRow): RequestTemplateViewOf<Dat
   disabledParameters: row.disabledParameters ?? {},
   headers: row.headers ?? {},
   disabledHeaders: row.disabledHeaders ?? {},
-  body: row.body ?? null,
+  body: row.body ?? { type: "none" },
   auth: row.auth ?? "default",
   updatedAt: row.updatedAt,
 });

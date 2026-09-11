@@ -23,7 +23,7 @@ const template = (id: string, name: string, operationId = "createThing"): Reques
   disabledParameters: {},
   headers: {},
   disabledHeaders: {},
-  body: null,
+  body: { type: "none" },
   auth: "default",
   updatedAt: "2026-03-01T10:00:00.000Z",
 });

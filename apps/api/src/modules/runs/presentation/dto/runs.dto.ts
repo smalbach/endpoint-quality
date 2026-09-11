@@ -11,7 +11,7 @@ import {
   Min,
   MinLength,
 } from "class-validator";
-import type { OrderMode, ScenarioAuth } from "@eq/runner-core";
+import type { OrderMode, RequestBody, ScenarioAuth } from "@eq/runner-core";
 
 export class StartRunDto {
   @IsUUID() environmentId: string;
@@ -59,6 +59,6 @@ export class PreviewRequestDto {
   /** No `disabled…` counterpart: this is not a row being saved, it is a request being sent, and
    * what is switched off is simply not in it. The editor drops them before it calls. */
   @IsOptional() @IsObject() headers?: Record<string, string>;
-  @IsOptional() @IsObject() body?: Record<string, unknown> | null;
+  @IsOptional() @IsObject() body?: RequestBody;
   @IsOptional() @IsIn(AUTH, { message: `auth debe ser uno de: ${AUTH.join(", ")}` }) auth?: ScenarioAuth;
 }

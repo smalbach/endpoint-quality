@@ -27,6 +27,7 @@ export type {
   OperationScenarios,
   ProblemDetails,
   ProjectSummary,
+  RequestBodyView,
   RequestPreviewView,
   RequestTemplateView,
   Role,

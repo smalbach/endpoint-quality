@@ -149,7 +149,7 @@ describe("flujos reutilizables y variables de entorno", () => {
         name: "Crear",
         operationId: "createThing",
         expectedStatus: 201,
-        body: { name: "{{entityName}}", size: 7 },
+        body: { type: "json", json: { name: "{{entityName}}", size: 7 } },
       });
     assert.equal(create.status, 201, JSON.stringify(create.body));
     const read = await api()
@@ -998,7 +998,12 @@ describe("comprobaciones, reintentos y política de error de un paso", () => {
     const create = await api()
       .post(`${fixture.projectBase}/request-templates`)
       .set(as(owner))
-      .send({ name: "Crear", operationId: "createThing", expectedStatus: 201, body: { name: "x", size: 7 } });
+      .send({
+        name: "Crear",
+        operationId: "createThing",
+        expectedStatus: 201,
+        body: { type: "json", json: { name: "x", size: 7 } },
+      });
     assert.equal(create.status, 201, JSON.stringify(create.body));
     const list = await api()
       .post(`${fixture.projectBase}/request-templates`)
@@ -1306,7 +1311,7 @@ describe("condición, espera y bucle de un paso", () => {
         name: "Crear",
         operationId: "createThing",
         expectedStatus: 201,
-        body: { name: "{{env.entityName}}", size: 7 },
+        body: { type: "json", json: { name: "{{env.entityName}}", size: 7 } },
       }),
       list: await send({ name: "Listar", operationId: "listThings", expectedStatus: 200 }),
       read: await send({
@@ -1473,7 +1478,7 @@ describe("conjuntos de datos y suites", () => {
       name: "Crear",
       operationId: "createThing",
       expectedStatus: 201,
-      body: { name: "{{dataset.nombre}}", size: 7 },
+      body: { type: "json", json: { name: "{{dataset.nombre}}", size: 7 } },
     });
     const list = await send("request-templates", { name: "Listar", operationId: "listThings", expectedStatus: 200 });
     const creates = await send("workflows", {
@@ -1788,7 +1793,7 @@ describe("la credencial que consigue la propia corrida", () => {
         name: "Iniciar sesión",
         operationId: "createSession",
         expectedStatus: 201,
-        body: { email: "quien@ejemplo.com", password: "una-contraseña" },
+        body: { type: "json", json: { email: "quien@ejemplo.com", password: "una-contraseña" } },
         auth: "none",
       }),
       list: await send({ name: "Listar", operationId: "listThings", expectedStatus: 200 }),
@@ -2115,11 +2120,90 @@ describe("enviar una petición sin lanzar una corrida", () => {
       environmentId: fixture.environmentId,
       operationId: "createThing",
       expectedStatus: 201,
-      body: { name: "escrito a mano", size: 3 },
+      body: { type: "json", json: { name: "escrito a mano", size: 3 } },
     });
     assert.equal(response.status, 200, JSON.stringify(response.body));
     assert.deepEqual(response.body.request.body, { name: "escrito a mano", size: 3 });
     assert.equal(response.body.response.status, 201);
+  });
+
+  /**
+   * Un cuerpo que no es JSON, que es lo que el formulario no sabía decir.
+   *
+   * Lo que hay que comprobar de cada tipo es lo mismo: que los bytes que salen son los que se
+   * escribieron y que el `Content-Type` coincide con ellos. Un formulario declarado como JSON y un
+   * multipart cuya frontera no es la que dice la cabecera son dos peticiones que ningún destino
+   * sabe leer, y el 400 que devuelven no habla de eso.
+   */
+  test("un cuerpo en texto sale tal cual, con el content-type que se escribió", async () => {
+    const before = fixture.target.requests.length;
+    const response = await send({
+      environmentId: fixture.environmentId,
+      operationId: "createThing",
+      expectedStatus: 201,
+      body: { type: "raw", text: '{"name":"a mano","size":3}', contentType: "application/json" },
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    const received = fixture.target.requests.slice(before).find((item) => item.path === "/things");
+    assert.equal(received?.headers["content-type"], "application/json");
+    // El texto, no el objeto: para un cuerpo en crudo lo único honesto que enseñar es lo que cruzó
+    // el cable, porque nadie ha prometido que se pueda leer como un árbol.
+    assert.equal(response.body.request.body, '{"name":"a mano","size":3}');
+  });
+
+  test("un formulario urlencoded se codifica después de sustituir las variables", async () => {
+    const before = fixture.target.requests.length;
+    const response = await send({
+      environmentId: fixture.environmentId,
+      operationId: "createThing",
+      expectedStatus: 201,
+      // El espacio es lo que parte el payload si se codifica antes de sustituir: el destino leería
+      // dos campos donde se escribió uno.
+      body: { type: "x-www-form-urlencoded", fields: { name: "a mano", size: "3" }, disabledFields: { d: "1" } },
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    const received = fixture.target.requests.slice(before).find((item) => item.path === "/things");
+    assert.equal(received?.headers["content-type"], "application/x-www-form-urlencoded");
+    assert.equal(response.body.request.body, "name=a+mano&size=3");
+  });
+
+  test("un multipart declara en la cabecera la misma frontera que lleva dentro", async () => {
+    const before = fixture.target.requests.length;
+    const response = await send({
+      environmentId: fixture.environmentId,
+      operationId: "createThing",
+      expectedStatus: 201,
+      body: { type: "form-data", fields: { name: "a mano" }, disabledFields: {} },
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    const received = fixture.target.requests.slice(before).find((item) => item.path === "/things");
+    const boundary = /boundary=(.+)$/.exec(received?.headers["content-type"] ?? "")?.[1];
+    assert.ok(boundary, `el content-type no declara frontera: ${received?.headers["content-type"]}`);
+    assert.ok(String(response.body.request.body).startsWith(`--${boundary}\r\n`));
+  });
+
+  test("«sin cuerpo» no manda ninguno, que no es lo mismo que mandar uno vacío", async () => {
+    const before = fixture.target.requests.length;
+    const response = await send({
+      environmentId: fixture.environmentId,
+      operationId: "listThings",
+      expectedStatus: 200,
+      body: { type: "none" },
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    const received = fixture.target.requests.slice(before).find((item) => item.path === "/things");
+    assert.equal(received?.headers["content-type"], undefined);
+    assert.equal(response.body.request.body, null);
+  });
+
+  test("un cuerpo de un tipo que no existe es 422, con el campo que lo dice", async () => {
+    const response = await send({
+      environmentId: fixture.environmentId,
+      operationId: "listThings",
+      expectedStatus: 200,
+      body: { type: "yaml", text: "a: 1" },
+    });
+    assert.equal(response.status, 422, JSON.stringify(response.body));
   });
 
   test("una cabecera escrita a mano llega al destino y gana sobre la que pone el motor", async () => {
