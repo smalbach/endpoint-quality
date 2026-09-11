@@ -24,10 +24,10 @@ Security Rules**, panel de respuesta **Body · Headers · Console**, y un botón
 | --- | ---------------------------------------------------------- | --------------------------------------------- | ----- |
 | 1   | Enviar una petición suelta y ver la respuesta              | no existía                                    | 1 ✔   |
 | 2   | Panel de respuesta (estado, ms, tamaño, cabeceras, cuerpo) | no existía                                    | 1 ✔   |
-| 3   | Cabeceras propias por plantilla                            | `parameters` son solo parámetros del contrato | 2     |
-| 4   | Cuerpo no-JSON (form-data, urlencoded, raw, binary)        | `body` es `Record<string, unknown> \| null`   | 2     |
-| 5   | Fila con interruptor (`enabled`)                           | para quitar un parámetro hay que borrarlo     | 2     |
-| 6   | Autocompletado al escribir `{{`                            | el motor interpola, el editor no ayuda        | 2     |
+| 3   | Cabeceras propias por plantilla                            | `parameters` son solo parámetros del contrato | 2 ✔   |
+| 4   | Cuerpo no-JSON (form-data, urlencoded, raw)                | `body` es `Record<string, unknown> \| null`   | 2 ✔   |
+| 5   | Fila con interruptor (`enabled`)                           | para quitar un parámetro hay que borrarlo     | 2 ✔   |
+| 6   | Autocompletado al escribir `{{`                            | el motor interpola, el editor no ayuda        | 2 ✔   |
 | 7   | Exportar como cURL                                         | no existía                                    | 3     |
 | 8   | Importar cURL / Postman / Insomnia / markdown              | solo entra OpenAPI 3.x                        | 3     |
 
@@ -88,12 +88,27 @@ Para que las dos rutas se preparen igual, `RunOrchestrator.prepare` salió a
 mapeo de plantilla a escenario se fue a `scenarioFor` en
 `apps/api/src/modules/workflows/domain/model.ts`.
 
-### Tanda 2 — El formulario
+### Tanda 2 — El formulario · **cerrada** (`ef97235`, `abba9dd`, `cfadc65`)
 
-Cabeceras propias, `enabled` por fila, tipos de cuerpo. `RequestTemplateView.body` pasa de
-`Record<string, unknown> | null` a algo como `{ type, content }` — **con migración**, porque hay
-plantillas guardadas. Autocompletado al escribir `{{`, alimentado de las variables del entorno
-seleccionado.
+Cabeceras propias, `enabled` por fila, tipos de cuerpo, autocompletado al escribir `{{`.
+
+Tres decisiones que conviene no volver a discutir:
+
+- **Lo apagado va en un segundo mapa al lado del primero**, nunca como una marca dentro:
+  `disabledParameters`, `disabledHeaders`, `disabledFields`. Es la forma que ya tenían las
+  `disabledVariables` de un entorno y vale por lo mismo — `parameters` y `headers` siguen
+  significando lo que se envía, en todas partes, así que `scenarioFor` no filtra nada y **el motor
+  no aprende el concepto**.
+- **`body` es una unión etiquetada** —`none` / `json` / `raw` / `form-data` /
+  `x-www-form-urlencoded`— y no cinco campos opcionales. En el escenario del motor el JSON sigue
+  siendo `body`, porque es lo que la comprobación de persistencia compara campo a campo, y lo demás
+  entra por `payload`; quién es cuál lo decide `scenarioFor`, y solo `scenarioFor`. El golden de
+  paridad no se toca.
+- **Serializar es lo último**, ya en el ejecutor: un `{{nombre}}` codificado antes de sustituirse
+  mete un espacio sin escapar en un formulario y el destino lee dos campos donde se escribió uno.
+
+Quedan dos migraciones: `1700000011000` (las tres columnas nuevas) y `1700000012000` (`body` a
+`{ type, … }`, con `NOT NULL` y `{"type":"none"}` por defecto).
 
 ### Tanda 3 — Entrar y salir
 
