@@ -5,6 +5,7 @@ import { api, type ApiError } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { Badge, Button, Card, Field, inputClass } from "@/components/ui";
 import { SECTION_EDITORS } from "@/components/config-editors";
+import { CopyFromProject } from "@/components/copy-from-project";
 import { unchanged } from "@/lib/config-draft";
 import { formatDate } from "@/lib/format";
 import type { ConfigView, ProjectSummary } from "@/lib/types";
@@ -74,6 +75,8 @@ export function ConfigPage() {
     <div className="space-y-4">
       <ImportContract
         base={base}
+        projectId={projectId ?? ""}
+        organizationId={organization?.id ?? ""}
         contract={project.data?.contract ?? null}
         source={project.data?.source ?? null}
         disabled={!canEdit}
@@ -98,12 +101,16 @@ export function ConfigPage() {
 
 function ImportContract({
   base,
+  projectId,
+  organizationId,
   contract,
   source,
   disabled,
   onImported,
 }: {
   base: string;
+  projectId: string;
+  organizationId: string;
   contract: ProjectSummary["contract"];
   source: ProjectSummary["source"];
   disabled: boolean;
@@ -197,6 +204,16 @@ function ImportContract({
           >
             Importar desde la URL
           </Button>
+          {/* Under the contract import, because that is the other thing somebody does in the first
+              five minutes of a project — and the two are the same sentence: «este proyecto empieza
+              desde algo», sea un documento o el proyecto de al lado. */}
+          <CopyFromProject
+            base={base}
+            projectId={projectId}
+            organizationId={organizationId}
+            disabled={disabled}
+            onCopied={onImported}
+          />
         </div>
         <div>
           <Field

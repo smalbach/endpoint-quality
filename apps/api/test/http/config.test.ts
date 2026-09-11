@@ -826,6 +826,174 @@ describe("credenciales del destino", () => {
     assert.equal(response.body.errors[0].field, "access.crossRole.0.target");
   });
 
+  /**
+   * Empezar un proyecto desde uno que ya funciona.
+   *
+   * El segundo proyecto de un equipo no es nunca uno en blanco: tiene el mismo envelope, los mismos
+   * presupuestos, las mismas palabras para los mismos casos. Retecleado todo eso es una tarde y es
+   * también de donde salen las diferencias que hacen que dos proyectos no estén de acuerdo sobre
+   * qué significa «pasó».
+   *
+   * Lo que hay que asegurar es lo que no se ve: que los ids se rehacen y las referencias se
+   * remapean —un flujo nombra sus pruebas por id dentro de un `jsonb`, así que copiarlo tal cual
+   * daría un grafo del proyecto nuevo apuntando a las filas del viejo— y que no cruza ningún
+   * secreto.
+   */
+  async function blankProject(name: string) {
+    const created = await api().post(`/orgs/${owner.organizationId}/projects`).set(as(owner)).send({ name });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    return `/orgs/${owner.organizationId}/projects/${created.body.projectId}`;
+  }
+
+  test("las secciones elegidas se copian enteras, y solo las elegidas", async () => {
+    const target = await blankProject(`copia-${Math.random().toString(36).slice(2, 8)}`);
+    const response = await api()
+      .post(`${target}/copy-from-project`)
+      .set(as(owner))
+      .send({ sourceProjectId: base.split("/").pop(), sections: ["envelope"] });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.deepEqual(response.body.sections, ["envelope"]);
+
+    const copied = (await api().get(`${target}/config`).set(as(owner))).body.sections;
+    const original = (await api().get(`${base}/config`).set(as(owner))).body.sections;
+    assert.deepEqual(copied.envelope.data, original.envelope.data);
+    // La que no se pidió sigue como estaba: una copia que arrastra secciones que nadie nombró es
+    // este comando borrando configuración por su cuenta.
+    assert.equal(copied.budgets.updatedAt, null);
+  });
+
+  test("una sección que el origen no tiene se dice en vez de sobrescribir la de aquí", async () => {
+    const source = await blankProject(`vacio-${Math.random().toString(36).slice(2, 8)}`);
+    const target = await blankProject(`destino-${Math.random().toString(36).slice(2, 8)}`);
+    const response = await api()
+      .post(`${target}/copy-from-project`)
+      .set(as(owner))
+      .send({ sourceProjectId: source.split("/").pop(), sections: ["budgets"] });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.deepEqual(response.body.sections, []);
+    assert.match(response.body.skipped[0].detail, /budgets/);
+  });
+
+  test("un flujo copiado apunta a las pruebas nuevas, no a las del proyecto de origen", async () => {
+    const source = await blankProject(`origen-${Math.random().toString(36).slice(2, 8)}`);
+    const template = await api()
+      .post(`${source}/request-templates`)
+      .set(as(owner))
+      .send({ name: "Listar", operationId: "listStores", expectedStatus: 200 });
+    assert.equal(template.status, 201, JSON.stringify(template.body));
+    const workflow = await api()
+      .post(`${source}/workflows`)
+      .set(as(owner))
+      .send({
+        name: "Solo listar",
+        definition: { steps: [{ id: "listar", requestTemplateId: template.body.requestTemplateId }] },
+      });
+    assert.equal(workflow.status, 201, JSON.stringify(workflow.body));
+
+    const target = await blankProject(`destino-${Math.random().toString(36).slice(2, 8)}`);
+    const response = await api()
+      .post(`${target}/copy-from-project`)
+      .set(as(owner))
+      .send({ sourceProjectId: source.split("/").pop(), flows: true });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.requestTemplates, 1);
+    assert.equal(response.body.workflows, 1);
+
+    const copied = (await api().get(`${target}/workflows`).set(as(owner))).body;
+    const copiedTemplate = copied.requestTemplates[0];
+    // Id nuevo, y el paso apuntando a él: copiar la fila tal cual dejaría un grafo del proyecto
+    // nuevo señalando una prueba del viejo, que ninguna clave ajena puede refusar y que solo falla
+    // horas después, a mitad de corrida.
+    assert.notEqual(copiedTemplate.id, template.body.requestTemplateId);
+    assert.equal(copied.workflows[0].steps[0].requestTemplateId, copiedTemplate.id);
+  });
+
+  test("un entorno cruza sin su credencial y con los secretos vaciados, y lo dice", async () => {
+    const source = await blankProject(`origen-${Math.random().toString(36).slice(2, 8)}`);
+    const environment = await api()
+      .post(`${source}/environments`)
+      .set(as(owner))
+      .send({
+        name: "staging",
+        baseUrl: "https://staging.ejemplo.com",
+        variables: {
+          tenant: { initial: "acme", current: "acme", sensitive: false },
+          token: { initial: "un-secreto", current: "un-secreto", sensitive: true },
+        },
+        writesAllowed: true,
+      });
+    assert.equal(environment.status, 201, JSON.stringify(environment.body));
+    await api()
+      .put(`${source}/environments/${environment.body.environmentId}/credentials`)
+      .set(as(owner))
+      .send({ name: "admin", role: "primary", kind: "bearer", secret: "token-de-staging" });
+
+    const target = await blankProject(`destino-${Math.random().toString(36).slice(2, 8)}`);
+    const response = await api()
+      .post(`${target}/copy-from-project`)
+      .set(as(owner))
+      .send({ sourceProjectId: source.split("/").pop(), environments: true });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.environments, 1);
+
+    const copied = (await api().get(`${target}/environments`).set(as(owner))).body[0];
+    assert.equal(copied.baseUrl, "https://staging.ejemplo.com");
+    assert.equal(copied.variables.tenant.current, "acme");
+    // El nombre sí, el valor no: el nombre es la mitad útil —es a lo que apunta un `{{token}}`— y
+    // el valor es la que no puede duplicarse.
+    assert.equal(copied.variables.token.current, "");
+    assert.equal(copied.variables.token.sensitive, true);
+    // Y lo que hay que volver a escribir se dice por su nombre, porque un entorno que parece
+    // configurado y contesta 401 es peor que uno que pide a gritos que lo rellenen.
+    assert.ok(response.body.skipped.some((entry: { detail: string }) => entry.detail.includes("token")));
+    assert.ok(response.body.skipped.some((entry: { what: string }) => entry.what === "credencial"));
+    assert.equal(copied.credentials.length, 0);
+    // Los dos permisos vuelven a su valor de partida: son respuestas sobre *este* destino, y un
+    // entorno que llegara con las escrituras ya permitidas podría descubrirlo en su primera corrida.
+    assert.equal(copied.writesAllowed, false);
+  });
+
+  test("copiar del mismo proyecto es 422, y de otra organización es 404", async () => {
+    const target = await blankProject(`destino-${Math.random().toString(36).slice(2, 8)}`);
+    const itself = await api()
+      .post(`${target}/copy-from-project`)
+      .set(as(owner))
+      .send({ sourceProjectId: target.split("/").pop() });
+    assert.equal(itself.status, 422, JSON.stringify(itself.body));
+
+    const stranger = await signUp("copia-ajena@example.com");
+    const theirs = await api()
+      .post(`/orgs/${stranger.organizationId}/projects`)
+      .set(as(stranger))
+      .send({ name: "Suyo" });
+    const across = await api()
+      .post(`${target}/copy-from-project`)
+      .set(as(owner))
+      .send({ sourceProjectId: theirs.body.projectId });
+    // 404 y no 403: un 403 confirmaría que el id es real.
+    assert.equal(across.status, 404, JSON.stringify(across.body));
+  });
+
+  test("un nombre que ya existe se numera en vez de fallar a mitad de la copia", async () => {
+    const source = await blankProject(`origen-${Math.random().toString(36).slice(2, 8)}`);
+    await api()
+      .post(`${source}/request-templates`)
+      .set(as(owner))
+      .send({ name: "Listar", operationId: "listStores", expectedStatus: 200 });
+    const target = await blankProject(`destino-${Math.random().toString(36).slice(2, 8)}`);
+    const send = () =>
+      api()
+        .post(`${target}/copy-from-project`)
+        .set(as(owner))
+        .send({ sourceProjectId: source.split("/").pop(), flows: true });
+    assert.equal((await send()).status, 201);
+    assert.equal((await send()).status, 201);
+    const names = (await api().get(`${target}/workflows`).set(as(owner))).body.requestTemplates.map(
+      (item: { name: string }) => item.name,
+    );
+    assert.deepEqual(names.sort(), ["Listar", "Listar (2)"]);
+  });
+
   test("una URL base que no es http(s) se rechaza al escribirla", async () => {
     const response = await api()
       .post(`${base}/environments`)

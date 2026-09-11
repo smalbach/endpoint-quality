@@ -22,7 +22,10 @@ import {
   RequireRole,
   type Principal,
 } from "@/modules/auth/infrastructure/guards/auth.guard";
+import type { ConfigSection } from "@eq/runner-core";
+
 import { CreateProjectCommand } from "../application/commands/create-project";
+import { CopyFromProjectCommand } from "../application/commands/copy-from-project";
 import { SetProjectArchivedCommand, UpdateProjectCommand } from "../application/commands/update-project";
 import { GetProjectQuery, ListProjectsQuery } from "../application/queries/list-projects";
 import {
@@ -33,6 +36,7 @@ import { ActivateSpecVersionCommand } from "@/modules/specs/application/commands
 import { CheckSpecDriftCommand } from "@/modules/specs/application/commands/check-spec-drift";
 import { GetOperationsQuery, ListSpecVersionsQuery } from "@/modules/specs/application/queries/get-operations";
 import {
+  CopyFromProjectDto,
   ArchiveProjectDto,
   CreateProjectDto,
   ImportSpecDto,
@@ -179,6 +183,37 @@ export class ProjectsController {
   ) {
     return this.commandBus.execute(
       new CheckSpecDriftCommand(organizationId, projectId, toSource(body.source), actorId(principal)),
+    );
+  }
+
+  /**
+   * Empezar un proyecto desde uno que ya funciona.
+   *
+   * `admin`, and not `editor` like the other writes here. It replaces whole configuration sections
+   * of this project with another's in one call — there is no half of it to undo from the editor —
+   * and the source has to be one this person can already read, which is what makes the role the
+   * honest gate rather than a formality.
+   */
+  @Post(":projectId/copy-from-project")
+  @RequireRole("admin")
+  async copyFromProject(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Body() body: CopyFromProjectDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.commandBus.execute(
+      new CopyFromProjectCommand(
+        organizationId,
+        projectId,
+        {
+          sourceProjectId: body.sourceProjectId,
+          sections: (body.sections ?? []) as ConfigSection[],
+          flows: body.flows ?? false,
+          environments: body.environments ?? false,
+        },
+        actorId(principal),
+      ),
     );
   }
 

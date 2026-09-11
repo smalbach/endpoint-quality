@@ -46,6 +46,7 @@ import {
 } from "@/modules/iam/presentation/dto/iam.dto";
 import {
   ArchiveProjectDto,
+  CopyFromProjectDto,
   CreateProjectDto,
   ImportSpecDto,
   SpecSourceDto,
@@ -86,6 +87,7 @@ const DTOS = [
   CreateProjectDto,
   UpdateProjectDto,
   ArchiveProjectDto,
+  CopyFromProjectDto,
   SpecSourceDto,
   ImportSpecDto,
   CreateEnvironmentDto,

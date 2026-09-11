@@ -1,4 +1,15 @@
-import { IsBoolean, IsIn, IsObject, IsOptional, IsString, IsUrl, MaxLength, ValidateNested } from "class-validator";
+import {
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsObject,
+  IsOptional,
+  IsString,
+  IsUrl,
+  IsUUID,
+  MaxLength,
+  ValidateNested,
+} from "class-validator";
 import { Type } from "class-transformer";
 
 import { MAX_SPEC_BYTES } from "@/shared/http/body-limits";
@@ -56,4 +67,20 @@ export class ImportSpecDto {
   @IsOptional() @ValidateNested() @Type(() => SpecSourceDto) source?: SpecSourceDto;
   /** Absent means activate, which is what importing usually means. A drift check passes false. */
   @IsOptional() @IsBoolean() activate?: boolean;
+}
+
+/**
+ * Copiar de otro proyecto de la misma organización.
+ *
+ * Which sections come across is a list and not a boolean, because the useful copy is almost never
+ * all of it: two projects share an envelope and a set of budgets far more often than they share
+ * which operations are implemented, and that last one is a fact about somebody else's code.
+ */
+export class CopyFromProjectDto {
+  @IsUUID() sourceProjectId: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) sections?: string[];
+  @IsOptional() @IsBoolean() flows?: boolean;
+  /** Their targets and their variables. **Never their credentials, nor the value of a variable
+   * marked sensitive** — see the command; it says which ones it emptied. */
+  @IsOptional() @IsBoolean() environments?: boolean;
 }
