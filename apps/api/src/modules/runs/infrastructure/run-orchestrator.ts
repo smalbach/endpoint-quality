@@ -58,7 +58,12 @@ import { SECRET_CIPHER, type SecretCipherPort } from "@/shared/crypto/secret-cip
 import { caseStatusFor, failureFor, verdictFor, type Run, type RunCase, type RunStep } from "../domain/model";
 import { RUN_QUEUE, RUN_REPOSITORY, type RunQueuePort, type RunRepositoryPort } from "../domain/ports";
 import { CaseExecutor, type ExecutedCase, type ExecutedStep, type ExecutionTarget } from "./case-executor";
-import { RunCaseFinishedEvent, RunFinishedEvent, RunStartedEvent } from "../application/events/run.events";
+import {
+  RunCaseFinishedEvent,
+  RunCaseRetryingEvent,
+  RunFinishedEvent,
+  RunStartedEvent,
+} from "../application/events/run.events";
 
 @Injectable()
 export class RunOrchestrator {
@@ -284,7 +289,12 @@ export class RunOrchestrator {
    * would otherwise disappear into a green tick. It does not fail the case — the author asked for
    * the retries — and it is on the report where somebody can see the pattern across runs.
    */
-  private async attempt(step: WorkflowStep, execute: () => Promise<ExecutedCase>): Promise<ExecutedCase> {
+  private async attempt(
+    run: Run,
+    runCaseId: string,
+    step: WorkflowStep,
+    execute: () => Promise<ExecutedCase>,
+  ): Promise<ExecutedCase> {
     const retry = step.retry;
     const attempts = Math.max(0, retry?.attempts ?? 0) + 1;
     let wait = retry?.delayMs ?? 0;
@@ -296,6 +306,9 @@ export class RunOrchestrator {
       // opted into.
       const status = executed.steps.at(-1)?.actual?.status;
       if (retry?.onStatus?.length && (status === undefined || !retry.onStatus.includes(status))) break;
+      // Said before the wait and not after it: the point is the silence, and announcing it once
+      // it is over would be a message about something that already stopped being true.
+      this.eventBus.publish(new RunCaseRetryingEvent(run.projectId, run.id, runCaseId, attempt, attempts, wait));
       if (wait > 0) await delay(wait);
       wait = Math.round(wait * (retry?.backoff ?? 1));
       executed = await this.withChecks(step, await execute());
@@ -644,7 +657,7 @@ export class RunOrchestrator {
       }
 
       await this.runs.saveCase({ ...runCase, status: "running", startedAt: boundAt });
-      const executed = await this.attempt(item.step, () =>
+      const executed = await this.attempt(run, runCase.id, item.step, () =>
         this.executor.run({
           operation: item.operation,
           scenario: scenarioFor(item.template),

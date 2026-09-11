@@ -3,7 +3,12 @@ import { EventsHandler, type IEventHandler } from "@nestjs/cqrs";
 import { Subject, filter, type Observable } from "rxjs";
 
 import { PROGRESS_RELAY, type ProgressEvent, type ProgressRelayPort } from "../domain/progress";
-import { RunCaseFinishedEvent, RunFinishedEvent, RunStartedEvent } from "../application/events/run.events";
+import {
+  RunCaseFinishedEvent,
+  RunCaseRetryingEvent,
+  RunFinishedEvent,
+  RunStartedEvent,
+} from "../application/events/run.events";
 
 export type { ProgressEvent };
 
@@ -59,6 +64,18 @@ export class RunCaseProjector implements IEventHandler<RunCaseFinishedEvent> {
   constructor(private readonly stream: RunProgressStream) {}
   handle(event: RunCaseFinishedEvent): void {
     this.stream.publish({ runId: event.runId, type: "case", payload: { case: event.runCase, totals: event.totals } });
+  }
+}
+
+@EventsHandler(RunCaseRetryingEvent)
+export class RunCaseRetryingProjector implements IEventHandler<RunCaseRetryingEvent> {
+  constructor(private readonly stream: RunProgressStream) {}
+  handle(event: RunCaseRetryingEvent): void {
+    this.stream.publish({
+      runId: event.runId,
+      type: "retrying",
+      payload: { caseId: event.runCaseId, attempt: event.attempt, attempts: event.attempts, waitMs: event.waitMs },
+    });
   }
 }
 

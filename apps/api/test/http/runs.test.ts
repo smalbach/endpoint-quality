@@ -1008,6 +1008,45 @@ describe("comprobaciones, reintentos y política de error de un paso", () => {
     await flow.target.stop();
   });
 
+  test("mientras espera para volver a intentarlo, lo dice", async () => {
+    const flow = await flowWith(
+      ({ create }) => [
+        { id: "crear", requestTemplateId: create, retry: { attempts: 2, delayMs: 300, onStatus: [503] } },
+      ],
+      { flakyWrites: 1 },
+    );
+    // Sin esperar a la cola: el stream se abre con la corrida caminando, que es la única forma de
+    // ver lo único que una corrida hace que tarda y no produce nada que mirar. Los 300 ms de
+    // espera son la ventana.
+    const started = await api()
+      .post(`${flow.projectBase}/runs`)
+      .set(as(owner))
+      .send({ environmentId: flow.environmentId, workflowId: flow.workflowId });
+    assert.equal(started.status, 202);
+
+    const stream = await api()
+      .get(`${flow.projectBase}/runs/${started.body.runId}/stream`)
+      .set(as(owner))
+      .buffer(true)
+      .parse((response, next) => {
+        let text = "";
+        response.on("data", (chunk: Buffer) => (text += chunk.toString()));
+        response.on("end", () => next(null, text));
+      });
+
+    const raw = stream.body as unknown as string;
+    assert.match(raw, /event: retrying/, raw.slice(0, 400));
+    // Buscado por su contenido y no por su posición: el orden de las líneas de un evento SSE lo
+    // decide el framework, y una prueba que dependa de él se rompe en una actualización.
+    const line = raw.split("\n").find((entry) => entry.startsWith("data:") && entry.includes("attempt"));
+    const retrying = JSON.parse(line!.slice("data:".length));
+    assert.equal(retrying.attempt, 2);
+    assert.equal(retrying.attempts, 3);
+    assert.equal(retrying.waitMs, 300);
+    await context.queue.idle();
+    await flow.target.stop();
+  });
+
   test("onStatus impide reintentar lo que nunca va a cambiar", async () => {
     // El fallo es una comprobación, no un 503: con `onStatus` acotado a 503 no se repite, que es
     // justo lo que evita que una suite reintente un 422 tres veces y tarde el triple.

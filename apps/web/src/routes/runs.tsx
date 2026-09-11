@@ -146,6 +146,15 @@ export function RunDetailPage() {
   const base = `/orgs/${organization?.id}/projects/${projectId}`;
 
   const [live, setLive] = useState<{ totals: RunTotals; cases: Map<string, RunCase> } | null>(null);
+  /**
+   * El caso que está esperando para volver a intentarlo.
+   *
+   * Es lo único que una corrida hace que tarda y no produce nada que mirar: con una espera de
+   * cuatro segundos, la fila se queda en `running` y no hay forma de distinguirla de una petición
+   * colgada. Vive fuera de `live` porque no es un caso ni unos totales: es una nota sobre una fila,
+   * y la borra el propio caso cuando termina.
+   */
+  const [retrying, setRetrying] = useState<Map<string, { attempt: number; attempts: number }>>(new Map());
   const [streaming, setStreaming] = useState<"connecting" | "live" | "polling">("connecting");
   const [openCase, setOpenCase] = useState<string | null>(null);
   const finished = useRef(false);
@@ -171,7 +180,29 @@ export function RunDetailPage() {
       signal: controller.signal,
       onEvent: (event) => {
         setStreaming("live");
-        const payload = event.data as { case?: RunCase; totals?: RunTotals; status?: string };
+        const payload = event.data as {
+          case?: RunCase;
+          totals?: RunTotals;
+          status?: string;
+          caseId?: string;
+          attempt?: number;
+          attempts?: number;
+        };
+        if (payload.caseId && payload.attempt) {
+          const { caseId, attempt, attempts = 0 } = payload;
+          setRetrying((current) => new Map(current).set(caseId, { attempt, attempts }));
+          return;
+        }
+        // El caso que llega ya trae su veredicto, así que la nota de reintento dejó de ser cierta.
+        if (payload.case) {
+          const finished = payload.case.id;
+          setRetrying((current) => {
+            if (!current.has(finished)) return current;
+            const next = new Map(current);
+            next.delete(finished);
+            return next;
+          });
+        }
         setLive((current) => {
           const cases = new Map(current?.cases ?? []);
           if (payload.case) cases.set(payload.case.id, payload.case);
@@ -308,6 +339,11 @@ export function RunDetailPage() {
                 <span className="block truncate font-mono text-[11px] text-slate-700">{runCase.path}</span>
                 <span className="block truncate text-[10px] text-slate-400">{runCase.scenarioId}</span>
               </span>
+              {retrying.has(runCase.id) && (
+                <span className="shrink-0 animate-pulse rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">
+                  reintento {retrying.get(runCase.id)?.attempt}/{retrying.get(runCase.id)?.attempts}
+                </span>
+              )}
               {runCase.failure && <FailureTag failure={runCase.failure} />}
               <span className="shrink-0 text-[10px] text-slate-400">{formatDuration(runCase.durationMs)}</span>
               <Badge className={cn("shrink-0 border-transparent", statusClass[runCase.status])}>{runCase.status}</Badge>
