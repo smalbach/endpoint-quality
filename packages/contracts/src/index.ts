@@ -333,12 +333,39 @@ export type RunCaseOf<T> = {
   finishedAt?: T | null;
 };
 
+/**
+ * What a run was launched to execute, said in words rather than in ids.
+ *
+ * There are three ways to start one now — the generated matrix, one flow (optionally once per row
+ * of a dataset), or a suite of flows — and until this existed they were the same row in the
+ * history. «¿Esto estaba verde la semana pasada?» is not answerable by a list where every entry
+ * looks identical.
+ *
+ * The names are resolved when the run is read, not stored with it, and a `null` name means the
+ * row is gone. That is the honest shape: a run is a record of what happened, and renaming a flow
+ * afterwards should change what the history calls it, while deleting one should not turn its runs
+ * into a lie about a flow that still exists.
+ */
+export type RunSource =
+  | { kind: "matrix"; operationIds: string[] }
+  | {
+      kind: "workflow";
+      workflowId: string;
+      name: string | null;
+      datasetId: string | null;
+      datasetName: string | null;
+      /** How many times the flow was walked. `1` with no dataset. */
+      rows: number;
+    }
+  | { kind: "suite"; suiteId: string; name: string | null; flowNames: (string | null)[] };
+
 export type RunOf<T> = {
   id: string;
   projectId: string;
   environmentId: string | null;
   status: RunStatus;
   totals: RunTotals;
+  source: RunSource;
   startedAt: T;
   finishedAt: T | null;
   error: string | null;

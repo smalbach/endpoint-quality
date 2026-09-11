@@ -1431,6 +1431,106 @@ describe("conjuntos de datos y suites", () => {
     await project.target.stop();
   });
 
+  test("una corrida dice qué ejecutó, y lo dice con nombres", async () => {
+    const project = await projectWithFlows();
+    const dataset = await project.send(`workflows/${project.creates}/datasets`, {
+      name: "catálogo",
+      rows: [{ nombre: "primera" }],
+    });
+    const suite = await project.send("suites", { name: "antes de entregar", workflowIds: [project.lists] });
+
+    await runAndWait(project.projectBase, { environmentId: project.environmentId });
+    await runAndWait(project.projectBase, {
+      environmentId: project.environmentId,
+      workflowId: project.creates,
+      datasetId: dataset.body.datasetId,
+    });
+    await runAndWait(project.projectBase, { environmentId: project.environmentId, suiteId: suite.body.suiteId });
+
+    const listed = await api().get(`${project.projectBase}/runs`).set(as(owner));
+    // Las tres formas de lanzar una corrida eran la misma fila en el historial, que es como
+    // «¿esto estaba verde la semana pasada?» deja de tener respuesta.
+    const kinds = listed.body.map((run: { source: { kind: string } }) => run.source.kind);
+    assert.deepEqual(new Set(kinds), new Set(["matrix", "workflow", "suite"]));
+
+    const flow = listed.body.find((run: { source: { kind: string } }) => run.source.kind === "workflow");
+    assert.deepEqual(flow.source, {
+      kind: "workflow",
+      workflowId: project.creates,
+      name: "Crear cosas",
+      datasetId: dataset.body.datasetId,
+      datasetName: "catálogo",
+      rows: 1,
+    });
+    await project.target.stop();
+  });
+
+  test("el flujo que ya no existe se dice, no se calla", async () => {
+    const project = await projectWithFlows();
+    const { run } = await runAndWait(project.projectBase, {
+      environmentId: project.environmentId,
+      workflowId: project.creates,
+    });
+    assert.equal(
+      (await api().delete(`${project.projectBase}/workflows/${project.creates}`).set(as(owner))).status,
+      204,
+    );
+
+    const after = await api().get(`${project.projectBase}/runs/${run.id}`).set(as(owner));
+    // El nombre se resuelve al leer y no se guarda con la corrida: renombrar un flujo cambia lo
+    // que el historial lo llama, y borrarlo no convierte sus corridas en una mentira sobre un
+    // flujo que sigue existiendo.
+    assert.deepEqual(after.body.source, {
+      kind: "workflow",
+      workflowId: project.creates,
+      name: null,
+      datasetId: null,
+      datasetName: null,
+      rows: 1,
+    });
+    await project.target.stop();
+  });
+
+  test("una corrida que se pasaría del tope se rechaza en el clic", async () => {
+    // Los topes de este producto son locales —500 filas, 50 flujos, 200 vueltas— y se
+    // multiplican. Este es el único que mira el total, y mirarlo aquí es la diferencia entre un
+    // 422 nombrando el campo y una corrida que hay que cancelar con sus efectos ya en el destino.
+    //
+    // Once pasos por quinientas filas son 5 500 casos, por encima del tope real de 5 000: la
+    // prueba usa el valor de verdad en vez de bajarlo para la ocasión.
+    const project = await projectWithFlows();
+    const steps = [];
+    for (let index = 0; index < 11; index += 1) {
+      const template = await project.send("request-templates", {
+        name: `Listar ${index}`,
+        operationId: "listThings",
+        expectedStatus: 200,
+      });
+      steps.push({ id: `paso-${index}`, requestTemplateId: template.body.requestTemplateId });
+    }
+    const workflow = await project.send("workflows", { name: "once pasos", definition: { steps } });
+    assert.equal(workflow.status, 201, JSON.stringify(workflow.body));
+
+    const dataset = await project.send(`workflows/${workflow.body.workflowId}/datasets`, {
+      name: "quinientas",
+      rows: Array.from({ length: 500 }, (_item, index) => ({ nombre: `fila-${index}` })),
+    });
+    assert.equal(dataset.status, 201, JSON.stringify(dataset.body));
+
+    const response = await api().post(`${project.projectBase}/runs`).set(as(owner)).send({
+      environmentId: project.environmentId,
+      workflowId: workflow.body.workflowId,
+      datasetId: dataset.body.datasetId,
+    });
+    assert.equal(response.status, 422, JSON.stringify(response.body));
+    assert.match(response.body.detail, /5500 casos y el tope es 5000/);
+    assert.deepEqual(
+      response.body.errors.map((error: { field: string }) => error.field),
+      ["datasetId"],
+    );
+    await project.target.stop();
+  });
+
   test("la lista no trae las filas, y el conjunto sí cuando se pide", async () => {
     const project = await projectWithFlows();
     const dataset = await project.send(`workflows/${project.creates}/datasets`, {

@@ -33,6 +33,7 @@ import {
   listAt,
   orderWorkflowSteps,
   withEnvironmentNamespace,
+  withinBudget,
   type Operation,
   type ProjectConfig,
   type ActualResponse,
@@ -42,6 +43,7 @@ import {
 } from "@eq/runner-core";
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
+import { ENV, type Env } from "@/shared/config/env";
 import { SAFE_FETCH, type SafeFetchPort } from "@/shared/http/safe-fetch";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { SPEC_REPOSITORY, type SpecRepositoryPort } from "@/modules/specs/domain/ports";
@@ -72,6 +74,7 @@ export class RunOrchestrator {
     @Inject(CLOCK) private readonly clock: ClockPort,
     @Inject(SAFE_FETCH) private readonly http: SafeFetchPort,
     @Inject(SECRET_CIPHER) private readonly cipher: SecretCipherPort,
+    @Inject(ENV) private readonly env: Env,
     private readonly executor: CaseExecutor,
     private readonly eventBus: EventBus,
   ) {}
@@ -253,11 +256,14 @@ export class RunOrchestrator {
   private elementsFor(
     step: WorkflowStep,
     responses: Map<string, { actual: ActualResponse; durationMs: number }>,
-  ): unknown[] | null {
+    budget: { extra: number },
+  ): { elements: unknown[]; dropped: number } | null {
     if (!step.forEach) return null;
     const source = responses.get(step.forEach.from);
     const list = source ? listAt(source.actual.body, step.forEach.path) : null;
-    return (list ?? []).slice(0, step.forEach.max ?? 50);
+    const walked = withinBudget(list ?? [], step.forEach.max ?? 50, budget.extra);
+    if (walked.elements.length > 1) budget.extra -= walked.elements.length - 1;
+    return walked;
   }
 
   /**
@@ -375,6 +381,10 @@ export class RunOrchestrator {
     // and the totals a follower shows are recomputed from the rows on every event anyway.
     this.eventBus.publish(new RunStartedEvent(run.projectId, run.id, position));
 
+    // What the loops may still add. The static half — flows times rows times steps — was refused
+    // at the click if it did not fit; this is what is left of the ceiling for the half the target
+    // decides.
+    const budget = { extra: this.env.MAX_RUN_CASES - position };
     const base = { ...context.target.variables };
     let cancelled = false;
     let walkedRow = -1;
@@ -386,7 +396,7 @@ export class RunOrchestrator {
         for (const key of Object.keys(context.target.variables)) delete context.target.variables[key];
         Object.assign(context.target.variables, base, datasetBindings(pass.row));
       }
-      cancelled = await this.walkPrepared(run, context, pass.items);
+      cancelled = await this.walkPrepared(run, context, pass.items, budget);
     }
 
     await this.finish(run, cancelled);
@@ -435,6 +445,7 @@ export class RunOrchestrator {
     run: Run,
     context: { config: ProjectConfig; resolved: ResolvedOperation[]; target: ExecutionTarget; authEnabled: boolean },
     prepared: ReturnType<RunOrchestrator["prepareWorkflow"]>,
+    budget: { extra: number },
   ): Promise<boolean> {
     const passed = new Map<string, boolean>();
     // The last answer of each step, which is what a condition judges and a loop walks. Kept for
@@ -499,7 +510,8 @@ export class RunOrchestrator {
       // that accepts a write and takes a moment to make it readable.
       if (item.step.waitMs) await delay(item.step.waitMs);
 
-      const elements = this.elementsFor(item.step, responses);
+      const walked = this.elementsFor(item.step, responses, budget);
+      const elements = walked?.elements ?? null;
       if (elements && elements.length === 0) {
         // A loop over nothing is not a failure and is not silence either: a case that says the
         // list was empty is what tells the next person the flow ran and had nothing to walk.
@@ -561,6 +573,19 @@ export class RunOrchestrator {
           });
           last.ok = last.ok && holds(last.assertions);
           executed.ok = executed.steps.every((step) => step.ok);
+        }
+
+        // Said on the first element, which is the case somebody opens to find out why a loop of
+        // forty produced nine. A warning: the run hit the ceiling, which is not a finding about
+        // the target.
+        if (iteration === 0 && walked?.dropped) {
+          last?.assertions.push({
+            label: "Bucle recortado",
+            pass: false,
+            severity: "warning",
+            detail: `Se recorrieron ${elements?.length ?? 0} de ${(elements?.length ?? 0) + walked.dropped} elementos: la corrida llegó al tope de ${this.env.MAX_RUN_CASES} casos`,
+          });
+          if (last) last.ok = last.ok && holds(last.assertions);
         }
 
         await this.runs.saveSteps(toRunSteps(runCase.id, executed.steps));

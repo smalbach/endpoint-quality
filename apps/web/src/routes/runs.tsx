@@ -5,7 +5,7 @@ import { api, streamRun } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { AssertionRow, Badge, Button, Card, Empty, Json } from "@/components/ui";
 import { cn, formatDate, formatDuration, methodStyle, statusClass } from "@/lib/format";
-import type { Run, RunCase, RunCaseView, RunTotals, RunView } from "@/lib/types";
+import type { Run, RunCase, RunCaseView, RunSource, RunTotals, RunView } from "@/lib/types";
 
 export function RunsPage() {
   const { projectId } = useParams();
@@ -35,6 +35,7 @@ export function RunsPage() {
           <tr>
             <th className="px-4 py-2 font-medium">Estado</th>
             <th className="px-4 py-2 font-medium">Inicio</th>
+            <th className="px-4 py-2 font-medium">Qué</th>
             <th className="px-4 py-2 font-medium">Casos</th>
             <th className="px-4 py-2 font-medium">Resultado</th>
             <th className="px-4 py-2" />
@@ -47,6 +48,9 @@ export function RunsPage() {
                 <Badge className={cn("border-transparent", statusClass[run.status])}>{run.status}</Badge>
               </td>
               <td className="px-4 py-2 text-slate-600">{formatDate(run.startedAt)}</td>
+              <td className="max-w-[18rem] truncate px-4 py-2 text-slate-600" title={sourceLabel(run.source)}>
+                {sourceLabel(run.source)}
+              </td>
               <td className="px-4 py-2 font-mono text-slate-600">{run.totals.cases}</td>
               <td className="px-4 py-2">
                 <Totals totals={run.totals} />
@@ -62,6 +66,28 @@ export function RunsPage() {
       </table>
     </Card>
   );
+}
+
+/**
+ * Qué ejecutó una corrida, en una línea.
+ *
+ * Hay tres formas de lanzar una —la matriz generada, un flujo (a veces una vez por fila de datos)
+ * y una suite— y en el historial eran la misma fila. «¿Esto estaba verde la semana pasada?» no se
+ * contesta en una lista donde todas las entradas se leen igual.
+ *
+ * Un nombre en `null` es una fila que ya no existe. Se dice, en vez de callarlo: la corrida sigue
+ * siendo evidencia de lo que pasó, y el flujo que la produjo ya no está para volver a mirarlo.
+ */
+function sourceLabel(source: RunSource): string {
+  if (source.kind === "suite") {
+    return `Suite ${source.name ?? "(eliminada)"} · ${source.flowNames.length} flujos`;
+  }
+  if (source.kind === "workflow") {
+    const flow = `Flujo ${source.name ?? "(eliminado)"}`;
+    if (!source.datasetId) return flow;
+    return `${flow} · ${source.datasetName ?? "(datos eliminados)"}, ${source.rows} filas`;
+  }
+  return source.operationIds.length ? `Matriz · ${source.operationIds.length} operaciones` : "Matriz completa";
 }
 
 function Totals({ totals }: { totals: RunTotals }) {
@@ -171,6 +197,9 @@ export function RunDetailPage() {
             <div className="flex flex-wrap items-center gap-2">
               <Badge className={cn("border-transparent", statusClass[run.data.status])}>{run.data.status}</Badge>
               <span className="text-xs text-slate-400">{formatDate(run.data.startedAt)}</span>
+              <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-[11px] text-slate-200">
+                {sourceLabel(run.data.source)}
+              </span>
               {running && (
                 <span className="text-[11px] text-slate-500">
                   {streaming === "live"

@@ -194,6 +194,27 @@ export function bindElement(as: string, element: unknown): RuntimeVariables {
   return bound;
 }
 
+/**
+ * How much of a list a loop may actually walk.
+ *
+ * Two ceilings, and they say different things. `max` is the author's — «no more than fifty of
+ * these, whatever the target returns» — and it is part of the flow. `extra` is the run's: every
+ * limit in this product is local (rows in a dataset, flows in a suite, elements in a loop) and
+ * they **multiply**, so something has to hold the total, and the total is only knowable while
+ * walking because the list is as long as the target decided.
+ *
+ * The step's own case is already counted, so a loop of N costs N-1 more — which is why a list of
+ * one is never truncated, even with no budget left at all.
+ *
+ * `dropped` is returned rather than swallowed: a loop that quietly walks nine of forty is a report
+ * that is wrong about the target, and the whole product is an argument against those.
+ */
+export function withinBudget(list: unknown[], max: number, extra: number): { elements: unknown[]; dropped: number } {
+  const wanted = list.slice(0, max);
+  const allowed = wanted.length <= 1 ? wanted.length : Math.min(wanted.length, 1 + Math.max(0, extra));
+  return { elements: wanted.slice(0, allowed), dropped: wanted.length - allowed };
+}
+
 /** The array a loop walks, or `null` when the path does not lead to one. */
 export function listAt(body: unknown, path: string): unknown[] | null {
   const found = valueAtPath(body, path);

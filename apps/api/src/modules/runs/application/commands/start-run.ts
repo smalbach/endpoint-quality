@@ -5,6 +5,7 @@ import type { OrderMode } from "@eq/runner-core";
 
 import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
+import { ENV, type Env } from "@/shared/config/env";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
 import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
@@ -39,6 +40,7 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
     @Inject(RUN_REPOSITORY) private readonly runs: RunRepositoryPort,
     @Inject(RUN_QUEUE) private readonly queue: RunQueuePort,
     @Inject(CLOCK) private readonly clock: ClockPort,
+    @Inject(ENV) private readonly env: Env,
   ) {}
 
   async execute(command: StartRunCommand): Promise<{ runId: string }> {
@@ -118,6 +120,8 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
       }
     }
 
+    await this.refuseOversized(project.id, command.input);
+
     const samples = clamp(command.input.samples ?? 1, 1, 50);
     const delayMs = clamp(command.input.delayMs ?? 0, 0, 30_000);
     if (!Number.isFinite(samples) || !Number.isFinite(delayMs))
@@ -158,6 +162,46 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
     await this.runs.save(run);
     await this.queue.enqueue(run.id);
     return { runId: run.id };
+  }
+
+  /**
+   * The half of the size that is arithmetic, refused before anything is queued.
+   *
+   * Rows times flows times steps is known here, and a run that would produce a hundred thousand
+   * requests against somebody's staging environment is not a suite anybody meant to start. Saying
+   * so at the click is the difference between a 422 naming the field and a run that has to be
+   * cancelled once its effects are already in the target.
+   *
+   * The other half — how long a loop turns out to be — belongs to the walk, because only the
+   * target knows it.
+   */
+  private async refuseOversized(projectId: string, input: StartRunCommand["input"]): Promise<void> {
+    const ids = input.suiteId
+      ? ((await this.workflows.findSuite(projectId, input.suiteId))?.workflowIds ?? [])
+      : input.workflowId
+        ? [input.workflowId]
+        : [];
+    if (!ids.length) return;
+
+    let steps = 0;
+    for (const id of ids) steps += (await this.workflows.findWorkflow(projectId, id))?.definition.steps.length ?? 0;
+    const rows = input.datasetId
+      ? ((await this.workflows.findDataset(projectId, input.datasetId))?.rows.length ?? 1)
+      : 1;
+
+    const cases = steps * rows;
+    if (cases > this.env.MAX_RUN_CASES) {
+      throw new InvalidInputError(
+        `Esta corrida generaría ${cases} casos y el tope es ${this.env.MAX_RUN_CASES}`,
+        [
+          {
+            field: input.datasetId ? "datasetId" : input.suiteId ? "suiteId" : "workflowId",
+            detail: `${steps} pasos × ${rows} filas`,
+          },
+        ],
+        "run-too-large",
+      );
+    }
   }
 }
 

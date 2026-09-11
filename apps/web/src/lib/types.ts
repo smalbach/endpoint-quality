@@ -32,6 +32,7 @@ export type {
   RunCase,
   RunCaseView,
   RunReport,
+  RunSource,
   RunStatus,
   RunStep,
   RunTotals,

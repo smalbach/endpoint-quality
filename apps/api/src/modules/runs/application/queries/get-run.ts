@@ -1,4 +1,4 @@
-import type { RunCaseViewOf, RunReportOf, RunReportStep, RunViewOf } from "@eq/contracts";
+import type { RunCaseViewOf, RunOf, RunReportOf, RunReportStep, RunViewOf } from "@eq/contracts";
 
 import { Inject } from "@nestjs/common";
 import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
@@ -8,6 +8,8 @@ import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projec
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
 import type { Run, RunCase, RunStep } from "../../domain/model";
 import { RUN_REPOSITORY, type RunRepositoryPort } from "../../domain/ports";
+import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
+import { describeSource, loadCatalog } from "./describe-source";
 
 export class ListRunsQuery implements IQuery {
   constructor(
@@ -33,18 +35,24 @@ export class GetRunCaseQuery implements IQuery {
 }
 
 /** The same declarations the browser reads, instantiated with this side's timestamps. */
+export type RunRow = Run & RunOf<Date>;
 export type RunView = Run & { cases: RunCase[] } & RunViewOf<Date>;
 export type RunCaseView = RunCase & { steps: RunStep[] } & RunCaseViewOf<Date>;
 
 @QueryHandler(ListRunsQuery)
-export class ListRunsHandler implements IQueryHandler<ListRunsQuery, Run[]> {
+export class ListRunsHandler implements IQueryHandler<ListRunsQuery, RunRow[]> {
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(RUN_REPOSITORY) private readonly runs: RunRepositoryPort,
+    @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
   ) {}
-  async execute(query: ListRunsQuery): Promise<Run[]> {
+  async execute(query: ListRunsQuery): Promise<RunRow[]> {
     const project = await ownedProject(this.projects, query.organizationId, query.projectId);
-    return this.runs.listForProject(project.id, Math.min(100, Math.max(1, query.limit)));
+    const [runs, catalog] = await Promise.all([
+      this.runs.listForProject(project.id, Math.min(100, Math.max(1, query.limit))),
+      loadCatalog(this.workflows, project.id),
+    ]);
+    return runs.map((run) => ({ ...run, source: describeSource(run, catalog) }));
   }
 }
 
@@ -60,12 +68,14 @@ export class GetRunHandler implements IQueryHandler<GetRunQuery, RunView> {
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(RUN_REPOSITORY) private readonly runs: RunRepositoryPort,
+    @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
   ) {}
   async execute(query: GetRunQuery): Promise<RunView> {
     const project = await ownedProject(this.projects, query.organizationId, query.projectId);
     const run = await this.runs.findById(query.runId);
     if (!run || run.projectId !== project.id) throw new NotFoundError("La corrida no existe", "run-not-found");
-    return { ...run, cases: await this.runs.listCases(run.id) };
+    const [cases, catalog] = await Promise.all([this.runs.listCases(run.id), loadCatalog(this.workflows, project.id)]);
+    return { ...run, source: describeSource(run, catalog), cases };
   }
 }
 
@@ -112,13 +122,14 @@ export class GetRunReportQuery implements IQuery {
 export type ReportAssertion = RunReportStep["assertions"][number];
 export type ReportStep = RunReportStep;
 export type ReportCase = Omit<RunCase, "runId"> & { steps: ReportStep[] };
-export type RunReport = RunReportOf<Date> & { run: Run; cases: ReportCase[] };
+export type RunReport = RunReportOf<Date> & { run: RunRow; cases: ReportCase[] };
 
 @QueryHandler(GetRunReportQuery)
 export class GetRunReportHandler implements IQueryHandler<GetRunReportQuery, RunReport> {
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(RUN_REPOSITORY) private readonly runs: RunRepositoryPort,
+    @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
   ) {}
   async execute(query: GetRunReportQuery): Promise<RunReport> {
     const project = await ownedProject(this.projects, query.organizationId, query.projectId);
@@ -127,12 +138,18 @@ export class GetRunReportHandler implements IQueryHandler<GetRunReportQuery, Run
 
     // One read for the cases and one for every step, then grouped here. The alternative — a query
     // per case — is the N+1 that made the per-case view unusable as a report in the first place.
-    const [cases, steps] = await Promise.all([this.runs.listCases(run.id), this.runs.listStepsForRun(run.id)]);
+    const [cases, steps, catalog] = await Promise.all([
+      this.runs.listCases(run.id),
+      this.runs.listStepsForRun(run.id),
+      loadCatalog(this.workflows, project.id),
+    ]);
     const byCase = new Map<string, RunStep[]>();
     for (const step of steps) byCase.set(step.runCaseId, [...(byCase.get(step.runCaseId) ?? []), step]);
 
     return {
-      run,
+      // The report is what gets attached to a pull request or read six months later, so what it
+      // executed has to be in it. An anonymous list of 311 verdicts is not evidence of anything.
+      run: { ...run, source: describeSource(run, catalog) },
       cases: cases.map(({ runId: _runId, ...runCase }) => ({
         ...runCase,
         steps: (byCase.get(runCase.id) ?? []).map((step) => ({

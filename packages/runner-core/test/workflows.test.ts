@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import { applyCaptures, orderWorkflowSteps } from "../src/workflows.ts";
+import test, { describe } from "node:test";
+import { applyCaptures, orderWorkflowSteps, withinBudget } from "../src/workflows.ts";
 import { safeParseWorkflowDocument } from "../src/workflow-schema.ts";
 
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -94,4 +94,36 @@ test("canvas coordinates survive validation and a bad one is refused", () => {
     safeParseWorkflowDocument({ steps: [{ id: "a", requestTemplateId: uuid(1), position: { x: "40", y: 60 } }] }).ok,
     false,
   );
+});
+
+/**
+ * Los dos techos de un bucle, que dicen cosas distintas.
+ *
+ * `max` es el del autor y es parte del flujo. El presupuesto es el de la corrida: todos los topes
+ * de este producto son locales —filas de datos, flujos de una suite, vueltas de un bucle— y se
+ * multiplican, así que algo tiene que mirar el total, y el total solo se sabe recorriendo porque
+ * la lista la decide el destino.
+ */
+describe("lo que un bucle puede recorrer", () => {
+  const list = Array.from({ length: 10 }, (_item, index) => index);
+
+  test("el tope del autor recorta primero", () => {
+    assert.deepEqual(withinBudget(list, 3, 100), { elements: [0, 1, 2], dropped: 0 });
+  });
+
+  test("el presupuesto de la corrida recorta después, y lo dice", () => {
+    // El caso del propio paso ya está contado, así que un bucle de N cuesta N-1 más.
+    assert.deepEqual(withinBudget(list, 10, 4), { elements: [0, 1, 2, 3, 4], dropped: 5 });
+  });
+
+  test("un elemento nunca se recorta, ni sin presupuesto", () => {
+    // Ese caso ya estaba contado antes de saber que había un bucle: recortarlo dejaría el paso sin
+    // ejecutar y sin veredicto.
+    assert.deepEqual(withinBudget([7], 10, 0), { elements: [7], dropped: 0 });
+    assert.deepEqual(withinBudget([], 10, 0), { elements: [], dropped: 0 });
+  });
+
+  test("un presupuesto negativo se trata como cero, no como un recorte al revés", () => {
+    assert.deepEqual(withinBudget(list, 10, -5), { elements: [0], dropped: 9 });
+  });
 });

@@ -55,6 +55,20 @@ export const envSchema = z.object({
   /** How often the sweep runs. Not a cron: one interval, started at boot, is the whole of it. */
   RETENTION_SWEEP_HOURS: z.coerce.number().int().min(0).max(168).default(6),
 
+  /**
+   * The most cases one run may produce.
+   *
+   * Every ceiling in this product is local — 500 rows in a dataset, 50 flows in a suite, 200
+   * elements in a loop — and they **multiply**. Nothing was stopping one click from queueing a run
+   * of several million requests against somebody's staging environment, which is not a test suite;
+   * it is an outage with a green tick at the end of it.
+   *
+   * Checked twice, because the size is known in two halves: the flows times the rows is arithmetic
+   * done before the run is queued, so it is a 422 at the click, and a loop's length is whatever the
+   * target answered, so it is enforced while walking and the truncation is reported.
+   */
+  MAX_RUN_CASES: z.coerce.number().int().min(1).default(5_000),
+
   CORS_ORIGINS: z.string().default("http://localhost:5173"),
   COOKIE_DOMAIN: z.string().optional(),
 });
