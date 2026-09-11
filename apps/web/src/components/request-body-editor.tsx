@@ -3,6 +3,7 @@ import { useRef } from "react";
 import { JsonObjectField } from "@/components/json-object-field";
 import { RequestFieldsEditor } from "@/components/request-fields-editor";
 import { inputClass } from "@/components/ui";
+import { VariableSuggest } from "@/components/variable-suggest";
 import { fieldMapsFrom, fieldProblems, fieldRowsFrom } from "@/lib/request-fields";
 import type { RequestBodyView } from "@/lib/types";
 
@@ -35,13 +36,14 @@ export function RequestBodyEditor({
   body,
   canEdit,
   onChange,
-  renderValue,
+  variables = [],
 }: {
   body: RequestBodyView;
   canEdit: boolean;
   onChange: (body: RequestBodyView) => void;
-  /** Wraps the value inputs so the `{{` suggestions can be drawn around them. */
-  renderValue?: (input: React.ReactNode, index: number) => React.ReactNode;
+  /** What `{{` can name here: the environment's variables plus what the steps this one depends on
+   * capture. A payload is where most of them are spent. */
+  variables?: string[];
 }) {
   const rows =
     body.type === "form-data" || body.type === "x-www-form-urlencoded"
@@ -87,7 +89,12 @@ export function RequestBodyEditor({
       )}
 
       {body.type === "json" && (
-        <JsonObjectField label="Body" value={body.json} onChange={(json) => onChange({ type: "json", json })} />
+        <JsonObjectField
+          label="Body"
+          value={body.json}
+          variables={variables}
+          onChange={(json) => onChange({ type: "json", json })}
+        />
       )}
 
       {body.type === "raw" && (
@@ -107,15 +114,18 @@ export function RequestBodyEditor({
               <option key={value} value={value} />
             ))}
           </datalist>
-          <textarea
-            aria-label="Cuerpo en texto"
-            className={`${inputClass} mt-1 h-24 font-mono text-[10px]`}
-            value={body.text}
-            placeholder={"<pedido>\n  <id>{{pedidoId}}</id>\n</pedido>"}
-            disabled={!canEdit}
-            spellCheck={false}
-            onChange={(event) => onChange({ ...body, text: event.target.value })}
-          />
+          <VariableSuggest variables={variables} value={body.text} onChange={(text) => onChange({ ...body, text })}>
+            {(suggest) => (
+              <textarea
+                {...suggest}
+                aria-label="Cuerpo en texto"
+                className={`${inputClass} mt-1 h-24 font-mono text-[10px]`}
+                placeholder={"<pedido>\n  <id>{{pedidoId}}</id>\n</pedido>"}
+                disabled={!canEdit}
+                spellCheck={false}
+              />
+            )}
+          </VariableSuggest>
         </div>
       )}
 
@@ -136,7 +146,7 @@ export function RequestBodyEditor({
             const maps = fieldMapsFrom(next);
             onChange({ ...body, fields: maps.enabled, disabledFields: maps.disabled });
           }}
-          {...(renderValue ? { renderValue: (input, _row, index) => renderValue(input, index) } : {})}
+          variables={variables}
         />
       )}
     </div>

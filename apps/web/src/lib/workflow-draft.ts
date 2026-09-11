@@ -143,6 +143,38 @@ export function toNodes(steps: WorkflowStepView[], templates: RequestTemplateVie
 }
 
 /**
+ * Every variable this step can actually spend, in the order they are worth offering.
+ *
+ * The environment's names first, because they are true for every step; then what the steps this
+ * one depends on capture, transitively. **Only the upstream ones**, and that is the point of
+ * walking the graph rather than listing every capture in the flow: a variable written by a step
+ * that runs after this one, or beside it, is empty when this request goes out — offering it would
+ * be the editor suggesting the bug.
+ *
+ * Duplicates collapse to the first occurrence, which is the environment's: a capture with the same
+ * name overwrites the environment value for the rest of the run, so the two are one name and
+ * showing it twice would only raise the question of which is which.
+ */
+export function variablesFor(steps: WorkflowStepView[], stepId: string, environment: string[]): string[] {
+  const byId = new Map(steps.map((step) => [step.id, step]));
+  const upstream: string[] = [];
+  const seen = new Set<string>([stepId]);
+  const pending = [...(byId.get(stepId)?.dependsOn ?? [])];
+  while (pending.length) {
+    const id = pending.shift()!;
+    // A flow with a cycle cannot be saved, but it can be on screen while somebody is drawing it,
+    // and a walk that revisits a node would not finish.
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const step = byId.get(id);
+    if (!step) continue;
+    upstream.push(...(step.captures ?? []).map((capture) => capture.variable).filter(Boolean));
+    pending.push(...(step.dependsOn ?? []));
+  }
+  return [...new Set([...environment, ...upstream])];
+}
+
+/**
  * The same three things the server refuses, said before the request leaves.
  *
  * Not instead of the server's check — that one is the rule — but so the editor can point at the

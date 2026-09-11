@@ -1,3 +1,4 @@
+import { VariableSuggest } from "@/components/variable-suggest";
 import { cn } from "@/lib/format";
 import { emptyFieldRow, isBlankField, type FieldRow } from "@/lib/request-fields";
 
@@ -27,7 +28,7 @@ export function RequestFieldsEditor({
   valuePlaceholder,
   disabled,
   onChange,
-  renderValue,
+  variables = [],
 }: {
   label: string;
   hint?: string;
@@ -37,9 +38,9 @@ export function RequestFieldsEditor({
   valuePlaceholder: string;
   disabled: boolean;
   onChange: (rows: FieldRow[]) => void;
-  /** Lets the caller wrap the value input — the `{{` suggestions are drawn around it. Absent
-   * renders the plain field, which is what the value is without them. */
-  renderValue?: (input: React.ReactNode, row: FieldRow, index: number) => React.ReactNode;
+  /** What `{{` can name here. Empty is a real answer — a project with no variables — and it is why
+   * the suggestion list never appears rather than appearing empty. */
+  variables?: string[];
 }) {
   /** The blank row at the bottom, always. Typing in it is what creates a parameter. */
   const withGhost = (next: FieldRow[]) =>
@@ -68,20 +69,6 @@ export function RequestFieldsEditor({
         {shown.map((row, index) => {
           const problem = problemAt(index);
           const ghost = index === shown.length - 1 && isBlankField(row);
-          const valueInput = (
-            <input
-              aria-label={`Valor de ${row.name || label.toLowerCase()}`}
-              className={cn(
-                "h-7 w-full rounded-md border-0 bg-transparent px-1.5 font-mono text-[11px] outline-none focus:bg-slate-50",
-                !row.enabled && !ghost && "text-slate-400",
-              )}
-              value={row.value}
-              placeholder={ghost ? "" : valuePlaceholder}
-              disabled={disabled}
-              spellCheck={false}
-              onChange={(event) => edit(index, { value: event.target.value })}
-            />
-          );
           return (
             <div key={index} className="border-b border-slate-100 last:border-b-0">
               <div className="group grid grid-cols-[1.5rem_minmax(0,1fr)_minmax(0,1.2fr)_1.25rem] items-center gap-1 px-1 py-0.5">
@@ -106,7 +93,21 @@ export function RequestFieldsEditor({
                   spellCheck={false}
                   onChange={(event) => edit(index, { name: event.target.value })}
                 />
-                {renderValue ? renderValue(valueInput, row, index) : valueInput}
+                <VariableSuggest variables={variables} value={row.value} onChange={(value) => edit(index, { value })}>
+                  {(suggest) => (
+                    <input
+                      {...suggest}
+                      aria-label={`Valor de ${row.name || label.toLowerCase()}`}
+                      className={cn(
+                        "h-7 w-full rounded-md border-0 bg-transparent px-1.5 font-mono text-[11px] outline-none focus:bg-slate-50",
+                        !row.enabled && !ghost && "text-slate-400",
+                      )}
+                      placeholder={ghost ? "" : valuePlaceholder}
+                      disabled={disabled}
+                      spellCheck={false}
+                    />
+                  )}
+                </VariableSuggest>
                 {!ghost && (
                   <button
                     type="button"

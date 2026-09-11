@@ -3,7 +3,7 @@ import { RequestBodyEditor } from "@/components/request-body-editor";
 import { RequestFieldsEditor } from "@/components/request-fields-editor";
 import { RequestPreviewPanel } from "@/components/request-preview";
 import { fieldMapsFrom, fieldProblems, fieldRowsFrom, type FieldRow } from "@/lib/request-fields";
-import { removeStep, replaceStep } from "@/lib/workflow-draft";
+import { removeStep, replaceStep, variablesFor } from "@/lib/workflow-draft";
 import type { OperationSummary } from "@/lib/workflow-draft";
 import type {
   CaptureSource,
@@ -124,6 +124,15 @@ export function WorkflowInspector({
             template={template}
             operations={operations}
             environmentId={environmentId}
+            // What `{{` can name in this step's fields: the chosen environment's variables, plus
+            // what the steps it depends on capture. Computed here because this is the only place
+            // that holds both the environments and the graph — and the disabled ones are left out
+            // on purpose, because a run does not substitute them.
+            variables={variablesFor(
+              steps,
+              step.id,
+              Object.keys(environments.find((item) => item.id === environmentId)?.variables ?? {}),
+            )}
             canEdit={canEdit}
             onTemplate={onTemplate}
             onChange={(next) => onSteps(replaceStep(steps, next))}
@@ -177,6 +186,7 @@ function StepInspector({
   template,
   operations,
   environmentId,
+  variables,
   canEdit,
   onTemplate,
   onChange,
@@ -187,6 +197,7 @@ function StepInspector({
   template: RequestTemplateView | undefined;
   operations: OperationSummary[];
   environmentId: string;
+  variables: string[];
   canEdit: boolean;
   onTemplate: (template: RequestTemplateView) => void;
   onChange: (step: WorkflowStepView) => void;
@@ -258,6 +269,7 @@ function StepInspector({
             valuePlaceholder="{{thingId}}"
             enabled={template.parameters}
             disabledMap={template.disabledParameters}
+            variables={variables}
             canEdit={canEdit}
             onChange={(maps) =>
               onTemplate({ ...template, parameters: maps.enabled, disabledParameters: maps.disabled })
@@ -271,11 +283,13 @@ function StepInspector({
             valuePlaceholder="acme"
             enabled={template.headers}
             disabledMap={template.disabledHeaders}
+            variables={variables}
             canEdit={canEdit}
             onChange={(maps) => onTemplate({ ...template, headers: maps.enabled, disabledHeaders: maps.disabled })}
           />
           <RequestBodyEditor
             body={template.body}
+            variables={variables}
             canEdit={canEdit}
             onChange={(body) => onTemplate({ ...template, body })}
           />
@@ -402,6 +416,7 @@ function RequestFieldsRows({
   valuePlaceholder,
   enabled,
   disabledMap,
+  variables,
   canEdit,
   onChange,
 }: {
@@ -412,6 +427,7 @@ function RequestFieldsRows({
   valuePlaceholder: string;
   enabled: Record<string, string>;
   disabledMap: Record<string, string>;
+  variables: string[];
   canEdit: boolean;
   onChange: (maps: { enabled: Record<string, string>; disabled: Record<string, string> }) => void;
 }) {
@@ -424,6 +440,7 @@ function RequestFieldsRows({
       problems={fieldProblems(rows, kind)}
       namePlaceholder={namePlaceholder}
       valuePlaceholder={valuePlaceholder}
+      variables={variables}
       disabled={!canEdit}
       onChange={(next: FieldRow[]) => onChange(fieldMapsFrom(next))}
     />

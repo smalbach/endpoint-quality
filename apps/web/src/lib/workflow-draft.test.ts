@@ -10,6 +10,7 @@ import {
   removeStep,
   toEdges,
   toNodes,
+  variablesFor,
 } from "@/lib/workflow-draft";
 import type { RequestTemplateView, WorkflowStepView } from "@/lib/types";
 
@@ -167,5 +168,51 @@ describe("los nodos del lienzo, entre un documento y el siguiente", () => {
       { x: 20, y: 200 },
       { x: 340, y: 120 },
     ]);
+  });
+});
+
+/**
+ * Qué variables tiene sentido ofrecerle a un paso.
+ *
+ * Solo las de arriba, y por eso se recorre el grafo en vez de listar todas las capturas del flujo:
+ * una variable que escribe un paso posterior —o uno que puede correr al lado— está vacía cuando
+ * esta petición sale. Ofrecerla sería el editor sugiriendo el fallo, y el síntoma es un 404 que se
+ * lee como un endpoint roto.
+ */
+describe("las variables que un paso puede gastar", () => {
+  const flow = (): WorkflowStepView[] => [
+    { id: "login", requestTemplateId: "t0", captures: [{ variable: "token", from: "body", path: "data.token" }] },
+    {
+      id: "crear",
+      requestTemplateId: "t1",
+      dependsOn: ["login"],
+      captures: [{ variable: "pedidoId", from: "body", path: "data.id" }],
+    },
+    { id: "leer", requestTemplateId: "t2", dependsOn: ["crear"] },
+    { id: "aparte", requestTemplateId: "t3", captures: [{ variable: "otro", from: "body", path: "data.id" }] },
+  ];
+
+  test("las del entorno valen para cualquier paso", () => {
+    expect(variablesFor(flow(), "login", ["tenant"])).toEqual(["tenant"]);
+  });
+
+  test("las capturas llegan por la cadena entera, no solo del paso anterior", () => {
+    expect(variablesFor(flow(), "leer", ["tenant"])).toEqual(["tenant", "pedidoId", "token"]);
+  });
+
+  test("lo que captura un paso que no está arriba no se ofrece: estaría vacío al enviar", () => {
+    expect(variablesFor(flow(), "leer", [])).not.toContain("otro");
+  });
+
+  test("un nombre repetido sale una vez: la captura pisa el valor del entorno, no convive con él", () => {
+    expect(variablesFor(flow(), "leer", ["pedidoId"])).toEqual(["pedidoId", "token"]);
+  });
+
+  test("un ciclo a medio dibujar no cuelga el editor", () => {
+    const cyclic: WorkflowStepView[] = [
+      { id: "a", requestTemplateId: "t1", dependsOn: ["b"] },
+      { id: "b", requestTemplateId: "t2", dependsOn: ["a"], captures: [{ variable: "x", from: "body", path: "d" }] },
+    ];
+    expect(variablesFor(cyclic, "a", [])).toEqual(["x"]);
   });
 });
