@@ -284,10 +284,41 @@ export async function createTestApp(): Promise<TestContext> {
       errorHttpStatusCode: HttpStatus.UNPROCESSABLE_ENTITY,
     }),
   );
-  await app.init();
+  // Listening once, on `127.0.0.1`, is load-bearing — it is not a shortcut for `init()`.
+  //
+  // Supertest only binds a port itself when the server it is handed has no address yet. With a
+  // merely initialised app that was every single request: `listen(0)` before it, `close()` after
+  // it, hundreds of times per file. And `listen(0)` with no host binds the IPv6 wildcard `::`,
+  // while supertest then composes the URL against the literal `127.0.0.1`. Those are two
+  // different addresses, so the kernel hands out an ephemeral port for `::` without knowing that
+  // some other process already holds the same number on `127.0.0.1` — a sibling test file's
+  // `StubTarget`, which binds `127.0.0.1` explicitly, or any unrelated server on the developer's
+  // machine. When the numbers met, the request left for a stranger and came back as whatever
+  // that stranger answers: a bare 404, a 401 with `{"error":"Unauthorized"}`, a 400 reading
+  // "WebSockets request was expected". That is the whole of the intermittent failure that made
+  // roughly one run in three red, always on a different line, and never reproducible alone —
+  // with the files running in parallel the collision needed a neighbour to exist.
+  //
+  // Binding `127.0.0.1` up front closes it: the address we bind is the address supertest dials,
+  // so a successful bind is now an actual reservation, and a genuine clash would be a loud
+  // `EADDRINUSE` at startup instead of a wrong answer in the middle of an assertion.
+  await app.listen(0, "127.0.0.1");
 
   // The worker starts listening exactly as `RunsModule.onApplicationBootstrap` does.
   moduleRef.get(RunOrchestrator).listen();
 
-  return { app, clock, env, repositories, http, queue, close: () => app.close() };
+  return {
+    app,
+    clock,
+    env,
+    repositories,
+    http,
+    queue,
+    close: async () => {
+      // Superagent leaves keep-alive sockets behind, and `close()` waits for connections to end.
+      // Dropping them first is what keeps a finished suite from hanging at exit.
+      app.getHttpServer().closeAllConnections();
+      await app.close();
+    },
+  };
 }
