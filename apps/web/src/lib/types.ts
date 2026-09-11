@@ -17,6 +17,7 @@ export type {
   CaseStatus,
   ConfigView,
   CoverageGap,
+  CaptureSource,
   CoverageView,
   CurrentUser,
   Environment,

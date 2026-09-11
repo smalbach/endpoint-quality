@@ -1720,6 +1720,33 @@ describe("la credencial que consigue la propia corrida", () => {
     await flow.target.stop();
   });
 
+  test("la sesión también puede venir en una cookie, que es donde viene la mitad de las veces", async () => {
+    const flow = await loginFlow((ids) => [
+      {
+        id: "iniciar",
+        requestTemplateId: ids.login,
+        // La cabecera entera es `session=…; Path=/; Expires=Wed, 09 Jun …`. Sacar eso con una ruta
+        // de puntos no es algo que se le pueda pedir a nadie, así que `cookie` la lee por su
+        // nombre y se queda con el valor, sin atributos.
+        authorizes: { from: "cookie", path: "session", header: "Cookie", scheme: "session=" },
+        captures: [{ variable: "tema", from: "cookie", path: "theme" }],
+      },
+      { id: "listar", requestTemplateId: ids.list, dependsOn: ["iniciar"] },
+    ]);
+    const { runId, run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    assert.equal(run.status, "passed", JSON.stringify(run.totals));
+
+    const login = await api().get(`${flow.projectBase}/runs/${runId}/cases/${run.cases[0].id}`).set(as(owner));
+    const assertions = login.body.steps[0].assertions as { label: string; pass: boolean; detail: string }[];
+    assert.equal(assertions.find((entry) => entry.label === "Sesión obtenida")?.pass, true);
+    // Y la segunda cookie sale entera pese a la coma de la fecha de la primera.
+    assert.match(assertions.find((entry) => entry.label === "Variables capturadas")?.detail ?? "", /tema/);
+    await flow.target.stop();
+  });
+
   test("un login que contesta otra cosa se dice en el paso que inició sesión", async () => {
     const flow = await loginFlow((ids) => [
       { id: "iniciar", requestTemplateId: ids.login, authorizes: { from: "body", path: "data.accessToken" } },

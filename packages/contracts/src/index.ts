@@ -145,8 +145,17 @@ export type EnvironmentSummaryOf<T> = {
 // Reusable requests and the flows composed from them
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * Where a value is read out of a response.
+ *
+ * `body` and `header` are for an API designed to be read by a program. `cookie` and `regex` exist
+ * because plenty are not: a session arrives inside a `Set-Cookie` whose header value carries every
+ * attribute with it, and sometimes the value is embedded in text somebody else designed.
+ */
+export type CaptureSource = "body" | "header" | "cookie" | "regex";
+
 /** A value read out of one response and published as a variable the next requests can spend. */
-export type WorkflowCaptureView = { variable: string; from: "body" | "header"; path: string };
+export type WorkflowCaptureView = { variable: string; from: CaptureSource; path: string };
 
 /** A claim the author of a step wrote by hand, on top of the ones derived from the contract. */
 export type StepCheckView = {
@@ -163,7 +172,7 @@ export type StepCheckView = {
 export type StepRetryView = { attempts: number; delayMs: number; backoff?: number; onStatus?: number[] };
 
 /** The token a step's response yields, and the header the rest of the run sends it in. */
-export type StepAuthorizesView = { from: "body" | "header"; path: string; header?: string; scheme?: string };
+export type StepAuthorizesView = { from: CaptureSource; path: string; header?: string; scheme?: string };
 
 /** Whether a step runs at all, decided by what a step it depends on answered. */
 export type StepConditionView = { from: string; check: StepCheckView };

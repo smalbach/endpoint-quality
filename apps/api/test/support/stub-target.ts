@@ -180,7 +180,11 @@ export class StubTarget {
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? "/", "http://stub");
     const method = request.method ?? "GET";
-    const authorization = request.headers.authorization;
+    // La cookie cuenta como credencial, como en cualquier API que sirva también a un navegador.
+    // Sin esto, un flujo que inicia sesión y presenta la cookie no se podría probar contra este
+    // destino, y la única forma de pasar la guarda sería fingir que la cookie es un bearer.
+    const cookie = request.headers.cookie;
+    const authorization = request.headers.authorization ?? (cookie?.includes("session=") ? cookie : undefined);
     this.requests.push({ method, path: url.pathname, authorization });
 
     const send = (status: number, body?: unknown, contentType = "application/json") => {
@@ -206,6 +210,13 @@ export class StubTarget {
       if (!body || typeof body.email !== "string" || typeof body.password !== "string") {
         return problem(422, "Credenciales inválidas");
       }
+      // Un login de verdad suele contestar las dos cosas: el token en el cuerpo, para un cliente
+      // que lo guarda, y la cookie, para un navegador. Con la fecha dentro, que lleva una coma y
+      // es lo que parte una cookie mal leída.
+      response.setHeader(
+        "set-cookie",
+        `session=${SESSION_TOKEN}; Path=/; Expires=Wed, 09 Jun 2027 10:18:14 GMT; HttpOnly, theme=oscuro; Path=/`,
+      );
       return send(201, { data: { token: SESSION_TOKEN } });
     }
 

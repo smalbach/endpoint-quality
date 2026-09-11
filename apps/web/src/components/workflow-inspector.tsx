@@ -2,13 +2,27 @@ import { Button, Field, inputClass } from "@/components/ui";
 import { JsonObjectField } from "@/components/json-object-field";
 import { removeStep, replaceStep } from "@/lib/workflow-draft";
 import type { OperationSummary } from "@/lib/workflow-draft";
-import type { Environment, RequestTemplateView, StepCheckView, WorkflowStepView, WorkflowView } from "@/lib/types";
+import type {
+  CaptureSource,
+  Environment,
+  RequestTemplateView,
+  StepCheckView,
+  WorkflowStepView,
+  WorkflowView,
+} from "@/lib/types";
 
 const AUTH = ["default", "none", "insufficient", "api-key"];
 
 /** The same lists the engine validates against, written here because the contract package emits
  * no runtime. A value the engine does not know is a 422 on save, which is where it belongs. */
 const CHECK_SOURCES: StepCheckView["source"][] = ["status", "body", "header", "durationMs"];
+/** Las cuatro rutas por las que se saca un valor de una respuesta, y qué se escribe al lado. */
+const CAPTURE_SOURCES: { value: CaptureSource; hint: string }[] = [
+  { value: "body", hint: "data.id" },
+  { value: "header", hint: "X-Request-Id" },
+  { value: "cookie", hint: "session" },
+  { value: "regex", hint: "pedido: (PED-\\d+)" },
+];
 const CHECK_OPERATORS = [
   "equals",
   "not_equals",
@@ -224,8 +238,9 @@ function StepInspector({
       )}
 
       <p className="mt-3 text-[11px] leading-5 text-slate-500">
-        Extrae campos de esta respuesta para los pasos siguientes. Un campo del cuerpo usa una ruta como{" "}
-        <span className="font-mono">data.id</span>; una cabecera, su nombre.
+        Extrae valores de esta respuesta para los pasos siguientes. Del cuerpo, con una ruta como{" "}
+        <span className="font-mono">data.id</span>; de una cabecera o una cookie, con su nombre; y si la respuesta no
+        tiene forma que recorrer, con una expresión regular sobre el texto —su grupo, si lo lleva—.
       </p>
       <div className="mt-2 space-y-2">
         {captures.map((capture, index) => (
@@ -252,19 +267,24 @@ function StepInspector({
                 onChange={(event) =>
                   editCaptures(
                     captures.map((item, position) =>
-                      position === index ? { ...item, from: event.target.value as "body" | "header" } : item,
+                      position === index ? { ...item, from: event.target.value as CaptureSource } : item,
                     ),
                   )
                 }
               >
-                <option value="body">body</option>
-                <option value="header">header</option>
+                {CAPTURE_SOURCES.map((source) => (
+                  <option key={source.value} value={source.value}>
+                    {source.value}
+                  </option>
+                ))}
               </select>
               <input
                 aria-label="Ruta de captura"
                 className={inputClass}
                 value={capture.path}
-                placeholder="data.id"
+                // El ejemplo cambia con la ruta elegida: `data.id` al lado de un selector que dice
+                // «cookie» es una pista que estorba más de lo que ayuda.
+                placeholder={CAPTURE_SOURCES.find((source) => source.value === capture.from)?.hint}
                 disabled={!canEdit}
                 onChange={(event) =>
                   editCaptures(
@@ -816,11 +836,14 @@ function SessionEditor({
               value={auth.from}
               disabled={!canEdit}
               onChange={(event) =>
-                onChange({ ...step, authorizes: { ...auth, from: event.target.value as "body" | "header" } })
+                onChange({ ...step, authorizes: { ...auth, from: event.target.value as CaptureSource } })
               }
             >
-              <option value="body">body</option>
-              <option value="header">header</option>
+              {CAPTURE_SOURCES.map((source) => (
+                <option key={source.value} value={source.value}>
+                  {source.value}
+                </option>
+              ))}
             </select>
             <input
               aria-label="Ruta del token"

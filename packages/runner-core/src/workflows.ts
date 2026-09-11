@@ -25,10 +25,26 @@ export type RequestTemplate = {
   auth?: ScenarioAuth;
 };
 
+/**
+ * Where a captured value is read from.
+ *
+ * `body` and `header` cover an API that was designed to be read by a program. The other two exist
+ * because plenty are not:
+ *
+ * - `cookie` — a session that arrives in `Set-Cookie` is not reachable as a header value: the
+ *   header holds the whole directive string, attributes and all, and pulling one cookie out of it
+ *   with a dot path is not a thing anybody should be asked to do.
+ * - `regex` — the escape hatch, matched against the raw response text. For the response that is
+ *   not JSON, or the value embedded in one field of a string somebody else designed. Group 1 if
+ *   the pattern has one, the whole match otherwise.
+ */
+export const CAPTURE_SOURCES = ["body", "header", "cookie", "regex"] as const;
+export type CaptureSource = (typeof CAPTURE_SOURCES)[number];
+
 export type WorkflowCapture = {
   variable: string;
-  /** Dot path into the JSON body, or a response header name. */
-  from: "body" | "header";
+  from: CaptureSource;
+  /** A dot path into the JSON body, a header name, a cookie name, or a regular expression. */
   path: string;
 };
 
@@ -128,8 +144,9 @@ export type StepForEach = {
  * 200 that proves nothing.
  */
 export type StepAuthorizes = {
-  /** Where the token is: a dot path into the JSON body, or the name of a response header. */
-  from: "body" | "header";
+  /** Where the token is. The same four routes a capture has, because a session that arrives in a
+   * `Set-Cookie` is at least as common as one in a JSON body. */
+  from: CaptureSource;
   path: string;
   /** The header it travels in. `Authorization` unless the target calls it something else. */
   header?: string;
@@ -249,9 +266,22 @@ export function listAt(body: unknown, path: string): unknown[] | null {
   return Array.isArray(found) ? found : null;
 }
 
+/**
+ * One cookie out of a `Set-Cookie`.
+ *
+ * Several cookies arrive as several headers, which a client flattens into one string; the
+ * separator is a comma, and a comma also appears inside `Expires=Wed, 09 Jun 2027`. Splitting on
+ * `name=` at a boundary instead of on the separator is what keeps a date from cutting a cookie in
+ * half — and the value ends at the first `;`, which is where its attributes start.
+ */
+export function cookieValue(setCookie: string, name: string): string | undefined {
+  const match = new RegExp(`(?:^|[,;]\\s*)${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}=([^;]*)`).exec(setCookie);
+  return match ? match[1] : undefined;
+}
+
 export function applyCaptures(
   captures: WorkflowCapture[],
-  response: { body: unknown; headers: Record<string, string> },
+  response: { body: unknown; headers: Record<string, string>; raw?: string },
   variables: RuntimeVariables,
   /** The step doing the capturing. Given, the value is also published as `<stepId>.<name>`, which
    * is what lets a later step say which answer it means when two steps capture the same name. */
@@ -260,10 +290,7 @@ export function applyCaptures(
   const captured: string[] = [];
   const missing: string[] = [];
   for (const capture of captures) {
-    const value =
-      capture.from === "body"
-        ? valueAtPath(response.body, capture.path)
-        : (response.headers[capture.path.toLowerCase()] ?? response.headers[capture.path]);
+    const value = readFrom(capture.from, capture.path, response);
     // An object is `missing` on purpose: a variable is text that goes into a URL or a body, and
     // `[object Object]` in a request path is a worse outcome than a step that says what it lacked.
     if (value === undefined || value === null || typeof value === "object") {
@@ -277,6 +304,41 @@ export function applyCaptures(
   return { captured, missing };
 }
 
+/** One value out of a response, by any of the four routes. Shared by a capture and by the step
+ * that publishes a session, because «where is the token» and «where is the id» are one question. */
+export function readFrom(
+  from: CaptureSource,
+  path: string,
+  response: { body: unknown; headers: Record<string, string>; raw?: string },
+): unknown {
+  const header = (name: string) => response.headers[name.toLowerCase()] ?? response.headers[name];
+  switch (from) {
+    case "body":
+      return valueAtPath(response.body, path);
+    case "header":
+      return header(path);
+    case "cookie": {
+      const setCookie = header("set-cookie");
+      return setCookie ? cookieValue(setCookie, path) : undefined;
+    }
+    case "regex": {
+      // Against the raw text and not the parsed body: the reason to reach for a regular expression
+      // is that the response is not the shape a path can walk.
+      const text = response.raw ?? (typeof response.body === "string" ? response.body : JSON.stringify(response.body));
+      try {
+        const match = new RegExp(path).exec(text ?? "");
+        // Group 1 when the pattern has one, because a pattern with a group was written to say
+        // «this part»; the whole match otherwise.
+        return match ? (match[1] ?? match[0]) : undefined;
+      } catch {
+        // A malformed pattern is the author's mistake and comes back as «no se encontró», which is
+        // reported on the step. Throwing would take the run down over one bad character.
+        return undefined;
+      }
+    }
+  }
+}
+
 /**
  * Reads the credential a step published.
  *
@@ -286,12 +348,9 @@ export function applyCaptures(
  */
 export function readAuthorization(
   authorizes: StepAuthorizes,
-  response: { body: unknown; headers: Record<string, string> },
+  response: { body: unknown; headers: Record<string, string>; raw?: string },
 ): { header: string; value: string } | null {
-  const found =
-    authorizes.from === "body"
-      ? valueAtPath(response.body, authorizes.path)
-      : (response.headers[authorizes.path.toLowerCase()] ?? response.headers[authorizes.path]);
+  const found = readFrom(authorizes.from, authorizes.path, response);
   if (found === undefined || found === null || typeof found === "object" || found === "") return null;
   return {
     header: authorizes.header?.trim() || "Authorization",

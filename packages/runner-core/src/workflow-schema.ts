@@ -14,7 +14,7 @@ import { z } from "zod";
 import { scenarioAuthSchema } from "./schema.ts";
 import { VARIABLE_NAME } from "./variables.ts";
 import { CHECK_OPERATORS, CHECK_SOURCES } from "./checks.ts";
-import { STEP_ON_ERROR } from "./workflows.ts";
+import { CAPTURE_SOURCES, STEP_ON_ERROR } from "./workflows.ts";
 
 const jsonValue: z.ZodType<unknown> = z.lazy(() =>
   z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(jsonValue), z.record(z.string(), jsonValue)]),
@@ -31,11 +31,22 @@ export const requestTemplateBodySchema = z.object({
   auth: scenarioAuthSchema.optional(),
 });
 
-export const workflowCaptureSchema = z.object({
-  variable: z.string().regex(VARIABLE_NAME, "nombre de variable inválido"),
-  from: z.enum(["body", "header"]),
-  path: z.string().min(1),
-});
+export const workflowCaptureSchema = z
+  .object({
+    variable: z.string().regex(VARIABLE_NAME, "nombre de variable inválido"),
+    from: z.enum(CAPTURE_SOURCES),
+    path: z.string().min(1).max(500),
+  })
+  .superRefine((capture, context) => {
+    if (capture.from !== "regex") return;
+    try {
+      new RegExp(capture.path);
+    } catch {
+      // Caught at write time. A bad pattern discovered mid-run comes back as «no se encontró», and
+      // whoever reads that report has no reason to suspect the pattern rather than the target.
+      context.addIssue({ code: "custom", message: "la expresión regular no es válida", path: ["path"] });
+    }
+  });
 
 /** Which operators judge the value on its own, and so take no right-hand side. */
 const WITHOUT_OPERAND = ["exists", "not_exists", "is_array", "is_not_empty"];
@@ -102,7 +113,7 @@ export const workflowStepSchema = z.object({
     .optional(),
   authorizes: z
     .object({
-      from: z.enum(["body", "header"]),
+      from: z.enum(CAPTURE_SOURCES),
       path: z.string().min(1).max(500),
       header: z.string().max(80).optional(),
       scheme: z.string().max(40).optional(),

@@ -127,3 +127,62 @@ describe("lo que un bucle puede recorrer", () => {
     assert.deepEqual(withinBudget(list, 10, -5), { elements: [0], dropped: 9 });
   });
 });
+
+/**
+ * De dónde se saca un valor de una respuesta.
+ *
+ * Las dos primeras rutas —cuerpo y cabecera— son para una API pensada para que la lea un programa.
+ * Las otras dos existen porque muchas no lo están: una sesión llega en un `Set-Cookie`, del que la
+ * cabecera entera trae atributos y fechas, y a veces el valor está incrustado dentro de un texto
+ * que diseñó otro.
+ */
+describe("las cuatro rutas de una captura", () => {
+  const response = {
+    body: { data: { id: "42" } },
+    headers: {
+      "x-total": "3",
+      "set-cookie": "session=abc123; Path=/; Expires=Wed, 09 Jun 2027 10:18:14 GMT; HttpOnly, theme=oscuro; Path=/",
+    },
+    raw: "id del pedido: PED-99 (creado)",
+  };
+  const capture = (from: "body" | "header" | "cookie" | "regex", path: string) => {
+    const variables: Record<string, string> = {};
+    const result = applyCaptures([{ variable: "v", from, path }], response, variables);
+    return { value: variables.v, ...result };
+  };
+
+  test("una ruta con puntos entra en el cuerpo", () => {
+    assert.equal(capture("body", "data.id").value, "42");
+  });
+
+  test("una cabecera se encuentra escrita como sea", () => {
+    assert.equal(capture("header", "X-Total").value, "3");
+  });
+
+  test("una cookie sale de su directiva, sin los atributos", () => {
+    // La cabecera entera es `session=abc123; Path=/; Expires=…`. Sacar eso con una ruta de puntos
+    // no es algo que se le pueda pedir a nadie.
+    assert.equal(capture("cookie", "session").value, "abc123");
+  });
+
+  test("una fecha dentro de la cookie no parte la siguiente", () => {
+    // `Expires=Wed, 09 Jun 2027` lleva una coma, y la coma es también lo que separa dos cookies.
+    assert.equal(capture("cookie", "theme").value, "oscuro");
+  });
+
+  test("una cookie que no está se informa como que falta, no como vacía", () => {
+    assert.deepEqual(capture("cookie", "noExiste").missing, ["v"]);
+  });
+
+  test("una expresión regular se aplica al texto crudo y devuelve su grupo", () => {
+    assert.equal(capture("regex", "pedido: (PED-\\d+)").value, "PED-99");
+  });
+
+  test("sin grupo, la coincidencia entera", () => {
+    assert.equal(capture("regex", "PED-\\d+").value, "PED-99");
+  });
+
+  test("una expresión rota no tumba la corrida: se informa como que falta", () => {
+    assert.deepEqual(capture("regex", "(").missing, ["v"]);
+  });
+});

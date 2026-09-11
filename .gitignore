@@ -17,3 +17,6 @@ coverage/
 
 # Los secretos que scripts/demo.sh genera para el compose.
 docker/.env
+
+# Worktrees de los agentes en segundo plano. Son clones del propio repo.
+.claude/worktrees/
