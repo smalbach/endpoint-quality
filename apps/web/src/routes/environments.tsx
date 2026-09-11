@@ -5,9 +5,9 @@ import { api, type ApiError } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { Badge, Button, Card, Empty, Field, inputClass } from "@/components/ui";
 import { cn, formatDate } from "@/lib/format";
-import type { Environment } from "@/lib/types";
+import type { ConfigView, Environment } from "@/lib/types";
 import { VariablesEditor } from "@/components/variables-editor";
-import { mapsFrom, problemsWith, rowsFrom } from "@/lib/env-variables";
+import { credentialRoleOptions, declaredRoles, mapsFrom, problemsWith, rowsFrom } from "@/lib/env-variables";
 
 /**
  * Where a contract is exercised, and with what.
@@ -31,6 +31,21 @@ export function EnvironmentsPage() {
     enabled: Boolean(organization && projectId),
     queryFn: () => api<Environment[]>(`${base}/environments`),
   });
+
+  /**
+   * The roles this project declared, so a credential can be created for one.
+   *
+   * Read here and not in the form, because the form is drawn once per environment and the answer
+   * is the project's. Its own query rather than a field on the environment: «esta API tiene estos
+   * roles» is true of the project, and putting it on every environment would be the same fact
+   * repeated and free to disagree with itself.
+   */
+  const config = useQuery({
+    queryKey: ["config", projectId],
+    enabled: Boolean(organization && projectId),
+    queryFn: () => api<ConfigView>(`${base}/config`),
+  });
+  const roles = useMemo(() => declaredRoles(config.data?.sections.access?.data), [config.data]);
 
   const list = useMemo(() => environments.data ?? [], [environments.data]);
   // The selection survives a refetch and follows a deletion. Left alone it would point at a row
@@ -113,7 +128,9 @@ export function EnvironmentsPage() {
         </nav>
       </div>
 
-      {current && <EnvironmentDetail key={current.id} base={base} environment={current} onSaved={invalidate} />}
+      {current && (
+        <EnvironmentDetail key={current.id} base={base} environment={current} roles={roles} onSaved={invalidate} />
+      )}
     </div>
   );
 }
@@ -129,10 +146,14 @@ export function EnvironmentsPage() {
 function EnvironmentDetail({
   base,
   environment,
+  roles,
   onSaved,
 }: {
   base: string;
   environment: Environment;
+  /** The roles this project declared. Passed down rather than fetched here: it is the project's
+   * answer, and this component is drawn once per environment. */
+  roles: string[];
   onSaved: () => void;
 }) {
   const canEdit = useCan("editor");
@@ -281,7 +302,13 @@ function EnvironmentDetail({
         </div>
       </div>
 
-      <Credentials base={base} environment={environment} canManage={canManageCredentials} onSaved={onSaved} />
+      <Credentials
+        base={base}
+        environment={environment}
+        roles={roles}
+        canManage={canManageCredentials}
+        onSaved={onSaved}
+      />
 
       {canEdit && (
         <div className="sticky bottom-0 -mx-4 -mb-4 mt-5 flex flex-wrap items-center gap-3 rounded-b-2xl border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur">
@@ -341,14 +368,21 @@ function Switch({
 function Credentials({
   base,
   environment,
+  roles,
   canManage,
   onSaved,
 }: {
   base: string;
   environment: Environment;
+  /** The roles this project declared, beside the three the engine reserves. */
+  roles: string[];
   canManage: boolean;
   onSaved: () => void;
 }) {
+  // A declared role with no credential here is a permission case that cannot run: it stops as
+  // `config`, which is correct and says nothing about the endpoint. Named now rather than
+  // discovered in a run, because this is the screen where it is fixed.
+  const missing = roles.filter((role) => !environment.credentials.some((credential) => credential.role === role));
   return (
     <div className="mt-5 border-t border-slate-100 pt-4">
       <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Credenciales</p>
@@ -374,7 +408,12 @@ function Credentials({
           ))}
         </ul>
       )}
-      {canManage && <CredentialForm base={base} environmentId={environment.id} onSaved={onSaved} />}
+      {missing.length > 0 && (
+        <p className="mt-2 text-[11px] text-amber-700">
+          Faltan las de {missing.join(", ")}: sin ellas, los casos de permisos de esos roles se quedan en «config».
+        </p>
+      )}
+      {canManage && <CredentialForm base={base} environmentId={environment.id} roles={roles} onSaved={onSaved} />}
     </div>
   );
 }
@@ -433,13 +472,23 @@ function NewEnvironment({ base, onDone }: { base: string; onDone: (environmentId
   );
 }
 
+/** What the three reserved names are for, said next to each one. A declared role needs no hint:
+ * whoever wrote it down knows what it is. */
+const RESERVED_ROLE_HINT: Record<string, string> = {
+  primary: " · la credencial que funciona",
+  insufficient: " · autentica y no alcanza el scope (el 403)",
+  alternate: " · un esquema que la operación no declara (el 401)",
+};
+
 function CredentialForm({
   base,
   environmentId,
+  roles,
   onSaved,
 }: {
   base: string;
   environmentId: string;
+  roles: string[];
   onSaved: () => void;
 }) {
   const [role, setRole] = useState("primary");
@@ -474,9 +523,12 @@ function CredentialForm({
           value={role}
           onChange={(event) => setRole(event.target.value)}
         >
-          <option value="primary">primary · la credencial que funciona</option>
-          <option value="insufficient">insufficient · autentica y no alcanza el scope (el 403)</option>
-          <option value="alternate">alternate · un esquema que la operación no declara (el 401)</option>
+          {credentialRoleOptions(roles).map((option) => (
+            <option key={option} value={option}>
+              {option}
+              {RESERVED_ROLE_HINT[option] ?? " · un rol de este proyecto"}
+            </option>
+          ))}
         </select>
       </label>
       <label className="text-[11px] text-slate-600">

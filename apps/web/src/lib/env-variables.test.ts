@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
+  credentialRoleOptions,
+  declaredRoles,
   MASKED_VALUE,
   bulkFrom,
   mapsFrom,
@@ -130,5 +132,52 @@ describe("las variables de un entorno", () => {
       current: MASKED_VALUE,
       sensitive: true,
     });
+  });
+});
+
+/**
+ * Los roles que este proyecto declaró, leídos de la sección `access`.
+ *
+ * Se estrecha a mano y no se asevera, porque `ConfigSectionView.data` es `unknown` a propósito: es
+ * una columna `jsonb`, y una sección escrita por una versión anterior con otra forma tiene que
+ * volver vacía en vez de tumbar la pantalla que dibuja el formulario de credenciales. Un entorno al
+ * que nadie puede añadirle una credencial es peor que uno que solo ofrece los tres reservados.
+ */
+describe("los roles que el proyecto declaró", () => {
+  test("salen de la sección access", () => {
+    expect(declaredRoles({ access: { roles: ["vendedor", "comprador"] } })).toEqual(["vendedor", "comprador"]);
+  });
+
+  test("una sección sin escribir no tiene ninguno, y no es un error", () => {
+    expect(declaredRoles(undefined)).toEqual([]);
+    expect(declaredRoles({})).toEqual([]);
+    expect(declaredRoles({ access: {} })).toEqual([]);
+  });
+
+  test("una forma que no se reconoce vuelve vacía en vez de tumbar la pantalla", () => {
+    // Es una columna jsonb: lo que haya escrito una versión anterior llega tal cual.
+    expect(declaredRoles({ access: { roles: "vendedor" } })).toEqual([]);
+    expect(declaredRoles({ access: { roles: [1, null, "vendedor", ""] } })).toEqual(["vendedor"]);
+  });
+});
+
+describe("los roles que puede tener una credencial", () => {
+  test("los tres reservados van siempre y primero", () => {
+    // Son los que gasta la matriz 401/403 generada, y un proyecto que no ha declarado ningún rol
+    // los sigue necesitando.
+    expect(credentialRoleOptions([])).toEqual(["primary", "insufficient", "alternate"]);
+  });
+
+  test("los declarados van detrás", () => {
+    expect(credentialRoleOptions(["vendedor"])).toEqual(["primary", "insufficient", "alternate", "vendedor"]);
+  });
+
+  test("uno declarado que se llame como un reservado no sale dos veces", () => {
+    expect(credentialRoleOptions(["primary", "vendedor"])).toEqual([
+      "primary",
+      "insufficient",
+      "alternate",
+      "vendedor",
+    ]);
   });
 });

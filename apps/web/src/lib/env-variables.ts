@@ -181,3 +181,34 @@ function fromJson(
   if (badName) return { ok: false, error: `«${badName[0]}» no es un nombre de variable válido` };
   return { ok: true, rows: entries.map(([name, value]) => rowFor(name, value as string, true)) };
 }
+
+/**
+ * The roles this project declared, read out of the `access` section.
+ *
+ * Narrowed by hand rather than asserted, because `ConfigSectionView.data` is `unknown` on purpose:
+ * it is a `jsonb` column, and a section written by an older version with a different shape has to
+ * come back empty rather than crash the screen that draws the credential form. An environment
+ * nobody can add a credential to is worse than one that offers only the three reserved names.
+ */
+export function declaredRoles(data: unknown): string[] {
+  if (!data || typeof data !== "object") return [];
+  const access = (data as { access?: unknown }).access;
+  if (!access || typeof access !== "object") return [];
+  const roles = (access as { roles?: unknown }).roles;
+  return Array.isArray(roles)
+    ? roles.filter((role): role is string => typeof role === "string" && role.length > 0)
+    : [];
+}
+
+/**
+ * The three the engine always understands, plus whatever the project called its own.
+ *
+ * The reserved ones first and always, because they are what the generated 401/403 matrix spends
+ * and a project that has declared no roles still needs them. A declared role that happens to be
+ * spelled like one of the three is not listed twice.
+ */
+export const RESERVED_ROLES = ["primary", "insufficient", "alternate"] as const;
+
+export function credentialRoleOptions(declared: string[]): string[] {
+  return [...new Set([...RESERVED_ROLES, ...declared])];
+}
