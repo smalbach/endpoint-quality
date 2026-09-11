@@ -494,7 +494,128 @@ function ImplementedEditor({ value, onChange, disabled, operationIds }: EditorPr
   );
 }
 
-function ParametersEditor({ value, onChange, disabled }: EditorProps) {
+/**
+ * Lo que un endpoint dice de sus propios parámetros.
+ *
+ * Las listas de arriba van por nombre de parámetro, y eso vale hasta que dos endpoints usan el
+ * mismo nombre para cosas distintas —que es siempre, en cuanto el contrato crece—. Aquí se acota
+ * por operación: el `{id}` que existe en `/widgets/{id}` no es el que existe en `/usuarios/{id}`.
+ *
+ * Se edita una operación cada vez, elegida de las que el contrato declara, porque la pregunta
+ * («¿qué vale esto *aquí*?») se hace sobre un endpoint concreto y no sobre una tabla.
+ */
+function PerOperationParameters({
+  value,
+  onChange,
+  disabled,
+  operationIds,
+}: {
+  value: Record<string, Draft>;
+  onChange: (next: Record<string, Draft>) => void;
+  disabled: boolean;
+  operationIds: string[];
+}) {
+  const configured = Object.keys(value);
+  const [open, setOpen] = useState(configured[0] ?? "");
+  const current = (value[open] ?? {}) as Draft;
+  const write = (next: Draft) => {
+    // Una entrada que se queda sin nada que decir se va: guardar `{}` por operación llena la
+    // sección de ruido que hay que leer para descubrir que no dice nada.
+    const clean = Object.fromEntries(Object.entries(next).filter(([, entry]) => entry !== undefined));
+    const { [open]: _previous, ...rest } = value;
+    onChange(Object.keys(clean).length ? { ...rest, [open]: clean } : rest);
+  };
+
+  return (
+    <div>
+      <p className="text-[11px] text-slate-500">
+        Lo que vale un parámetro <span className="font-medium">en un endpoint concreto</span>, cuando la lista de arriba
+        no le sirve. Manda lo más estrecho: lo del endpoint, luego lo del proyecto.
+      </p>
+      <div className="mt-2 flex flex-wrap items-end gap-2">
+        <div>
+          <p className={label}>Operación</p>
+          <select
+            className={`${field} w-64 font-mono`}
+            value={open}
+            disabled={disabled}
+            onChange={(event) => setOpen(event.target.value)}
+          >
+            <option value="">Elige una…</option>
+            {operationIds.map((id) => (
+              <option key={id} value={id}>
+                {configured.includes(id) ? `• ${id}` : id}
+              </option>
+            ))}
+          </select>
+        </div>
+        {configured.length > 0 && (
+          <p className="pb-1 text-[11px] text-slate-400">
+            Con algo dicho: <span className="font-mono">{configured.join(", ")}</span>
+          </p>
+        )}
+      </div>
+
+      {open && (
+        <div className="mt-2 rounded-lg border border-slate-200 p-2">
+          <div>
+            <p className={label}>Identificador que no existe, aquí</p>
+            <input
+              className={`${field} w-40 font-mono`}
+              value={String(current.missingIdValue ?? "")}
+              placeholder="(el del proyecto)"
+              disabled={disabled}
+              onChange={(event) => write({ ...current, missingIdValue: event.target.value || undefined })}
+            />
+          </div>
+          <p className="mt-2 text-[11px] text-slate-500">Valores de ruta de esta operación.</p>
+          <StringMap
+            value={(current.pathDefaults as Record<string, string>) ?? {}}
+            disabled={disabled}
+            keyLabel="Parámetro"
+            valueLabel="Valor"
+            empty="Ninguno: usa los del proyecto."
+            onChange={(pathDefaults) =>
+              write({ ...current, pathDefaults: Object.keys(pathDefaults).length ? pathDefaults : undefined })
+            }
+          />
+          <p className="mt-2 text-[11px] text-slate-500">
+            Valores con los que ejercitar un filtro de esta operación, separados por coma.
+          </p>
+          <StringMap
+            value={Object.fromEntries(
+              Object.entries((current.parameterSamples as Record<string, unknown[]>) ?? {}).map(([name, samples]) => [
+                name,
+                samples.map((sample) => String(sample)).join(", "),
+              ]),
+            )}
+            disabled={disabled}
+            keyLabel="Filtro"
+            valueLabel="Valores"
+            empty="Ninguno: usa los del proyecto."
+            onChange={(samples) => {
+              const parameterSamples = Object.fromEntries(
+                Object.entries(samples).map(([name, list]) => [
+                  name,
+                  list
+                    .split(",")
+                    .map((entry) => entry.trim())
+                    .filter(Boolean),
+                ]),
+              );
+              write({
+                ...current,
+                parameterSamples: Object.keys(parameterSamples).length ? parameterSamples : undefined,
+              });
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ParametersEditor({ value, onChange, disabled, operationIds }: EditorProps) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap gap-3">
@@ -537,6 +658,14 @@ function ParametersEditor({ value, onChange, disabled }: EditorProps) {
         hint="Parámetros que no generan un caso propio (uno por línea)"
         onChange={(excludeFromSoloScenarios) => onChange({ ...value, excludeFromSoloScenarios })}
       />
+      <div className="border-t border-slate-100 pt-3">
+        <PerOperationParameters
+          value={(value.operationParameters as Record<string, Draft>) ?? {}}
+          disabled={disabled}
+          operationIds={operationIds}
+          onChange={(operationParameters) => onChange({ ...value, operationParameters })}
+        />
+      </div>
     </div>
   );
 }

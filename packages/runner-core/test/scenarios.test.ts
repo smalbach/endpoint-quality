@@ -8,10 +8,10 @@
  * If these two files ever disagree about what the engine does, the configuration is not
  * configuration — it is the old constants wearing a different hat.
  */
-import { test } from "node:test";
+import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { defineProjectConfig } from "../src/config.ts";
+import { defineProjectConfig, type ProjectConfigInput } from "../src/config.ts";
 import { resolveOperations, scenariosFor, runnableScenarios } from "../src/scenarios.ts";
 import { budgetFor } from "../src/budgets.ts";
 import type { Operation } from "../src/types.ts";
@@ -55,7 +55,10 @@ const operations: Operation[] = [
   },
 ];
 
-const blog = defineProjectConfig({
+/** Escrito aparte para poder derivar de él: una prueba de abajo lo reusa cambiando una sección.
+ * Anotado, no inferido: sin el tipo, `methods: ["DELETE"]` se infiere como `string[]` y deja de
+ * encajar donde el motor espera métodos HTTP. */
+const blogInput: ProjectConfigInput = {
   locale: "en",
   parameterSamples: {
     author: ["ada", "nobody"],
@@ -77,7 +80,8 @@ const blog = defineProjectConfig({
     fallbackShape: "{ post }",
     errorShape: "RFC7807",
   },
-});
+};
+const blog = defineProjectConfig(blogInput);
 
 const resolved = resolveOperations(operations, blog);
 const byId = (id: string) => resolved.find((operation) => operation.id === id)!;
@@ -227,4 +231,68 @@ test("y con las dos cosas sí lo genera, con el identificador inexistente del pr
   const notFound = scenariosFor(resolved, blog).find((scenario) => scenario.id === "not-found");
   assert.ok(notFound, "getPost declara 404 y tiene {slug}: el caso debe existir");
   assert.equal(notFound.parameters?.slug, "does-not-exist");
+});
+
+/**
+ * Lo que un endpoint dice de sus propios parámetros.
+ *
+ * Las listas del proyecto van por **nombre de parámetro**, y eso vale hasta que dos endpoints usan
+ * el mismo nombre para cosas distintas — que es siempre, en cuanto el contrato crece—. `slug` en
+ * un blog es un artículo; `slug` en su sección de autores es una persona. Una sola lista tiene que
+ * estar mal para uno de los dos, y el caso que sale es un 404 achacado a la API.
+ *
+ * Lo mismo con los marcadores de ruta: `pathDefaults.slug` es un único recurso que existe, para un
+ * contrato con una docena que se llaman igual.
+ */
+describe("un endpoint puede decir lo suyo sobre sus parámetros", () => {
+  const authors: Operation[] = [
+    ...operations,
+    {
+      id: "getAuthor",
+      method: "GET",
+      path: "/authors/{slug}",
+      summary: "Get",
+      tag: "Authors",
+      statuses: [200, 404],
+      parameters: ["slug"],
+    },
+  ];
+  const withOverrides = defineProjectConfig({
+    ...blogInput,
+    operationParameters: {
+      // El mismo nombre, otro recurso: el autor que existe no es el artículo que existe.
+      getAuthor: { pathDefaults: { slug: "ada-lovelace" }, missingIdValue: "nadie" },
+      // Y el mismo nombre de filtro, otros valores.
+      listPosts: { parameterSamples: { author: ["turing"] } },
+    },
+  });
+
+  const caseFor = (config: typeof blog, list: Operation[], operationId: string, scenarioId: string) => {
+    const operation = resolveOperations(list, config).find((entry) => entry.id === operationId)!;
+    return scenariosFor(operation, config).find((entry) => entry.id === scenarioId)!;
+  };
+
+  test("el recurso que existe es el suyo, no el del proyecto", () => {
+    assert.equal(caseFor(withOverrides, authors, "getAuthor", "found").parameters?.slug, "ada-lovelace");
+    // Y el del proyecto sigue valiendo para quien no dice nada.
+    assert.equal(caseFor(withOverrides, authors, "getPost", "found").parameters?.slug, "hello-world");
+  });
+
+  test("el que no existe también es suyo: un id libre en una colección está cogido en otra", () => {
+    assert.equal(caseFor(withOverrides, authors, "getAuthor", "not-found").parameters?.slug, "nadie");
+    assert.equal(caseFor(withOverrides, authors, "getPost", "not-found").parameters?.slug, "does-not-exist");
+  });
+
+  test("los valores de un filtro también", () => {
+    const ids = resolveOperations(authors, withOverrides)
+      .filter((entry) => entry.id === "listPosts")
+      .flatMap((entry) => scenariosFor(entry, withOverrides).map((scenario) => scenario.id));
+    assert.ok(ids.includes("author-turing"), ids.join(", "));
+    assert.ok(!ids.includes("author-ada"), "la lista del proyecto no se acumula con la del endpoint");
+  });
+
+  test("sin decir nada, nada cambia", () => {
+    assert.equal(caseFor(blog, operations, "getPost", "found").parameters?.slug, "hello-world");
+    assert.equal(caseFor(blog, operations, "getPost", "not-found").parameters?.slug, "does-not-exist");
+  });
 });

@@ -110,6 +110,14 @@ export const operationOverrideSchema = z.object({
   extraFunctional: z.array(scenarioTemplateSchema).optional(),
 });
 
+/** Lo que un endpoint dice de sus propios parámetros. Las listas del proyecto van por nombre, y
+ * dos endpoints usan el mismo nombre para cosas distintas en cuanto el contrato crece. */
+export const operationParametersSchema = z.object({
+  parameterSamples: z.record(z.string(), z.array(sampleValueSchema)).optional(),
+  pathDefaults: z.record(z.string(), z.string()).optional(),
+  missingIdValue: z.string().min(1).optional(),
+});
+
 /**
  * The sections the API exposes, each writable on its own.
  *
@@ -120,6 +128,9 @@ export const operationOverrideSchema = z.object({
 export const configSections = {
   parameters: z.object({
     parameterSamples: z.record(z.string(), z.array(sampleValueSchema)),
+    // Con valor por defecto y no obligatorio: la sección se escribe entera en cada `PUT`, y
+    // exigirlo rompería a todo el que ya tenía una guardada sin esto — que son todos.
+    operationParameters: z.record(z.string(), operationParametersSchema).default({}),
     fallbackSamples: z.array(sampleValueSchema),
     excludeFromSoloScenarios: z.array(z.string()),
     pathDefaults: z.record(z.string(), z.string()),

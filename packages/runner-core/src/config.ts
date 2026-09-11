@@ -97,12 +97,41 @@ export type OperationOverride = {
   extraFunctional?: ScenarioTemplate[];
 };
 
+/**
+ * What one operation says about its own parameters, when the project-wide answer is wrong for it.
+ *
+ * The project's lists are keyed by the parameter's **name**, which is right until two endpoints
+ * use the same name for different things — and they always do once a contract grows. `status` on
+ * `/pedidos` is `pagado` and `enviado`; `status` on `/servidores` is `arriba` and `abajo`. One
+ * list has to be wrong for one of them, and the case it produces is a 422 filed against the API.
+ *
+ * Same for the placeholders: `pathDefaults.id` is one existing id for a contract with a dozen
+ * resources that all call it `{id}`. The one that exists in `/widgets/{id}` is not the one in
+ * `/usuarios/{id}`, and picking either makes every read of the other a 404 that says nothing
+ * about the endpoint.
+ *
+ * It sits in the `parameters` section and not next to `operationOverrides`, which is about
+ * *scenarios*: this narrows what a parameter is worth, and whoever is editing that is editing the
+ * rest of this section in the same sitting.
+ *
+ * Narrower wins: what the operation says, then what the project says, then the fallback.
+ */
+export type OperationParameters = {
+  parameterSamples?: Record<string, SampleValue[]>;
+  /** The value a placeholder of *this* operation takes when the case wants the resource to exist. */
+  pathDefaults?: Record<string, string>;
+  /** And when it wants it missing. An id that is free in one collection is taken in another. */
+  missingIdValue?: string;
+};
+
 export type ProjectConfig = {
   locale: Locale;
   text: TextBundle;
 
-  /** §1.4 — the values to try per parameter name. */
+  /** §1.4 — the values to try per parameter name, for every operation that has one. */
   parameterSamples: Record<string, SampleValue[]>;
+  /** And what a specific operation says instead, keyed by operationId. */
+  operationParameters: Record<string, OperationParameters>;
   /** What a parameter with no samples gets. One value, so an unconfigured filter still produces
    * a case that proves the API does not reject it. */
   fallbackSamples: SampleValue[];
@@ -156,6 +185,7 @@ export const DEFAULT_CONFIG: ProjectConfig = {
   locale: "es",
   text: bundles.es,
   parameterSamples: {},
+  operationParameters: {},
   fallbackSamples: ["test"],
   excludeFromSoloScenarios: [],
   conditionalScenarios: [],
@@ -198,4 +228,27 @@ export function defineProjectConfig(input: ProjectConfigInput = {}): ProjectConf
 /** Normalises the string form of a sample to the object form the generators work with. */
 export function toSample(value: SampleValue): Exclude<SampleValue, string> {
   return typeof value === "string" ? { value } : value;
+}
+
+/**
+ * What a parameter of one operation is worth: the project's answer, narrowed by anything the
+ * operation says for itself.
+ *
+ * One place rather than four call sites doing `override?.x ?? config.x ?? fallback`, because the
+ * order is the rule — narrower wins — and four copies of a rule are four chances to write it
+ * backwards. The functions are built per operation and then asked per name, which is also how
+ * they are used: a scenario builder resolves one operation's parameters in a row.
+ */
+export function parametersFor(config: ProjectConfig, operationId: string) {
+  const override = config.operationParameters[operationId];
+  return {
+    samples: (name: string): SampleValue[] =>
+      override?.parameterSamples?.[name] ?? config.parameterSamples[name] ?? config.fallbackSamples,
+    /** The value that makes the resource exist. */
+    present: (name: string): string =>
+      override?.pathDefaults?.[name] ?? config.pathDefaults[name] ?? config.fallbackPathValue,
+    /** The value that makes it missing. Per operation and not per placeholder: «no existe» is a
+     * property of the collection being read, not of the name the contract gave its id. */
+    missing: (): string => override?.missingIdValue ?? config.missingIdValue,
+  };
 }

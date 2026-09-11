@@ -8,7 +8,7 @@
  */
 import type { Operation, ResolvedOperation, ScenarioFlow, TestScenario } from "./types.ts";
 import type { ConditionalScenario, ProjectConfig, ScenarioTemplate } from "./config.ts";
-import { toSample } from "./config.ts";
+import { parametersFor, toSample } from "./config.ts";
 import { interpolate } from "./text.ts";
 import { responseShapeFor } from "./envelope.ts";
 import { exampleFromSchema } from "./example.ts";
@@ -95,9 +95,10 @@ function listScenarios(operation: ResolvedOperation, config: ProjectConfig): Tes
     },
   ];
   const queries = queryParameters(operation);
+  const values = parametersFor(config, operation.id);
   for (const parameter of queries) {
     if (config.excludeFromSoloScenarios.includes(parameter)) continue;
-    for (const raw of config.parameterSamples[parameter] ?? config.fallbackSamples) {
+    for (const raw of values.samples(parameter)) {
       const sample = toSample(raw);
       scenarios.push({
         id: `${parameter}-${sample.value}`,
@@ -159,10 +160,9 @@ function defaultAuthText(credential: string, config: ProjectConfig): { name: str
 function writeEdgeScenarios(operation: ResolvedOperation, config: ProjectConfig): TestScenario[] {
   const scenarios: TestScenario[] = [];
   const names = pathParameters(operation);
-  const missing = Object.fromEntries(names.map((name) => [name, config.missingIdValue]));
-  const present = Object.fromEntries(
-    names.map((name) => [name, config.pathDefaults[name] ?? config.fallbackPathValue]),
-  );
+  const values = parametersFor(config, operation.id);
+  const missing = Object.fromEntries(names.map((name) => [name, values.missing()]));
+  const present = Object.fromEntries(names.map((name) => [name, values.present(name)]));
 
   if (operation.statuses.includes(404) && names.length) {
     scenarios.push({
@@ -209,10 +209,9 @@ function functionalScenarios(operation: ResolvedOperation, config: ProjectConfig
 
   if (operation.method === "GET") {
     const names = pathParameters(operation);
-    const present = Object.fromEntries(
-      names.map((name) => [name, config.pathDefaults[name] ?? config.fallbackPathValue]),
-    );
-    const missing = Object.fromEntries(names.map((name) => [name, config.missingIdValue]));
+    const values = parametersFor(config, operation.id);
+    const present = Object.fromEntries(names.map((name) => [name, values.present(name)]));
+    const missing = Object.fromEntries(names.map((name) => [name, values.missing()]));
     return [
       {
         id: "found",

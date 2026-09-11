@@ -15,7 +15,12 @@
     "qué forma tiene el envelope, y cuánto debería tardar cada cosa.",
     "",
     "Solo se envían las secciones que este contrato necesita. Las demás se quedan con su valor",
-    "por defecto, que es casi vacío a propósito: el motor no sabe nada de ningún proyecto."
+    "por defecto, que es casi vacío a propósito: el motor no sabe nada de ningún proyecto.",
+    "",
+    "`pathDefaults` va por nombre de parámetro y aquí basta, porque hay un solo recurso. Eso es lo",
+    "interesante de mirarlo: en cuanto un contrato tenga `/widgets/{id}` y `/pedidos/{id}`, un",
+    "único `id` que existe tiene que estar mal para uno de los dos, y ahí es donde entra",
+    "`operationParameters`, que acota cualquiera de estos valores a una operación concreta."
   ],
   "parameters": {
     "parameterSamples": {

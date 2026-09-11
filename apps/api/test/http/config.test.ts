@@ -704,6 +704,48 @@ describe("credenciales del destino", () => {
     );
   });
 
+  test("un endpoint puede decir lo suyo sobre sus parámetros, y solo para él", async () => {
+    // Las listas de la sección van por nombre de parámetro, y dos endpoints usan el mismo nombre
+    // para cosas distintas en cuanto el contrato crece. Esto es lo que separa «el id que existe»
+    // de «el id que existe *aquí*».
+    const written = await api()
+      .put(`${base}/config/parameters`)
+      .set(as(owner))
+      .send({
+        parameterSamples: {},
+        fallbackSamples: ["test"],
+        excludeFromSoloScenarios: [],
+        pathDefaults: { id: "1" },
+        fallbackPathValue: "1",
+        missingIdValue: "no-existe",
+        operationParameters: {
+          getStore: { pathDefaults: { id: "42" }, missingIdValue: "sin-tienda" },
+        },
+      });
+    assert.equal(written.status, 204, JSON.stringify(written.body));
+
+    const section = (await api().get(`${base}/config`).set(as(owner))).body.sections.parameters;
+    assert.deepEqual(section.data.operationParameters.getStore, {
+      pathDefaults: { id: "42" },
+      missingIdValue: "sin-tienda",
+    });
+
+    // Y una sección escrita sin la clave sigue siendo válida: es la que tiene todo el mundo que
+    // guardó una antes de que esto existiera.
+    const older = await api()
+      .put(`${base}/config/parameters`)
+      .set(as(owner))
+      .send({
+        parameterSamples: {},
+        fallbackSamples: ["test"],
+        excludeFromSoloScenarios: [],
+        pathDefaults: { id: "1" },
+        fallbackPathValue: "1",
+        missingIdValue: "no-existe",
+      });
+    assert.equal(older.status, 204, JSON.stringify(older.body));
+  });
+
   test("una URL base que no es http(s) se rechaza al escribirla", async () => {
     const response = await api()
       .post(`${base}/environments`)
