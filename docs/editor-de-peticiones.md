@@ -28,8 +28,8 @@ Security Rules**, panel de respuesta **Body · Headers · Console**, y un botón
 | 4   | Cuerpo no-JSON (form-data, urlencoded, raw)                | `body` es `Record<string, unknown> \| null`   | 2 ✔   |
 | 5   | Fila con interruptor (`enabled`)                           | para quitar un parámetro hay que borrarlo     | 2 ✔   |
 | 6   | Autocompletado al escribir `{{`                            | el motor interpola, el editor no ayuda        | 2 ✔   |
-| 7   | Exportar como cURL                                         | no existía                                    | 3     |
-| 8   | Importar cURL / Postman / Insomnia / markdown              | solo entra OpenAPI 3.x                        | 3     |
+| 7   | Exportar como cURL                                         | no existía                                    | 3 ✔   |
+| 8   | Importar cURL / Postman / Insomnia / markdown              | solo entra OpenAPI 3.x                        | 3 ✔   |
 
 ### 2. Permisos por rol y por endpoint
 
@@ -110,11 +110,27 @@ Tres decisiones que conviene no volver a discutir:
 Quedan dos migraciones: `1700000011000` (las tres columnas nuevas) y `1700000012000` (`body` a
 `{ type, … }`, con `NOT NULL` y `{"type":"none"}` por defecto).
 
-### Tanda 3 — Entrar y salir
+### Tanda 3 — Entrar y salir · **cerrada** (`90e78b6`, `3ad6c2c`, `55ec579`)
 
-Importar cURL (uno suelto o un markdown lleno), colección Postman v2.1, Insomnia. Salen plantillas,
-no operaciones: el contrato sigue mandando. Exportar cURL desde el panel de respuesta. Informe HTML
-y JUnit XML como `?format=` de `GET :runId/report`.
+Importar cURL (uno suelto o un markdown lleno), colección Postman v2.1, Insomnia. Exportar cURL
+desde el panel de respuesta. Informe HTML y JUnit XML como `?format=` de `GET :runId/report`.
+
+Lo que conviene no volver a discutir:
+
+- **Sale una plantilla, nunca una operación.** Toda petición importada tiene que caer sobre una que
+  el contrato activo ya declara; la que no cae vuelve nombrada en `skipped`, que es información
+  útil por sí sola. El emparejado va desde el final de la ruta —una colección lleva la base que
+  usara su autor— y entre dos que encajan gana la de menos huecos.
+- **Lo que no se importa**: la credencial (es del entorno, y guardarla pisaría la que la corrida
+  iba a presentar, dejando en verde todos los casos de autorización), el `Content-Type` y el
+  `Accept` (los decide el ejecutor) y lo que es del transporte. `auth` entra siempre como
+  `default`: los otros tres valores existen para ser rechazados a propósito.
+- **El cURL exportado lleva la credencial enmascarada** y lo dice. El valor claro no llega al
+  navegador, y es sobre todo una ventaja: un cURL pegado en un ticket es un cURL por el que si no
+  habría viajado el token de staging de alguien.
+- **El informe no depende de nada externo.** Ni handlebars ni puppeteer: una página sin hoja de
+  estilos, sin script y sin imagen, porque acaba de artefacto en un CI o abierta desde el disco.
+  Un `?format=` que no se reconoce cae en JSON en vez de romper la tubería.
 
 ### Tanda 4 — Permisos por operación
 
