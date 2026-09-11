@@ -124,10 +124,23 @@ export function useAuth(): AuthState {
 
 /** The organization the app is acting in. Everything below a project hangs off it, so it is
  * resolved once here rather than threaded through every query key. */
+/**
+ * The organization in context, as a **stable** object.
+ *
+ * The memo is not a micro-optimisation. Without it this built a new object literal on every
+ * render, so anything that put the result in a dependency array had a dependency that changed
+ * every time — and the run screen did: its `useEffect` opened an SSE stream, the stream's first
+ * event set state, the state re-rendered, the effect re-ran, and it opened another. One tab left
+ * on a run made a hundred thousand requests and spent the rest of its life reading 429s.
+ *
+ * Returning the row itself is not enough either: `user` is replaced wholesale on every refresh of
+ * the session, so the identity has to hang off the values that actually decide it.
+ */
 export function useOrganization(): { id: string; name: string; role: Role } | null {
   const { user, organizationId } = useAuth();
   const organization = user?.organizations.find((entry) => entry.id === organizationId);
-  return organization ? { id: organization.id, name: organization.name, role: organization.role } : null;
+  const { id, name, role } = organization ?? {};
+  return useMemo(() => (id && name && role ? { id, name, role } : null), [id, name, role]);
 }
 
 /** Whether the signed-in member reaches a given rung. The server enforces it; this only decides

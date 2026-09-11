@@ -224,6 +224,11 @@ export function RunDetailPage() {
     });
 
     return () => controller.abort();
+    // `organization` belongs here — the effect reads it — and it is only safe to depend on
+    // because `useOrganization` memoises it. It used to build a fresh object per render, so this
+    // effect re-ran on every one: abort the stream, open another, whose first event set state,
+    // which rendered, which re-ran the effect. A tab left on a run made a hundred thousand
+    // requests and then spent its life reading 429s.
   }, [base, organization, projectId, runId, queryClient]);
 
   const cancel = useMutation({
