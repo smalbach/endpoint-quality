@@ -145,7 +145,20 @@ export class RunsController {
     // with zero totals while the case rows say otherwise. It has to be resolved first.
     const snapshot = from(
       this.queryBus.execute<GetRunQuery, RunView>(new GetRunQuery(organizationId, projectId, runId)),
-    ).pipe(map((run) => ({ type: "snapshot", payload: { totals: run.totals } })));
+    ).pipe(
+      map((run) => {
+        // **A run that is already over opens as `finished`, not as a snapshot.** A follower that
+        // connects after the last case — which is every follower of a run that takes thirty
+        // milliseconds — would otherwise hold a stream that will never emit anything again, while
+        // its header keeps showing whatever the first fetch happened to catch. The `finished`
+        // event is what tells it to re-read the stored run, and `takeWhile` closes the connection
+        // on the way out.
+        const over = run.status !== "queued" && run.status !== "running";
+        return over
+          ? { type: "finished", payload: { totals: run.totals, status: run.status } }
+          : { type: "snapshot", payload: { totals: run.totals } };
+      }),
+    );
 
     return concat(snapshot, this.progress.forRun(runId)).pipe(
       map((event) => ({ type: event.type, data: event.payload })),

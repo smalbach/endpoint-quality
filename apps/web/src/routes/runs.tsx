@@ -183,8 +183,13 @@ export function RunDetailPage() {
   if (run.isLoading) return <p className="text-sm text-slate-500">Cargando…</p>;
   if (!run.data) return <p className="text-sm text-rose-600">No se encontró la corrida.</p>;
 
-  // The live map wins per case while the run is going, so a row flips the moment its case ends.
-  const cases = run.data.cases.map((runCase) => live?.cases.get(runCase.id) ?? runCase);
+  // The live map wins per case while the run is going, so a row flips the moment its case ends —
+  // and it can also carry cases the first fetch never saw. A step that loops writes one case per
+  // element while the run is walking, so the list has to be the union of the two and not a map
+  // over the one that was queued; ordered by `position`, which is what the server orders by.
+  const known = new Map(run.data.cases.map((runCase) => [runCase.id, runCase]));
+  for (const [id, runCase] of live?.cases ?? []) known.set(id, runCase);
+  const cases = [...known.values()].sort((left, right) => left.position - right.position);
   const totals = live?.totals ?? run.data.totals;
   const running = run.data.status === "queued" || run.data.status === "running";
   const progress = totals.cases ? Math.round((totals.completed / totals.cases) * 100) : 0;

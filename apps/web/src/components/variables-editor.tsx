@@ -40,6 +40,18 @@ export function VariablesEditor({
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [revealing, setRevealing] = useState(false);
+  /**
+   * What «Ver secretos» came back with, kept **beside** the rows and not written into them.
+   *
+   * Writing it into the draft was the obvious version and it made the form say «cambios sin
+   * guardar» for having looked at something. Worse than the wrong label: saving then re-encrypts a
+   * value nobody edited, which is a write, a new `updatedAt`, and an audit trail that says
+   * somebody changed a secret they only read.
+   *
+   * An entry is dropped the moment that row is typed in, because from then on the draft is what
+   * the field means.
+   */
+  const [revealed, setRevealed] = useState<Record<string, string>>({});
 
   // Editing in the table while the text view holds a stale copy is how a switch silently reverts
   // what was just typed. It is only carried in the direction that is not being edited.
@@ -86,10 +98,9 @@ export function VariablesEditor({
     setRevealing(true);
     setError(null);
     try {
-      const revealed = await onReveal();
-      // Only `current` is filled. `initial` stays masked, and the mask is what tells the API to
-      // leave the shared value exactly as it was — revealing a secret must not rewrite one.
-      onChange(rows.map((row) => (row.name in revealed ? { ...row, current: revealed[row.name] } : row)));
+      // Only the current value is shown. `initial` stays masked, and the mask is what tells the
+      // API to leave the shared value exactly as it was — revealing a secret must not rewrite one.
+      setRevealed(await onReveal());
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "No se pudieron leer los secretos");
     } finally {
@@ -211,10 +222,13 @@ export function VariablesEditor({
                   <input
                     aria-label="Valor actual"
                     className={valueClass}
-                    value={row.current}
+                    value={revealed[row.name] ?? row.current}
                     placeholder={ghost ? "" : row.initial || "123"}
                     disabled={disabled}
-                    onChange={(event) => edit(index, { current: event.target.value })}
+                    onChange={(event) => {
+                      setRevealed(({ [row.name]: _shown, ...rest }) => rest);
+                      edit(index, { current: event.target.value });
+                    }}
                   />
                   <input
                     type="checkbox"

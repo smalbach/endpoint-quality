@@ -1436,6 +1436,33 @@ describe("conjuntos de datos y suites", () => {
     await project.target.stop();
   });
 
+  test("seguir una corrida que ya terminó la da por terminada, no deja la conexión esperando", async () => {
+    const project = await projectWithFlows();
+    const { runId } = await runAndWait(project.projectBase, { environmentId: project.environmentId });
+
+    // Una corrida de treinta milisegundos termina antes de que el navegador llegue a abrir el
+    // stream. Si eso abriera con una foto sin estado, el seguidor se quedaría con una conexión
+    // que ya no va a emitir nada y una cabecera que dice «running» para siempre.
+    const stream = await api()
+      .get(`${project.projectBase}/runs/${runId}/stream`)
+      .set(as(owner))
+      .buffer(true)
+      .parse((response, next) => {
+        let text = "";
+        response.on("data", (chunk: Buffer) => (text += chunk.toString()));
+        response.on("end", () => next(null, text));
+      });
+
+    // El parser de arriba deja el texto crudo en `body`: un `text/event-stream` no es JSON y
+    // supertest no tiene nada que poner en `.text` si nadie se lo dice.
+    const raw = stream.body as unknown as string;
+    assert.match(raw, /event: finished/);
+    const data = JSON.parse(/data: (.*)/.exec(raw)![1]);
+    assert.equal(data.status, "passed");
+    assert.equal(data.totals.cases, data.totals.completed);
+    await project.target.stop();
+  });
+
   test("una corrida dice qué ejecutó, y lo dice con nombres", async () => {
     const project = await projectWithFlows();
     const dataset = await project.send(`workflows/${project.creates}/datasets`, {
