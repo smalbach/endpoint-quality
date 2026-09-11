@@ -604,6 +604,22 @@ function ScheduleEditor({
     <div className="mt-4 border-t border-slate-100 pt-3">
       <p className="text-xs font-semibold text-slate-800">Cuándo y cuántas veces</p>
 
+      {/* Solo con varias dependencias: con una, «todas» y «cualquiera» son la misma frase, y un
+          desplegable que no decide nada es una pregunta que alguien tiene que leer igual. */}
+      {sources.length > 1 && (
+        <Field label="Empieza cuando" hint="«Cualquiera» arranca con el primero que llegue, sin esperar al resto.">
+          <select
+            className={inputClass}
+            value={step.waits ?? "all"}
+            disabled={!canEdit}
+            onChange={(event) => onChange({ ...step, waits: event.target.value === "any" ? "any" : undefined })}
+          >
+            <option value="all">han terminado todos los anteriores</option>
+            <option value="any">ha terminado cualquiera de ellos</option>
+          </select>
+        </Field>
+      )}
+
       <Field
         label="Esperar antes (ms)"
         hint="Para el destino que acepta la escritura y tarda un momento en poder leerla."

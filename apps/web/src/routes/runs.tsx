@@ -300,7 +300,10 @@ export function RunDetailPage() {
               {/* El desglose por culpable, que es lo que convierte «40 fallidos» en un plan. */}
               {breakdown.map(([failure, count]) => (
                 <span key={failure} className="rounded-full bg-white/5 px-2.5 py-1 text-slate-300">
-                  {count} {FAILURE_LABEL[failure].text}
+                  {/* `×` y no un espacio: los ocho nombres son sustantivos de géneros y números
+                      distintos —«red», «contrato», «5xx»— y concordarlos con el número pedía una
+                      tabla de plurales para ganar «2 comprobaciones» y perder «2 5xx». */}
+                  {count} × {FAILURE_LABEL[failure].text}
                 </span>
               ))}
               <span className="rounded-full bg-amber-400/10 px-2.5 py-1 text-amber-300">
