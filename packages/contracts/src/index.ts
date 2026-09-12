@@ -75,12 +75,46 @@ export type ContractSummaryOf<T> = {
  */
 export type SpecSourceSummary = { kind: string; location: string; headersStored: boolean };
 
+export type ProjectAuthType = "none" | "bearer" | "basic" | "api_key";
+
+/**
+ * How a project logs in to its API, as it leaves the API.
+ *
+ * Every secret — `token`, `loginBody`, `password`, `apiKey` — is either empty or the eight-dot
+ * mask. Sending the mask back in an update means «leave it as it was».
+ */
+export type ProjectAuthView = {
+  type: ProjectAuthType;
+  loginUrl: string;
+  loginMethod: string;
+  tokenPath: string;
+  username: string;
+  headerName: string;
+  token: string;
+  loginBody: string;
+  password: string;
+  apiKey: string;
+};
+
+/** The latest run of a project, which is what its card calls its health. */
+export type ProjectLastRunOf<T> = {
+  id: string;
+  status: RunStatus;
+  startedAt: T;
+  finishedAt: T | null;
+  totals: RunTotals;
+};
+
 export type ProjectSummaryOf<T> = {
   id: string;
   name: string;
   slug: string;
   description: string;
   archivedAt: T | null;
+  baseUrl: string;
+  tags: string[];
+  auth: ProjectAuthView;
+  lastRun: ProjectLastRunOf<T> | null;
   /** Null is a real state and the UI renders it: a project exists before its first import. */
   contract: ContractSummaryOf<T> | null;
   source: SpecSourceSummary | null;

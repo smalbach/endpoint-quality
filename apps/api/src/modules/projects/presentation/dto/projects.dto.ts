@@ -1,4 +1,6 @@
+import { PROJECT_AUTH_TYPES, type ProjectAuthType } from "@/modules/projects/domain/project-auth";
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsIn,
@@ -14,14 +16,34 @@ import { Type } from "class-transformer";
 
 import { MAX_SPEC_BYTES } from "@/shared/http/body-limits";
 
+/** How the project logs in to its API. Secrets travel as strings; the mask means «unchanged». */
+export class ProjectAuthDto {
+  @IsIn(PROJECT_AUTH_TYPES) type: ProjectAuthType;
+  @IsOptional() @IsString() @MaxLength(8000) token?: string;
+  @IsOptional() @IsString() @MaxLength(2000) loginUrl?: string;
+  @IsOptional() @IsString() @MaxLength(10) loginMethod?: string;
+  @IsOptional() @IsString() @MaxLength(20_000) loginBody?: string;
+  @IsOptional() @IsString() @MaxLength(500) tokenPath?: string;
+  @IsOptional() @IsString() @MaxLength(320) username?: string;
+  @IsOptional() @IsString() @MaxLength(1000) password?: string;
+  @IsOptional() @IsString() @MaxLength(200) headerName?: string;
+  @IsOptional() @IsString() @MaxLength(8000) apiKey?: string;
+}
+
 export class CreateProjectDto {
   @IsString() @MaxLength(200) name: string;
   @IsOptional() @IsString() @MaxLength(2000) description?: string;
+  @IsOptional() @IsString() @MaxLength(2000) baseUrl?: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(30) @IsString({ each: true }) @MaxLength(40, { each: true }) tags?: string[];
+  @IsOptional() @ValidateNested() @Type(() => ProjectAuthDto) auth?: ProjectAuthDto;
 }
 
 export class UpdateProjectDto {
   @IsOptional() @IsString() @MaxLength(200) name?: string;
   @IsOptional() @IsString() @MaxLength(2000) description?: string;
+  @IsOptional() @IsString() @MaxLength(2000) baseUrl?: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(30) @IsString({ each: true }) @MaxLength(40, { each: true }) tags?: string[];
+  @IsOptional() @ValidateNested() @Type(() => ProjectAuthDto) auth?: ProjectAuthDto;
 }
 
 export class ArchiveProjectDto {

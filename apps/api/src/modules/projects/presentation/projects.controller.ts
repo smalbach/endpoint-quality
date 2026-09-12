@@ -12,7 +12,8 @@
  * keeping the matrix current; archiving is `admin` because it takes a project out of everyone's
  * list.
  */
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { DeleteProjectCommand } from "../application/commands/delete-project";
 import { CommandBus, QueryBus } from "@nestjs/cqrs";
 
 import { InvalidInputError, UnauthenticatedError } from "@/shared/errors/domain-error";
@@ -97,8 +98,20 @@ export class ProjectsController {
     @CurrentUser() principal: Principal,
   ) {
     return this.commandBus.execute(
-      new CreateProjectCommand(organizationId, body.name, body.description ?? "", actorId(principal)),
+      new CreateProjectCommand(organizationId, body.name, body.description ?? "", actorId(principal), {
+        baseUrl: body.baseUrl,
+        tags: body.tags,
+        auth: body.auth,
+      }),
     );
+  }
+
+  // Deleting is final for everybody in the organization, so it is the same rung as archiving.
+  @Delete(":projectId")
+  @RequireRole("admin")
+  @HttpCode(204)
+  async remove(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string): Promise<void> {
+    await this.commandBus.execute(new DeleteProjectCommand(organizationId, projectId));
   }
 
   @Get(":projectId")

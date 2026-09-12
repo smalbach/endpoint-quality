@@ -9,6 +9,7 @@ import { CreateOrganizationCommand } from "@/modules/iam/application/commands/cr
 import { normalizeEmail, type User } from "../../domain/model";
 import { USER_REPOSITORY, type UserRepositoryPort } from "../../domain/ports";
 import { UserRegisteredEvent } from "../events/user-registered.event";
+import { assertStrongPassword } from "../../domain/password-policy";
 
 export class RegisterUserCommand implements ICommand {
   constructor(
@@ -52,14 +53,7 @@ export class RegisterUserHandler implements ICommandHandler<RegisterUserCommand,
       throw new InvalidInputError("El correo no es válido", [
         { field: "email", detail: "Debe ser una dirección de correo" },
       ]);
-    // Length is the only password rule enforced. Composition rules ("one uppercase, one symbol")
-    // measurably push people towards `Password1!` and are not in NIST 800-63B any more; length
-    // is what actually buys entropy.
-    if (command.password.length < 12) {
-      throw new InvalidInputError("La contraseña es demasiado corta", [
-        { field: "password", detail: "Debe tener al menos 12 caracteres" },
-      ]);
-    }
+    assertStrongPassword(command.password, "password");
 
     if (await this.users.findByEmail(email)) {
       // This does leak that the address is registered, and it is the right trade here: the
@@ -76,6 +70,8 @@ export class RegisterUserHandler implements ICommandHandler<RegisterUserCommand,
       passwordDigest: await this.passwords.hash(command.password),
       status: "active",
       createdAt: now,
+      failedLoginAttempts: 0,
+      lockedUntil: null,
     };
     await this.users.save(user);
 

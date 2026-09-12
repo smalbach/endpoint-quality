@@ -34,7 +34,17 @@ import {
   type CurrentUserView,
 } from "../application/queries/get-current-user";
 import { CurrentUser, Public, type Principal } from "../infrastructure/guards/auth.guard";
-import { ChangePasswordDto, LoginDto, LogoutDto, RefreshDto, RegisterDto } from "./dto/auth.dto";
+import {
+  ChangePasswordDto,
+  ForgotPasswordDto,
+  LoginDto,
+  LogoutDto,
+  RefreshDto,
+  RegisterDto,
+  ResetPasswordDto,
+} from "./dto/auth.dto";
+import { RequestPasswordResetCommand } from "../application/commands/request-password-reset";
+import { ResetPasswordCommand } from "../application/commands/reset-password";
 
 const REFRESH_COOKIE = "eq_refresh";
 
@@ -94,6 +104,30 @@ export class AuthController {
     await this.commandBus.execute(new LogoutUserCommand(token, body.everywhere ?? false, principal.userId));
     // Cleared with the same attributes it was set with, or the browser keeps the old one and the
     // next refresh presents a token the server has already revoked.
+    response.clearCookie(REFRESH_COOKIE, this.cookieOptions());
+  }
+
+  /**
+   * Sends a reset link, and answers 204 whether or not the address has an account.
+   *
+   * Throttled harder than login: each call can put a mail in somebody's inbox, which makes it a
+   * way to harass an address as much as a way to probe one.
+   */
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 15 * 60_000 } })
+  @HttpCode(204)
+  @Post("forgot-password")
+  async forgotPassword(@Body() body: ForgotPasswordDto): Promise<void> {
+    await this.commandBus.execute(new RequestPasswordResetCommand(body.email));
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @HttpCode(204)
+  @Post("reset-password")
+  async resetPassword(@Body() body: ResetPasswordDto, @Res({ passthrough: true }) response: Response): Promise<void> {
+    await this.commandBus.execute(new ResetPasswordCommand(body.token, body.newPassword));
+    // Every session was revoked, this browser's included.
     response.clearCookie(REFRESH_COOKIE, this.cookieOptions());
   }
 

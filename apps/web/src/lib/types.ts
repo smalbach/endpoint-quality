@@ -26,6 +26,8 @@ export type {
   PendingInvitation,
   OperationScenarios,
   ProblemDetails,
+  ProjectAuthType,
+  ProjectAuthView,
   ProjectSummary,
   RequestBodyView,
   RequestPreviewView,

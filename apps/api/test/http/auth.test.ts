@@ -20,7 +20,7 @@ after(async () => {
 });
 
 const api = () => request(context.app.getHttpServer());
-const credentials = { email: "ada@example.com", password: "una-contraseña-larga", name: "Ada" };
+const credentials = { email: "ada@example.com", password: "Una-contraseña-larga-1", name: "Ada" };
 
 async function register(overrides: Partial<typeof credentials> = {}) {
   return api()
@@ -203,13 +203,13 @@ describe("cierre de sesión y cambio de contraseña", () => {
     const changed = await api()
       .post("/auth/change-password")
       .set("Authorization", `Bearer ${first.accessToken}`)
-      .send({ currentPassword: credentials.password, newPassword: "otra-contraseña-larga" });
+      .send({ currentPassword: credentials.password, newPassword: "Otra-contraseña-larga-2" });
     assert.equal(changed.status, 204);
 
     for (const session of [first, second]) {
       const response = await api().post("/auth/refresh").send({ refreshToken: session.refreshToken });
       assert.equal(response.status, 401, "una sesión anterior sobrevivió al cambio de contraseña");
     }
-    assert.equal((await login({ password: "otra-contraseña-larga" })).status, 200);
+    assert.equal((await login({ password: "Otra-contraseña-larga-2" })).status, 200);
   });
 });

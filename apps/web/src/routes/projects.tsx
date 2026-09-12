@@ -7,6 +7,8 @@ import { Button, Card, Empty, Field, inputClass } from "@/components/ui";
 import { Modal } from "@/components/overlay";
 import { useToast } from "@/components/toast";
 import { cn, formatDate } from "@/lib/format";
+import { ProjectAuthFields } from "@/components/project-auth-fields";
+import { authPayload, authProblems, EMPTY_AUTH, parseTags } from "@/lib/project-auth";
 import type { ProjectSummary } from "@/lib/types";
 
 type View = "active" | "archived";
@@ -142,7 +144,9 @@ function ProjectCard({
                 <span className="shrink-0 rounded bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">archivado</span>
               )}
             </div>
-            <p className="truncate font-mono text-[11px] text-slate-400">{project.slug}</p>
+            <p className="truncate font-mono text-[11px] text-slate-400" title={project.baseUrl || project.slug}>
+              {project.baseUrl || project.slug}
+            </p>
           </div>
           {canArchive && (
             <button
@@ -157,6 +161,18 @@ function ProjectCard({
         </div>
 
         {project.description && <p className="mt-2 line-clamp-2 text-xs text-slate-500">{project.description}</p>}
+
+        <Health lastRun={project.lastRun} />
+
+        {project.tags.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1">
+            {project.tags.map((tag) => (
+              <span key={tag} className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
 
         <div className="mt-4 border-t border-slate-100 pt-3 text-[11px]">
           {project.contract ? (
@@ -177,6 +193,49 @@ function ProjectCard({
   );
 }
 
+/**
+ * How the project's latest run went, in one line: the percentage of cases that passed.
+ *
+ * The analyzer showed security, flows and performance side by side; this is the first of those
+ * figures that exists here, and the others join it when their runs do.
+ */
+export function Health({ lastRun }: { lastRun: ProjectSummary["lastRun"] }) {
+  if (!lastRun) return <p className="mt-3 text-[11px] text-slate-400">Sin corridas todavía</p>;
+  const { cases, passed, failed } = lastRun.totals;
+  if (lastRun.status === "queued" || lastRun.status === "running") {
+    return (
+      <p className="mt-3 flex items-center gap-1.5 text-[11px] text-sky-700">
+        <span className="size-2 animate-pulse rounded-full bg-sky-500" />
+        Corrida en curso · {passed + failed}/{cases}
+      </p>
+    );
+  }
+  const rate = cases > 0 ? Math.round((passed / cases) * 100) : 0;
+  const tone = rate >= 80 ? "emerald" : rate >= 60 ? "amber" : "rose";
+  return (
+    <p
+      className="mt-3 flex items-center gap-1.5 text-[11px] text-slate-600"
+      title={`Última corrida: ${lastRun.status}`}
+    >
+      <span
+        className={cn(
+          "size-2 rounded-full",
+          tone === "emerald" ? "bg-emerald-500" : tone === "amber" ? "bg-amber-500" : "bg-rose-500",
+        )}
+      />
+      <span
+        className={cn(
+          "font-semibold",
+          tone === "emerald" ? "text-emerald-700" : tone === "amber" ? "text-amber-700" : "text-rose-700",
+        )}
+      >
+        {rate}%
+      </span>
+      en la última corrida · {passed}/{cases} casos
+    </p>
+  );
+}
+
 function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const organization = useOrganization();
   const queryClient = useQueryClient();
@@ -184,12 +243,22 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const toast = useToast();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [tags, setTags] = useState("");
+  const [auth, setAuth] = useState(EMPTY_AUTH);
+  const problems = authProblems(auth);
 
   const create = useMutation({
     mutationFn: () =>
       api<{ projectId: string }>(`/orgs/${organization!.id}/projects`, {
         method: "POST",
-        body: { name: name.trim(), ...(description.trim() ? { description: description.trim() } : {}) },
+        body: {
+          name: name.trim(),
+          ...(description.trim() ? { description: description.trim() } : {}),
+          ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
+          ...(parseTags(tags).length ? { tags: parseTags(tags) } : {}),
+          ...(auth.type !== "none" ? { auth: authPayload(auth) } : {}),
+        },
       }),
     onSuccess: async ({ projectId }) => {
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -205,13 +274,19 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (name.trim()) create.mutate();
+    if (name.trim() && Object.keys(problems).length === 0) create.mutate();
   }
+
+  const serverFields =
+    create.error instanceof ApiError
+      ? Object.fromEntries(create.error.fields.map((entry) => [entry.field, entry.detail]))
+      : {};
 
   return (
     <Modal
       title="Nuevo proyecto"
       description="Un proyecto agrupa el contrato de una API, sus entornos, sus flujos y sus corridas."
+      size="lg"
       onClose={onClose}
     >
       <form className="space-y-3" onSubmit={submit}>
@@ -234,6 +309,29 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
             onChange={(event) => setDescription(event.target.value)}
           />
         </Field>
+        <Field
+          label="URL base"
+          error={fieldError("baseUrl")}
+          hint="La raíz de la API. Cada entorno puede tener la suya."
+        >
+          <input
+            className={`${inputClass} font-mono text-xs`}
+            value={baseUrl}
+            placeholder="https://api.example.com"
+            onChange={(event) => setBaseUrl(event.target.value)}
+          />
+        </Field>
+        <Field label="Etiquetas" hint="Separadas por comas.">
+          <input
+            className={inputClass}
+            value={tags}
+            placeholder="produccion, v2, interno"
+            onChange={(event) => setTags(event.target.value)}
+          />
+        </Field>
+        <div className="border-t border-slate-100 pt-3">
+          <ProjectAuthFields value={auth} onChange={setAuth} errors={{ ...problems, ...serverFields }} />
+        </div>
         {create.error && !(create.error instanceof ApiError && create.error.fields.length > 0) && (
           <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{create.error.message}</p>
         )}
@@ -241,7 +339,7 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancelar
           </Button>
-          <Button type="submit" disabled={!name.trim() || create.isPending}>
+          <Button type="submit" disabled={!name.trim() || Object.keys(problems).length > 0 || create.isPending}>
             {create.isPending ? "Creando…" : "Crear proyecto"}
           </Button>
         </div>

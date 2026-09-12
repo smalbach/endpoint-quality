@@ -19,6 +19,7 @@ import { DatasetsAndSuites1700000009000 } from "./migrations/1700000009000-Datas
 import { CaseFailureKind1700000010000 } from "./migrations/1700000010000-CaseFailureKind";
 import { RequestTemplateHeaders1700000011000 } from "./migrations/1700000011000-RequestTemplateHeaders";
 import { RequestBodyTypes1700000012000 } from "./migrations/1700000012000-RequestBodyTypes";
+import { ProjectSettingsAndAccountRecovery1700000013000 } from "./migrations/1700000013000-ProjectSettingsAndAccountRecovery";
 
 // Ordered. TypeORM runs them by the timestamp in the class name, and the second one adds a
 // foreign key into a table the first creates.
@@ -36,6 +37,7 @@ export const MIGRATIONS = [
   CaseFailureKind1700000010000,
   RequestTemplateHeaders1700000011000,
   RequestBodyTypes1700000012000,
+  ProjectSettingsAndAccountRecovery1700000013000,
 ];
 
 export function buildDataSourceOptions(databaseUrl: string) {

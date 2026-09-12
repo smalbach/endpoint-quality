@@ -26,6 +26,19 @@ export class UserEntity {
   @Column({ type: "varchar", length: 400 }) passwordDigest: string;
   @Column({ type: "varchar", length: 20 }) status: string;
   @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "integer", default: 0 }) failedLoginAttempts: number;
+  @Column({ type: "timestamptz", nullable: true }) lockedUntil: Date | null;
+}
+
+/** A «forgot my password» link. Only its hash is kept, and using one spends every other. */
+@Entity({ name: "password_reset_tokens" })
+export class PasswordResetTokenEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") userId: string;
+  @Index({ unique: true }) @Column({ type: "varchar", length: 64 }) tokenHash: string;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) expiresAt: Date;
+  @Column({ type: "timestamptz", nullable: true }) usedAt: Date | null;
 }
 
 @Entity({ name: "organizations" })
@@ -115,6 +128,16 @@ export class ProjectEntity {
   @Column({ type: "timestamptz", nullable: true }) archivedAt: Date | null;
   /** The version the runs use. Null until the first import succeeds. */
   @Column({ type: "uuid", nullable: true }) activeSpecVersionId: string | null;
+  @Column({ type: "varchar", length: 2000, default: "" }) baseUrl: string;
+  @Column({ type: "jsonb", default: () => "'[]'::jsonb" }) tags: string[];
+  /** `none`, `bearer`, `basic` or `api_key`. */
+  @Column({ type: "varchar", length: 20, default: "none" }) authType: string;
+  /** The half of the login that is not secret, and the names of the secrets that exist. */
+  @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) authSettings: Record<string, unknown>;
+  /** The token, password, key and login body, as one AES-256-GCM payload. Never returned. */
+  @Column({ type: "text", nullable: true }) authSecretCiphertext: string | null;
+  /** Deleted for everybody; the runs stay. */
+  @Column({ type: "timestamptz", nullable: true }) deletedAt: Date | null;
 }
 
 /** Where a contract comes from, so a re-import needs no arguments and a drift check can run on
@@ -442,6 +465,7 @@ export class WorkflowSuiteEntity {
 // prettier-ignore
 export const ENTITIES = [
   UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity,
+  PasswordResetTokenEntity,
   ProjectEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity,
   EnvironmentEntity, EnvironmentCredentialEntity, ProjectConfigEntity,
   RequestTemplateEntity, WorkflowEntity, WorkflowDatasetEntity, WorkflowSuiteEntity,

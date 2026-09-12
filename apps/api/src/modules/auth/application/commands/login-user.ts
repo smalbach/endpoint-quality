@@ -9,7 +9,7 @@ import { generateOpaqueToken, hashOpaqueToken } from "@/shared/crypto/opaque-tok
 import { ENV } from "@/shared/config/env";
 import type { Env } from "@/shared/config/env";
 import { ACCESS_TOKEN_SERVICE, type AccessTokenServicePort } from "../../domain/access-token";
-import { isActive, normalizeEmail } from "../../domain/model";
+import { isActive, LOCKOUT_MS, MAX_FAILED_LOGINS, normalizeEmail } from "../../domain/model";
 import {
   REFRESH_TOKEN_REPOSITORY,
   USER_REPOSITORY,
@@ -57,17 +57,38 @@ export class LoginUserHandler implements ICommandHandler<LoginUserCommand, Sessi
   ) {}
 
   async execute(command: LoginUserCommand): Promise<SessionTokens> {
+    const now = this.clock.now();
     const user = await this.users.findByEmail(normalizeEmail(command.email));
     const digest = user?.passwordDigest ?? (await this.decoyDigest());
     const matches = await this.passwords.verify(command.password, digest);
 
-    if (!user || !matches || !isActive(user)) throw new UnauthenticatedError();
+    if (!user) throw new UnauthenticatedError();
+
+    // A locked account refuses even the right password, and says the same as for a wrong one. A
+    // distinct «cuenta bloqueada» would confirm the address exists to whoever made the five
+    // attempts; the person who owns it has «¿Olvidaste tu contraseña?», which also lifts the lock.
+    if (user.lockedUntil && user.lockedUntil.getTime() > now.getTime()) throw new UnauthenticatedError();
+
+    if (!matches) {
+      const attempts = user.failedLoginAttempts + 1;
+      const locks = attempts >= MAX_FAILED_LOGINS;
+      await this.users.save({
+        ...user,
+        failedLoginAttempts: locks ? 0 : attempts,
+        lockedUntil: locks ? new Date(now.getTime() + LOCKOUT_MS) : null,
+      });
+      throw new UnauthenticatedError();
+    }
+    if (!isActive(user)) throw new UnauthenticatedError();
+    if (user.failedLoginAttempts > 0 || user.lockedUntil) {
+      await this.users.save({ ...user, failedLoginAttempts: 0, lockedUntil: null });
+    }
 
     return issueSession({
       userId: user.id,
       email: user.email,
       sessionId: randomUUID(),
-      now: this.clock.now(),
+      now,
       ttlDays: this.env.REFRESH_TOKEN_TTL_DAYS,
       accessTokens: this.accessTokens,
       refreshTokens: this.refreshTokens,

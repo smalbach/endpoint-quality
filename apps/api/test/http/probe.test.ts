@@ -14,7 +14,7 @@ after(async () => context?.close());
 test("probe", async () => {
   const target = new StubTarget({});
   await target.start();
-  const password = "una-contraseña-larga";
+  const password = "Una-contraseña-larga-1";
   await api().post("/auth/register").send({ email: "probe@example.com", password, name: "p" });
   const session = await api().post("/auth/login").send({ email: "probe@example.com", password });
   const as = { Authorization: `Bearer ${session.body.accessToken}` };

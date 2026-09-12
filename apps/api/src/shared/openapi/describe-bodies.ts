@@ -28,6 +28,8 @@ import type { OpenAPIObject } from "@nestjs/swagger";
 import {
   ChangePasswordDto,
   CreateApiTokenDto,
+  ForgotPasswordDto,
+  ResetPasswordDto,
   LoginDto,
   LogoutDto,
   RefreshDto,
@@ -49,6 +51,7 @@ import {
   CopyFromProjectDto,
   CreateProjectDto,
   ImportSpecDto,
+  ProjectAuthDto,
   SpecSourceDto,
   UpdateProjectDto,
 } from "@/modules/projects/presentation/dto/projects.dto";
@@ -79,6 +82,9 @@ const DTOS = [
   RefreshDto,
   LogoutDto,
   ChangePasswordDto,
+  ForgotPasswordDto,
+  ResetPasswordDto,
+  ProjectAuthDto,
   CreateApiTokenDto,
   CreateOrganizationDto,
   InviteMemberDto,

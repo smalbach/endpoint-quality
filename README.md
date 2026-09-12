@@ -24,9 +24,13 @@ Termina con 13 casos en verde y 2 en rojo. Los rojos son ese fallo: una suite qu
 códigos de estado ve el `204` correcto y da el endpoint por bueno; los casos `delete-read` y
 `deleted-read` releen después de borrar y ahí se ve.
 
-    Interfaz    http://localhost:8080   demo@example.com / una-contraseña-de-demo
+    Interfaz    http://localhost:8080   demo@example.com / Una-contraseña-de-demo-1
     API         http://localhost:3001   su propio contrato en /openapi.json
     Muestra     http://localhost:9100
+
+La contraseña pide mayúscula, minúscula, número y símbolo desde que existe «¿Olvidaste tu
+contraseña?». Un volumen de demo creado antes conserva la cuenta con la contraseña de entonces:
+`scripts/demo.sh down` y vuelta a levantar, o restablecerla desde la pantalla de entrada.
 
 `scripts/demo.sh down` lo para y borra el volumen. Si algún puerto está ocupado:
 `EQ_WEB_PORT=8081 scripts/demo.sh` — también `EQ_API_PORT`, `EQ_POSTGRES_PORT` y

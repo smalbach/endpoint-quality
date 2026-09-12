@@ -1,15 +1,18 @@
 import { Inject } from "@nestjs/common";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 
-import { ConflictError, NotFoundError } from "@/shared/errors/domain-error";
+import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
+import { SECRET_CIPHER, type SecretCipherPort } from "@/shared/crypto/secret-cipher";
+import { normalizeTags, projectSettingsProblems, type ProjectSettingsInput } from "../../domain/model";
+import { storeProjectAuth } from "../../domain/project-auth";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "../../domain/ports";
 
 export class UpdateProjectCommand implements ICommand {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
-    readonly changes: { name?: string; description?: string },
+    readonly changes: { name?: string; description?: string } & ProjectSettingsInput,
   ) {}
 }
 
@@ -32,17 +35,26 @@ async function ownedProject(projects: ProjectRepositoryPort, organizationId: str
 
 @CommandHandler(UpdateProjectCommand)
 export class UpdateProjectHandler implements ICommandHandler<UpdateProjectCommand, void> {
-  constructor(@Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort) {}
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(SECRET_CIPHER) private readonly cipher: SecretCipherPort,
+  ) {}
 
   async execute(command: UpdateProjectCommand): Promise<void> {
     const project = await ownedProject(this.projects, command.organizationId, command.projectId);
     if (project.archivedAt) throw new ConflictError("El proyecto está archivado", "project-archived");
+    const { changes } = command;
+    const problems = projectSettingsProblems(changes, project.auth);
+    if (problems.length) throw new InvalidInputError("La configuración del proyecto no es válida", problems);
     // The slug is **not** recomputed from a new name: it is in URLs the team has bookmarked and
     // in whatever CI job launches their runs. Renaming a project should not break either.
     await this.projects.save({
       ...project,
-      name: command.changes.name?.trim() || project.name,
-      description: command.changes.description?.trim() ?? project.description,
+      name: changes.name?.trim() || project.name,
+      description: changes.description?.trim() ?? project.description,
+      baseUrl: changes.baseUrl !== undefined ? changes.baseUrl.trim() : project.baseUrl,
+      tags: changes.tags !== undefined ? normalizeTags(changes.tags) : project.tags,
+      auth: changes.auth ? storeProjectAuth(changes.auth, project.auth, this.cipher) : project.auth,
     });
   }
 }

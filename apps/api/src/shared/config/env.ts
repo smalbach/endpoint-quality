@@ -71,12 +71,30 @@ export const envSchema = z.object({
 
   CORS_ORIGINS: z.string().default("http://localhost:5173"),
   COOKIE_DOMAIN: z.string().optional(),
+
+  /** Where the interface lives, for the links a mail carries. */
+  APP_URL: z.string().url().default("http://localhost:5173"),
+  /**
+   * `log` writes mails to the process log, which is enough for a local install and shows the reset
+   * link to whoever runs it. `brevo` sends them, and then the key is required: a deployment that
+   * asked for real mail and has no key must fail at boot, not the first time somebody forgets
+   * their password.
+   */
+  MAIL_DRIVER: z.enum(["log", "brevo"]).default("log"),
+  BREVO_API_KEY: z.string().optional(),
+  MAIL_FROM: z.string().email().default("no-reply@endpoint-quality.local"),
+  MAIL_FROM_NAME: z.string().default("Endpoint Quality"),
+});
+
+const refinedEnvSchema = envSchema.superRefine((env, context) => {
+  if (env.MAIL_DRIVER === "brevo" && !env.BREVO_API_KEY)
+    context.addIssue({ code: "custom", path: ["BREVO_API_KEY"], message: "requerida con MAIL_DRIVER=brevo" });
 });
 
 export type Env = z.infer<typeof envSchema>;
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
-  const parsed = envSchema.safeParse(source);
+  const parsed = refinedEnvSchema.safeParse(source);
   if (parsed.success) return parsed.data;
   const detail = parsed.error.issues
     .map((issue) => `  ${issue.path.join(".") || "(raíz)"}: ${issue.message}`)

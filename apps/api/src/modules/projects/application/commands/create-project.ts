@@ -3,7 +3,16 @@ import { Inject } from "@nestjs/common";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
-import { slugifyProject, type Project } from "../../domain/model";
+import { SECRET_CIPHER, type SecretCipherPort } from "@/shared/crypto/secret-cipher";
+import { InvalidInputError } from "@/shared/errors/domain-error";
+import {
+  normalizeTags,
+  projectSettingsProblems,
+  slugifyProject,
+  type Project,
+  type ProjectSettingsInput,
+} from "../../domain/model";
+import { NO_AUTH, storeProjectAuth } from "../../domain/project-auth";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "../../domain/ports";
 
 export class CreateProjectCommand implements ICommand {
@@ -12,6 +21,7 @@ export class CreateProjectCommand implements ICommand {
     readonly name: string,
     readonly description: string,
     readonly createdBy: string,
+    readonly settings: ProjectSettingsInput = {},
   ) {}
 }
 
@@ -23,9 +33,13 @@ export class CreateProjectHandler implements ICommandHandler<
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
+    @Inject(SECRET_CIPHER) private readonly cipher: SecretCipherPort,
   ) {}
 
   async execute(command: CreateProjectCommand) {
+    const problems = projectSettingsProblems(command.settings, NO_AUTH);
+    if (problems.length) throw new InvalidInputError("La configuración del proyecto no es válida", problems);
+
     const project: Project = {
       id: randomUUID(),
       organizationId: command.organizationId,
@@ -39,6 +53,10 @@ export class CreateProjectHandler implements ICommandHandler<
       // importing is a step that can fail — against an unreachable URL, or a document that does
       // not parse — and losing the project along with the failed import helps nobody.
       activeSpecVersionId: null,
+      baseUrl: command.settings.baseUrl?.trim() ?? "",
+      tags: normalizeTags(command.settings.tags ?? []),
+      auth: command.settings.auth ? storeProjectAuth(command.settings.auth, NO_AUTH, this.cipher) : NO_AUTH,
+      deletedAt: null,
     };
     await this.projects.save(project);
     return { projectId: project.id, slug: project.slug };

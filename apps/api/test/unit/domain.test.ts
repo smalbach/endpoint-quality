@@ -138,19 +138,19 @@ describe("correos", () => {
 describe("hash de contraseñas", () => {
   test("el mismo texto produce digests distintos y ambos verifican", async () => {
     const hasher = new ScryptPasswordHasher();
-    const [first, second] = [await hasher.hash("una-contraseña-larga"), await hasher.hash("una-contraseña-larga")];
+    const [first, second] = [await hasher.hash("Una-contraseña-larga-1"), await hasher.hash("Una-contraseña-larga-1")];
     assert.notEqual(
       first,
       second,
       "sin sal aleatoria dos usuarios con la misma contraseña serían visiblemente iguales",
     );
-    assert.ok(await hasher.verify("una-contraseña-larga", first));
-    assert.ok(await hasher.verify("una-contraseña-larga", second));
+    assert.ok(await hasher.verify("Una-contraseña-larga-1", first));
+    assert.ok(await hasher.verify("Una-contraseña-larga-1", second));
   });
 
   test("una contraseña incorrecta no verifica", async () => {
     const hasher = new ScryptPasswordHasher();
-    assert.equal(await hasher.verify("otra-cosa", await hasher.hash("una-contraseña-larga")), false);
+    assert.equal(await hasher.verify("otra-cosa", await hasher.hash("Una-contraseña-larga-1")), false);
   });
 
   test("los parámetros de coste viajan en el digest", async () => {

@@ -162,7 +162,8 @@ export class InMemoryProjectRepository implements ProjectRepositoryPort {
   readonly rows = new Map<string, Project>();
 
   async findById(id: string): Promise<Project | null> {
-    return this.rows.get(id) ?? null;
+    const project = this.rows.get(id);
+    return project && !project.deletedAt ? project : null;
   }
   async findBySlug(organizationId: string, slug: string): Promise<Project | null> {
     return (
@@ -172,7 +173,8 @@ export class InMemoryProjectRepository implements ProjectRepositoryPort {
   }
   async listForOrganization(organizationId: string, includeArchived: boolean): Promise<Project[]> {
     return [...this.rows.values()].filter(
-      (project) => project.organizationId === organizationId && (includeArchived || !project.archivedAt),
+      (project) =>
+        project.organizationId === organizationId && !project.deletedAt && (includeArchived || !project.archivedAt),
     );
   }
   async save(project: Project): Promise<void> {

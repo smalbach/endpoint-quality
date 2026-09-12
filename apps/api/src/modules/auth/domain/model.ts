@@ -14,7 +14,16 @@ export type User = {
   passwordDigest: string;
   status: UserStatus;
   createdAt: Date;
+  /** Consecutive wrong passwords since the last success. Reset to zero on success and when the
+   * lock is applied, so the count after a lock expires starts over. */
+  failedLoginAttempts: number;
+  /** Until when a correct password is refused anyway. */
+  lockedUntil: Date | null;
 };
+
+/** Five wrong passwords lock the account for fifteen minutes — the analyzer's numbers. */
+export const MAX_FAILED_LOGINS = 5;
+export const LOCKOUT_MS = 15 * 60 * 1000;
 
 /**
  * A refresh token, and the session it belongs to.

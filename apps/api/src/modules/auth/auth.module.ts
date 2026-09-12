@@ -3,7 +3,12 @@ import { CqrsModule } from "@nestjs/cqrs";
 import { JwtModule } from "@nestjs/jwt";
 import { TypeOrmModule } from "@nestjs/typeorm";
 
-import { ApiTokenEntity, RefreshTokenEntity, UserEntity } from "@/shared/database/entities";
+import { ApiTokenEntity, PasswordResetTokenEntity, RefreshTokenEntity, UserEntity } from "@/shared/database/entities";
+import { PASSWORD_RESET_REPOSITORY } from "./domain/password-reset";
+import { TypeOrmPasswordResetRepository } from "./infrastructure/persistence/typeorm-password-reset.repository";
+import { RequestPasswordResetHandler } from "./application/commands/request-password-reset";
+import { ResetPasswordHandler } from "./application/commands/reset-password";
+import { SendWelcomeMailHandler } from "./application/events/send-welcome-mail";
 import { PASSWORD_HASHER, ScryptPasswordHasher } from "@/shared/crypto/password-hasher";
 import { IamModule } from "@/modules/iam/iam.module";
 import { ACCESS_TOKEN_SERVICE } from "./domain/access-token";
@@ -34,8 +39,11 @@ export const AUTH_COMMAND_HANDLERS = [
   ChangePasswordHandler,
   IssueApiTokenHandler,
   RevokeApiTokenHandler,
+  RequestPasswordResetHandler,
+  ResetPasswordHandler,
 ];
 export const AUTH_QUERY_HANDLERS = [GetCurrentUserHandler, GetAuthContextHandler, ListApiTokensHandler];
+export const AUTH_EVENT_HANDLERS = [SendWelcomeMailHandler];
 
 /**
  * The ports are bound to Postgres adapters *here*, and only here. Every test that needs
@@ -46,6 +54,7 @@ export const AUTH_ADAPTERS = [
   { provide: USER_REPOSITORY, useClass: TypeOrmUserRepository },
   { provide: REFRESH_TOKEN_REPOSITORY, useClass: TypeOrmRefreshTokenRepository },
   { provide: API_TOKEN_REPOSITORY, useClass: TypeOrmApiTokenRepository },
+  { provide: PASSWORD_RESET_REPOSITORY, useClass: TypeOrmPasswordResetRepository },
   { provide: PASSWORD_HASHER, useClass: ScryptPasswordHasher },
   { provide: ACCESS_TOKEN_SERVICE, useClass: JwtAccessTokenService },
 ];
@@ -54,11 +63,11 @@ export const AUTH_ADAPTERS = [
   imports: [
     CqrsModule,
     JwtModule.register({}),
-    TypeOrmModule.forFeature([UserEntity, RefreshTokenEntity, ApiTokenEntity]),
+    TypeOrmModule.forFeature([UserEntity, RefreshTokenEntity, ApiTokenEntity, PasswordResetTokenEntity]),
     IamModule,
   ],
   controllers: [AuthController],
-  providers: [...AUTH_ADAPTERS, ...AUTH_COMMAND_HANDLERS, ...AUTH_QUERY_HANDLERS, AuthGuard],
+  providers: [...AUTH_ADAPTERS, ...AUTH_COMMAND_HANDLERS, ...AUTH_QUERY_HANDLERS, ...AUTH_EVENT_HANDLERS, AuthGuard],
   exports: [ACCESS_TOKEN_SERVICE, USER_REPOSITORY, API_TOKEN_REPOSITORY, PASSWORD_HASHER, AuthGuard],
 })
 export class AuthModule {}

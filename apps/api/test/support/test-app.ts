@@ -34,7 +34,10 @@ import { API_TOKEN_REPOSITORY, REFRESH_TOKEN_REPOSITORY, USER_REPOSITORY } from 
 import { JwtAccessTokenService } from "@/modules/auth/infrastructure/jwt-access-token.service";
 import { AuthGuard } from "@/modules/auth/infrastructure/guards/auth.guard";
 import { AuthController } from "@/modules/auth/presentation/auth.controller";
-import { AUTH_COMMAND_HANDLERS, AUTH_QUERY_HANDLERS } from "@/modules/auth/auth.module";
+import { AUTH_COMMAND_HANDLERS, AUTH_EVENT_HANDLERS, AUTH_QUERY_HANDLERS } from "@/modules/auth/auth.module";
+import { PASSWORD_RESET_REPOSITORY } from "@/modules/auth/domain/password-reset";
+import { MAILER, RecordingMailer } from "@/shared/mail/mailer";
+import { InMemoryPasswordResetRepository } from "./in-memory-password-resets";
 import { INVITATION_REPOSITORY, MEMBERSHIP_REPOSITORY, ORGANIZATION_REPOSITORY } from "@/modules/iam/domain/ports";
 import { OrganizationsController } from "@/modules/iam/presentation/organizations.controller";
 import { IAM_COMMAND_HANDLERS, IAM_QUERY_HANDLERS } from "@/modules/iam/iam.module";
@@ -174,8 +177,11 @@ export type TestContext = {
     config: InMemoryConfigRepository;
     workflows: InMemoryWorkflowRepository;
     runs: InMemoryRunRepository;
+    passwordResets: InMemoryPasswordResetRepository;
   };
   http: StubSafeFetch;
+  /** Every mail the application sent. The reset link is only reachable through here. */
+  mailer: RecordingMailer;
   /** Lets a test await the queue instead of polling for a run to finish. */
   queue: InMemoryRunQueue;
   close(): Promise<void>;
@@ -197,7 +203,9 @@ export async function createTestApp(): Promise<TestContext> {
     config: new InMemoryConfigRepository(),
     workflows: new InMemoryWorkflowRepository(),
     runs: new InMemoryRunRepository(),
+    passwordResets: new InMemoryPasswordResetRepository(),
   };
+  const mailer = new RecordingMailer();
   // Loopback is allowed here because the run tests point the engine at a stub server on
   // 127.0.0.1, which is also the ordinary self-hosted case.
   const http = new StubSafeFetch({
@@ -227,6 +235,8 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: ACCESS_TOKEN_SERVICE, useClass: JwtAccessTokenService },
       { provide: USER_REPOSITORY, useValue: repositories.users },
       { provide: REFRESH_TOKEN_REPOSITORY, useValue: repositories.refreshTokens },
+      { provide: PASSWORD_RESET_REPOSITORY, useValue: repositories.passwordResets },
+      { provide: MAILER, useValue: mailer },
       { provide: API_TOKEN_REPOSITORY, useValue: repositories.apiTokens },
       { provide: ORGANIZATION_REPOSITORY, useValue: repositories.organizations },
       { provide: MEMBERSHIP_REPOSITORY, useValue: repositories.memberships },
@@ -253,6 +263,7 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: SECRET_CIPHER, useValue: new AesGcmSecretCipher(Buffer.alloc(32, 9).toString("base64")) },
       ...AUTH_COMMAND_HANDLERS,
       ...AUTH_QUERY_HANDLERS,
+      ...AUTH_EVENT_HANDLERS,
       ...IAM_COMMAND_HANDLERS,
       ...IAM_QUERY_HANDLERS,
       ...PROJECT_COMMAND_HANDLERS,
@@ -319,6 +330,7 @@ export async function createTestApp(): Promise<TestContext> {
     env,
     repositories,
     http,
+    mailer,
     queue,
     close: async () => {
       // Superagent leaves keep-alive sockets behind, and `close()` waits for connections to end.

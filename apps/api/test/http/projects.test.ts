@@ -41,7 +41,7 @@ const api = () => request(context.app.getHttpServer());
 
 type Actor = { userId: string; organizationId: string; token: string };
 async function signUp(email: string): Promise<Actor> {
-  const password = "una-contraseña-larga";
+  const password = "Una-contraseña-larga-1";
   const registered = await api()
     .post("/auth/register")
     .send({ email, password, name: email.split("@")[0] });

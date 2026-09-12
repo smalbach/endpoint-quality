@@ -63,6 +63,7 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
       "invitations",
       "memberships",
       "organizations",
+      "password_reset_tokens",
       "project_config",
       "projects",
       "refresh_tokens",

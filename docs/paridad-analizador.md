@@ -178,7 +178,7 @@ Cada fase deja el producto funcionando y se prueba en el navegador antes de pasa
 1. **Shell y menús** · _hecha_. Barra global (Dashboard, Proyectos, Historial, Iconos, breadcrumb, botón de
    entorno), barra lateral plegable del proyecto con las seis secciones y su ayuda, panel de
    ayuda, modal y toasts propios, 404. Las pantallas que ya existen se reubican bajo su sección.
-2. **Proyectos y Settings.** Descripción, URL base, tags y autenticación del proyecto; activos y
+2. **Proyectos y Settings** · _hecha_. Descripción, URL base, tags y autenticación del proyecto; activos y
    archivados; salud en la tarjeta; eliminar; pestaña Settings; olvidé/restablecer contraseña con
    correo; bloqueo; complejidad.
 3. **Endpoints.** Entidad propia que convive con las operaciones del contrato (importar un

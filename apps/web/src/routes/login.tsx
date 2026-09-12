@@ -3,6 +3,7 @@ import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Button, Card, Field, inputClass } from "@/components/ui";
+import { PasswordChecklist } from "@/components/password-checklist";
 
 /**
  * Sign in and sign up, on one screen each.
@@ -95,11 +96,7 @@ export function LoginPage({ mode }: { mode: "login" | "register" }) {
               autoComplete="email"
             />
           </Field>
-          <Field
-            label="Contraseña"
-            hint={mode === "register" ? "Al menos 12 caracteres. La longitud es lo único que se exige." : undefined}
-            error={fieldError("password")}
-          >
+          <Field label="Contraseña" error={fieldError("password")}>
             <input
               className={inputClass}
               type="password"
@@ -109,6 +106,18 @@ export function LoginPage({ mode }: { mode: "login" | "register" }) {
               autoComplete={mode === "login" ? "current-password" : "new-password"}
             />
           </Field>
+          {mode === "register" ? (
+            <PasswordChecklist password={password} />
+          ) : (
+            <div className="-mt-2 text-right">
+              <Link
+                className="text-xs text-slate-500 underline-offset-2 hover:text-slate-900 hover:underline"
+                to="/forgot-password"
+              >
+                ¿Olvidaste tu contraseña?
+              </Link>
+            </div>
+          )}
           {mode === "register" && !invitation && (
             <Field label="Organización" hint="Opcional. Si la dejas vacía se crea una con tu nombre.">
               <input

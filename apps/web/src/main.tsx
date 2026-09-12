@@ -19,6 +19,7 @@ import { RunDetailPage, RunsPage } from "@/routes/runs";
 import { RolesPage } from "@/routes/roles";
 import { ProjectGeneralPage, ProjectSettingsLayout } from "@/routes/project-settings";
 import { NotFoundPage } from "@/routes/not-found";
+import { ForgotPasswordPage, ResetPasswordPage } from "@/routes/password-reset";
 
 // The graph editor brings its own renderer and controls. Keep it out of the initial dashboard
 // bundle so users who only inspect the matrix do not download it on every visit.
@@ -65,6 +66,8 @@ createRoot(document.getElementById("root")!).render(
               <Routes>
                 <Route path="/login" element={<LoginPage mode="login" />} />
                 <Route path="/register" element={<LoginPage mode="register" />} />
+                <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+                <Route path="/reset-password" element={<ResetPasswordPage />} />
                 <Route element={<Protected />}>
                   <Route element={<PageLayout />}>
                     <Route index element={<Navigate to="/projects" replace />} />

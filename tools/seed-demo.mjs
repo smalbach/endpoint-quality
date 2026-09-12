@@ -28,7 +28,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const API = (process.env.EQ_API ?? "http://localhost:3001").replace(/\/+$/, "");
 const TARGET = (process.env.EQ_TARGET ?? "http://localhost:9000").replace(/\/+$/, "");
 const EMAIL = process.env.EQ_EMAIL ?? "demo@example.com";
-const PASSWORD = process.env.EQ_PASSWORD ?? "una-contraseña-de-demo";
+const PASSWORD = process.env.EQ_PASSWORD ?? "Una-contraseña-de-demo-1";
 const PROJECT_NAME = process.env.EQ_PROJECT ?? "Sample API";
 const ENVIRONMENT_NAME = "demo";
 const RUN = process.env.EQ_SEED_RUN !== "false";

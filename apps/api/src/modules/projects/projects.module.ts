@@ -14,6 +14,8 @@ import { TypeOrmProjectRepository } from "./infrastructure/persistence/typeorm-p
 import { CreateProjectHandler } from "./application/commands/create-project";
 import { CopyFromProjectHandler } from "./application/commands/copy-from-project";
 import { SetProjectArchivedHandler, UpdateProjectHandler } from "./application/commands/update-project";
+import { DeleteProjectHandler } from "./application/commands/delete-project";
+import { RunsModule } from "@/modules/runs/runs.module";
 import { GetProjectHandler, ListProjectsHandler } from "./application/queries/list-projects";
 import { ProjectsController } from "./presentation/projects.controller";
 
@@ -21,6 +23,7 @@ export const PROJECT_COMMAND_HANDLERS = [
   CreateProjectHandler,
   UpdateProjectHandler,
   SetProjectArchivedHandler,
+  DeleteProjectHandler,
   CopyFromProjectHandler,
 ];
 export const PROJECT_QUERY_HANDLERS = [ListProjectsHandler, GetProjectHandler];
@@ -42,6 +45,8 @@ export const PROJECT_ADAPTERS = [{ provide: PROJECT_REPOSITORY, useClass: TypeOr
     forwardRef(() => ProjectConfigModule),
     forwardRef(() => WorkflowsModule),
     forwardRef(() => EnvironmentsModule),
+    // The project list shows the health of each project's latest run.
+    forwardRef(() => RunsModule),
     AuthModule,
     IamModule,
   ],

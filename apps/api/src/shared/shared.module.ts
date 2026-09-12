@@ -2,6 +2,8 @@ import { Global, Module } from "@nestjs/common";
 import { CLOCK, SystemClock } from "./clock/clock.port";
 import { SECRET_CIPHER } from "./crypto/secret-cipher";
 import { SecretCipherProvider } from "./crypto/secret-cipher.provider";
+import { ENV, type Env } from "./config/env";
+import { BrevoMailer, LogMailer, MAILER } from "./mail/mailer";
 
 /**
  * The cross-cutting providers every module needs and none owns.
@@ -26,7 +28,17 @@ import { SecretCipherProvider } from "./crypto/secret-cipher.provider";
   providers: [
     { provide: CLOCK, useClass: SystemClock },
     { provide: SECRET_CIPHER, useClass: SecretCipherProvider },
+    // Mail is sent by auth today and will be by runs tomorrow (a report to a list), so it is
+    // nobody's module's.
+    {
+      provide: MAILER,
+      inject: [ENV],
+      useFactory: (env: Env) =>
+        env.MAIL_DRIVER === "brevo" && env.BREVO_API_KEY
+          ? new BrevoMailer(env.BREVO_API_KEY, { email: env.MAIL_FROM, name: env.MAIL_FROM_NAME })
+          : new LogMailer(),
+    },
   ],
-  exports: [CLOCK, SECRET_CIPHER],
+  exports: [CLOCK, SECRET_CIPHER, MAILER],
 })
 export class SharedModule {}

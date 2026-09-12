@@ -46,6 +46,18 @@ export class ChangePasswordDto {
   newPassword: string;
 }
 
+export class ForgotPasswordDto {
+  @IsEmail({}, { message: "email debe ser una dirección válida" }) @MaxLength(320) email: string;
+}
+
+export class ResetPasswordDto {
+  @IsString() @MaxLength(200) token: string;
+  @IsString()
+  @MinLength(12, { message: "newPassword debe tener al menos 12 caracteres" })
+  @MaxLength(200)
+  newPassword: string;
+}
+
 export class CreateApiTokenDto {
   @IsString() @MaxLength(120) name: string;
 }
