@@ -5,6 +5,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { AssertionRow, Badge, Button, Card, Empty, Json } from "@/components/ui";
+import { EndpointsTabs } from "@/components/endpoints-tabs";
 import { cn, methodStyle } from "@/lib/format";
 import type { CoverageView, Environment, OperationScenarios, ScenariosView, ScenarioView } from "@/lib/types";
 
@@ -140,6 +141,7 @@ export function MatrixPage() {
 
   return (
     <div className="space-y-4">
+      {projectId && <EndpointsTabs projectId={projectId} />}
       <Card className="p-4">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div className="flex flex-wrap items-center gap-3">

@@ -13,6 +13,7 @@ import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projec
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
 import { SPEC_REPOSITORY, type SpecRepositoryPort } from "../../domain/ports";
 import { SpecVersionImportedEvent } from "../events/spec-version-imported.event";
+import { SpecVersionActivatedEvent } from "../events/spec-version-activated.event";
 
 export type SpecSourceInput =
   | { kind: "url"; url: string; headers?: Record<string, string> }
@@ -90,7 +91,10 @@ export class ImportSpecVersionHandler implements ICommandHandler<ImportSpecVersi
       // Identical bytes. Activation is still honoured, because "import this and use it" is a
       // reasonable thing to ask about a version that happens to already be on file.
       const activated = command.activate && project.activeSpecVersionId !== existing.id;
-      if (activated) await this.projects.save({ ...project, activeSpecVersionId: existing.id });
+      if (activated) {
+        await this.projects.save({ ...project, activeSpecVersionId: existing.id });
+        this.eventBus.publish(new SpecVersionActivatedEvent(project.id, existing.id, command.importedBy));
+      }
       return {
         specVersionId: existing.id,
         hash,
@@ -145,6 +149,7 @@ export class ImportSpecVersionHandler implements ICommandHandler<ImportSpecVersi
     if (activate) await this.projects.save({ ...project, activeSpecVersionId: specVersionId });
 
     this.eventBus.publish(new SpecVersionImportedEvent(project.id, specVersionId, hash, parsed.operations.length, now));
+    if (activate) this.eventBus.publish(new SpecVersionActivatedEvent(project.id, specVersionId, command.importedBy));
 
     return {
       specVersionId,

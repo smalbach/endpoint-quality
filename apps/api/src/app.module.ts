@@ -15,6 +15,7 @@ import { EnvironmentsModule } from "./modules/environments/environments.module";
 import { ProjectConfigModule } from "./modules/config/config.module";
 import { WorkflowsModule } from "./modules/workflows/workflows.module";
 import { RunsModule } from "./modules/runs/runs.module";
+import { EndpointsModule } from "./modules/endpoints/endpoints.module";
 import { AuthGuard } from "./modules/auth/infrastructure/guards/auth.guard";
 import { HealthController } from "./shared/health.controller";
 
@@ -40,6 +41,7 @@ import { HealthController } from "./shared/health.controller";
     ProjectConfigModule,
     WorkflowsModule,
     RunsModule,
+    EndpointsModule,
   ],
   controllers: [HealthController],
   providers: [

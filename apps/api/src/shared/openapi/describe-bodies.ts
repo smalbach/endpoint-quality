@@ -23,6 +23,13 @@
  */
 import "reflect-metadata";
 import { getMetadataStorage } from "class-validator";
+import {
+  BulkDeleteEndpointsDto,
+  BulkEndpointStatusDto,
+  CreateEndpointDto,
+  ImportEndpointCurlDto,
+  UpdateEndpointDto,
+} from "@/modules/endpoints/presentation/dto/endpoints.dto";
 import type { OpenAPIObject } from "@nestjs/swagger";
 
 import {
@@ -110,6 +117,11 @@ const DTOS = [
   UpdateSuiteDto,
   StartRunDto,
   PreviewRequestDto,
+  CreateEndpointDto,
+  UpdateEndpointDto,
+  BulkEndpointStatusDto,
+  BulkDeleteEndpointsDto,
+  ImportEndpointCurlDto,
 ];
 
 type Schema = Record<string, unknown>;

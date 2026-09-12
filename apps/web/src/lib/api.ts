@@ -59,15 +59,18 @@ export function onAccessTokenChange(listener: (token: string | null) => void): (
 type RequestOptions = { method?: string; body?: unknown; signal?: AbortSignal; retryOnUnauthorized?: boolean };
 
 export async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  // A form goes as it is: the browser writes the multipart boundary into the Content-Type, and
+  // setting the header by hand would send one without it.
+  const form = options.body instanceof FormData;
   const response = await fetch(`${BASE}${path}`, {
     method: options.method ?? "GET",
     headers: {
-      ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
+      ...(options.body === undefined || form ? {} : { "Content-Type": "application/json" }),
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
     // Always, because the refresh cookie is the session and a request without it cannot renew.
     credentials: "include",
-    ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+    ...(options.body === undefined ? {} : { body: form ? (options.body as FormData) : JSON.stringify(options.body) }),
     ...(options.signal ? { signal: options.signal } : {}),
   });
 

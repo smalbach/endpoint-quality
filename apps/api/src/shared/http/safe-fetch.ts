@@ -167,7 +167,9 @@ async function lookupOrFail(hostname: string, rawUrl: string): Promise<{ address
 export type SafeRequestOptions = {
   method?: string;
   headers?: Record<string, string>;
-  body?: string;
+  /** Bytes as well as text: a file sent from the endpoint editor is not a string, and decoding it
+   * into one would corrupt anything that is not UTF-8. */
+  body?: string | Uint8Array;
 };
 
 /**

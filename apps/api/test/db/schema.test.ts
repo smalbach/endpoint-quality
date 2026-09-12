@@ -58,6 +58,7 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
     const tables = rows.map((row) => row.table_name).sort();
     assert.deepEqual(tables, [
       "api_tokens",
+      "endpoints",
       "environment_credentials",
       "environments",
       "invitations",
@@ -588,5 +589,100 @@ describe("retención en SQL", { skip: DATABASE_URL ? false : REASON }, () => {
     assert.deepEqual(await dataSource!.query(`SELECT id FROM runs WHERE id = $1`, [runId]), []);
     assert.deepEqual(await dataSource!.query(`SELECT id FROM run_cases WHERE id = $1`, [caseId]), []);
     assert.deepEqual(await steps(caseId), []);
+  });
+});
+
+describe("endpoints", { skip: DATABASE_URL ? false : REASON }, () => {
+  test("la migración copia como endpoints las operaciones del contrato activo de cada proyecto", async () => {
+    const [userId, organizationId, projectId, versionId] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    // Back to before the table existed, with a project that already has a contract.
+    await dataSource!.undoLastMigration();
+    try {
+      await insertUser(userId, `endpoints-${userId}@example.com`);
+      await insertOrganization(organizationId, `o-${organizationId.slice(0, 8)}`);
+      await dataSource!.query(
+        `INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`,
+        [projectId, organizationId, `e-${projectId.slice(0, 8)}`, userId],
+      );
+      await dataSource!.query(
+        `INSERT INTO spec_versions (id, "projectId", hash, raw, format, "openapiVersion", title, "contractVersion", "operationCount", problems, "importedBy", "importedAt")
+         VALUES ($1, $2, $3, 'x', 'yaml', '3.1.0', 't', '1', 2, '[]'::jsonb, $4, now())`,
+        [versionId, projectId, randomUUID().replace(/-/g, ""), userId],
+      );
+      await dataSource!.query(`UPDATE projects SET "activeSpecVersionId" = $1 WHERE id = $2`, [versionId, projectId]);
+      const insertOperation = (
+        operationId: string,
+        method: string,
+        path: string,
+        parameters: string[],
+        security: string[],
+        position: number,
+      ) =>
+        dataSource!.query(
+          `INSERT INTO spec_operations (id, "specVersionId", "operationId", method, path, summary, tag, statuses, parameters, security, position)
+           VALUES ($1, $2, $3, $4, $5, 'resumen', 'Things', '[200]'::jsonb, $6::jsonb, $7::jsonb, $8)`,
+          [
+            randomUUID(),
+            versionId,
+            operationId,
+            method,
+            path,
+            JSON.stringify(parameters),
+            JSON.stringify(security),
+            position,
+          ],
+        );
+      await insertOperation("getThing", "get", "/things/{thingId}", ["thingId", "expand"], ["bearer"], 0);
+      await insertOperation("listThings", "GET", "/things", [], [], 1);
+    } finally {
+      await dataSource!.runMigrations();
+    }
+
+    const rows: {
+      method: string;
+      path: string;
+      origin: string;
+      operationId: string;
+      requiresAuth: boolean;
+      tags: string[];
+      pathParameters: { name: string }[];
+      query: { name: string; enabled: boolean }[];
+    }[] = await dataSource!.query(`SELECT * FROM endpoints WHERE "projectId" = $1 ORDER BY "orderIndex"`, [projectId]);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].method, "GET");
+    assert.equal(rows[0].path, "/things/{thingId}");
+    assert.equal(rows[0].origin, "contract");
+    assert.equal(rows[0].operationId, "getThing");
+    assert.equal(rows[0].requiresAuth, true);
+    assert.deepEqual(rows[0].tags, ["Things"]);
+    assert.deepEqual(
+      rows[0].pathParameters.map((parameter) => parameter.name),
+      ["thingId"],
+    );
+    assert.deepEqual(
+      rows[0].query.map((row) => [row.name, row.enabled]),
+      [["expand", false]],
+    );
+    assert.equal(rows[1].requiresAuth, false);
+    assert.deepEqual(rows[1].query, []);
+  });
+
+  test("dos endpoints vivos no comparten método y ruta; uno borrado deja sitio", async () => {
+    const [userId, organizationId, projectId] = [randomUUID(), randomUUID(), randomUUID()];
+    await insertUser(userId, `endpoints-u-${userId}@example.com`);
+    await insertOrganization(organizationId, `o-${organizationId.slice(0, 8)}`);
+    await dataSource!.query(
+      `INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`,
+      [projectId, organizationId, `u-${projectId.slice(0, 8)}`, userId],
+    );
+    const insert = (deletedAt: string | null) =>
+      dataSource!.query(
+        `INSERT INTO endpoints (id, "projectId", method, path, "createdAt", "updatedAt", "updatedBy", "deletedAt")
+         VALUES ($1, $2, 'GET', '/x', now(), now(), $3, $4)`,
+        [randomUUID(), projectId, userId, deletedAt],
+      );
+    await insert(new Date().toISOString());
+    await insert(null);
+    await assert.rejects(insert(null), /duplicate key|unique/i);
   });
 });

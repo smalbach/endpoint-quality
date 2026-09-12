@@ -13,6 +13,7 @@ import { LoginPage } from "@/routes/login";
 import { ProjectsPage } from "@/routes/projects";
 import { SettingsPage } from "@/routes/settings";
 import { MatrixPage } from "@/routes/matrix";
+import { EndpointEditorPage, EndpointsPage } from "@/routes/endpoints";
 import { EnvironmentsPage } from "@/routes/environments";
 import { ConfigPage } from "@/routes/config";
 import { RunDetailPage, RunsPage } from "@/routes/runs";
@@ -76,7 +77,9 @@ createRoot(document.getElementById("root")!).render(
                     <Route path="*" element={<NotFoundPage />} />
                   </Route>
                   <Route path="p/:projectId" element={<ProjectLayout />}>
-                    <Route index element={<MatrixPage />} />
+                    <Route index element={<EndpointsPage />} />
+                    <Route path="matrix" element={<MatrixPage />} />
+                    <Route path="endpoints/:endpointId" element={<EndpointEditorPage />} />
                     <Route path="roles" element={<RolesPage />} />
                     <Route
                       path="workflows"

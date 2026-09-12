@@ -175,8 +175,11 @@ export class ProjectsController {
     @Param("organizationId") organizationId: string,
     @Param("projectId") projectId: string,
     @Param("specVersionId") specVersionId: string,
+    @CurrentUser() principal: Principal,
   ): Promise<void> {
-    await this.commandBus.execute(new ActivateSpecVersionCommand(organizationId, projectId, specVersionId));
+    await this.commandBus.execute(
+      new ActivateSpecVersionCommand(organizationId, projectId, specVersionId, actorId(principal)),
+    );
   }
 
   /**

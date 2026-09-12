@@ -38,6 +38,14 @@ import { AUTH_COMMAND_HANDLERS, AUTH_EVENT_HANDLERS, AUTH_QUERY_HANDLERS } from 
 import { PASSWORD_RESET_REPOSITORY } from "@/modules/auth/domain/password-reset";
 import { MAILER, RecordingMailer } from "@/shared/mail/mailer";
 import { InMemoryPasswordResetRepository } from "./in-memory-password-resets";
+import { InMemoryEndpointRepository } from "./in-memory-endpoints";
+import { ENDPOINT_REPOSITORY } from "@/modules/endpoints/domain/ports";
+import { EndpointsController } from "@/modules/endpoints/presentation/endpoints.controller";
+import {
+  ENDPOINT_COMMAND_HANDLERS,
+  ENDPOINT_EVENT_HANDLERS,
+  ENDPOINT_QUERY_HANDLERS,
+} from "@/modules/endpoints/endpoints.module";
 import { INVITATION_REPOSITORY, MEMBERSHIP_REPOSITORY, ORGANIZATION_REPOSITORY } from "@/modules/iam/domain/ports";
 import { OrganizationsController } from "@/modules/iam/presentation/organizations.controller";
 import { IAM_COMMAND_HANDLERS, IAM_QUERY_HANDLERS } from "@/modules/iam/iam.module";
@@ -178,6 +186,7 @@ export type TestContext = {
     workflows: InMemoryWorkflowRepository;
     runs: InMemoryRunRepository;
     passwordResets: InMemoryPasswordResetRepository;
+    endpoints: InMemoryEndpointRepository;
   };
   http: StubSafeFetch;
   /** Every mail the application sent. The reset link is only reachable through here. */
@@ -204,6 +213,7 @@ export async function createTestApp(): Promise<TestContext> {
     workflows: new InMemoryWorkflowRepository(),
     runs: new InMemoryRunRepository(),
     passwordResets: new InMemoryPasswordResetRepository(),
+    endpoints: new InMemoryEndpointRepository(),
   };
   const mailer = new RecordingMailer();
   // Loopback is allowed here because the run tests point the engine at a stub server on
@@ -227,6 +237,7 @@ export async function createTestApp(): Promise<TestContext> {
       WorkflowsController,
       RunsController,
       RequestPreviewController,
+      EndpointsController,
     ],
     providers: [
       { provide: ENV, useValue: env },
@@ -258,6 +269,7 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: ENVIRONMENT_REPOSITORY, useValue: repositories.environments },
       { provide: CONFIG_REPOSITORY, useValue: repositories.config },
       { provide: WORKFLOW_REPOSITORY, useValue: repositories.workflows },
+      { provide: ENDPOINT_REPOSITORY, useValue: repositories.endpoints },
       // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the
       // repository is ciphertext, and a pass-through would make that assertion meaningless.
       { provide: SECRET_CIPHER, useValue: new AesGcmSecretCipher(Buffer.alloc(32, 9).toString("base64")) },
@@ -278,6 +290,9 @@ export async function createTestApp(): Promise<TestContext> {
       ...WORKFLOW_QUERY_HANDLERS,
       ...RUN_COMMAND_HANDLERS,
       ...RUN_QUERY_HANDLERS,
+      ...ENDPOINT_COMMAND_HANDLERS,
+      ...ENDPOINT_QUERY_HANDLERS,
+      ...ENDPOINT_EVENT_HANDLERS,
       // The global guard and filter are registered exactly as `AppModule` does, because half of
       // what these tests check is that the wiring protects what it should. Throttling is left
       // out: it is the one piece whose behaviour is a rate, and asserting it here would make

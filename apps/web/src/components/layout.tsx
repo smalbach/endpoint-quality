@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, NavLink, Outlet, useNavigate, useParams } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAuth, useOrganization } from "@/lib/auth";
@@ -31,13 +31,15 @@ export function projectSections(projectId: string | undefined) {
       label: "Endpoints",
       help: "endpoints",
       end: true,
-      tooltip: "Las operaciones del proyecto y los casos que se generan para cada una.",
+      also: [`${base}/matrix`, `${base}/endpoints`],
+      tooltip: "Los endpoints del proyecto: lista, editor para probarlos y la matriz del contrato.",
     },
     {
       to: `${base}/roles`,
       label: "Roles",
       help: "roles",
       end: false,
+      also: [] as string[],
       tooltip: "Qué roles tiene la API y a qué operación puede llegar cada uno.",
     },
     {
@@ -45,6 +47,7 @@ export function projectSections(projectId: string | undefined) {
       label: "Test Runs",
       help: "test-runs",
       end: false,
+      also: [] as string[],
       tooltip: "Cada corrida lanzada, con su progreso en vivo, sus fallos y sus informes.",
     },
     {
@@ -52,6 +55,7 @@ export function projectSections(projectId: string | undefined) {
       label: "Flow Testing",
       help: "flow-testing",
       end: false,
+      also: [] as string[],
       tooltip: "Flujos de pasos encadenados que se pasan valores, con datos y suites.",
     },
     {
@@ -59,6 +63,7 @@ export function projectSections(projectId: string | undefined) {
       label: "Settings",
       help: "settings",
       end: false,
+      also: [] as string[],
       tooltip: "Nombre del proyecto, contrato, configuración y entornos.",
     },
   ];
@@ -222,6 +227,7 @@ export function ProjectLayout() {
   }, [collapsed]);
 
   const sections = projectSections(projectId);
+  const { pathname } = useLocation();
 
   return (
     <div className="flex min-h-[calc(100dvh-49px)]">
@@ -274,7 +280,9 @@ export function ProjectLayout() {
                   cn(
                     "flex flex-1 items-center gap-2.5 rounded-lg px-2 py-2 text-xs font-medium transition-colors",
                     collapsed && "justify-center",
-                    isActive ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+                    isActive || sectionMatches(section, pathname)
+                      ? "bg-slate-900 text-white"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900",
                   )
                 }
               >
@@ -319,10 +327,18 @@ export function ProjectLayout() {
   );
 }
 
+/** Whether a section is the one being looked at, counting the extra addresses it owns. */
+export function sectionMatches(section: ReturnType<typeof projectSections>[number], pathname: string): boolean {
+  if (section.end ? pathname === section.to : pathname.startsWith(section.to)) return true;
+  return section.also.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
 /** The help topic of the section being looked at, so the panel opens on the relevant page. */
 export function helpTopicFor(sections: ReturnType<typeof projectSections>, pathname: string): string {
   const match = [...sections]
-    .filter((section) => (section.end ? pathname === section.to : pathname.startsWith(section.to)))
-    .sort((a, b) => b.to.length - a.to.length)[0];
+    .filter((section) => sectionMatches(section, pathname))
+    .sort(
+      (a, b) => Number(b.also.length > 0 && !b.end) - Number(a.also.length > 0 && !a.end) || b.to.length - a.to.length,
+    )[0];
   return match?.help ?? "primeros-pasos";
 }

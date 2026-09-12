@@ -1,16 +1,19 @@
 import { Inject } from "@nestjs/common";
-import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
+import { CommandHandler, EventBus, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 
 import { NotFoundError } from "@/shared/errors/domain-error";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
 import { SPEC_REPOSITORY, type SpecRepositoryPort } from "../../domain/ports";
+import { SpecVersionActivatedEvent } from "../events/spec-version-activated.event";
 
 export class ActivateSpecVersionCommand implements ICommand {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
     readonly specVersionId: string,
+    /** Who switched it, for the endpoints the switch creates. */
+    readonly actorId = "",
   ) {}
 }
 
@@ -26,6 +29,7 @@ export class ActivateSpecVersionHandler implements ICommandHandler<ActivateSpecV
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(SPEC_REPOSITORY) private readonly specs: SpecRepositoryPort,
+    private readonly eventBus: EventBus,
   ) {}
 
   async execute(command: ActivateSpecVersionCommand): Promise<void> {
@@ -36,5 +40,6 @@ export class ActivateSpecVersionHandler implements ICommandHandler<ActivateSpecV
     if (!version || version.projectId !== project.id)
       throw new NotFoundError("La versión no existe", "spec-version-not-found");
     await this.projects.save({ ...project, activeSpecVersionId: version.id });
+    this.eventBus.publish(new SpecVersionActivatedEvent(project.id, version.id, command.actorId));
   }
 }

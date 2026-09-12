@@ -181,7 +181,7 @@ Cada fase deja el producto funcionando y se prueba en el navegador antes de pasa
 2. **Proyectos y Settings** · _hecha_. Descripción, URL base, tags y autenticación del proyecto; activos y
    archivados; salud en la tarjeta; eliminar; pestaña Settings; olvidé/restablecer contraseña con
    correo; bloqueo; complejidad.
-3. **Endpoints.** Entidad propia que convive con las operaciones del contrato (importar un
+3. **Endpoints** · _hecha_. Entidad propia que convive con las operaciones del contrato (importar un
    contrato crea o actualiza endpoints con origen `contract`), estados, árbol, bulk, importación de
    ficheros y cURL, editor tipo Postman con subida de ficheros.
 4. **Entornos activos y scripts.** Entorno activo, gestor modal, token de sesión; sandbox de

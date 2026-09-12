@@ -579,6 +579,87 @@ export type RunReportOf<T> = { run: RunOf<T>; cases: RunReportCase[] };
 // The wire: every shape above, as JSON delivers it
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * An endpoint of a project: written by hand, imported from a file or a cURL, or taken from the
+ * contract. The request parts are stored as rows, so a switched-off row and the value of a path
+ * parameter survive a reload; a file chosen for upload does not — only its field name is kept.
+ */
+export type EndpointMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+export type EndpointStatus = "active" | "archived" | "inactive";
+export type EndpointOrigin = "manual" | "import" | "contract";
+export type ParameterType = "string" | "number" | "boolean" | "uuid" | "array";
+export type EndpointPathParameterView = { name: string; type: ParameterType; description: string; value: string };
+export type EndpointQueryParameterView = {
+  name: string;
+  type: ParameterType;
+  required: boolean;
+  description: string;
+  value: string;
+  enabled: boolean;
+};
+export type EndpointHeaderView = { name: string; value: string; enabled: boolean };
+export type EndpointFormFieldView = { name: string; value: string; kind: "text" | "file"; enabled: boolean };
+export type EndpointBodyMode = "none" | "json" | "raw" | "form-data" | "x-www-form-urlencoded" | "binary";
+export type EndpointBodyView = {
+  mode: EndpointBodyMode;
+  text: string;
+  contentType: string;
+  fields: EndpointFormFieldView[];
+};
+
+export type EndpointViewOf<T> = {
+  id: string;
+  method: EndpointMethod;
+  path: string;
+  description: string;
+  pathParameters: EndpointPathParameterView[];
+  query: EndpointQueryParameterView[];
+  headers: EndpointHeaderView[];
+  body: EndpointBodyView;
+  requiresAuth: boolean;
+  tags: string[];
+  status: EndpointStatus;
+  origin: EndpointOrigin;
+  operationId: string | null;
+  orderIndex: number;
+  preRequestScript: string;
+  postResponseScript: string;
+  createdAt: T;
+  updatedAt: T;
+  updatedBy: string;
+  /** Whether the active contract declares this method and path; `null` without a contract. */
+  inContract: boolean | null;
+};
+
+export type EndpointPageOf<T> = {
+  data: EndpointViewOf<T>[];
+  meta: { page: number; limit: number; total: number; totalPages: number };
+  counts: Record<EndpointStatus, number>;
+  hasContract: boolean;
+};
+
+export type EndpointImportResult = {
+  format: "openapi" | "postman" | "insomnia" | "markdown";
+  imported: { id: string; method: string; path: string }[];
+  skipped: { method: string; path: string; name: string; reason: string }[];
+};
+
+/** What «Send» answers: the request as sent (credentials masked) and the target's response. */
+export type SentRequestView = {
+  request: { method: string; url: string; headers: Record<string, string>; body: string | null };
+  response: {
+    status: number;
+    headers: Record<string, string>;
+    body: string;
+    sizeBytes: number;
+    durationMs: number;
+    timing: { dnsMs: number; ttfbMs: number; downloadMs: number };
+  } | null;
+  error: string | null;
+  auth: string;
+  environment: { id: string; name: string } | null;
+};
+
 export type Member = MemberOf<string>;
 export type PendingInvitation = PendingInvitationOf<string>;
 export type MembersView = MembersViewOf<string>;
@@ -600,6 +681,8 @@ export type RunStep = RunStepOf<string>;
 export type RunView = RunViewOf<string>;
 export type RunCaseView = RunCaseViewOf<string>;
 export type RunReport = RunReportOf<string>;
+export type EndpointView = EndpointViewOf<string>;
+export type EndpointPage = EndpointPageOf<string>;
 
 /** RFC 9457, which is what every error in this system is written as. */
 export type ProblemDetails = {

@@ -8,7 +8,7 @@
  * without a router, which is the cheapest place to keep this honest.
  */
 import { describe, expect, test } from "vitest";
-import { helpTopicFor, projectSections } from "./layout";
+import { helpTopicFor, projectSections, sectionMatches } from "./layout";
 import { settingsTabs } from "@/routes/project-settings";
 
 const ID = "11111111-2222-3333-4444-555555555555";
@@ -36,12 +36,22 @@ describe("las secciones de un proyecto", () => {
     expect(sections.filter((section) => section.end).map((section) => section.label)).toEqual(["Endpoints"]);
   });
 
+  test("Endpoints también es la sección de la matriz y del editor a pantalla completa", () => {
+    const endpoints = sections[0];
+    expect(sectionMatches(endpoints, `/p/${ID}/matrix`)).toBe(true);
+    expect(sectionMatches(endpoints, `/p/${ID}/endpoints/x`)).toBe(true);
+    expect(sectionMatches(endpoints, `/p/${ID}/runs`)).toBe(false);
+    expect(sectionMatches(sections[2], `/p/${ID}/runs/abc`)).toBe(true);
+  });
+
   test("sin proyecto no hay secciones que enseñar", () => {
     expect(projectSections(undefined)).toEqual([]);
   });
 
   test("la ayuda se abre en el tema de la sección que se está mirando", () => {
     expect(helpTopicFor(sections, `/p/${ID}`)).toBe("endpoints");
+    expect(helpTopicFor(sections, `/p/${ID}/matrix`)).toBe("endpoints");
+    expect(helpTopicFor(sections, `/p/${ID}/endpoints/abc`)).toBe("endpoints");
     expect(helpTopicFor(sections, `/p/${ID}/runs/abc`)).toBe("test-runs");
     expect(helpTopicFor(sections, `/p/${ID}/settings/environments`)).toBe("settings");
     expect(helpTopicFor(sections, "/projects")).toBe("primeros-pasos");

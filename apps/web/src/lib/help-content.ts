@@ -35,20 +35,25 @@ export const HELP_TOPICS: HelpTopic[] = [
   {
     id: "endpoints",
     title: "Endpoints",
-    intro: "Las operaciones del proyecto y los casos que se generan para cada una.",
+    intro: "Los endpoints del proyecto, un editor para probarlos y la matriz que genera el contrato.",
     steps: [
       {
         title: "De dónde salen",
-        body: "Del contrato importado. Cada operación trae los casos que su documento permite derivar: lectura, no encontrado, cuerpo inválido, creación y relectura, autorización.",
+        body: "Se crean a mano con «+ Nuevo», se importan desde un fichero (OpenAPI, Postman, Insomnia o un markdown con curls) o desde un cURL suelto, y al importar el contrato en Settings cada operación se añade como endpoint. Una ruta que ya existe no se duplica: la importación dice cuáles se saltó y por qué.",
       },
       {
-        title: "Filtrar y elegir",
-        body: "Busca por método, ruta o resumen; filtra por la etiqueta del contrato o por las etiquetas del equipo. Marca operaciones para lanzar solo esas.",
+        title: "Organizar",
+        body: "Se agrupan por el primer segmento de la ruta, y por módulo y versión cuando empieza por v1, v2… Filtra por estado, busca por ruta o descripción y marca varios para archivarlos, desactivarlos, activarlos o eliminarlos a la vez.",
+        tip: "«fuera» junto a un endpoint significa que el contrato activo ya no lo declara.",
       },
       {
-        title: "Casos que no se ejecutarán",
-        body: "Un entorno de solo lectura bloquea las escrituras. El caso sigue en la lista, en ámbar, con el motivo.",
-        tip: "El orden «Lecturas primero» evita que un DELETE deje sin recurso a una lectura que venía después.",
+        title: "Probar",
+        body: "El editor manda lo que hay en pantalla, guardado o no, contra el entorno elegido: parámetros, cabeceras, cuerpo (JSON, texto, form-data con ficheros, urlencoded o binario) y la autenticación heredada del proyecto o un token solo para esa petición. Ctrl+Enter envía y Ctrl+S guarda.",
+        tip: "Un entorno sin escrituras permitidas no deja enviar POST, PUT, PATCH ni DELETE.",
+      },
+      {
+        title: "La matriz del contrato",
+        body: "En la pestaña «Matriz del contrato» siguen los casos que el documento permite derivar, con el entorno y el orden, y el botón para lanzar la corrida.",
       },
     ],
   },

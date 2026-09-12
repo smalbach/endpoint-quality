@@ -460,6 +460,39 @@ export class WorkflowSuiteEntity {
   @Column("uuid") updatedBy: string;
 }
 
+/**
+ * An endpoint of a project, written, imported or taken from the contract.
+ *
+ * The request parts are `jsonb` rows because they are edited and saved as one form, and the unique
+ * index is partial — only live rows count — so deleting `GET /x` leaves room for a new one.
+ */
+@Entity({ name: "endpoints" })
+@Index("UQ_endpoints_live_method_path", ["projectId", "method", "path"], { unique: true, where: `"deletedAt" IS NULL` })
+@Index("IDX_endpoints_projectId_status", ["projectId", "status"])
+export class EndpointEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Column("uuid") projectId: string;
+  @Column({ type: "varchar", length: 10 }) method: string;
+  @Column({ type: "varchar", length: 500 }) path: string;
+  @Column({ type: "text", default: "" }) description: string;
+  @Column({ type: "jsonb", default: () => "'[]'::jsonb" }) pathParameters: unknown[];
+  @Column({ type: "jsonb", default: () => "'[]'::jsonb" }) query: unknown[];
+  @Column({ type: "jsonb", default: () => "'[]'::jsonb" }) headers: unknown[];
+  @Column({ type: "jsonb" }) body: unknown;
+  @Column({ type: "boolean", default: false }) requiresAuth: boolean;
+  @Column({ type: "jsonb", default: () => "'[]'::jsonb" }) tags: string[];
+  @Column({ type: "varchar", length: 20, default: "active" }) status: string;
+  @Column({ type: "varchar", length: 20, default: "manual" }) origin: string;
+  @Column({ type: "varchar", length: 200, nullable: true }) operationId: string | null;
+  @Column({ type: "int", default: 0 }) orderIndex: number;
+  @Column({ type: "text", default: "" }) preRequestScript: string;
+  @Column({ type: "text", default: "" }) postResponseScript: string;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) updatedAt: Date;
+  @Column("uuid") updatedBy: string;
+  @Column({ type: "timestamptz", nullable: true }) deletedAt: Date | null;
+}
+
 // The line breaks group these by module, which is information a formatter cannot know and
 // one-per-line would lose.
 // prettier-ignore
@@ -470,4 +503,5 @@ export const ENTITIES = [
   EnvironmentEntity, EnvironmentCredentialEntity, ProjectConfigEntity,
   RequestTemplateEntity, WorkflowEntity, WorkflowDatasetEntity, WorkflowSuiteEntity,
   RunEntity, RunCaseEntity, RunStepEntity,
+  EndpointEntity,
 ];
