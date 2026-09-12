@@ -1,12 +1,14 @@
 import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
 
 import "./styles/index.css";
 import { ApiError } from "@/lib/api";
 import { AuthProvider, useAuth } from "@/lib/auth";
-import { AppLayout } from "@/components/layout";
+import { AppLayout, PageLayout, ProjectLayout } from "@/components/layout";
+import { ToastProvider } from "@/components/toast";
+import { HelpProvider } from "@/components/help-panel";
 import { LoginPage } from "@/routes/login";
 import { ProjectsPage } from "@/routes/projects";
 import { SettingsPage } from "@/routes/settings";
@@ -14,6 +16,9 @@ import { MatrixPage } from "@/routes/matrix";
 import { EnvironmentsPage } from "@/routes/environments";
 import { ConfigPage } from "@/routes/config";
 import { RunDetailPage, RunsPage } from "@/routes/runs";
+import { RolesPage } from "@/routes/roles";
+import { ProjectGeneralPage, ProjectSettingsLayout } from "@/routes/project-settings";
+import { NotFoundPage } from "@/routes/not-found";
 
 // The graph editor brings its own renderer and controls. Keep it out of the initial dashboard
 // bundle so users who only inspect the matrix do not download it on every visit.
@@ -44,35 +49,55 @@ function Protected() {
   return <AppLayout />;
 }
 
+/** The old addresses of the two screens that moved under Settings, so bookmarks keep working. */
+function MovedToSettings({ to }: { to: string }) {
+  const { projectId } = useParams();
+  return <Navigate to={`/p/${projectId}/settings/${to}`} replace />;
+}
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AuthProvider>
-          <Routes>
-            <Route path="/login" element={<LoginPage mode="login" />} />
-            <Route path="/register" element={<LoginPage mode="register" />} />
-            <Route element={<Protected />}>
-              <Route index element={<ProjectsPage />} />
-              <Route path="settings/org" element={<SettingsPage />} />
-              <Route path="p/:projectId">
-                <Route index element={<MatrixPage />} />
-                <Route path="environments" element={<EnvironmentsPage />} />
-                <Route path="config" element={<ConfigPage />} />
-                <Route
-                  path="workflows"
-                  element={
-                    <Suspense fallback={<p className="text-sm text-slate-500">Cargando editor…</p>}>
-                      <WorkflowsPage />
-                    </Suspense>
-                  }
-                />
-                <Route path="runs" element={<RunsPage />} />
-                <Route path="runs/:runId" element={<RunDetailPage />} />
-              </Route>
-            </Route>
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          <ToastProvider>
+            <HelpProvider>
+              <Routes>
+                <Route path="/login" element={<LoginPage mode="login" />} />
+                <Route path="/register" element={<LoginPage mode="register" />} />
+                <Route element={<Protected />}>
+                  <Route element={<PageLayout />}>
+                    <Route index element={<Navigate to="/projects" replace />} />
+                    <Route path="projects" element={<ProjectsPage />} />
+                    <Route path="settings/org" element={<SettingsPage />} />
+                    <Route path="*" element={<NotFoundPage />} />
+                  </Route>
+                  <Route path="p/:projectId" element={<ProjectLayout />}>
+                    <Route index element={<MatrixPage />} />
+                    <Route path="roles" element={<RolesPage />} />
+                    <Route
+                      path="workflows"
+                      element={
+                        <Suspense fallback={<p className="text-sm text-slate-500">Cargando editor…</p>}>
+                          <WorkflowsPage />
+                        </Suspense>
+                      }
+                    />
+                    <Route path="runs" element={<RunsPage />} />
+                    <Route path="runs/:runId" element={<RunDetailPage />} />
+                    <Route path="settings" element={<ProjectSettingsLayout />}>
+                      <Route index element={<ProjectGeneralPage />} />
+                      <Route path="contract" element={<ConfigPage />} />
+                      <Route path="environments" element={<EnvironmentsPage />} />
+                    </Route>
+                    <Route path="environments" element={<MovedToSettings to="environments" />} />
+                    <Route path="config" element={<MovedToSettings to="contract" />} />
+                    <Route path="*" element={<NotFoundPage />} />
+                  </Route>
+                </Route>
+              </Routes>
+            </HelpProvider>
+          </ToastProvider>
         </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>

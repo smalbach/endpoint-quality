@@ -5,8 +5,10 @@
  * `definition` is, and both edit it. The graph is written whole on save, which is what makes «node
  * deleted, edge still pointing at it» a state that cannot be stored.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { PromptDialog } from "@/components/overlay";
+import { resolveActive, useActiveEnvironment } from "@/lib/active-environment";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
@@ -49,6 +51,9 @@ export function WorkflowsPage() {
   const [json, setJson] = useState("");
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [environmentId, setEnvironmentId] = useState("");
+  const [activeEnvironment, setActiveEnvironment] = useActiveEnvironment(projectId);
+  const preselected = useRef(false);
+  const [naming, setNaming] = useState(false);
   const [datasetId, setDatasetId] = useState("");
   const [concurrency, setConcurrency] = useState(1);
 
@@ -68,6 +73,14 @@ export function WorkflowsPage() {
     enabled,
     queryFn: () => api<Environment[]>(`${base}/environments`),
   });
+
+  // Start from the project's active environment, once. After that the select is the person's.
+  useEffect(() => {
+    if (preselected.current || !environments.data) return;
+    preselected.current = true;
+    const active = resolveActive(activeEnvironment, environments.data);
+    if (active) setEnvironmentId(active.id);
+  }, [environments.data, activeEnvironment]);
 
   const saved = workflows.data?.workflows.find((item) => item.id === selectedId);
   const templates = (workflows.data?.requestTemplates ?? []).map((template) => templateEdits[template.id] ?? template);
@@ -295,13 +308,23 @@ export function WorkflowsPage() {
                   variant="ghost"
                   className="h-7 px-2 text-xs"
                   disabled={createWorkflow.isPending}
-                  onClick={() => {
-                    const name = window.prompt("Nombre del flujo");
-                    if (name?.trim()) createWorkflow.mutate(name.trim());
-                  }}
+                  onClick={() => setNaming(true)}
                 >
                   + Nuevo
                 </Button>
+              )}
+              {naming && (
+                <PromptDialog
+                  title="Nuevo flujo"
+                  label="Nombre del flujo"
+                  hint="Lo que recorre, en pocas palabras: «alta y baja de pedido»."
+                  placeholder="Alta de pedido"
+                  onClose={() => setNaming(false)}
+                  onSubmit={(name) => {
+                    setNaming(false);
+                    createWorkflow.mutate(name);
+                  }}
+                />
               )}
             </div>
             <div className="mt-2 space-y-1">
@@ -381,7 +404,10 @@ export function WorkflowsPage() {
                 environments={environments.data ?? []}
                 environmentId={environmentId}
                 canEdit={canEdit}
-                onEnvironment={setEnvironmentId}
+                onEnvironment={(next) => {
+                  setEnvironmentId(next);
+                  if (next) setActiveEnvironment(next);
+                }}
                 onWorkflow={(change) => setDraft((current) => (current ? { ...current, ...change } : current))}
                 onSteps={setSteps}
                 onTemplate={(template) => setTemplateEdits((current) => ({ ...current, [template.id]: template }))}

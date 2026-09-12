@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type ApiError } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
@@ -7,7 +7,7 @@ import { Badge, Button, Card, Field, inputClass } from "@/components/ui";
 import { SECTION_EDITORS } from "@/components/config-editors";
 import { CopyFromProject } from "@/components/copy-from-project";
 import { unchanged } from "@/lib/config-draft";
-import { formatDate } from "@/lib/format";
+import { cn, formatDate } from "@/lib/format";
 import type { ConfigView, ProjectSummary } from "@/lib/types";
 
 const SECTION_HELP: Record<string, string> = {
@@ -83,18 +83,28 @@ export function ConfigPage() {
         onImported={() => queryClient.invalidateQueries()}
       />
 
+      {/* `access` is edited from Roles, its own section of the project: one place to change it. */}
+      <p className="px-1 text-[11px] text-slate-500">
+        Los permisos por rol se editan en{" "}
+        <Link className="font-medium text-slate-700 underline" to={`/p/${projectId}/roles`}>
+          Roles
+        </Link>
+        .
+      </p>
       {config.data &&
-        Object.entries(config.data.sections).map(([section, value]) => (
-          <SectionEditor
-            key={section}
-            base={base}
-            section={section}
-            data={value}
-            disabled={!canEdit}
-            operationIds={operationIds.data ?? []}
-            onSaved={() => queryClient.invalidateQueries({ queryKey: ["config", projectId] })}
-          />
-        ))}
+        Object.entries(config.data.sections)
+          .filter(([section]) => section !== "access")
+          .map(([section, value]) => (
+            <SectionEditor
+              key={section}
+              base={base}
+              section={section}
+              data={value}
+              disabled={!canEdit}
+              operationIds={operationIds.data ?? []}
+              onSaved={() => queryClient.invalidateQueries({ queryKey: ["config", projectId] })}
+            />
+          ))}
     </div>
   );
 }
@@ -258,9 +268,11 @@ function ImportContract({
   );
 }
 
-function SectionEditor({
+export function SectionEditor({
   base,
   section,
+  title,
+  defaultOpen = false,
   data,
   disabled,
   operationIds,
@@ -268,13 +280,16 @@ function SectionEditor({
 }: {
   base: string;
   section: string;
+  /** A human name for the header; the section key is shown next to it. */
+  title?: string;
+  defaultOpen?: boolean;
   data: { data: unknown; configured: boolean; updatedAt: string | null };
   disabled: boolean;
   operationIds: string[];
   onSaved: () => void;
 }) {
   const Editor = SECTION_EDITORS[section];
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [asJson, setAsJson] = useState(!Editor);
   const [draft, setDraft] = useState<Record<string, unknown>>(() => (data.data ?? {}) as Record<string, unknown>);
   const [text, setText] = useState(() => JSON.stringify(data.data, null, 2));
@@ -334,7 +349,10 @@ function SectionEditor({
         className="flex w-full items-center gap-3 px-4 py-3 text-left"
         onClick={() => setOpen((current) => !current)}
       >
-        <span className="font-mono text-sm text-slate-900">{section}</span>
+        {title && <span className="text-sm font-semibold text-slate-900">{title}</span>}
+        <span className={cn("font-mono text-slate-900", title ? "text-[11px] text-slate-400" : "text-sm")}>
+          {section}
+        </span>
         {/* "Configured" and "uses the defaults" are different states: the first is a decision, the
             second is a prompt to make one. */}
         <Badge

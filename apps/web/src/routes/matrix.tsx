@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { resolveActive, useActiveEnvironment } from "@/lib/active-environment";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -37,6 +38,17 @@ export function MatrixPage() {
     enabled: Boolean(organization && projectId),
     queryFn: () => api<Environment[]>(`${base}/environments`),
   });
+
+  // Start from the project's active environment, once. «Ninguno» stays a choice somebody can make
+  // afterwards, and choosing one here makes it the active one everywhere else.
+  const [activeEnvironment, setActiveEnvironment] = useActiveEnvironment(projectId);
+  const preselected = useRef(false);
+  useEffect(() => {
+    if (preselected.current || !environments.data) return;
+    preselected.current = true;
+    const active = resolveActive(activeEnvironment, environments.data);
+    if (active) setEnvironmentId(active.id);
+  }, [environments.data, activeEnvironment]);
 
   const scenarios = useQuery({
     queryKey: ["scenarios", projectId, environmentId, order],
@@ -136,7 +148,10 @@ export function MatrixPage() {
               <select
                 className="mt-1 block h-9 rounded-lg border border-slate-200 px-2 text-sm"
                 value={environmentId}
-                onChange={(event) => setEnvironmentId(event.target.value)}
+                onChange={(event) => {
+                  setEnvironmentId(event.target.value);
+                  if (event.target.value) setActiveEnvironment(event.target.value);
+                }}
               >
                 {/* Without an environment the matrix shows what the contract declares. That is the
                     honest answer to "what could be tested", as opposed to "what will run tonight". */}

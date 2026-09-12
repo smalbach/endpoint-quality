@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type ApiError } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { Badge, Button, Card, Empty, Field, inputClass } from "@/components/ui";
+import { ConfirmDialog } from "@/components/overlay";
 import { cn, formatDate } from "@/lib/format";
 import type { ConfigView, Environment } from "@/lib/types";
 import { VariablesEditor } from "@/components/variables-editor";
@@ -171,6 +172,7 @@ function EnvironmentDetail({
   );
   const [draft, setDraft] = useState(saved);
   const [error, setError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   // A refetch brings the server's version, which is the one that went through `normalizeVariables`
   // and `normalizeBaseUrl` — a trimmed key or a dropped trailing slash would otherwise look like a
@@ -323,12 +325,22 @@ function EnvironmentDetail({
           </span>
           <button
             className="ml-auto text-xs text-rose-600 hover:text-rose-700"
-            onClick={() => {
-              if (window.confirm(`¿Eliminar «${environment.name}» y sus credenciales?`)) remove.mutate();
-            }}
+            onClick={() => setConfirmingDelete(true)}
           >
             Eliminar entorno
           </button>
+          {confirmingDelete && (
+            <ConfirmDialog
+              title="Eliminar entorno"
+              message={`«${environment.name}» se elimina con sus variables y sus credenciales. No se puede deshacer.`}
+              pending={remove.isPending}
+              onConfirm={() => {
+                setConfirmingDelete(false);
+                remove.mutate();
+              }}
+              onClose={() => setConfirmingDelete(false)}
+            />
+          )}
           {(error || remove.error) && (
             <p className="w-full text-xs text-rose-700">{error ?? (remove.error as Error).message}</p>
           )}

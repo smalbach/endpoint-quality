@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, Field, inputClass } from "@/components/ui";
+import { PromptDialog } from "@/components/overlay";
 import type { DatasetView } from "@/lib/types";
 
 /**
@@ -38,6 +39,7 @@ export function DatasetsPanel({
   loadRows: (datasetId: string) => Promise<Record<string, string>[]>;
 }) {
   const [editing, setEditing] = useState("");
+  const [naming, setNaming] = useState(false);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -71,16 +73,22 @@ export function DatasetsPanel({
       <div className="flex items-center justify-between">
         <p className="text-xs font-semibold text-slate-800">Datos</p>
         {canEdit && (
-          <Button
-            variant="ghost"
-            className="h-7 px-2 text-xs"
-            onClick={() => {
-              const name = window.prompt("Nombre del conjunto");
-              if (name?.trim()) onCreate(name.trim());
-            }}
-          >
+          <Button variant="ghost" className="h-7 px-2 text-xs" onClick={() => setNaming(true)}>
             + Conjunto
           </Button>
+        )}
+        {naming && (
+          <PromptDialog
+            title="Nuevo conjunto de datos"
+            label="Nombre del conjunto"
+            hint="Las filas se pegan después, como CSV o JSON."
+            placeholder="clientes de prueba"
+            onClose={() => setNaming(false)}
+            onSubmit={(name) => {
+              setNaming(false);
+              onCreate(name);
+            }}
+          />
         )}
       </div>
 

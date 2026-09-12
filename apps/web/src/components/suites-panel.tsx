@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button, inputClass } from "@/components/ui";
+import { PromptDialog } from "@/components/overlay";
 import { cn } from "@/lib/format";
 import type { SuiteView, WorkflowView } from "@/lib/types";
 
@@ -34,6 +35,7 @@ export function SuitesPanel({
   onRun: (suiteId: string) => void;
 }) {
   const [openId, setOpenId] = useState("");
+  const [naming, setNaming] = useState(false);
   const nameOf = (id: string) => workflows.find((item) => item.id === id)?.name ?? "flujo eliminado";
 
   const move = (suite: SuiteView, index: number, by: number) => {
@@ -49,16 +51,22 @@ export function SuitesPanel({
       <div className="flex items-center justify-between">
         <p className="text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Suites</p>
         {canEdit && (
-          <Button
-            variant="ghost"
-            className="h-7 px-2 text-xs"
-            onClick={() => {
-              const name = window.prompt("Nombre de la suite");
-              if (name?.trim()) onCreate(name.trim());
-            }}
-          >
+          <Button variant="ghost" className="h-7 px-2 text-xs" onClick={() => setNaming(true)}>
             + Nueva
           </Button>
+        )}
+        {naming && (
+          <PromptDialog
+            title="Nueva suite"
+            label="Nombre de la suite"
+            hint="Una suite ejecuta varios flujos en orden y deja un solo veredicto."
+            placeholder="Antes de publicar"
+            onClose={() => setNaming(false)}
+            onSubmit={(name) => {
+              setNaming(false);
+              onCreate(name);
+            }}
+          />
         )}
       </div>
 
