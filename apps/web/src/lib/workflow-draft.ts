@@ -6,7 +6,7 @@
  * a cycle must be caught before it is saved — and none of them are display concerns. Tested here,
  * with no renderer in sight.
  */
-import type { RequestTemplateView, WorkflowStatusView, WorkflowStepView } from "@/lib/types";
+import type { WorkflowCaptureView, RequestTemplateView, WorkflowStatusView, WorkflowStepView } from "@/lib/types";
 import { slugId } from "@/lib/config-draft";
 
 export type OperationSummary = { id: string; method: string; path: string; summary: string };
@@ -211,6 +211,62 @@ export const COMPUTED_VALUES = [
   "$hmacSha256:clave:texto",
 ];
 
+/** A path segment worth turning into a variable name: the last one that is not an array index. */
+const namePart = (path: string): string => {
+  const parts = path.split(".").filter((part) => !/^\d+$/.test(part));
+  return parts[parts.length - 1] ?? path.replace(/\./g, "_");
+};
+
+/** Keys that are almost always what somebody captures — an id to read back, a token to present. */
+const INTERESTING = /(^|[._])(id|ids|token|access[_-]?token|jwt|uuid|guid|key|slug|code|sku|ref|email|name)($|[._])/i;
+
+/**
+ * The captures a response suggests, from a real body.
+ *
+ * The alternative is what the reference tool made ordinary: send the request in a terminal, read
+ * the JSON, and type `data.items.0.id` into a box by hand — a path is exactly the kind of string
+ * that is wrong by one segment and fails on the third case, not the first. Here the body it already
+ * got back is walked, every scalar leaf becomes a candidate `{{variable}}` with its path filled in,
+ * and the ones that look like an id or a token are offered first because they are what a next step
+ * spends. Arrays descend through their first element (`items.0.id`), which is a path the engine's
+ * `valueAtPath` reads. Pure, so it is tested without a network: a body in, candidates out.
+ */
+export function suggestCaptures(sample: unknown, existing: string[] = []): WorkflowCaptureView[] {
+  const taken = new Set(existing);
+  const out: { capture: WorkflowCaptureView; interesting: boolean }[] = [];
+  const seenPaths = new Set<string>();
+
+  const walk = (value: unknown, path: string, depth: number) => {
+    if (out.length >= 40 || depth > 5) return;
+    if (Array.isArray(value)) {
+      if (value.length) walk(value[0], path ? `${path}.0` : "0", depth + 1);
+      return;
+    }
+    if (value !== null && typeof value === "object") {
+      for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+        walk(child, path ? `${path}.${key}` : key, depth + 1);
+      }
+      return;
+    }
+    // A scalar leaf, and only these become captures — a capture reads one value, not an object.
+    if (!path || seenPaths.has(path)) return;
+    if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") return;
+    seenPaths.add(path);
+    const base = namePart(path);
+    let variable = base;
+    for (let n = 2; taken.has(variable); n += 1) variable = `${base}${n}`;
+    taken.add(variable);
+    out.push({ capture: { variable, from: "body", path }, interesting: INTERESTING.test(path) });
+  };
+
+  walk(sample, "", 0);
+  // Interesting leaves first, order preserved within each group; capped so the list stays a menu.
+  return [...out]
+    .sort((a, b) => Number(b.interesting) - Number(a.interesting))
+    .slice(0, 15)
+    .map((item) => item.capture);
+}
+
 export function variablesFor(steps: WorkflowStepView[], stepId: string, environment: string[]): string[] {
   const byId = new Map(steps.map((step) => [step.id, step]));
   const upstream: string[] = [];
@@ -230,21 +286,27 @@ export function variablesFor(steps: WorkflowStepView[], stepId: string, environm
   return [...new Set([...environment, ...upstream, ...COMPUTED_VALUES])];
 }
 
+/** A problem, and the node it is about — so the validation panel can jump to it. Some problems
+ * (a duplicate id, a cycle) are about the graph and not one node, and carry no `stepId`. */
+export type FlowProblem = { message: string; stepId?: string };
+
 /**
  * The same three things the server refuses, said before the request leaves.
  *
  * Not instead of the server's check — that one is the rule — but so the editor can point at the
- * node instead of showing a 422 about a path into a JSON document.
+ * node instead of showing a 422 about a path into a JSON document. Each carries the node it is
+ * about where there is one, so the panel is a list of «ir al nodo» and not just a list of text.
  */
-export function problemsWith(steps: WorkflowStepView[]): string[] {
-  const problems: string[] = [];
+export function flowProblems(steps: WorkflowStepView[]): FlowProblem[] {
+  const problems: FlowProblem[] = [];
   const ids = steps.map((step) => step.id);
-  if (new Set(ids).size !== ids.length) problems.push("Hay pasos con el mismo id.");
+  if (new Set(ids).size !== ids.length) problems.push({ message: "Hay pasos con el mismo id." });
   for (const step of steps) {
     for (const dependency of step.dependsOn ?? []) {
-      if (dependency === step.id) problems.push(`El paso «${step.id}» depende de sí mismo.`);
+      if (dependency === step.id)
+        problems.push({ message: `El paso «${step.id}» depende de sí mismo.`, stepId: step.id });
       else if (!ids.includes(dependency))
-        problems.push(`El paso «${step.id}» depende de «${dependency}», que no existe.`);
+        problems.push({ message: `El paso «${step.id}» depende de «${dependency}», que no existe.`, stepId: step.id });
     }
   }
 
@@ -254,12 +316,17 @@ export function problemsWith(steps: WorkflowStepView[]): string[] {
       (step) => pending.has(step.id) && (step.dependsOn ?? []).every((id) => !pending.has(id)),
     );
     if (!ready.length) {
-      problems.push("El flujo tiene un ciclo: ningún paso puede empezar.");
+      problems.push({ message: "El flujo tiene un ciclo: ningún paso puede empezar." });
       break;
     }
     ready.forEach((step) => pending.delete(step.id));
   }
   return problems;
+}
+
+/** The messages alone. Kept for the callers that only need «is it valid» and a list of strings. */
+export function problemsWith(steps: WorkflowStepView[]): string[] {
+  return flowProblems(steps).map((problem) => problem.message);
 }
 
 /** `dependsOn: []` and no `dependsOn` mean the same thing, and only one of them is worth storing. */

@@ -9,6 +9,7 @@ import {
   positionFor,
   problemsWith,
   removeStep,
+  suggestCaptures,
   toEdges,
   toNodes,
   variablesFor,
@@ -206,6 +207,38 @@ describe("los nodos del lienzo, entre un documento y el siguiente", () => {
  * esta petición sale. Ofrecerla sería el editor sugiriendo el fallo, y el síntoma es un 404 que se
  * lee como un endpoint roto.
  */
+describe("las capturas que sugiere una respuesta", () => {
+  test("cada hoja escalar es un candidato, con id y token primero, y las listas entran por su primer elemento", () => {
+    const body = {
+      data: { id: 7, name: "pedido", items: [{ sku: "A1" }, { sku: "A2" }] },
+      token: "abc",
+      meta: { count: 2 },
+    };
+    const suggestions = suggestCaptures(body);
+    const byPath = new Map(suggestions.map((suggestion) => [suggestion.path, suggestion]));
+    // Los escalares están; el objeto y la lista no son capturas.
+    expect(byPath.has("data.id")).toBe(true);
+    expect(byPath.has("token")).toBe(true);
+    expect(byPath.get("data.items.0.sku")?.variable).toBe("sku");
+    expect(byPath.has("meta.count")).toBe(true);
+    // Lo interesante (id, token) va delante de lo demás.
+    const idRank = suggestions.findIndex((s) => s.path === "data.id");
+    const countRank = suggestions.findIndex((s) => s.path === "meta.count");
+    expect(idRank).toBeLessThan(countRank);
+    // La variable sale del último segmento no numérico, y todo se lee del cuerpo.
+    expect(byPath.get("data.id")?.variable).toBe("id");
+    expect(suggestions.every((s) => s.from === "body")).toBe(true);
+  });
+
+  test("no repite un nombre que ya existe: lo desambigua", () => {
+    const suggestions = suggestCaptures({ id: 1, nested: { id: 2 } }, ["id"]);
+    const names = suggestions.map((s) => s.variable);
+    // «id» ya está tomado, así que los dos candidatos llamados «id» se numeran sin chocar.
+    expect(new Set(names).size).toBe(names.length);
+    expect(names).not.toContain("id");
+  });
+});
+
 describe("las variables que un paso puede gastar", () => {
   const flow = (): WorkflowStepView[] => [
     { id: "login", requestTemplateId: "t0", captures: [{ variable: "token", from: "body", path: "data.token" }] },

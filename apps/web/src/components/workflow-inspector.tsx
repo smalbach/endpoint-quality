@@ -1,15 +1,17 @@
+import { useState } from "react";
 import { Button, Field, inputClass } from "@/components/ui";
 import { RequestBodyEditor } from "@/components/request-body-editor";
 import { RequestFieldsEditor } from "@/components/request-fields-editor";
 import { RequestPreviewPanel } from "@/components/request-preview";
 import { fieldMapsFrom, fieldProblems, fieldRowsFrom, type FieldRow } from "@/lib/request-fields";
-import { removeStep, replaceStep, variablesFor } from "@/lib/workflow-draft";
+import { removeStep, replaceStep, suggestCaptures, variablesFor } from "@/lib/workflow-draft";
 import type { OperationSummary } from "@/lib/workflow-draft";
 import type {
   CaptureSource,
   Environment,
   RequestTemplateView,
   StepCheckView,
+  WorkflowCaptureView,
   WorkflowStepView,
   WorkflowView,
 } from "@/lib/types";
@@ -180,6 +182,90 @@ export function WorkflowInspector({
   );
 }
 
+/**
+ * Captures a response offers, as one-click chips.
+ *
+ * The path is the part that is wrong by one segment and fails on the third case, so the editor
+ * reads a real body and fills it in: «Usar última respuesta» takes the body the preview just got
+ * back, or a body pasted from anywhere goes in the box. Every scalar leaf becomes a chip — the ones
+ * that look like an id or a token first — and a click adds the capture with its path already right.
+ * A chip whose path is already captured is not offered, so the list shrinks as it is spent.
+ */
+function CaptureSuggestions({
+  sampleBody,
+  existing,
+  onAdd,
+}: {
+  sampleBody: unknown;
+  existing: WorkflowCaptureView[];
+  onAdd: (capture: WorkflowCaptureView) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+
+  const existingPaths = new Set(existing.filter((capture) => capture.from === "body").map((capture) => capture.path));
+  const existingVars = existing.map((capture) => capture.variable);
+  let suggestions: WorkflowCaptureView[] = [];
+  let error: string | null = null;
+  if (text.trim()) {
+    try {
+      suggestions = suggestCaptures(JSON.parse(text), existingVars).filter(
+        (suggestion) => !existingPaths.has(suggestion.path),
+      );
+    } catch {
+      error = "No es JSON válido.";
+    }
+  }
+
+  return (
+    <div className="mt-2">
+      <button className="text-[11px] text-slate-500 hover:text-slate-800" onClick={() => setOpen((value) => !value)}>
+        {open ? "Ocultar sugerencias" : "Sugerir capturas desde la respuesta"}
+      </button>
+      {open && (
+        <div className="mt-2 rounded-lg border border-dashed border-slate-200 p-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-slate-400">Pega una respuesta JSON o usa la última enviada.</span>
+            <button
+              className="text-[10px] text-slate-500 hover:text-slate-800 disabled:opacity-40"
+              disabled={sampleBody === undefined}
+              onClick={() => setText(JSON.stringify(sampleBody, null, 2))}
+            >
+              Usar última respuesta
+            </button>
+          </div>
+          <textarea
+            className={`${inputClass} mt-1 h-24 font-mono text-[10px]`}
+            placeholder='{ "data": { "id": 1, "token": "…" } }'
+            value={text}
+            spellCheck={false}
+            onChange={(event) => setText(event.target.value)}
+          />
+          {error && <p className="mt-1 text-[10px] text-rose-600">{error}</p>}
+          {suggestions.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {suggestions.map((suggestion) => (
+                <button
+                  key={suggestion.path}
+                  className="rounded-md bg-slate-100 px-2 py-1 text-[10px] text-slate-700 hover:bg-slate-200"
+                  title={suggestion.path}
+                  onClick={() => onAdd(suggestion)}
+                >
+                  + {suggestion.variable}
+                  <span className="ml-1 font-mono text-slate-400">{suggestion.path}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {text.trim() && !error && suggestions.length === 0 && (
+            <p className="mt-1 text-[10px] text-slate-400">Nada nuevo que capturar en esta respuesta.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StepInspector({
   base,
   step,
@@ -205,6 +291,10 @@ function StepInspector({
 }) {
   const captures = step.captures ?? [];
   const editCaptures = (next: typeof captures) => onChange({ ...step, captures: next });
+  // The last body the preview got back, so the captures below can be suggested from a real response
+  // instead of typed by hand. Held here because the preview panel that fetches it and the captures
+  // that spend it are two sections of the same node.
+  const [sampleBody, setSampleBody] = useState<unknown>(undefined);
 
   return (
     <div>
@@ -295,7 +385,13 @@ function StepInspector({
           />
           {/* Lo que hay en el formulario, enviado de verdad. No hace falta guardar antes: lo que
               se manda es lo que se está mirando. */}
-          <RequestPreviewPanel base={base} template={template} environmentId={environmentId} canSend={canEdit} />
+          <RequestPreviewPanel
+            base={base}
+            template={template}
+            environmentId={environmentId}
+            canSend={canEdit}
+            onResponseBody={setSampleBody}
+          />
         </div>
       ) : (
         <p className="mt-2 text-[11px] text-rose-600">
@@ -372,6 +468,14 @@ function StepInspector({
           </div>
         ))}
       </div>
+      {canEdit && (
+        <CaptureSuggestions
+          sampleBody={sampleBody}
+          existing={captures}
+          onAdd={(capture) => editCaptures([...captures, capture])}
+        />
+      )}
+
       {canEdit && (
         <Button
           variant="ghost"

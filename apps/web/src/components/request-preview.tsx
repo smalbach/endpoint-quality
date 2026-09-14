@@ -43,11 +43,15 @@ export function RequestPreviewPanel({
   template,
   environmentId,
   canSend,
+  onResponseBody,
 }: {
   base: string;
   template: RequestTemplateView;
   environmentId: string;
   canSend: boolean;
+  /** The response body, handed up when a send succeeds, so a caller can suggest captures from it.
+   * Optional: the preview stands alone, this is only for the flow editor's captures. */
+  onResponseBody?: (body: unknown) => void;
 }) {
   const [tab, setTab] = useState<Tab>("body");
   const [copied, setCopied] = useState(false);
@@ -58,6 +62,7 @@ export function RequestPreviewPanel({
         method: "POST",
         body: previewBodyFor(template, environmentId),
       }),
+    onSuccess: (data) => onResponseBody?.(data.response?.body),
   });
 
   const preview = send.data;

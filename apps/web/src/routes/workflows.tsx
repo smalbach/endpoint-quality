@@ -16,7 +16,7 @@ import { useCan, useOrganization } from "@/lib/auth";
 import { Button, Card, Empty } from "@/components/ui";
 import { cn } from "@/lib/format";
 import { unchanged } from "@/lib/config-draft";
-import { addStep, problemsWith, WORKFLOW_STATUS_META, type OperationSummary } from "@/lib/workflow-draft";
+import { addStep, flowProblems, WORKFLOW_STATUS_META, type OperationSummary } from "@/lib/workflow-draft";
 import { WorkflowCanvas } from "@/components/workflow-canvas";
 import { WorkflowInspector } from "@/components/workflow-inspector";
 import { TemplateLibrary, type NewTemplate } from "@/components/template-library";
@@ -95,7 +95,7 @@ export function WorkflowsPage() {
   const archivedCount = allWorkflows.filter((item) => item.status === "archived").length;
   const templates = (workflows.data?.requestTemplates ?? []).map((template) => templateEdits[template.id] ?? template);
   const steps = draft?.steps ?? [];
-  const problems = problemsWith(steps);
+  const problems = flowProblems(steps);
 
   // The draft follows the selection, and a refetch replaces it: the server's copy is the one that
   // went through validation, so keeping a local version on top of it would hide what it changed.
@@ -295,8 +295,23 @@ export function WorkflowsPage() {
         </div>
         {problems.length > 0 && (
           <ul className="mt-3 space-y-1 text-xs text-rose-700">
-            {problems.map((problem) => (
-              <li key={problem}>{problem}</li>
+            {problems.map((problem, index) => (
+              <li key={`${problem.message}-${index}`} className="flex items-center gap-2">
+                <span>{problem.message}</span>
+                {problem.stepId && (
+                  <button
+                    className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 hover:bg-rose-100"
+                    onClick={() => {
+                      // The problem is a path into a node; the fix is at the node, so the panel jumps
+                      // to it — leaving the JSON view if that is where it was clicked.
+                      setAsJson(false);
+                      setSelectedStep(problem.stepId!);
+                    }}
+                  >
+                    Ir al nodo
+                  </button>
+                )}
+              </li>
             ))}
           </ul>
         )}
