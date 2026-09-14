@@ -5,6 +5,7 @@ import {
   connectStep,
   disconnectEdges,
   duplicateStep,
+  flowNodeStatuses,
   mergeNodes,
   positionFor,
   problemsWith,
@@ -291,5 +292,32 @@ describe("las variables que un paso puede gastar", () => {
       { id: "b", requestTemplateId: "t2", dependsOn: ["a"], captures: [{ variable: "x", from: "body", path: "d" }] },
     ];
     expect(variablesFor(cyclic, "a", []).filter((name) => !name.startsWith("$"))).toEqual(["x"]);
+  });
+});
+
+describe("el estado de cada nodo durante una corrida", () => {
+  test("saca el stepId del scenarioId, ignora suffix de fila/elemento y lo que no es de flujo", () => {
+    const status = flowNodeStatuses([
+      { scenarioId: "workflow:wf1:crear", status: "passed" },
+      { scenarioId: "workflow:wf1:listar#0", status: "running" },
+      { scenarioId: "matrix:algo", status: "failed" },
+    ]);
+    expect(status).toEqual({ crear: "passed", listar: "running" });
+  });
+
+  test("un paso con varios casos muestra el más relevante: running gana a todo, luego failed", () => {
+    const running = flowNodeStatuses([
+      { scenarioId: "workflow:wf:bucle#0", status: "passed" },
+      { scenarioId: "workflow:wf:bucle#1", status: "running" },
+      { scenarioId: "workflow:wf:bucle#2", status: "failed" },
+    ]);
+    expect(running.bucle).toBe("running");
+
+    const failed = flowNodeStatuses([
+      { scenarioId: "workflow:wf:bucle#0", status: "passed" },
+      { scenarioId: "workflow:wf:bucle#1", status: "failed" },
+      { scenarioId: "workflow:wf:bucle#2", status: "queued" },
+    ]);
+    expect(failed.bucle).toBe("failed");
   });
 });

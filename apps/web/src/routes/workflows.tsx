@@ -5,10 +5,10 @@
  * `definition` is, and both edit it. The graph is written whole on save, which is what makes «node
  * deleted, edge still pointing at it» a state that cannot be stored.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Modal, PromptDialog } from "@/components/overlay";
-import { RunProgress } from "@/routes/runs";
+import { PromptDialog } from "@/components/overlay";
+import { useRunProgress } from "@/routes/runs";
 import { resolveActive, useActiveEnvironment } from "@/lib/active-environment";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -17,7 +17,13 @@ import { useCan, useOrganization } from "@/lib/auth";
 import { Button, Card, Empty } from "@/components/ui";
 import { cn } from "@/lib/format";
 import { unchanged } from "@/lib/config-draft";
-import { addStep, flowProblems, WORKFLOW_STATUS_META, type OperationSummary } from "@/lib/workflow-draft";
+import {
+  addStep,
+  flowNodeStatuses,
+  flowProblems,
+  WORKFLOW_STATUS_META,
+  type OperationSummary,
+} from "@/lib/workflow-draft";
 import { WorkflowCanvas } from "@/components/workflow-canvas";
 import { WorkflowInspector } from "@/components/workflow-inspector";
 import { TemplateLibrary, type NewTemplate } from "@/components/template-library";
@@ -28,6 +34,7 @@ import type {
   DatasetRowsView,
   Environment,
   RequestTemplateView,
+  RunView,
   SuiteView,
   WorkflowStatusView,
   WorkflowStepView,
@@ -60,6 +67,14 @@ export function WorkflowsPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [datasetId, setDatasetId] = useState("");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+
+  // The live run being watched, if any. The hook no-ops on an empty id, so it is safe to call
+  // every render; when a run is active its cases colour the canvas nodes as they execute.
+  const runProgress = useRunProgress(base, activeRunId ?? "");
+  const stepStatus = useMemo(
+    () => (activeRunId ? flowNodeStatuses(runProgress.cases) : {}),
+    [activeRunId, runProgress.cases],
+  );
   const [concurrency, setConcurrency] = useState(1);
   // A pause between steps, so the live timeline can be watched. It is the run's `delayMs`, which the
   // orchestrator already honours; it changes the rhythm, never what is tested.
@@ -512,6 +527,7 @@ export function WorkflowsPage() {
                 operations={operations.data?.operations ?? []}
                 onChange={setSteps}
                 onSelect={setSelectedStep}
+                runStatus={stepStatus}
               />
             )}
           </Card>
@@ -561,23 +577,62 @@ export function WorkflowsPage() {
       )}
 
       {activeRunId && (
-        <Modal
-          size="xl"
-          title="Ejecución del flujo"
-          description="Se ejecuta ahora; sigue el progreso en vivo y, al terminar, el resumen queda aquí."
+        <RunStrip
+          run={runProgress.run.data}
+          onOpen={() => navigate(`/p/${projectId}/runs/${activeRunId}`)}
           onClose={() => setActiveRunId(null)}
-          footer={
-            <>
-              <Button variant="ghost" onClick={() => navigate(`/p/${projectId}/runs/${activeRunId}`)}>
-                Abrir en Runs
-              </Button>
-              <Button onClick={() => setActiveRunId(null)}>Cerrar</Button>
-            </>
-          }
-        >
-          <RunProgress base={base} runId={activeRunId} />
-        </Modal>
+        />
       )}
+    </div>
+  );
+}
+
+/**
+ * A slim bar that floats over the canvas while a run is watched: the verdict so far and the bar,
+ * without taking the flow off screen — the point is to watch the nodes, not a modal.
+ */
+function RunStrip({ run, onOpen, onClose }: { run: RunView | undefined; onOpen: () => void; onClose: () => void }) {
+  const totals = run?.totals;
+  const running = run?.status === "queued" || run?.status === "running";
+  const progress = totals && totals.cases ? Math.round((totals.completed / totals.cases) * 100) : 0;
+  return (
+    <div className="fixed inset-x-0 bottom-4 z-40 mx-auto w-[min(680px,92vw)] rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-xl backdrop-blur">
+      <div className="flex items-center gap-3">
+        <span
+          className={cn(
+            "flex h-2.5 w-2.5 shrink-0 rounded-full",
+            running ? "animate-pulse bg-sky-500" : run?.status === "failed" ? "bg-rose-500" : "bg-emerald-500",
+          )}
+        />
+        <span className="shrink-0 text-xs font-semibold text-slate-800">
+          {running ? "Ejecutando el flujo…" : run?.status === "failed" ? "Terminó con fallos" : "Terminó"}
+        </span>
+        <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+          <div
+            className={cn(
+              "h-full rounded-full transition-all",
+              run?.status === "failed" ? "bg-rose-400" : "bg-emerald-400",
+            )}
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <span className="shrink-0 font-mono text-[11px] text-slate-500">
+          {totals ? `${totals.completed}/${totals.cases}` : "0/0"}
+        </span>
+        {totals && (
+          <span className="hidden shrink-0 gap-2 text-[11px] sm:flex">
+            <span className="text-emerald-600">{totals.passed}✓</span>
+            <span className="text-rose-600">{totals.failed}✗</span>
+            {totals.skipped > 0 && <span className="text-amber-600">{totals.skipped}⃠</span>}
+          </span>
+        )}
+        <Button variant="ghost" className="h-7 shrink-0 px-2 text-[11px]" onClick={onOpen}>
+          Ver detalle
+        </Button>
+        <button className="shrink-0 text-slate-400 hover:text-slate-700" onClick={onClose} aria-label="Cerrar">
+          ×
+        </button>
+      </div>
     </div>
   );
 }

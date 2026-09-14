@@ -6,7 +6,13 @@
  * a cycle must be caught before it is saved — and none of them are display concerns. Tested here,
  * with no renderer in sight.
  */
-import type { WorkflowCaptureView, RequestTemplateView, WorkflowStatusView, WorkflowStepView } from "@/lib/types";
+import type {
+  CaseStatus,
+  WorkflowCaptureView,
+  RequestTemplateView,
+  WorkflowStatusView,
+  WorkflowStepView,
+} from "@/lib/types";
 import { slugId } from "@/lib/config-draft";
 
 export type OperationSummary = { id: string; method: string; path: string; summary: string };
@@ -148,7 +154,12 @@ export function mergeNodes<T extends { id: string; position: { x: number; y: num
   });
 }
 
-export function toNodes(steps: WorkflowStepView[], templates: RequestTemplateView[], operations: OperationSummary[]) {
+export function toNodes(
+  steps: WorkflowStepView[],
+  templates: RequestTemplateView[],
+  operations: OperationSummary[],
+  runStatus?: Record<string, CaseStatus>,
+) {
   const templateById = new Map(templates.map((template) => [template.id, template]));
   const operationById = new Map(operations.map((operation) => [operation.id, operation]));
   return steps.map((step, index) => {
@@ -168,9 +179,33 @@ export function toNodes(steps: WorkflowStepView[], templates: RequestTemplateVie
         loops: Boolean(step.forEach),
         conditional: Boolean(step.runIf),
         authorizes: Boolean(step.authorizes),
+        // Set only while a run is being watched; the node lights up by it.
+        runStatus: runStatus?.[step.id],
       },
     };
   });
+}
+
+/**
+ * Which node is doing what, from the cases of a live run.
+ *
+ * A run case carries a `scenarioId` of `workflow:<flow>:<stepId>` — plus a `#suffix` per dataset row
+ * or loop element — so one node can own several cases at once. It shows the most eventful of them:
+ * anything running makes the node running, then a failure, then still-queued, then passed, and
+ * skipped last. That order is what makes the canvas read as «this one now, that one broke».
+ */
+const STATUS_RANK: Record<CaseStatus, number> = { running: 4, failed: 3, queued: 2, passed: 1, skipped: 0 };
+
+export function flowNodeStatuses(cases: { scenarioId: string; status: CaseStatus }[]): Record<string, CaseStatus> {
+  const byStep: Record<string, CaseStatus> = {};
+  for (const runCase of cases) {
+    const parts = runCase.scenarioId.split(":");
+    if (parts[0] !== "workflow" || parts.length < 3) continue;
+    const stepId = parts[2].split("#")[0];
+    const current = byStep[stepId];
+    if (!current || STATUS_RANK[runCase.status] > STATUS_RANK[current]) byStep[stepId] = runCase.status;
+  }
+  return byStep;
 }
 
 /**

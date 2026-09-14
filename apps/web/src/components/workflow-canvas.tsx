@@ -29,7 +29,15 @@ import {
   toNodes,
 } from "@/lib/workflow-draft";
 import type { OperationSummary } from "@/lib/workflow-draft";
-import type { RequestTemplateView, WorkflowStepView } from "@/lib/types";
+import type { CaseStatus, RequestTemplateView, WorkflowStepView } from "@/lib/types";
+
+const CASE_STATUS_LABEL: Record<CaseStatus, string> = {
+  running: "Ejecutando",
+  passed: "Correcto",
+  failed: "Fallido",
+  skipped: "No ejecutado",
+  queued: "En cola",
+};
 
 /**
  * The node «types», as this editor means them.
@@ -62,14 +70,35 @@ type StepNodeData = {
   loops: boolean;
   conditional: boolean;
   authorizes: boolean;
+  runStatus?: CaseStatus;
+};
+
+/** How a node looks for each live status: border and a soft wash so the eye lands on the one
+ * running. Absent (no run being watched) leaves the node in its plain editor skin. */
+const RUN_NODE_CLASS: Record<CaseStatus, string> = {
+  running: "border-sky-400 bg-sky-50 ring-2 ring-sky-200",
+  passed: "border-emerald-300 bg-emerald-50",
+  failed: "border-rose-400 bg-rose-50 ring-2 ring-rose-200",
+  skipped: "border-amber-300 bg-amber-50",
+  queued: "border-slate-300 bg-white",
+};
+const RUN_DOT: Record<CaseStatus, string> = {
+  running: "bg-sky-500 animate-pulse",
+  passed: "bg-emerald-500",
+  failed: "bg-rose-500",
+  skipped: "bg-amber-400",
+  queued: "bg-slate-300",
 };
 
 function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
+  const status = data.runStatus;
   return (
     <div
       className={cn(
-        "w-64 rounded-xl border bg-white p-3 shadow-sm",
-        selected ? "border-slate-900 ring-2 ring-slate-200" : "border-slate-200",
+        "w-64 rounded-xl border bg-white p-3 shadow-sm transition-colors",
+        status ? RUN_NODE_CLASS[status] : "border-slate-200",
+        // Selection still wins the outline, so clicking a node during a run keeps its ring.
+        selected && "border-slate-900 ring-2 ring-slate-200",
       )}
     >
       <Handle type="target" position={Position.Left} />
@@ -81,6 +110,11 @@ function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
         {data.conditional && <span title="Condicional">◇</span>}
         {data.loops && <span title="Una vez por elemento">↻</span>}
         {data.authorizes && <span title="Inicia sesión para los pasos siguientes">🔑</span>}
+        {status && (
+          <span className="ml-auto flex items-center gap-1 text-[9px] text-slate-500" title={CASE_STATUS_LABEL[status]}>
+            <span className={cn("h-2 w-2 rounded-full", RUN_DOT[status])} />
+          </span>
+        )}
       </div>
       <p className="mt-2 truncate font-mono text-[10px] text-slate-500">{data.path}</p>
       <div className="mt-2 flex justify-between text-[10px] text-slate-400">
@@ -112,16 +146,19 @@ export function WorkflowCanvas({
   operations,
   onChange,
   onSelect,
+  runStatus,
 }: {
   steps: WorkflowStepView[];
   templates: RequestTemplateView[];
   operations: OperationSummary[];
   onChange: (steps: WorkflowStepView[]) => void;
   onSelect: (stepId: string) => void;
+  /** Per-step live status while a run is being watched; nodes light up by it. */
+  runStatus?: Record<string, CaseStatus>;
 }) {
   const fromDocument = useMemo(
-    () => toNodes(steps, templates, operations) as Node<StepNodeData>[],
-    [steps, templates, operations],
+    () => toNodes(steps, templates, operations, runStatus) as Node<StepNodeData>[],
+    [steps, templates, operations, runStatus],
   );
   const [nodes, setNodes] = useState<Node<StepNodeData>[]>(fromDocument);
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);

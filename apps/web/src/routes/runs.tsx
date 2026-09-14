@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, streamRun } from "@/lib/api";
@@ -167,13 +167,12 @@ export function RunDetailPage() {
 }
 
 /**
- * The live view of one run — header, progress, the case list and the case detail.
+ * The live state of one run: the stream, the merged case list, the totals and the controls.
  *
- * Used full-page by {@link RunDetailPage} and inline by the flow editor, which launches a run and
- * shows it here without leaving the canvas. It takes `base` and `runId` and owns nothing about
- * routing, so either caller can drop it wherever it wants the run to appear.
+ * Split from the view so the flow editor can read the same live progress it uses to light up the
+ * canvas nodes, without opening a second stream to the same run.
  */
-export function RunProgress({ base, runId }: { base: string; runId: string }) {
+export function useRunProgress(base: string, runId: string) {
   const canCancel = useCan("editor");
   const queryClient = useQueryClient();
 
@@ -204,6 +203,7 @@ export function RunProgress({ base, runId }: { base: string; runId: string }) {
   });
 
   useEffect(() => {
+    if (!runId) return;
     const controller = new AbortController();
     finished.current = false;
 
@@ -274,17 +274,49 @@ export function RunProgress({ base, runId }: { base: string; runId: string }) {
     queryFn: () => api<RunCaseView>(`${base}/runs/${runId}/cases/${openCase}`),
   });
 
-  if (run.isLoading) return <p className="text-sm text-slate-500">Cargando…</p>;
-  if (!run.data) return <p className="text-sm text-rose-600">No se encontró la corrida.</p>;
-
   // The live map wins per case while the run is going, so a row flips the moment its case ends —
   // and it can also carry cases the first fetch never saw. A step that loops writes one case per
   // element while the run is walking, so the list has to be the union of the two and not a map
   // over the one that was queued; ordered by `position`, which is what the server orders by.
-  const known = new Map(run.data.cases.map((runCase) => [runCase.id, runCase]));
-  for (const [id, runCase] of live?.cases ?? []) known.set(id, runCase);
-  const cases = [...known.values()].sort((left, right) => left.position - right.position);
-  const totals = live?.totals ?? run.data.totals;
+  //
+  // Memoised so its identity is stable between renders that changed neither the fetch nor the live
+  // map: the flow editor derives per-node status from it, and a fresh array each render would
+  // rebuild the canvas nodes on every tick.
+  const cases = useMemo(() => {
+    const known = new Map((run.data?.cases ?? []).map((runCase) => [runCase.id, runCase] as const));
+    for (const [id, runCase] of live?.cases ?? []) known.set(id, runCase);
+    return [...known.values()].sort((left, right) => left.position - right.position);
+  }, [run.data, live]);
+  const totals = live?.totals ?? run.data?.totals ?? null;
+  const running = run.data?.status === "queued" || run.data?.status === "running";
+
+  return { run, cases, totals, running, streaming, retrying, openCase, setOpenCase, detail, cancel, canCancel };
+}
+
+/**
+ * The live view of one run — header, progress, the case list and the case detail.
+ *
+ * Used full-page by {@link RunDetailPage} and inline by the flow editor, which launches a run and
+ * shows it here without leaving the canvas.
+ */
+export function RunProgress({ base, runId }: { base: string; runId: string }) {
+  const {
+    run,
+    cases,
+    totals: liveTotals,
+    streaming,
+    retrying,
+    openCase,
+    setOpenCase,
+    detail,
+    cancel,
+    canCancel,
+  } = useRunProgress(base, runId);
+
+  if (run.isLoading) return <p className="text-sm text-slate-500">Cargando…</p>;
+  if (!run.data) return <p className="text-sm text-rose-600">No se encontró la corrida.</p>;
+
+  const totals = liveTotals ?? run.data.totals;
   const running = run.data.status === "queued" || run.data.status === "running";
   const progress = totals.cases ? Math.round((totals.completed / totals.cases) * 100) : 0;
   // Counted from the rows and not from the totals, because the totals count verdicts and this
