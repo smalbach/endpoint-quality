@@ -161,9 +161,21 @@ function Totals({ totals }: { totals: RunTotals }) {
 export function RunDetailPage() {
   const { projectId, runId } = useParams();
   const organization = useOrganization();
+  const base = `/orgs/${organization?.id}/projects/${projectId}`;
+  if (!organization || !projectId || !runId) return <p className="text-sm text-slate-500">Cargando…</p>;
+  return <RunProgress base={base} runId={runId} />;
+}
+
+/**
+ * The live view of one run — header, progress, the case list and the case detail.
+ *
+ * Used full-page by {@link RunDetailPage} and inline by the flow editor, which launches a run and
+ * shows it here without leaving the canvas. It takes `base` and `runId` and owns nothing about
+ * routing, so either caller can drop it wherever it wants the run to appear.
+ */
+export function RunProgress({ base, runId }: { base: string; runId: string }) {
   const canCancel = useCan("editor");
   const queryClient = useQueryClient();
-  const base = `/orgs/${organization?.id}/projects/${projectId}`;
 
   const [live, setLive] = useState<{ totals: RunTotals | null; cases: Map<string, RunCase> } | null>(null);
   /**
@@ -181,7 +193,7 @@ export function RunDetailPage() {
 
   const run = useQuery({
     queryKey: ["run", runId],
-    enabled: Boolean(organization && projectId && runId),
+    enabled: Boolean(runId),
     queryFn: () => api<RunView>(`${base}/runs/${runId}`),
     // Only while the stream is not carrying the updates. With SSE live this is a single fetch.
     refetchInterval: (query) => {
@@ -192,7 +204,6 @@ export function RunDetailPage() {
   });
 
   useEffect(() => {
-    if (!organization || !projectId || !runId) return;
     const controller = new AbortController();
     finished.current = false;
 
@@ -246,12 +257,11 @@ export function RunDetailPage() {
     });
 
     return () => controller.abort();
-    // `organization` belongs here — the effect reads it — and it is only safe to depend on
-    // because `useOrganization` memoises it. It used to build a fresh object per render, so this
-    // effect re-ran on every one: abort the stream, open another, whose first event set state,
-    // which rendered, which re-ran the effect. A tab left on a run made a hundred thousand
-    // requests and then spent its life reading 429s.
-  }, [base, organization, projectId, runId, queryClient]);
+    // `base` is a plain string built by the caller, stable across renders unless the run changes;
+    // depending on it (rather than on a memoised `organization` object) keeps this effect from
+    // re-running every render — which once meant aborting and reopening the stream on each event,
+    // a hundred thousand requests from a tab left on a run, and then a life of reading 429s.
+  }, [base, runId, queryClient]);
 
   const cancel = useMutation({
     mutationFn: () => api<void>(`${base}/runs/${runId}/cancel`, { method: "POST" }),

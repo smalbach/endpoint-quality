@@ -7,7 +7,8 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { PromptDialog } from "@/components/overlay";
+import { Modal, PromptDialog } from "@/components/overlay";
+import { RunProgress } from "@/routes/runs";
 import { resolveActive, useActiveEnvironment } from "@/lib/active-environment";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -58,6 +59,7 @@ export function WorkflowsPage() {
   const [renaming, setRenaming] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [datasetId, setDatasetId] = useState("");
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [concurrency, setConcurrency] = useState(1);
   // A pause between steps, so the live timeline can be watched. It is the run's `delayMs`, which the
   // orchestrator already honours; it changes the rhythm, never what is tested.
@@ -193,13 +195,15 @@ export function WorkflowsPage() {
     onSuccess: invalidate,
   });
 
+  // Launching runs it here, in an overlay over the canvas, instead of navigating away: the flow
+  // stays open behind it, and the run's live progress and final summary show without a trip to Runs.
   const run = useMutation({
     mutationFn: () =>
       api<{ runId: string }>(`${base}/runs`, {
         method: "POST",
         body: { environmentId, workflowId: draft?.id, concurrency, delayMs, ...(datasetId ? { datasetId } : {}) },
       }),
-    onSuccess: ({ runId }) => void navigate(`/p/${projectId}/runs/${runId}`),
+    onSuccess: ({ runId }) => setActiveRunId(runId),
   });
 
   const runSuite = useMutation({
@@ -208,7 +212,7 @@ export function WorkflowsPage() {
         method: "POST",
         body: { environmentId, suiteId, concurrency, delayMs },
       }),
-    onSuccess: ({ runId }) => void navigate(`/p/${projectId}/runs/${runId}`),
+    onSuccess: ({ runId }) => setActiveRunId(runId),
   });
 
   const createDataset = useMutation({
@@ -554,6 +558,25 @@ export function WorkflowsPage() {
             )}
           </Card>
         </div>
+      )}
+
+      {activeRunId && (
+        <Modal
+          size="xl"
+          title="Ejecución del flujo"
+          description="Se ejecuta ahora; sigue el progreso en vivo y, al terminar, el resumen queda aquí."
+          onClose={() => setActiveRunId(null)}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => navigate(`/p/${projectId}/runs/${activeRunId}`)}>
+                Abrir en Runs
+              </Button>
+              <Button onClick={() => setActiveRunId(null)}>Cerrar</Button>
+            </>
+          }
+        >
+          <RunProgress base={base} runId={activeRunId} />
+        </Modal>
       )}
     </div>
   );
