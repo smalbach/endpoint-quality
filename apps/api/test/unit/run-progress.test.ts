@@ -10,8 +10,14 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { RunProgressStream } from "@/modules/runs/infrastructure/run-progress.stream";
+import {
+  RunCaseProjector,
+  RunCaseStartedProjector,
+  RunProgressStream,
+} from "@/modules/runs/infrastructure/run-progress.stream";
 import { InProcessRelay } from "@/modules/runs/infrastructure/progress/in-process-relay";
+import { RunCaseFinishedEvent, RunCaseStartedEvent } from "@/modules/runs/application/events/run.events";
+import type { RunCase, RunTotals } from "@/modules/runs/domain/model";
 import type { ProgressEvent, ProgressRelayPort } from "@/modules/runs/domain/progress";
 
 /** A channel two streams share, standing in for Redis pub/sub. It delivers to everyone *except*
@@ -103,6 +109,29 @@ describe("progreso en vivo", () => {
 
     assert.equal(suya.length, 1);
     assert.equal(ajena.length, 0);
+  });
+
+  test("el caso que empieza se anuncia como 'case' sin totales; el que termina sí los trae", () => {
+    const stream = new RunProgressStream(new InProcessRelay());
+    stream.onApplicationBootstrap();
+    const seen = collect(stream, "run-1");
+
+    const runCase = { id: "c1", status: "running", position: 0 } as unknown as RunCase;
+    new RunCaseStartedProjector(stream).handle(new RunCaseStartedEvent("p1", "run-1", runCase));
+
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].type, "case");
+    const startedPayload = seen[0].payload as { case: RunCase; totals?: RunTotals };
+    assert.equal(startedPayload.case.id, "c1");
+    assert.equal(startedPayload.totals, undefined, "empezar no completa nada, así que no redibuja la barra");
+
+    const totals: RunTotals = { cases: 1, completed: 1, passed: 1, failed: 0, skipped: 0 };
+    const done = { ...runCase, status: "passed" } as unknown as RunCase;
+    new RunCaseProjector(stream).handle(new RunCaseFinishedEvent("p1", "run-1", done, totals));
+
+    assert.equal(seen.length, 2);
+    const finishedPayload = seen[1].payload as { case: RunCase; totals?: RunTotals };
+    assert.deepEqual(finishedPayload.totals, totals);
   });
 
   test("con un solo proceso el relé no hace nada, y es lo correcto", async () => {

@@ -48,6 +48,7 @@ import { ExecutionContextFactory, type ExecutionContext } from "./execution-cont
 import {
   RunCaseFinishedEvent,
   RunCaseRetryingEvent,
+  RunCaseStartedEvent,
   RunFinishedEvent,
   RunStartedEvent,
 } from "../application/events/run.events";
@@ -151,7 +152,9 @@ export class RunOrchestrator {
       if (index > 0 && run.plan.delayMs > 0) await delay(run.plan.delayMs);
 
       const startedAt = this.clock.now();
-      await this.runs.saveCase({ ...runCase, status: "running", startedAt });
+      const started: RunCase = { ...runCase, status: "running", startedAt };
+      await this.runs.saveCase(started);
+      this.eventBus.publish(new RunCaseStartedEvent(run.projectId, run.id, started));
 
       const executed = await this.executor.run({
         operation: item.operation,
@@ -582,7 +585,9 @@ export class RunOrchestrator {
         Object.assign(context.target.variables, bindElement(item.step.forEach.as, element));
       }
 
-      await this.runs.saveCase({ ...runCase, status: "running", startedAt: boundAt });
+      const started: RunCase = { ...runCase, status: "running", startedAt: boundAt };
+      await this.runs.saveCase(started);
+      this.eventBus.publish(new RunCaseStartedEvent(run.projectId, run.id, started));
       const executed = await this.attempt(run, runCase.id, item.step, () =>
         this.executor.run({
           operation: item.operation,

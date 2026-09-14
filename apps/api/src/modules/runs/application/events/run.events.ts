@@ -9,6 +9,23 @@ export class RunStartedEvent {
     readonly cases: number,
   ) {}
 }
+/**
+ * A case that just started executing.
+ *
+ * Without it a follower learns a case exists as `queued` from the opening snapshot and next hears
+ * of it already `passed` — the moment it was the one running, the thing the user came to watch, went
+ * unsaid. The row is persisted `running` either way; this only makes the transition visible live.
+ *
+ * It carries no totals: starting a case completes nothing, so sending the same totals again would
+ * redraw the progress bar for no reason.
+ */
+export class RunCaseStartedEvent {
+  constructor(
+    readonly projectId: string,
+    readonly runId: string,
+    readonly runCase: RunCase,
+  ) {}
+}
 export class RunCaseFinishedEvent {
   constructor(
     readonly projectId: string,

@@ -25,6 +25,7 @@ import { RunOrchestrator } from "./infrastructure/run-orchestrator";
 import {
   RunCaseProjector,
   RunCaseRetryingProjector,
+  RunCaseStartedProjector,
   RunFinishedProjector,
   RunProgressStream,
   RunStartedProjector,
@@ -40,7 +41,13 @@ import { RequestPreviewController } from "./presentation/request-preview.control
 
 export const RUN_COMMAND_HANDLERS = [StartRunHandler, CancelRunHandler, PruneRunsHandler, PreviewRequestHandler];
 export const RUN_QUERY_HANDLERS = [ListRunsHandler, GetRunHandler, GetRunCaseHandler, GetRunReportHandler];
-export const RUN_PROJECTORS = [RunStartedProjector, RunCaseProjector, RunCaseRetryingProjector, RunFinishedProjector];
+export const RUN_PROJECTORS = [
+  RunStartedProjector,
+  RunCaseStartedProjector,
+  RunCaseProjector,
+  RunCaseRetryingProjector,
+  RunFinishedProjector,
+];
 
 /**
  * The queue adapter is chosen at boot from `QUEUE_DRIVER`.

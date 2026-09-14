@@ -6,6 +6,7 @@ import { PROGRESS_RELAY, type ProgressEvent, type ProgressRelayPort } from "../d
 import {
   RunCaseFinishedEvent,
   RunCaseRetryingEvent,
+  RunCaseStartedEvent,
   RunFinishedEvent,
   RunStartedEvent,
 } from "../application/events/run.events";
@@ -56,6 +57,15 @@ export class RunStartedProjector implements IEventHandler<RunStartedEvent> {
   constructor(private readonly stream: RunProgressStream) {}
   handle(event: RunStartedEvent): void {
     this.stream.publish({ runId: event.runId, type: "started", payload: { cases: event.cases } });
+  }
+}
+
+@EventsHandler(RunCaseStartedEvent)
+export class RunCaseStartedProjector implements IEventHandler<RunCaseStartedEvent> {
+  constructor(private readonly stream: RunProgressStream) {}
+  handle(event: RunCaseStartedEvent): void {
+    // Same `case` shape as the finished one, minus totals: the row updates, the bar does not.
+    this.stream.publish({ runId: event.runId, type: "case", payload: { case: event.runCase } });
   }
 }
 

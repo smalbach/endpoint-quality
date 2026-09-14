@@ -165,7 +165,7 @@ export function RunDetailPage() {
   const queryClient = useQueryClient();
   const base = `/orgs/${organization?.id}/projects/${projectId}`;
 
-  const [live, setLive] = useState<{ totals: RunTotals; cases: Map<string, RunCase> } | null>(null);
+  const [live, setLive] = useState<{ totals: RunTotals | null; cases: Map<string, RunCase> } | null>(null);
   /**
    * El caso que está esperando para volver a intentarlo.
    *
@@ -228,9 +228,11 @@ export function RunDetailPage() {
           if (payload.case) cases.set(payload.case.id, payload.case);
           // An event without totals leaves the last ones standing rather than resetting the bar
           // to zero — which is what a malformed frame used to do, and it read as "the run lost
-          // everything it had done".
-          const totals = payload.totals ?? current?.totals;
-          return totals ? { totals, cases } : current;
+          // everything it had done". A case-started event carries a case but no totals: keep the
+          // case (so the row flips to «ejecutando») while the totals stay put.
+          const totals = payload.totals ?? current?.totals ?? null;
+          if (!payload.case && totals === null) return current;
+          return { totals, cases };
         });
         if (payload.status) {
           finished.current = true;
@@ -358,6 +360,8 @@ export function RunDetailPage() {
               className={cn(
                 "flex w-full items-center gap-2 border-b border-slate-100 px-3 py-2 text-left last:border-b-0",
                 openCase === runCase.id && "bg-slate-50",
+                // The one running now, lit so the eye lands on it: a soft sky wash and a live left edge.
+                runCase.status === "running" && "bg-sky-50/70 shadow-[inset_3px_0_0_0_var(--color-sky-400)]",
               )}
             >
               <Badge className={cn("w-14 shrink-0 justify-center", methodStyle(runCase.method))}>
@@ -374,7 +378,16 @@ export function RunDetailPage() {
               )}
               {runCase.failure && <FailureTag failure={runCase.failure} />}
               <span className="shrink-0 text-[10px] text-slate-400">{formatDuration(runCase.durationMs)}</span>
-              <Badge className={cn("shrink-0 border-transparent", statusClass[runCase.status])}>{runCase.status}</Badge>
+              {runCase.status === "running" ? (
+                <Badge className="shrink-0 gap-1 border-transparent bg-sky-100 text-sky-700">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-sky-500" />
+                  ejecutando
+                </Badge>
+              ) : (
+                <Badge className={cn("shrink-0 border-transparent", statusClass[runCase.status])}>
+                  {runCase.status}
+                </Badge>
+              )}
             </button>
           ))}
         </Card>
