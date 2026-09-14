@@ -27,6 +27,7 @@ describe("las secciones de un proyecto", () => {
       ["Test Runs", `/p/${ID}/security`],
       ["Flow Testing", `/p/${ID}/workflows`],
       ["Performance", `/p/${ID}/performance`],
+      ["Escáner", `/p/${ID}/code-scan`],
       ["Settings", `/p/${ID}/settings`],
     ]);
   });

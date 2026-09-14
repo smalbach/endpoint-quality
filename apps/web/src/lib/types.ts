@@ -107,4 +107,12 @@ export type {
   PerformanceThresholdResultView,
   PerformanceRunSummaryView,
   PerformanceRunDetailView,
+  CodeConnectorView,
+  ScannedEndpointView,
+  ScanDiffView,
+  ScanImpactView,
+  ScanSourceView,
+  CodeScanStatusView,
+  CodeScanSummaryView,
+  CodeScanDetailView,
 } from "@eq/contracts";

@@ -32,6 +32,7 @@ const PerformancePage = lazy(() =>
 const PerformanceRunDetailPage = lazy(() =>
   import("@/routes/performance").then((module) => ({ default: module.PerformanceRunDetailPage })),
 );
+const CodeScanPage = lazy(() => import("@/routes/code-scan").then((module) => ({ default: module.CodeScanPage })));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -113,6 +114,14 @@ createRoot(document.getElementById("root")!).render(
                       element={
                         <Suspense fallback={<p className="text-sm text-slate-500">Cargando…</p>}>
                           <PerformanceRunDetailPage />
+                        </Suspense>
+                      }
+                    />
+                    <Route
+                      path="code-scan"
+                      element={
+                        <Suspense fallback={<p className="text-sm text-slate-500">Cargando…</p>}>
+                          <CodeScanPage />
                         </Suspense>
                       }
                     />

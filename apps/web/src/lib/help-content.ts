@@ -155,6 +155,30 @@ export const HELP_TOPICS: HelpTopic[] = [
     ],
   },
   {
+    id: "code-scan",
+    title: "Escáner de código",
+    intro: "Lee el código NestJS y lo compara con lo que el proyecto tiene declarado.",
+    steps: [
+      {
+        title: "Conecta o sube",
+        body: "Conecta un repositorio de GitHub (owner/repo, rama, base path y prefijo; el token va cifrado y no se muestra), o sube los ficheros del código. Ambos caminos valen.",
+      },
+      {
+        title: "Escanea",
+        body: "Se leen los controladores y sus rutas, guards y roles, siempre desde el servidor y detrás del guard SSRF. El resultado es un diff contra los endpoints del proyecto.",
+      },
+      {
+        title: "Mira el impacto",
+        body: "Roles que el código nombra y el proyecto no define, y endpoints que el código ya no tiene pero un permiso o un flujo aún referencian.",
+        tip: "Nada se borra al importar: quitar un endpoint que algo usa es una decisión tuya, no del escaneo.",
+      },
+      {
+        title: "Importa",
+        body: "Crea los endpoints nuevos y actualiza los cambiados; opcionalmente crea los roles que faltan. Un segundo import no duplica lo que ya existe.",
+      },
+    ],
+  },
+  {
     id: "settings",
     title: "Settings",
     intro: "El proyecto, su contrato, su configuración y sus entornos.",
