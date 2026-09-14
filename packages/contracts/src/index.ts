@@ -960,6 +960,54 @@ export type PerformanceRunDetailViewOf<T> = {
   finishedAt: T | null;
 };
 
+/** One run's head as it appears on either side of a comparison — no windows, just the summary. */
+export type PerformanceComparisonRunViewOf<T> = {
+  id: string;
+  planName: string;
+  status: PerformanceRunStatusView;
+  startedAt: T;
+  summary: PerformanceSummaryView | null;
+};
+
+/** A metric read on both runs. `delta` is target minus base; `pct` is that over base (null when
+ * base is 0). `better` names the run that wins on this metric — lower for latency and error rate,
+ * higher for throughput — or `"same"` when they tie. */
+export type PerformanceMetricDeltaView = {
+  metric: "rps" | "errorRate" | "avgMs" | "p50Ms" | "p90Ms" | "p95Ms" | "p99Ms" | "maxMs";
+  label: string;
+  base: number;
+  target: number;
+  delta: number;
+  pct: number | null;
+  better: "target" | "base" | "same";
+};
+
+/** An endpoint aligned by method+path across the two runs. A side is null when only the other run
+ * exercised it. Deltas are filled only when both sides are present. */
+export type PerformanceEndpointDeltaView = {
+  method: string;
+  path: string;
+  base: PerformanceEndpointStatView | null;
+  target: PerformanceEndpointStatView | null;
+  p95Delta: number | null;
+  errorRateDelta: number | null;
+};
+
+/** A threshold aligned by label. A side is null when that run's plan did not carry it. */
+export type PerformanceThresholdDeltaView = {
+  label: string;
+  base: { ok: boolean; actual: string } | null;
+  target: { ok: boolean; actual: string } | null;
+};
+
+export type PerformanceComparisonViewOf<T> = {
+  base: PerformanceComparisonRunViewOf<T>;
+  target: PerformanceComparisonRunViewOf<T>;
+  metrics: PerformanceMetricDeltaView[];
+  endpoints: PerformanceEndpointDeltaView[];
+  thresholds: PerformanceThresholdDeltaView[];
+};
+
 // ---------------------------------------------------------------------------------------------
 // Code scan (GitHub)
 // ---------------------------------------------------------------------------------------------
@@ -1119,6 +1167,8 @@ export type EndpointPage = EndpointPageOf<string>;
 export type PerformancePlanView = PerformancePlanViewOf<string>;
 export type PerformanceRunSummaryView = PerformanceRunSummaryViewOf<string>;
 export type PerformanceRunDetailView = PerformanceRunDetailViewOf<string>;
+export type PerformanceComparisonRunView = PerformanceComparisonRunViewOf<string>;
+export type PerformanceComparisonView = PerformanceComparisonViewOf<string>;
 export type CodeScanSummaryView = CodeScanSummaryViewOf<string>;
 export type CodeScanDetailView = CodeScanDetailViewOf<string>;
 

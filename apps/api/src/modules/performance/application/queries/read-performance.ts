@@ -1,10 +1,16 @@
 import { Inject } from "@nestjs/common";
 import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
-import type { PerformancePlanViewOf, PerformanceRunDetailViewOf, PerformanceRunSummaryViewOf } from "@eq/contracts";
+import type {
+  PerformanceComparisonViewOf,
+  PerformancePlanViewOf,
+  PerformanceRunDetailViewOf,
+  PerformanceRunSummaryViewOf,
+} from "@eq/contracts";
 
-import { NotFoundError } from "@/shared/errors/domain-error";
+import { InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
+import { compareRuns } from "../../domain/compare";
 import type { PerformancePlanRow, PerformanceRun } from "../../domain/model";
 import {
   PERFORMANCE_PLAN_REPOSITORY,
@@ -77,6 +83,15 @@ export class GetRunQuery implements IQuery {
   ) {}
 }
 
+export class CompareRunsQuery implements IQuery {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly baseRunId: string,
+    readonly targetRunId: string,
+  ) {}
+}
+
 @QueryHandler(ListPlansQuery)
 export class ListPlansHandler implements IQueryHandler<ListPlansQuery, PerformancePlanViewOf<Date>[]> {
   constructor(
@@ -130,5 +145,25 @@ export class GetRunHandler implements IQueryHandler<GetRunQuery, PerformanceRunD
     const run = await this.runs.find(query.projectId, query.runId);
     if (!run) throw new NotFoundError("La corrida no existe", "performance-run-not-found");
     return runDetailView(run);
+  }
+}
+
+@QueryHandler(CompareRunsQuery)
+export class CompareRunsHandler implements IQueryHandler<CompareRunsQuery, PerformanceComparisonViewOf<Date>> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(PERFORMANCE_RUN_REPOSITORY) private readonly runs: PerformanceRunRepositoryPort,
+  ) {}
+
+  async execute(query: CompareRunsQuery): Promise<PerformanceComparisonViewOf<Date>> {
+    await ownedProject(this.projects, query.organizationId, query.projectId);
+    if (query.baseRunId === query.targetRunId) {
+      throw new InvalidInputError("Elige dos corridas distintas para comparar", [], "performance-compare-same-run");
+    }
+    const base = await this.runs.find(query.projectId, query.baseRunId);
+    if (!base) throw new NotFoundError("La corrida base no existe", "performance-run-not-found");
+    const target = await this.runs.find(query.projectId, query.targetRunId);
+    if (!target) throw new NotFoundError("La corrida a comparar no existe", "performance-run-not-found");
+    return compareRuns(base, target);
   }
 }

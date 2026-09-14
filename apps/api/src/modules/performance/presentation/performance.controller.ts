@@ -18,7 +18,13 @@ import {
 } from "@/modules/auth/infrastructure/guards/auth.guard";
 import { CreatePlanCommand, DeletePlanCommand, UpdatePlanCommand } from "../application/commands/manage-plan";
 import { CancelRunCommand, DeleteRunCommand, StartRunCommand } from "../application/commands/manage-run";
-import { GetPlanQuery, GetRunQuery, ListPlansQuery, ListRunsQuery } from "../application/queries/read-performance";
+import {
+  CompareRunsQuery,
+  GetPlanQuery,
+  GetRunQuery,
+  ListPlansQuery,
+  ListRunsQuery,
+} from "../application/queries/read-performance";
 import { PerformanceProgressStream } from "../infrastructure/performance-progress.stream";
 import { CreatePlanDto, StartPerformanceRunDto, UpdatePlanDto } from "./dto/performance.dto";
 
@@ -96,6 +102,17 @@ export class PerformanceController {
     @Query("planId") planId?: string,
   ) {
     return this.queryBus.execute(new ListRunsQuery(organizationId, projectId, planId || undefined));
+  }
+
+  @Get("compare")
+  @RequireRole("viewer")
+  async compareRuns(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Query("base") base: string,
+    @Query("target") target: string,
+  ) {
+    return this.queryBus.execute(new CompareRunsQuery(organizationId, projectId, base, target));
   }
 
   @Get("runs/:runId")

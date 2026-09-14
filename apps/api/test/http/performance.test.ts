@@ -128,6 +128,38 @@ describe("las pruebas de carga", () => {
     assert.equal(run.status, 422, JSON.stringify(run.body));
   });
 
+  test("comparar dos corridas: cabeceras, métricas, endpoints; misma corrida es 422", async () => {
+    const created = await api()
+      .post(`${base()}/performance/plans`)
+      .set(as(owner))
+      .send({ ...plan(), name: "Comparable" });
+    const planId = created.body.planId;
+
+    const first = await api().post(`${base()}/performance/plans/${planId}/runs`).set(as(owner)).send({ environmentId });
+    const runA = await finished(first.body.runId);
+    const second = await api()
+      .post(`${base()}/performance/plans/${planId}/runs`)
+      .set(as(owner))
+      .send({ environmentId });
+    const runB = await finished(second.body.runId);
+
+    const compared = await api().get(`${base()}/performance/compare?base=${runA.id}&target=${runB.id}`).set(as(owner));
+    assert.equal(compared.status, 200, JSON.stringify(compared.body));
+    assert.equal(compared.body.base.id, runA.id);
+    assert.equal(compared.body.target.id, runB.id);
+    assert.ok(compared.body.metrics.length > 0, "hay métricas comparadas");
+    assert.ok(
+      compared.body.metrics.every((metric: { better: string }) => ["base", "target", "same"].includes(metric.better)),
+    );
+    assert.ok(compared.body.endpoints.some((endpoint: { path: string }) => endpoint.path === "/health"));
+
+    const same = await api().get(`${base()}/performance/compare?base=${runA.id}&target=${runA.id}`).set(as(owner));
+    assert.equal(same.status, 422);
+
+    const missing = await api().get(`${base()}/performance/compare?base=${runA.id}&target=no-existe`).set(as(owner));
+    assert.equal(missing.status, 404);
+  });
+
   test("un viewer no puede lanzar ni borrar", async () => {
     const created = await api()
       .post(`${base()}/performance/plans`)

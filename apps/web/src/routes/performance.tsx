@@ -25,6 +25,7 @@ import {
 } from "@/lib/performance";
 import type {
   Environment,
+  PerformanceComparisonView,
   PerformancePlanDefinitionView,
   PerformancePlanView,
   PerformanceRunDetailView,
@@ -316,6 +317,11 @@ export function PerformanceRunDetailPage() {
     enabled,
     queryFn: () => api<PerformanceRunDetailView>(`${base}/performance/runs/${runId}`),
   });
+  const others = useQuery({
+    queryKey: ["perf-runs-all", projectId],
+    enabled,
+    queryFn: () => api<PerformanceRunSummaryView[]>(`${base}/performance/runs`),
+  });
 
   // Live timeline: subscribe while the run is going, refetch on each tick and on finish.
   useEffect(() => {
@@ -363,6 +369,27 @@ export function PerformanceRunDetailPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            {(() => {
+              const comparable = (others.data ?? []).filter((other) => other.id !== runId && isTerminal(other.status));
+              if (comparable.length === 0) return null;
+              return (
+                <select
+                  className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-600"
+                  value=""
+                  onChange={(event) => {
+                    if (event.target.value)
+                      void navigate(`/p/${projectId}/performance/compare/${event.target.value}/${runId}`);
+                  }}
+                >
+                  <option value="">Comparar con…</option>
+                  {comparable.map((other) => (
+                    <option key={other.id} value={other.id}>
+                      {formatDate(other.startedAt)} · {RUN_STATUS_LABEL[other.status]}
+                    </option>
+                  ))}
+                </select>
+              );
+            })()}
             <Badge className={cn("ring-1 ring-inset", RUN_STATUS_CLASS[data.status])}>
               {RUN_STATUS_LABEL[data.status]}
             </Badge>
@@ -533,5 +560,252 @@ function WindowsChart({
         </text>
       </svg>
     </Card>
+  );
+}
+
+// ------------------------------------------------------------------------------------------------
+// Compare two runs
+// ------------------------------------------------------------------------------------------------
+
+const signed = (value: number) => `${value > 0 ? "+" : ""}${value}`;
+const signedMs = (value: number) => `${value > 0 ? "+" : value < 0 ? "-" : ""}${formatMs(Math.abs(value))}`;
+/** A difference between two rates, in percentage points (0.01 = one point). */
+const signedPoints = (fraction: number) => `${fraction > 0 ? "+" : ""}${(fraction * 100).toFixed(2)} pt`;
+/** A relative change, as a percentage of the base. */
+const signedRel = (ratio: number) => `${ratio > 0 ? "+" : ""}${(ratio * 100).toFixed(1)}%`;
+
+/** Colour a delta by which run it favours — the query already decided `better`, so the screen only
+ * paints it. A tie is grey, never green. */
+const betterClass = (better: "target" | "base" | "same") =>
+  better === "target" ? "text-emerald-600" : better === "base" ? "text-rose-600" : "text-slate-400";
+
+export function PerformanceComparePage() {
+  const { projectId, baseRunId, targetRunId } = useParams();
+  const organization = useOrganization();
+  const navigate = useNavigate();
+  const base = `/orgs/${organization?.id}/projects/${projectId}`;
+  const enabled = Boolean(organization && projectId && baseRunId && targetRunId);
+
+  const comparison = useQuery({
+    queryKey: ["perf-compare", projectId, baseRunId, targetRunId],
+    enabled,
+    queryFn: () =>
+      api<PerformanceComparisonView>(`${base}/performance/compare?base=${baseRunId}&target=${targetRunId}`),
+  });
+  const runs = useQuery({
+    queryKey: ["perf-runs-all", projectId],
+    enabled: Boolean(organization && projectId),
+    queryFn: () => api<PerformanceRunSummaryView[]>(`${base}/performance/runs`),
+  });
+
+  const terminal = (runs.data ?? []).filter((run) => isTerminal(run.status));
+  const go = (nextBase: string, nextTarget: string) => {
+    if (nextBase && nextTarget && nextBase !== nextTarget)
+      void navigate(`/p/${projectId}/performance/compare/${nextBase}/${nextTarget}`);
+  };
+  const picker = (value: string, onPick: (id: string) => void) => (
+    <select
+      className="h-8 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700"
+      value={value}
+      onChange={(event) => onPick(event.target.value)}
+    >
+      {terminal.map((run) => (
+        <option key={run.id} value={run.id}>
+          {run.planName} · {formatDate(run.startedAt)} · {RUN_STATUS_LABEL[run.status]}
+        </option>
+      ))}
+    </select>
+  );
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-4">
+        <button
+          className="text-[11px] text-slate-400 hover:text-slate-700"
+          onClick={() => navigate(`/p/${projectId}/performance`)}
+        >
+          ← Pruebas de carga
+        </button>
+        <h1 className="mt-1 text-base font-semibold text-slate-900">Comparar corridas</h1>
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+          <div>
+            <p className="text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Base</p>
+            <div className="mt-1">{picker(baseRunId ?? "", (id) => go(id, targetRunId ?? ""))}</div>
+          </div>
+          <span className="hidden text-slate-300 sm:block">vs</span>
+          <div>
+            <p className="text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Comparada</p>
+            <div className="mt-1">{picker(targetRunId ?? "", (id) => go(baseRunId ?? "", id))}</div>
+          </div>
+        </div>
+      </Card>
+
+      {comparison.isLoading && <p className="text-sm text-slate-500">Cargando…</p>}
+      {message(comparison.error) && (
+        <Card className="p-4">
+          <p className="text-xs text-rose-700">{message(comparison.error)}</p>
+        </Card>
+      )}
+
+      {comparison.data && (
+        <>
+          <ComparisonHeads data={comparison.data} />
+          {comparison.data.metrics.length > 0 ? (
+            <Card className="p-0 overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-400">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Métrica</th>
+                    <th className="px-3 py-2 text-right">Base</th>
+                    <th className="px-3 py-2 text-right">Comparada</th>
+                    <th className="px-3 py-2 text-right">Δ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {comparison.data.metrics.map((metric) => (
+                    <tr key={metric.metric} className="border-t border-slate-100">
+                      <td className="px-3 py-2 text-slate-600">{metric.label}</td>
+                      <td className="px-3 py-2 text-right text-slate-700">
+                        {formatMetric(metric.metric, metric.base)}
+                      </td>
+                      <td className="px-3 py-2 text-right text-slate-700">
+                        {formatMetric(metric.metric, metric.target)}
+                      </td>
+                      <td className={cn("px-3 py-2 text-right font-medium", betterClass(metric.better))}>
+                        {formatDelta(metric)}
+                        {metric.pct !== null && metric.metric !== "errorRate" && (
+                          <span className="ml-1 text-[10px] text-slate-400">({signedRel(metric.pct)})</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+          ) : (
+            <Empty title="Sin resumen que comparar" hint="Alguna de las corridas no terminó con métricas." />
+          )}
+
+          {comparison.data.thresholds.length > 0 && (
+            <Card className="p-4">
+              <p className="text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Umbrales</p>
+              <div className="mt-2 space-y-1">
+                {comparison.data.thresholds.map((threshold) => (
+                  <div key={threshold.label} className="flex items-center justify-between gap-3 text-xs">
+                    <span className="text-slate-600">{threshold.label}</span>
+                    <span className="flex items-center gap-3">
+                      <ThresholdCell side={threshold.base} />
+                      <span className="text-slate-300">→</span>
+                      <ThresholdCell side={threshold.target} />
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          {comparison.data.endpoints.length > 0 && (
+            <Card className="p-0 overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-400">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Endpoint</th>
+                    <th className="px-3 py-2 text-right">p95 base</th>
+                    <th className="px-3 py-2 text-right">p95 comp.</th>
+                    <th className="px-3 py-2 text-right">Δ p95</th>
+                    <th className="px-3 py-2 text-right">Δ errores</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {comparison.data.endpoints.map((endpoint) => (
+                    <tr key={`${endpoint.method} ${endpoint.path}`} className="border-t border-slate-100">
+                      <td className="px-3 py-2 font-mono text-slate-700">
+                        {endpoint.method} {endpoint.path}
+                      </td>
+                      <td className="px-3 py-2 text-right text-slate-600">
+                        {endpoint.base ? formatMs(endpoint.base.p95Ms) : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-right text-slate-600">
+                        {endpoint.target ? formatMs(endpoint.target.p95Ms) : "—"}
+                      </td>
+                      <td
+                        className={cn(
+                          "px-3 py-2 text-right font-medium",
+                          endpoint.p95Delta === null
+                            ? "text-slate-400"
+                            : endpoint.p95Delta > 0
+                              ? "text-rose-600"
+                              : endpoint.p95Delta < 0
+                                ? "text-emerald-600"
+                                : "text-slate-400",
+                        )}
+                      >
+                        {endpoint.p95Delta === null
+                          ? endpoint.base
+                            ? "quitado"
+                            : "nuevo"
+                          : signedMs(endpoint.p95Delta)}
+                      </td>
+                      <td
+                        className={cn(
+                          "px-3 py-2 text-right",
+                          endpoint.errorRateDelta === null
+                            ? "text-slate-400"
+                            : endpoint.errorRateDelta > 0
+                              ? "text-rose-600"
+                              : endpoint.errorRateDelta < 0
+                                ? "text-emerald-600"
+                                : "text-slate-400",
+                        )}
+                      >
+                        {endpoint.errorRateDelta === null ? "—" : signedPoints(endpoint.errorRateDelta)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+const formatMetric = (metric: PerformanceComparisonView["metrics"][number]["metric"], value: number) =>
+  metric === "errorRate" ? formatPct(value) : metric === "rps" ? String(value) : formatMs(value);
+
+const formatDelta = (metric: PerformanceComparisonView["metrics"][number]) => {
+  if (metric.delta === 0) return "=";
+  if (metric.metric === "errorRate") return signedPoints(metric.delta);
+  if (metric.metric === "rps") return signed(metric.delta);
+  return signedMs(metric.delta);
+};
+
+function ComparisonHeads({ data }: { data: PerformanceComparisonView }) {
+  const head = (run: PerformanceComparisonView["base"], tag: string) => (
+    <Card className="p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10px] font-semibold tracking-wide text-slate-400 uppercase">{tag}</p>
+        <Badge className={cn("ring-1 ring-inset", RUN_STATUS_CLASS[run.status])}>{RUN_STATUS_LABEL[run.status]}</Badge>
+      </div>
+      <p className="mt-1 truncate text-sm font-medium text-slate-800">{run.planName}</p>
+      <p className="text-[11px] text-slate-500">{formatDate(run.startedAt)}</p>
+    </Card>
+  );
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      {head(data.base, "Base")}
+      {head(data.target, "Comparada")}
+    </div>
+  );
+}
+
+function ThresholdCell({ side }: { side: PerformanceComparisonView["thresholds"][number]["base"] }) {
+  if (!side) return <span className="text-slate-400">—</span>;
+  return (
+    <span className={cn("font-medium", side.ok ? "text-emerald-600" : "text-rose-600")}>
+      {side.ok ? "✓" : "✗"} {side.actual}
+    </span>
   );
 }

@@ -19,6 +19,7 @@ import { PerformanceProgressStream } from "./infrastructure/performance-progress
 import { CreatePlanHandler, DeletePlanHandler, UpdatePlanHandler } from "./application/commands/manage-plan";
 import { CancelRunHandler, DeleteRunHandler, StartRunHandler } from "./application/commands/manage-run";
 import {
+  CompareRunsHandler,
   GetPlanHandler,
   GetRunHandler,
   ListPlansHandler,
@@ -34,7 +35,13 @@ export const PERFORMANCE_COMMAND_HANDLERS = [
   CancelRunHandler,
   DeleteRunHandler,
 ];
-export const PERFORMANCE_QUERY_HANDLERS = [ListPlansHandler, GetPlanHandler, ListRunsHandler, GetRunHandler];
+export const PERFORMANCE_QUERY_HANDLERS = [
+  ListPlansHandler,
+  GetPlanHandler,
+  ListRunsHandler,
+  GetRunHandler,
+  CompareRunsHandler,
+];
 export const PERFORMANCE_ADAPTERS = [
   { provide: PERFORMANCE_PLAN_REPOSITORY, useClass: TypeOrmPerformancePlanRepository },
   { provide: PERFORMANCE_RUN_REPOSITORY, useClass: TypeOrmPerformanceRunRepository },
