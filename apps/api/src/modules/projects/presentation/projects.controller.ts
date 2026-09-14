@@ -27,6 +27,8 @@ import type { ConfigSection } from "@eq/runner-core";
 
 import { CreateProjectCommand } from "../application/commands/create-project";
 import { CopyFromProjectCommand } from "../application/commands/copy-from-project";
+import { ImportElementsCommand } from "../application/commands/import-elements";
+import { GetImportPreviewQuery } from "../application/queries/import-preview";
 import { SetProjectArchivedCommand, UpdateProjectCommand } from "../application/commands/update-project";
 import { GetProjectQuery, ListProjectsQuery } from "../application/queries/list-projects";
 import {
@@ -38,6 +40,7 @@ import { CheckSpecDriftCommand } from "@/modules/specs/application/commands/chec
 import { GetOperationsQuery, ListSpecVersionsQuery } from "@/modules/specs/application/queries/get-operations";
 import {
   CopyFromProjectDto,
+  ImportElementsDto,
   ArchiveProjectDto,
   CreateProjectDto,
   ImportSpecDto,
@@ -227,6 +230,39 @@ export class ProjectsController {
           sections: (body.sections ?? []) as ConfigSection[],
           flows: body.flows ?? false,
           environments: body.environments ?? false,
+        },
+        actorId(principal),
+      ),
+    );
+  }
+
+  @Get(":projectId/import-preview")
+  @RequireRole("editor")
+  async importPreview(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Query("sourceProjectId") sourceProjectId: string,
+  ) {
+    return this.queryBus.execute(new GetImportPreviewQuery(organizationId, projectId, sourceProjectId));
+  }
+
+  @Post(":projectId/import-elements")
+  @RequireRole("editor")
+  async importElements(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Body() body: ImportElementsDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.commandBus.execute(
+      new ImportElementsCommand(
+        organizationId,
+        projectId,
+        {
+          sourceProjectId: body.sourceProjectId,
+          endpointIds: body.endpointIds ?? [],
+          workflowIds: body.workflowIds ?? [],
+          environmentIds: body.environmentIds ?? [],
         },
         actorId(principal),
       ),

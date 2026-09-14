@@ -106,3 +106,11 @@ export class CopyFromProjectDto {
    * marked sensitive** — see the command; it says which ones it emptied. */
   @IsOptional() @IsBoolean() environments?: boolean;
 }
+
+/** Element-by-element import: exactly which endpoints, flows and environments to bring. */
+export class ImportElementsDto {
+  @IsUUID() sourceProjectId: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(1000) @IsUUID("4", { each: true }) endpointIds?: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(500) @IsUUID("4", { each: true }) workflowIds?: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(200) @IsUUID("4", { each: true }) environmentIds?: string[];
+}

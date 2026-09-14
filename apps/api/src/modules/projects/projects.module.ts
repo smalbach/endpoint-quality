@@ -9,10 +9,13 @@ import { SpecsModule } from "@/modules/specs/specs.module";
 import { ProjectConfigModule } from "@/modules/config/config.module";
 import { WorkflowsModule } from "@/modules/workflows/workflows.module";
 import { EnvironmentsModule } from "@/modules/environments/environments.module";
+import { EndpointsModule } from "@/modules/endpoints/endpoints.module";
 import { PROJECT_REPOSITORY } from "./domain/ports";
 import { TypeOrmProjectRepository } from "./infrastructure/persistence/typeorm-project.repository";
 import { CreateProjectHandler } from "./application/commands/create-project";
 import { CopyFromProjectHandler } from "./application/commands/copy-from-project";
+import { ImportElementsHandler } from "./application/commands/import-elements";
+import { GetImportPreviewHandler } from "./application/queries/import-preview";
 import { SetProjectArchivedHandler, UpdateProjectHandler } from "./application/commands/update-project";
 import { DeleteProjectHandler } from "./application/commands/delete-project";
 import { RunsModule } from "@/modules/runs/runs.module";
@@ -25,8 +28,9 @@ export const PROJECT_COMMAND_HANDLERS = [
   SetProjectArchivedHandler,
   DeleteProjectHandler,
   CopyFromProjectHandler,
+  ImportElementsHandler,
 ];
-export const PROJECT_QUERY_HANDLERS = [ListProjectsHandler, GetProjectHandler];
+export const PROJECT_QUERY_HANDLERS = [ListProjectsHandler, GetProjectHandler, GetImportPreviewHandler];
 export const PROJECT_ADAPTERS = [{ provide: PROJECT_REPOSITORY, useClass: TypeOrmProjectRepository }];
 
 /**
@@ -45,6 +49,7 @@ export const PROJECT_ADAPTERS = [{ provide: PROJECT_REPOSITORY, useClass: TypeOr
     forwardRef(() => ProjectConfigModule),
     forwardRef(() => WorkflowsModule),
     forwardRef(() => EnvironmentsModule),
+    forwardRef(() => EndpointsModule),
     // The project list shows the health of each project's latest run.
     forwardRef(() => RunsModule),
     AuthModule,

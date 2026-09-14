@@ -1072,6 +1072,25 @@ export type HistoryEntryView = {
 
 export type HistoryPageView = { entries: HistoryEntryView[]; total: number; page: number; pageSize: number };
 
+// ---------------------------------------------------------------------------------------------
+// Import from another project (element by element)
+// ---------------------------------------------------------------------------------------------
+
+/** What a source project offers to copy, so the target can pick element by element. */
+export type ImportPreviewView = {
+  endpoints: { id: string; method: string; path: string }[];
+  workflows: { id: string; name: string; steps: number }[];
+  environments: { id: string; name: string }[];
+};
+
+/** What crossed and what was left, after a selective import. */
+export type ImportElementsResultView = {
+  endpoints: number;
+  workflows: number;
+  environments: number;
+  skipped: { what: string; detail: string }[];
+};
+
 export type Member = MemberOf<string>;
 export type PendingInvitation = PendingInvitationOf<string>;
 export type MembersView = MembersViewOf<string>;

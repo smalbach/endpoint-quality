@@ -289,7 +289,10 @@ export class CopyFromProjectHandler implements ICommandHandler<CopyFromProjectCo
 
 /** A sensitive variable keeps its name and loses its value: the name is the useful half — it is
  * what a `{{token}}` in a path refers to — and the value is the half that must not be duplicated. */
-function withoutSecrets(variables: EnvironmentVariables): { variables: EnvironmentVariables; emptied: string[] } {
+export function withoutSecrets(variables: EnvironmentVariables): {
+  variables: EnvironmentVariables;
+  emptied: string[];
+} {
   const emptied: string[] = [];
   const copied = Object.fromEntries(
     Object.entries(variables).map(([name, variable]) => {

@@ -56,6 +56,7 @@ import {
 import {
   ArchiveProjectDto,
   CopyFromProjectDto,
+  ImportElementsDto,
   CreateProjectDto,
   ImportSpecDto,
   ProjectAuthDto,
@@ -131,6 +132,7 @@ const DTOS = [
   UpdateProjectDto,
   ArchiveProjectDto,
   CopyFromProjectDto,
+  ImportElementsDto,
   SpecSourceDto,
   ImportSpecDto,
   CreateEnvironmentDto,
