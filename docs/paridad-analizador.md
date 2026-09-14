@@ -161,8 +161,12 @@ umbrales, progreso por SSE e historial por plan. Falta: comparativa entre dos co
 
 ### Escáner de GitHub
 
-Todo falta: conectar repo (token cifrado, rama, base path, prefijo), escanear NestJS con ts-morph,
-importar, sincronizar con diff, historial, análisis de impacto sobre flujos y permisos.
+Hecha (módulo propio `code-scan`). Conector por proyecto (repo, rama, base path, prefijo) con token
+cifrado que no se devuelve; escaneo por la API de GitHub detrás del guard SSRF o por subida de
+ficheros; análisis de NestJS con ts-morph (rutas con prefijo, guards, roles, `@Public`); diff contra
+los endpoints del proyecto (añadidos/quitados/cambiados); importar crea los añadidos, actualiza los
+cambiados y crea los roles que faltan; historial; análisis de impacto sobre permisos y flujos (roles
+desconocidos y endpoints quitados que un permiso o un flujo aún referencian).
 
 ### Dashboard, historial, ayuda
 
@@ -221,5 +225,9 @@ Cada fase deja el producto funcionando y se prueba en el navegador antes de pasa
    checks; corrida en cola con cancelación, progreso SSE y veredicto por umbrales; web con editor de
    planes, lanzar, detalle en vivo (resumen, timeline, desglose) e historial. Queda la comparativa
    entre corridas.
-9. **Escáner de GitHub.**
+9. **Escáner de GitHub** · _hecha_. Módulo `code-scan`: analizador puro con ts-morph (controladores
+   NestJS → rutas con prefijo, guards, roles, `@Public`) y diff, probados; conector con token cifrado
+   (repo/rama/base path/prefijo); escaneo por la API de GitHub tras el guard SSRF o por subida;
+   importar (crea endpoints, actualiza requiresAuth, crea roles que faltan, sin borrar nada);
+   historial; impacto sobre permisos y flujos. Web con conector, subida, diff, impacto e importar.
 10. **Dashboard, historial, análisis desde fichero, importar de otro proyecto por elementos.**
