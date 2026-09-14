@@ -73,6 +73,9 @@ export function WorkflowInspector({
   onWorkflow,
   onSteps,
   onTemplate,
+  templateUsage,
+  onFork,
+  forking,
   onRun,
   onDelete,
   running,
@@ -96,6 +99,11 @@ export function WorkflowInspector({
   onWorkflow: (change: Partial<Pick<WorkflowView, "name" | "description">>) => void;
   onSteps: (steps: WorkflowStepView[]) => void;
   onTemplate: (template: RequestTemplateView) => void;
+  /** How many nodes (across every flow) share the given reusable request. */
+  templateUsage: (templateId: string) => number;
+  /** Fork a private copy of this node's request, carrying the edit that triggered it. */
+  onFork: (step: WorkflowStepView, overrides?: Partial<RequestTemplateView>) => void;
+  forking: boolean;
   onRun: () => void;
   onDelete: () => void;
   running: boolean;
@@ -140,7 +148,10 @@ export function WorkflowInspector({
               Object.keys(environments.find((item) => item.id === environmentId)?.variables ?? {}),
             )}
             canEdit={canEdit}
+            sharedBy={template ? templateUsage(template.id) : 0}
+            forking={forking}
             onTemplate={onTemplate}
+            onFork={(overrides) => onFork(step, overrides)}
             onChange={(next) => onSteps(replaceStep(steps, next))}
             onRemove={() => onSteps(removeStep(steps, step.id))}
           />
@@ -289,7 +300,10 @@ function StepInspector({
   environmentId,
   variables,
   canEdit,
+  sharedBy,
+  forking,
   onTemplate,
+  onFork,
   onChange,
   onRemove,
 }: {
@@ -300,10 +314,15 @@ function StepInspector({
   environmentId: string;
   variables: string[];
   canEdit: boolean;
+  /** Number of nodes sharing this request; > 1 means an edit here would change them all. */
+  sharedBy: number;
+  forking: boolean;
   onTemplate: (template: RequestTemplateView) => void;
+  onFork: (overrides?: Partial<RequestTemplateView>) => void;
   onChange: (step: WorkflowStepView) => void;
   onRemove: () => void;
 }) {
+  const shared = sharedBy > 1;
   const captures = step.captures ?? [];
   const editCaptures = (next: typeof captures) => onChange({ ...step, captures: next });
   // The last body the preview got back, so the captures below can be suggested from a real response
@@ -314,15 +333,35 @@ function StepInspector({
   return (
     <div>
       <p className="text-xs font-semibold text-slate-800">Prueba reutilizable</p>
-      {/* Edited here, saved to its own row: the change reaches every other flow that uses it. */}
+      {/* A reusable request edited here is one row: the change reaches every node that shares it. So
+          when more than one does, the panel says so and offers a private copy — and changing the
+          operation, which never means «make the others a different request too», forks on its own. */}
+      {template && shared && canEdit && (
+        <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] leading-5 text-amber-800">
+          Esta petición la usan <span className="font-semibold">{sharedBy} nodos</span>. Al editarla cambian todos.
+          <button
+            className="mt-1 block rounded-md bg-amber-100 px-2 py-1 font-medium text-amber-900 hover:bg-amber-200 disabled:opacity-50"
+            disabled={forking}
+            onClick={() => onFork()}
+          >
+            {forking ? "Creando copia…" : "Hacer independiente este nodo"}
+          </button>
+        </div>
+      )}
       {template ? (
         <div className="mt-2 rounded-lg border border-slate-200 p-2">
           <Field label="Operación">
             <select
               className={inputClass}
               value={template.operationId}
-              disabled={!canEdit}
-              onChange={(event) => onTemplate({ ...template, operationId: event.target.value })}
+              disabled={!canEdit || forking}
+              // Changing the operation is the edit that must never drag the twins along: if the
+              // request is shared, fork a private copy that already carries the new operation.
+              onChange={(event) =>
+                shared
+                  ? onFork({ operationId: event.target.value })
+                  : onTemplate({ ...template, operationId: event.target.value })
+              }
             >
               {operations.map((operation) => (
                 <option key={operation.id} value={operation.id}>

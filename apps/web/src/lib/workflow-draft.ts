@@ -37,6 +37,40 @@ export const positionFor = (index: number) => ({ x: 40 + (index % 3) * 310, y: 6
  */
 export const nextStepId = (templateName: string, taken: string[]): string => slugId(templateName, taken);
 
+/**
+ * How many steps point at one reusable request — this flow's steps plus every other flow's.
+ *
+ * A request is shared on purpose: two flows that both create a widget name the same row. But that
+ * is also why editing a node's request from the inspector changes every node that shares it, and a
+ * person building a CRUD flow out of «leer» duplicated four times does not mean «change all four».
+ * So the inspector counts the uses first, and forks a private copy before an edit when there is
+ * more than one — {@link uniqueTemplateName} names it. Counted across all flows, and taking the
+ * current flow from the live draft rather than its saved copy, so a second node added this sitting
+ * is seen before the flow is saved.
+ */
+export function templateUsage(
+  draftSteps: { requestTemplateId: string }[],
+  allFlows: { id: string; steps: { requestTemplateId: string }[] }[],
+  currentFlowId: string,
+  templateId: string,
+): number {
+  const here = draftSteps.filter((step) => step.requestTemplateId === templateId).length;
+  const elsewhere = allFlows
+    .filter((flow) => flow.id !== currentFlowId)
+    .reduce((total, flow) => total + flow.steps.filter((step) => step.requestTemplateId === templateId).length, 0);
+  return here + elsewhere;
+}
+
+/** A name for a forked request that the project's unique `(projectId, name)` index will accept. */
+export function uniqueTemplateName(base: string, taken: string[]): string {
+  const set = new Set(taken);
+  const trimmed = base.replace(/ \(copia\)( \d+)?$/, "");
+  let candidate = `${trimmed} (copia)`.slice(0, 120);
+  let n = 2;
+  while (set.has(candidate)) candidate = `${trimmed} (copia) ${n++}`.slice(0, 120);
+  return candidate;
+}
+
 export function addStep(steps: WorkflowStepView[], template: RequestTemplateView): WorkflowStepView[] {
   const id = nextStepId(
     template.name,

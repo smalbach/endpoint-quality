@@ -11,8 +11,10 @@ import {
   problemsWith,
   removeStep,
   suggestCaptures,
+  templateUsage,
   toEdges,
   toNodes,
+  uniqueTemplateName,
   variablesFor,
 } from "@/lib/workflow-draft";
 import type { RequestTemplateView, WorkflowStepView } from "@/lib/types";
@@ -319,5 +321,34 @@ describe("el estado de cada nodo durante una corrida", () => {
       { scenarioId: "workflow:wf:bucle#2", status: "queued" },
     ]);
     expect(failed.bucle).toBe("failed");
+  });
+});
+
+describe("cuántos nodos comparten una petición reutilizable", () => {
+  const flows = [
+    { id: "wf1", steps: [{ requestTemplateId: "t-leer" }, { requestTemplateId: "t-crear" }] },
+    { id: "wf2", steps: [{ requestTemplateId: "t-leer" }] },
+  ];
+
+  test("cuenta el borrador actual más los demás flujos, sin duplicar el guardado del actual", () => {
+    // El borrador de wf1 tiene dos nodos que usan t-leer; wf2 (otro flujo) uno. Total 3.
+    const draft = [{ requestTemplateId: "t-leer" }, { requestTemplateId: "t-leer" }];
+    expect(templateUsage(draft, flows, "wf1", "t-leer")).toBe(3);
+  });
+
+  test("una petición usada por un solo nodo no está compartida", () => {
+    const draft = [{ requestTemplateId: "t-crear" }];
+    expect(templateUsage(draft, flows, "wf1", "t-crear")).toBe(1);
+  });
+});
+
+describe("el nombre de una copia independiente", () => {
+  test("añade «(copia)» y evita chocar con el índice único", () => {
+    expect(uniqueTemplateName("Leer widget", ["Leer widget"])).toBe("Leer widget (copia)");
+    expect(uniqueTemplateName("Leer widget", ["Leer widget", "Leer widget (copia)"])).toBe("Leer widget (copia) 2");
+  });
+
+  test("no encadena «(copia) (copia)» al copiar una copia", () => {
+    expect(uniqueTemplateName("Leer widget (copia)", ["Leer widget (copia)"])).toBe("Leer widget (copia) 2");
   });
 });

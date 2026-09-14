@@ -21,6 +21,9 @@ import {
   addStep,
   flowNodeStatuses,
   flowProblems,
+  replaceStep,
+  templateUsage,
+  uniqueTemplateName,
   WORKFLOW_STATUS_META,
   type OperationSummary,
 } from "@/lib/workflow-draft";
@@ -296,6 +299,60 @@ export function WorkflowsPage() {
   function setSteps(next: WorkflowStepView[]) {
     setDraft((current) => (current ? { ...current, steps: next } : current));
     setJson(JSON.stringify({ steps: next }, null, 2));
+  }
+
+  /** How many nodes — here and in every other flow — point at one reusable request. */
+  const usageOf = (templateId: string) =>
+    templateUsage(steps, workflows.data?.workflows ?? [], draft?.id ?? "", templateId);
+
+  /**
+   * Give one node its own copy of a shared request, so editing it stops changing its twins.
+   *
+   * Copy-on-write: the request stays shared while a single node uses it (editing it in place is the
+   * point of a reusable request), and forks the moment a second node would be dragged along by the
+   * edit. `overrides` carry the edit that triggered the fork — changing the operation is the usual
+   * one — so the new copy already has it and the originals keep what they had. Done through the same
+   * POST the library uses, then the step is repointed and the stale local edit for the old id is
+   * dropped so it never reaches the shared row on save.
+   */
+  const [forking, setForking] = useState(false);
+  async function makeIndependent(step: WorkflowStepView, overrides?: Partial<RequestTemplateView>) {
+    const current = templates.find((template) => template.id === step.requestTemplateId);
+    if (!current || !draft) return;
+    const merged = { ...current, ...overrides };
+    setForking(true);
+    try {
+      const { requestTemplateId } = await api<{ requestTemplateId: string }>(`${base}/request-templates`, {
+        method: "POST",
+        body: {
+          name: uniqueTemplateName(
+            merged.name,
+            (workflows.data?.requestTemplates ?? []).map((template) => template.name),
+          ),
+          operationId: merged.operationId,
+          expectedStatus: merged.expectedStatus,
+          parameters: merged.parameters,
+          disabledParameters: merged.disabledParameters,
+          headers: merged.headers,
+          disabledHeaders: merged.disabledHeaders,
+          body: merged.body,
+          auth: merged.auth,
+        },
+      });
+      const oldId = step.requestTemplateId;
+      setSteps(replaceStep(steps, { ...step, requestTemplateId }));
+      // Drop the pending edit for the shared row unless another node here still rides it — otherwise
+      // save would PATCH the original with the edit that was meant only for this node.
+      setTemplateEdits((edits) => {
+        if (steps.some((other) => other.id !== step.id && other.requestTemplateId === oldId)) return edits;
+        const next = { ...edits };
+        delete next[oldId];
+        return next;
+      });
+      await invalidate();
+    } finally {
+      setForking(false);
+    }
   }
 
   /** The two views hold the same document, so switching carries the edits either way. */
@@ -654,6 +711,9 @@ export function WorkflowsPage() {
                   onWorkflow={(change) => setDraft((current) => (current ? { ...current, ...change } : current))}
                   onSteps={setSteps}
                   onTemplate={(template) => setTemplateEdits((current) => ({ ...current, [template.id]: template }))}
+                  templateUsage={usageOf}
+                  onFork={makeIndependent}
+                  forking={forking}
                   concurrency={concurrency}
                   onConcurrency={setConcurrency}
                   delayMs={delayMs}
