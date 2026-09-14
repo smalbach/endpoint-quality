@@ -99,7 +99,53 @@ export function parseEndpointFile(format: ImportFileFormat, text: string): Parse
       skipped.push({ method: request.method, path: pathOf(request.url), name: request.name, reason: draft });
     else drafts.push(draft);
   }
+  // A markdown doc is not only a pile of `curl`: an API is as often written as a table of
+  // «MÉTODO /ruta» or a list of `GET /users`. Those are read too, and merged with the curl ones,
+  // deduped so a route documented both ways lands once.
+  if (format === "markdown") {
+    const seen = new Set(drafts.map((draft) => `${draft.method} ${draft.path}`));
+    for (const draft of parseMarkdownRoutes(text)) {
+      const key = `${draft.method} ${draft.path}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        drafts.push(draft);
+      }
+    }
+  }
   return { format, drafts, skipped };
+}
+
+const METHOD = new RegExp(`^(${ENDPOINT_METHODS.join("|")})$`, "i");
+
+/**
+ * The `MÉTODO /ruta` pairs written into a markdown document, from tables and from lists alike.
+ *
+ * A table row reaches here as its cells; a list item as a line. In both, the method is one token and
+ * the path is the next one that starts with `/`. NestJS's `:id` is rewritten to `{id}` so it matches
+ * the way this product writes a path, and `normalizePath` settles the rest.
+ */
+export function parseMarkdownRoutes(text: string): EndpointDraft[] {
+  const drafts: EndpointDraft[] = [];
+  const seen = new Set<string>();
+  for (const rawLine of text.split("\n")) {
+    // A fenced code line is left to the curl reader; a table/list line is tokenised on pipes, spaces
+    // and backticks, and the first method token paired with the next path token becomes a route.
+    const tokens = rawLine.split(/[|`\s]+/).filter(Boolean);
+    for (let index = 0; index < tokens.length; index += 1) {
+      if (!METHOD.test(tokens[index])) continue;
+      const pathToken = tokens.slice(index + 1).find((token) => token.startsWith("/"));
+      if (!pathToken) continue;
+      const method = tokens[index].toUpperCase() as EndpointMethod;
+      const path = normalizePath(pathToken.replace(/:([A-Za-z0-9_]+)/g, "{$1}"));
+      const key = `${method} ${path}`;
+      if (path.length > 1 && !seen.has(key)) {
+        seen.add(key);
+        drafts.push({ method, path, operationId: null, description: "" });
+      }
+      break;
+    }
+  }
+  return drafts;
 }
 
 /** One `curl`, as an endpoint, or the reason it cannot be one. */

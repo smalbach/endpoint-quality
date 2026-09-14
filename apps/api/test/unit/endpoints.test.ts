@@ -224,6 +224,27 @@ describe("importar", () => {
   test("un cURL sin URL dice por qué", () => {
     assert.equal(typeof draftFromCurl("curl -H 'X: 1'"), "string");
   });
+
+  test("markdown con tabla y lista: saca método y ruta, normaliza :id, y no duplica el curl", () => {
+    const parsed = parseEndpointFile(
+      "markdown",
+      [
+        "# API",
+        "| Método | Ruta |",
+        "| --- | --- |",
+        "| GET | /users |",
+        "| POST | /users/:id/roles |",
+        "",
+        "- `DELETE /users/{id}`",
+        "",
+        "```bash",
+        "curl 'https://api.example.com/users'", // mismo GET /users que la tabla
+        "```",
+      ].join("\n"),
+    );
+    const keys = parsed.drafts.map((draft) => `${draft.method} ${draft.path}`).sort();
+    assert.deepEqual(keys, ["DELETE /users/{id}", "GET /users", "POST /users/{id}/roles"]);
+  });
 });
 
 describe("enviar", () => {
