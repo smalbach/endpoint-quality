@@ -43,12 +43,12 @@ export function projectSections(projectId: string | undefined) {
       tooltip: "Qué roles tiene la API y a qué operación puede llegar cada uno.",
     },
     {
-      to: `${base}/runs`,
+      to: `${base}/security`,
       label: "Test Runs",
       help: "test-runs",
       end: false,
-      also: [] as string[],
-      tooltip: "Cada corrida lanzada, con su progreso en vivo, sus fallos y sus informes.",
+      also: [`${base}/runs`],
+      tooltip: "Corridas de seguridad con las 17 reglas, y las corridas de la matriz del contrato.",
     },
     {
       to: `${base}/workflows`,

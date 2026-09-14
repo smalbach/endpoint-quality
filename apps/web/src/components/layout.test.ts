@@ -24,7 +24,7 @@ describe("las secciones de un proyecto", () => {
     expect(sections.map((section) => [section.label, section.to])).toEqual([
       ["Endpoints", `/p/${ID}`],
       ["Roles", `/p/${ID}/roles`],
-      ["Test Runs", `/p/${ID}/runs`],
+      ["Test Runs", `/p/${ID}/security`],
       ["Flow Testing", `/p/${ID}/workflows`],
       ["Settings", `/p/${ID}/settings`],
     ]);
@@ -41,6 +41,7 @@ describe("las secciones de un proyecto", () => {
     expect(sectionMatches(endpoints, `/p/${ID}/matrix`)).toBe(true);
     expect(sectionMatches(endpoints, `/p/${ID}/endpoints/x`)).toBe(true);
     expect(sectionMatches(endpoints, `/p/${ID}/runs`)).toBe(false);
+    expect(sectionMatches(sections[2], `/p/${ID}/security/abc`)).toBe(true);
     expect(sectionMatches(sections[2], `/p/${ID}/runs/abc`)).toBe(true);
   });
 

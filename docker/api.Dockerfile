@@ -14,6 +14,7 @@ RUN corepack enable
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY apps/api/package.json apps/api/
 COPY packages/runner-core/package.json packages/runner-core/
+COPY packages/security-rules/package.json packages/security-rules/
 COPY packages/spec-import/package.json packages/spec-import/
 COPY packages/contracts/package.json packages/contracts/
 RUN pnpm install --frozen-lockfile
@@ -24,6 +25,7 @@ COPY . .
 # `tsc` las necesita presentes para compilar la API aunque el `import type` se borre al salir.
 RUN pnpm --filter @eq/contracts build \
  && pnpm --filter @eq/runner-core build \
+ && pnpm --filter @eq/security-rules build \
  && pnpm --filter @eq/spec-import build \
  && pnpm --filter @eq/api build
 # Fuera las dependencias de desarrollo — TypeScript, los tipos, el corredor de pruebas — de todo
@@ -42,6 +44,8 @@ RUN addgroup -S eq && adduser -S eq -G eq
 COPY --from=build --chown=eq:eq /repo/node_modules ./node_modules
 COPY --from=build --chown=eq:eq /repo/packages/runner-core/package.json ./packages/runner-core/
 COPY --from=build --chown=eq:eq /repo/packages/runner-core/dist ./packages/runner-core/dist
+COPY --from=build --chown=eq:eq /repo/packages/security-rules/package.json ./packages/security-rules/
+COPY --from=build --chown=eq:eq /repo/packages/security-rules/dist ./packages/security-rules/dist
 # Nada lo importa en ejecución —son solo tipos— pero el enlace de pnpm apunta aquí, y un enlace
 # colgando es una forma de que algún día un `require` resuelva a la nada.
 COPY --from=build --chown=eq:eq /repo/packages/contracts/package.json ./packages/contracts/

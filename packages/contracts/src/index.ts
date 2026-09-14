@@ -731,6 +731,116 @@ export type ScriptRunView = {
   durationMs: number;
 };
 
+// ---------------------------------------------------------------------------------------------
+// Security runs
+// ---------------------------------------------------------------------------------------------
+
+export type SecuritySeverity = "critical" | "high" | "medium" | "low" | "info";
+export type SecurityRisk = "critical" | "high" | "medium" | "low";
+export type SecurityRunStatus = "queued" | "running" | "passed" | "failed" | "cancelled" | "error";
+
+/** One vulnerability the rules found. `endpointId` is null for a run-wide one. */
+export type SecurityFinding = {
+  ruleKey: string;
+  ruleId: string;
+  ruleName: string;
+  category: string;
+  severity: SecuritySeverity;
+  endpointId: string | null;
+  title: string;
+  detail: string;
+  remediation: string;
+  references: string[];
+  reproduce: string[];
+  evidence: Record<string, unknown>;
+};
+
+/** One request the run sent and what came back. The Authorization is masked in `headers`. */
+export type SecurityProbe = {
+  id: string;
+  endpointId: string;
+  testType: string;
+  method: string;
+  path: string;
+  credential: string | null;
+  headers: Record<string, string>;
+  body: string | null;
+  status: number;
+  responseHeaders: Record<string, string>;
+  bodyText: string;
+  bodyBytes: number;
+  durationMs: number;
+  error: string | null;
+  note: string;
+};
+
+export type SecuritySummary = {
+  score: number;
+  risk: SecurityRisk;
+  findings: number;
+  bySeverity: Record<SecuritySeverity, number>;
+  endpointsTested: number;
+  unprotected: { endpointId: string; method: string; path: string; status: number }[];
+};
+
+export type SecurityRunProgress = {
+  phase: string;
+  percentage: number;
+  detail: string;
+  endpointsTested: number;
+  endpointsTotal: number;
+};
+
+export type SecurityRunAi = {
+  executiveSummary: string;
+  scoreJustification: string;
+  top: { title: string; description: string; severity: SecuritySeverity }[];
+  groups: { ruleKey: string; solution: string; commonFix: string; codeExample: string | null }[];
+};
+
+/** The list view: the head of a run, no findings or probes. */
+export type SecurityRunSummaryView = {
+  id: string;
+  label: string;
+  status: SecurityRunStatus;
+  score: number | null;
+  risk: SecurityRisk | null;
+  summary: SecuritySummary | null;
+  visibility: "private" | "public";
+  startedAt: string;
+  finishedAt: string | null;
+};
+
+/** The detail view: the head, its findings (filtered, worst first) and a page of probes. */
+export type SecurityRunDetailView = {
+  id: string;
+  projectId: string;
+  environmentId: string;
+  label: string;
+  status: SecurityRunStatus;
+  rules: Record<string, boolean>;
+  options: {
+    rateLimitIterations: number;
+    requestTimeoutMs: number;
+    crossUserPermutations: boolean;
+    endpointIds: string[];
+    adminRole: string | null;
+  };
+  progress: SecurityRunProgress;
+  score: number | null;
+  risk: SecurityRisk | null;
+  summary: SecuritySummary | null;
+  findings: SecurityFinding[];
+  findingsTotal: number;
+  probes: { data: SecurityProbe[]; page: number; pageSize: number; total: number };
+  ai: SecurityRunAi | null;
+  visibility: "private" | "public";
+  shareToken: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  error: string | null;
+};
+
 export type Member = MemberOf<string>;
 export type PendingInvitation = PendingInvitationOf<string>;
 export type MembersView = MembersViewOf<string>;

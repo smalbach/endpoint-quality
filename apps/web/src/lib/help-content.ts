@@ -80,8 +80,17 @@ export const HELP_TOPICS: HelpTopic[] = [
   {
     id: "test-runs",
     title: "Test Runs",
-    intro: "Cada ejecución, guardada con lo que envió y lo que recibió.",
+    intro: "Corridas de seguridad con las 17 reglas, y las corridas de la matriz del contrato.",
     steps: [
+      {
+        title: "Lanzar una corrida de seguridad",
+        body: "En la pestaña Seguridad → «Nueva corrida»: elige entorno, reglas (o un preset) y alcance. Las credenciales de cada rol salen del entorno, no del formulario. La matriz sale detrás del guard SSRF, nunca desde el navegador.",
+        tip: "Los casos de permisos solo se juzgan si el entorno aplica autorización; actívalo en sus ajustes.",
+      },
+      {
+        title: "Leer los hallazgos",
+        body: "Cada hallazgo trae severidad, la regla, el endpoint, cómo corregirlo y la petición que lo produjo. La puntuación baja según lo peor encontrado; «endpoints sin proteger» son los que responden 2xx sin token.",
+      },
       {
         title: "Seguir una corrida",
         body: "La página de la corrida se actualiza en vivo: casos terminados, fallos por tipo y reintentos en curso.",

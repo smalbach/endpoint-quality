@@ -5,12 +5,14 @@ import { api, streamRun } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { AssertionRow, Badge, Button, Card, Empty, Json } from "@/components/ui";
 import { cn, formatDate, formatDuration, methodStyle, statusClass } from "@/lib/format";
+import { RunsTabs } from "@/components/runs-tabs";
 import type { FailureKind, Run, RunCase, RunCaseView, RunSource, RunTotals, RunView } from "@/lib/types";
 
 export function RunsPage() {
   const { projectId } = useParams();
   const organization = useOrganization();
   const base = `/orgs/${organization?.id}/projects/${projectId}`;
+  const tabs = projectId ? <RunsTabs projectId={projectId} /> : null;
 
   const runs = useQuery({
     queryKey: ["runs", projectId],
@@ -18,53 +20,65 @@ export function RunsPage() {
     queryFn: () => api<Run[]>(`${base}/runs`),
   });
 
-  if (runs.isLoading) return <p className="text-sm text-slate-500">Cargando…</p>;
+  if (runs.isLoading)
+    return (
+      <div>
+        {tabs}
+        <p className="text-sm text-slate-500">Cargando…</p>
+      </div>
+    );
   if (runs.data?.length === 0) {
     return (
-      <Empty
-        title="Ninguna corrida todavía"
-        hint="Una corrida queda guardada con cada petición que hizo y cada aserción que comprobó. Eso es lo que permite responder a «¿esto estaba en verde la semana pasada?»."
-      />
+      <div>
+        {tabs}
+        <Empty
+          title="Ninguna corrida todavía"
+          hint="Una corrida queda guardada con cada petición que hizo y cada aserción que comprobó. Eso es lo que permite responder a «¿esto estaba en verde la semana pasada?»."
+        />
+      </div>
     );
   }
 
   return (
-    <Card className="overflow-hidden">
-      <table className="w-full text-left text-xs">
-        <thead className="border-b border-slate-100 text-[11px] text-slate-500">
-          <tr>
-            <th className="px-4 py-2 font-medium">Estado</th>
-            <th className="px-4 py-2 font-medium">Inicio</th>
-            <th className="px-4 py-2 font-medium">Qué</th>
-            <th className="px-4 py-2 font-medium">Casos</th>
-            <th className="px-4 py-2 font-medium">Resultado</th>
-            <th className="px-4 py-2" />
-          </tr>
-        </thead>
-        <tbody>
-          {runs.data?.map((run) => (
-            <tr key={run.id} className="border-b border-slate-50 last:border-b-0">
-              <td className="px-4 py-2">
-                <Badge className={cn("border-transparent", statusClass[run.status])}>{run.status}</Badge>
-              </td>
-              <td className="px-4 py-2 text-slate-600">{formatDate(run.startedAt)}</td>
-              <td className="max-w-[18rem] truncate px-4 py-2 text-slate-600" title={sourceLabel(run.source)}>
-                {sourceLabel(run.source)}
-              </td>
-              <td className="px-4 py-2 font-mono text-slate-600">{run.totals.cases}</td>
-              <td className="px-4 py-2">
-                <Totals totals={run.totals} />
-              </td>
-              <td className="px-4 py-2 text-right">
-                <Link className="font-medium text-slate-900 underline" to={`/p/${projectId}/runs/${run.id}`}>
-                  Ver
-                </Link>
-              </td>
+    <div>
+      {tabs}
+      <Card className="overflow-hidden">
+        <table className="w-full text-left text-xs">
+          <thead className="border-b border-slate-100 text-[11px] text-slate-500">
+            <tr>
+              <th className="px-4 py-2 font-medium">Estado</th>
+              <th className="px-4 py-2 font-medium">Inicio</th>
+              <th className="px-4 py-2 font-medium">Qué</th>
+              <th className="px-4 py-2 font-medium">Casos</th>
+              <th className="px-4 py-2 font-medium">Resultado</th>
+              <th className="px-4 py-2" />
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </Card>
+          </thead>
+          <tbody>
+            {runs.data?.map((run) => (
+              <tr key={run.id} className="border-b border-slate-50 last:border-b-0">
+                <td className="px-4 py-2">
+                  <Badge className={cn("border-transparent", statusClass[run.status])}>{run.status}</Badge>
+                </td>
+                <td className="px-4 py-2 text-slate-600">{formatDate(run.startedAt)}</td>
+                <td className="max-w-[18rem] truncate px-4 py-2 text-slate-600" title={sourceLabel(run.source)}>
+                  {sourceLabel(run.source)}
+                </td>
+                <td className="px-4 py-2 font-mono text-slate-600">{run.totals.cases}</td>
+                <td className="px-4 py-2">
+                  <Totals totals={run.totals} />
+                </td>
+                <td className="px-4 py-2 text-right">
+                  <Link className="font-medium text-slate-900 underline" to={`/p/${projectId}/runs/${run.id}`}>
+                    Ver
+                  </Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    </div>
   );
 }
 

@@ -17,6 +17,7 @@ import { EndpointEditorPage, EndpointsPage } from "@/routes/endpoints";
 import { EnvironmentsPage } from "@/routes/environments";
 import { ConfigPage } from "@/routes/config";
 import { RunDetailPage, RunsPage } from "@/routes/runs";
+import { SecurityRunDetailPage, SecurityRunsPage } from "@/routes/security-runs";
 import { RolesPage } from "@/routes/roles";
 import { ProjectGeneralPage, ProjectSettingsLayout } from "@/routes/project-settings";
 import { NotFoundPage } from "@/routes/not-found";
@@ -91,6 +92,8 @@ createRoot(document.getElementById("root")!).render(
                     />
                     <Route path="runs" element={<RunsPage />} />
                     <Route path="runs/:runId" element={<RunDetailPage />} />
+                    <Route path="security" element={<SecurityRunsPage />} />
+                    <Route path="security/:runId" element={<SecurityRunDetailPage />} />
                     <Route path="settings" element={<ProjectSettingsLayout />}>
                       <Route index element={<ProjectGeneralPage />} />
                       <Route path="contract" element={<ConfigPage />} />
