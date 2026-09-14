@@ -33,6 +33,7 @@ export const workflowView = (row: WorkflowRow): WorkflowViewOf<Date> => ({
   id: row.id,
   name: row.name,
   description: row.description,
+  status: row.status,
   steps: row.definition.steps,
   updatedAt: row.updatedAt,
 });

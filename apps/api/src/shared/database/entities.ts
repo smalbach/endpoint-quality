@@ -414,6 +414,9 @@ export class WorkflowEntity {
   @Index() @Column("uuid") projectId: string;
   @Column({ type: "varchar", length: 120 }) name: string;
   @Column({ type: "text", nullable: true }) description: string | null;
+  /** draft / ready / archived. A short varchar and not an enum type: the set lives in the domain
+   * and a Postgres enum would be a second copy that a migration has to alter to add a value. */
+  @Column({ type: "varchar", length: 16, default: "ready" }) status: string;
   @Column({ type: "jsonb", default: () => `'{"steps":[]}'::jsonb` }) definition: { steps: unknown[] };
   @Column({ type: "timestamptz" }) createdAt: Date;
   @Column({ type: "timestamptz" }) updatedAt: Date;

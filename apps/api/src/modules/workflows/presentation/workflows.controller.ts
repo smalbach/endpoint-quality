@@ -25,6 +25,7 @@ import { ImportRequestTemplatesCommand } from "../application/commands/import-re
 import {
   CreateWorkflowCommand,
   DeleteWorkflowCommand,
+  DuplicateWorkflowCommand,
   UpdateWorkflowCommand,
 } from "../application/commands/manage-workflow";
 import { ListWorkflowsQuery } from "../application/queries/list-workflows";
@@ -160,6 +161,20 @@ export class WorkflowsController {
     @Param("workflowId") workflowId: string,
   ): Promise<void> {
     await this.commandBus.execute(new DeleteWorkflowCommand(organizationId, projectId, workflowId));
+  }
+
+  /** A copy of the flow, its graph and its datasets, as a draft under a free «(copia)» name. */
+  @Post("workflows/:workflowId/duplicate")
+  @RequireRole("editor")
+  async duplicateWorkflow(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("workflowId") workflowId: string,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.commandBus.execute(
+      new DuplicateWorkflowCommand(organizationId, projectId, workflowId, actorId(principal)),
+    );
   }
 
   // ---------------------------------------------------------------------------------------------

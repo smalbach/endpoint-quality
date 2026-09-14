@@ -16,6 +16,7 @@ import {
 import type { RequestBody, ScenarioCredential, WorkflowDocument } from "@eq/runner-core";
 
 import { IMPORT_FORMATS, type ImportFormat } from "../../application/commands/import-request-templates";
+import { WORKFLOW_STATUSES, type WorkflowStatus } from "../../domain/model";
 
 /** The four fixed selectors, or `role:<nombre>`. The shape is checked here and the rule about
  * which names a project knows lives in the engine's schema, checked inside the command — a second
@@ -84,12 +85,18 @@ export class ImportRequestTemplatesDto {
 export class CreateWorkflowDto {
   @IsString() @MinLength(1) @MaxLength(120) name: string;
   @IsOptional() @IsString() @MaxLength(500) description?: string | null;
+  @IsOptional()
+  @IsIn(WORKFLOW_STATUSES, { message: `status debe ser uno de: ${WORKFLOW_STATUSES.join(", ")}` })
+  status?: WorkflowStatus;
   @IsOptional() @IsObject() definition?: WorkflowDocument;
 }
 
 export class UpdateWorkflowDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(120) name?: string;
   @IsOptional() @IsString() @MaxLength(500) description?: string | null;
+  @IsOptional()
+  @IsIn(WORKFLOW_STATUSES, { message: `status debe ser uno de: ${WORKFLOW_STATUSES.join(", ")}` })
+  status?: WorkflowStatus;
   /** The whole graph. There is no route that edits one node: a half-written document whose halves
    * reference each other is the state this shape exists to make impossible. */
   @IsOptional() @IsObject() definition?: WorkflowDocument;

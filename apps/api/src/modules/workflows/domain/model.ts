@@ -39,12 +39,29 @@ export type RequestTemplateRow = {
   updatedBy: string;
 };
 
+/**
+ * Where a flow is in its life, and the one thing it changes: what a suite runs.
+ *
+ * `draft` is where a flow starts — half-built, its edges still moving, not something a release
+ * checklist should pick up yet. `ready` is the one that counts: the only state a **new** suite
+ * offers, and the state the badge is green for. `archived` is retire-without-delete — kept for its
+ * history and its datasets, out of the way of the list and out of the pickers that build a suite.
+ *
+ * It is advice to the person, not a lock on the engine: a flow can be run from its own page in any
+ * state, because «run this once to see why it is still a draft» is the ordinary next thing. What
+ * the state gates is the group — an archived flow is not offered when composing a suite, so a
+ * checklist cannot quietly grow a flow nobody meant to keep.
+ */
+export const WORKFLOW_STATUSES = ["draft", "ready", "archived"] as const;
+export type WorkflowStatus = (typeof WORKFLOW_STATUSES)[number];
+
 /** The document is the engine's own, so what was validated on write is what the orchestrator orders. */
 export type WorkflowRow = {
   id: string;
   projectId: string;
   name: string;
   description: string | null;
+  status: WorkflowStatus;
   definition: WorkflowDocument;
   createdAt: Date;
   updatedAt: Date;

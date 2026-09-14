@@ -6,10 +6,18 @@
  * a cycle must be caught before it is saved — and none of them are display concerns. Tested here,
  * with no renderer in sight.
  */
-import type { RequestTemplateView, WorkflowStepView } from "@/lib/types";
+import type { RequestTemplateView, WorkflowStatusView, WorkflowStepView } from "@/lib/types";
 import { slugId } from "@/lib/config-draft";
 
 export type OperationSummary = { id: string; method: string; path: string; summary: string };
+
+/** The three states a flow can be in, with the badge each one wears. Kept here so the list, the
+ * inspector and the suites panel all say «archivado» the same colour. */
+export const WORKFLOW_STATUS_META: Record<WorkflowStatusView, { label: string; badge: string; dot: string }> = {
+  draft: { label: "Borrador", badge: "bg-amber-50 text-amber-700 ring-amber-200", dot: "bg-amber-400" },
+  ready: { label: "Listo", badge: "bg-emerald-50 text-emerald-700 ring-emerald-200", dot: "bg-emerald-500" },
+  archived: { label: "Archivado", badge: "bg-slate-100 text-slate-500 ring-slate-200", dot: "bg-slate-300" },
+};
 
 /** Where a new node lands: three per row, in the order they were added. */
 export const positionFor = (index: number) => ({ x: 40 + (index % 3) * 310, y: 60 + Math.floor(index / 3) * 170 });

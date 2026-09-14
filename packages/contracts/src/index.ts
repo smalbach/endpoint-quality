@@ -313,10 +313,15 @@ export type RequestTemplateViewOf<T> = {
   updatedAt: T;
 };
 
+/** draft: still being built, no suite offers it. ready: the tested one, green badge. archived:
+ * retired but kept, out of the list and the suite pickers. */
+export type WorkflowStatusView = "draft" | "ready" | "archived";
+
 export type WorkflowViewOf<T> = {
   id: string;
   name: string;
   description: string | null;
+  status: WorkflowStatusView;
   steps: WorkflowStepView[];
   updatedAt: T;
 };

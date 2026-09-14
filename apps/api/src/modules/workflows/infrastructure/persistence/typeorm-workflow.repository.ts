@@ -26,6 +26,7 @@ const toTemplate = (row: RequestTemplateEntity): RequestTemplateRow => ({
 
 const toWorkflow = (row: WorkflowEntity): WorkflowRow => ({
   ...row,
+  status: row.status as WorkflowRow["status"],
   definition: row.definition as WorkflowDocument,
 });
 

@@ -85,6 +85,7 @@ export type {
   StepForEachView,
   StepRetryView,
   WorkflowCaptureView,
+  WorkflowStatusView,
   WorkflowStepView,
   WorkflowView,
   WorkflowsView,

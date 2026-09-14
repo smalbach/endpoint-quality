@@ -16,7 +16,7 @@ import { useCan, useOrganization } from "@/lib/auth";
 import { Button, Card, Empty } from "@/components/ui";
 import { cn } from "@/lib/format";
 import { unchanged } from "@/lib/config-draft";
-import { addStep, problemsWith, type OperationSummary } from "@/lib/workflow-draft";
+import { addStep, problemsWith, WORKFLOW_STATUS_META, type OperationSummary } from "@/lib/workflow-draft";
 import { WorkflowCanvas } from "@/components/workflow-canvas";
 import { WorkflowInspector } from "@/components/workflow-inspector";
 import { TemplateLibrary, type NewTemplate } from "@/components/template-library";
@@ -28,6 +28,7 @@ import type {
   Environment,
   RequestTemplateView,
   SuiteView,
+  WorkflowStatusView,
   WorkflowStepView,
   WorkflowView,
   WorkflowsView,
@@ -54,6 +55,8 @@ export function WorkflowsPage() {
   const [activeEnvironment, setActiveEnvironment] = useActiveEnvironment(projectId);
   const preselected = useRef(false);
   const [naming, setNaming] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const [datasetId, setDatasetId] = useState("");
   const [concurrency, setConcurrency] = useState(1);
 
@@ -82,7 +85,14 @@ export function WorkflowsPage() {
     if (active) setEnvironmentId(active.id);
   }, [environments.data, activeEnvironment]);
 
-  const saved = workflows.data?.workflows.find((item) => item.id === selectedId);
+  const allWorkflows = workflows.data?.workflows ?? [];
+  const saved = allWorkflows.find((item) => item.id === selectedId);
+  // Archived flows are hidden unless asked for — but the one open stays visible, so «archivar» does
+  // not make the flow you are looking at vanish out from under you.
+  const visibleWorkflows = allWorkflows.filter(
+    (item) => showArchived || item.status !== "archived" || item.id === selectedId,
+  );
+  const archivedCount = allWorkflows.filter((item) => item.status === "archived").length;
   const templates = (workflows.data?.requestTemplates ?? []).map((template) => templateEdits[template.id] ?? template);
   const steps = draft?.steps ?? [];
   const problems = problemsWith(steps);
@@ -126,6 +136,21 @@ export function WorkflowsPage() {
       setDraft(null);
       await invalidate();
     },
+  });
+  const duplicateWorkflow = useMutation({
+    mutationFn: (workflowId: string) =>
+      api<{ workflowId: string }>(`${base}/workflows/${workflowId}/duplicate`, { method: "POST" }),
+    onSuccess: async ({ workflowId }) => {
+      await invalidate();
+      setSelectedId(workflowId);
+    },
+  });
+  // Rename and status are partial writes of the row, not the graph: they go straight to the server
+  // rather than through the draft, so «archivar» is one click and does not wait on a valid diagram.
+  const patchWorkflow = useMutation({
+    mutationFn: ({ id, ...body }: { id: string; name?: string; status?: WorkflowStatusView }) =>
+      api<void>(`${base}/workflows/${id}`, { method: "PUT", body }),
+    onSuccess: invalidate,
   });
 
   /**
@@ -327,29 +352,83 @@ export function WorkflowsPage() {
                 />
               )}
             </div>
+            {renaming && saved && (
+              <PromptDialog
+                title="Renombrar flujo"
+                label="Nombre del flujo"
+                hint="Lo que recorre, en pocas palabras."
+                initialValue={saved.name}
+                onClose={() => setRenaming(false)}
+                onSubmit={(name) => {
+                  setRenaming(false);
+                  if (name.trim() && name !== saved.name) patchWorkflow.mutate({ id: saved.id, name });
+                }}
+              />
+            )}
             <div className="mt-2 space-y-1">
-              {workflows.data?.workflows.length === 0 && <p className="text-[11px] text-slate-400">Ninguno todavía.</p>}
-              {workflows.data?.workflows.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => setSelectedId(item.id)}
-                  className={cn(
-                    "w-full rounded-lg px-2 py-2 text-left text-xs",
-                    item.id === selectedId ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50",
-                  )}
-                >
-                  <span className="block font-medium">{item.name}</span>
-                  <span
+              {allWorkflows.length === 0 && <p className="text-[11px] text-slate-400">Ninguno todavía.</p>}
+              {visibleWorkflows.map((item) => {
+                const meta = WORKFLOW_STATUS_META[item.status];
+                const active = item.id === selectedId;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => setSelectedId(item.id)}
                     className={cn(
-                      "mt-0.5 block text-[10px]",
-                      item.id === selectedId ? "text-slate-300" : "text-slate-400",
+                      "w-full rounded-lg px-2 py-2 text-left text-xs",
+                      active ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50",
                     )}
                   >
-                    {item.steps.length} pasos
-                  </span>
-                </button>
-              ))}
+                    <span className="flex items-center gap-1.5">
+                      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", meta.dot)} title={meta.label} />
+                      <span className="flex-1 truncate font-medium">{item.name}</span>
+                    </span>
+                    <span className={cn("mt-0.5 block text-[10px]", active ? "text-slate-300" : "text-slate-400")}>
+                      {item.steps.length} pasos · {meta.label}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
+            {archivedCount > 0 && (
+              <button
+                className="mt-2 text-[10px] text-slate-400 hover:text-slate-600"
+                onClick={() => setShowArchived((value) => !value)}
+              >
+                {showArchived ? "Ocultar archivados" : `Ver archivados (${archivedCount})`}
+              </button>
+            )}
+            {canEdit && saved && (
+              <div className="mt-3 flex flex-wrap gap-1 border-t border-slate-100 pt-3">
+                <Button variant="ghost" className="h-6 px-1.5 text-[11px]" onClick={() => setRenaming(true)}>
+                  Renombrar
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="h-6 px-1.5 text-[11px]"
+                  disabled={duplicateWorkflow.isPending}
+                  onClick={() => duplicateWorkflow.mutate(saved.id)}
+                >
+                  Duplicar
+                </Button>
+                <select
+                  value={saved.status}
+                  disabled={patchWorkflow.isPending}
+                  onChange={(event) =>
+                    patchWorkflow.mutate({ id: saved.id, status: event.target.value as WorkflowStatusView })
+                  }
+                  className="h-6 rounded-md border border-slate-200 bg-white px-1 text-[11px] text-slate-600"
+                  title="Estado del flujo"
+                >
+                  <option value="draft">Borrador</option>
+                  <option value="ready">Listo</option>
+                  <option value="archived">Archivado</option>
+                </select>
+              </div>
+            )}
+            {message(duplicateWorkflow.error) && (
+              <p className="mt-2 text-[11px] text-rose-700">{message(duplicateWorkflow.error)}</p>
+            )}
             <div className="mt-4 border-t border-slate-100 pt-3">
               <SuitesPanel
                 suites={workflows.data?.suites ?? []}

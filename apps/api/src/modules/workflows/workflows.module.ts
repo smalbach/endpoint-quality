@@ -23,6 +23,7 @@ import { ImportRequestTemplatesHandler } from "./application/commands/import-req
 import {
   CreateWorkflowHandler,
   DeleteWorkflowHandler,
+  DuplicateWorkflowHandler,
   UpdateWorkflowHandler,
 } from "./application/commands/manage-workflow";
 import {
@@ -43,6 +44,7 @@ export const WORKFLOW_COMMAND_HANDLERS = [
   CreateWorkflowHandler,
   UpdateWorkflowHandler,
   DeleteWorkflowHandler,
+  DuplicateWorkflowHandler,
   CreateDatasetHandler,
   UpdateDatasetHandler,
   DeleteDatasetHandler,

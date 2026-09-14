@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button, inputClass } from "@/components/ui";
 import { PromptDialog } from "@/components/overlay";
 import { cn } from "@/lib/format";
+import { WORKFLOW_STATUS_META } from "@/lib/workflow-draft";
 import type { SuiteView, WorkflowView } from "@/lib/types";
 
 /**
@@ -36,15 +37,23 @@ export function SuitesPanel({
 }) {
   const [openId, setOpenId] = useState("");
   const [naming, setNaming] = useState(false);
-  const nameOf = (id: string) => workflows.find((item) => item.id === id)?.name ?? "flujo eliminado";
+  // The row being dragged, and the one it is hovering over — kept per suite so a drag in one does
+  // not draw a drop line in another.
+  const [drag, setDrag] = useState<{ suiteId: string; from: number; over: number } | null>(null);
+  const flowOf = (id: string) => workflows.find((item) => item.id === id);
+  const nameOf = (id: string) => flowOf(id)?.name ?? "flujo eliminado";
 
-  const move = (suite: SuiteView, index: number, by: number) => {
+  /** Pull the flow out of `from` and drop it before `to`, the one operation both the arrows and the
+   * drag use — so «reorder» is a single whole-list write and can never half-apply. */
+  const reorder = (suite: SuiteView, from: number, to: number) => {
+    if (to < 0 || to >= suite.workflowIds.length || from === to) return;
     const next = [...suite.workflowIds];
-    const target = index + by;
-    if (target < 0 || target >= next.length) return;
-    [next[index], next[target]] = [next[target], next[index]];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
     onChange({ ...suite, workflowIds: next });
   };
+
+  const move = (suite: SuiteView, index: number, by: number) => reorder(suite, index, index + by);
 
   return (
     <div>
@@ -88,46 +97,71 @@ export function SuitesPanel({
               {openId === suite.id && (
                 <div className="border-t border-slate-100 p-2">
                   <ol className="space-y-1">
-                    {suite.workflowIds.map((id, index) => (
-                      <li key={`${id}-${index}`} className="flex items-center gap-1 text-[11px] text-slate-600">
-                        <span className="w-4 text-right text-slate-400">{index + 1}.</span>
-                        <span
+                    {suite.workflowIds.map((id, index) => {
+                      const flow = flowOf(id);
+                      const dragging = drag?.suiteId === suite.id;
+                      return (
+                        <li
+                          key={`${id}-${index}`}
+                          draggable={canEdit}
+                          onDragStart={() => setDrag({ suiteId: suite.id, from: index, over: index })}
+                          onDragOver={(event) => {
+                            if (!dragging) return;
+                            event.preventDefault();
+                            if (drag.over !== index) setDrag({ ...drag, over: index });
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            if (dragging) reorder(suite, drag.from, index);
+                            setDrag(null);
+                          }}
+                          onDragEnd={() => setDrag(null)}
                           className={cn(
-                            "flex-1 truncate",
-                            !workflows.some((item) => item.id === id) && "text-rose-600",
+                            "flex items-center gap-1 rounded text-[11px] text-slate-600",
+                            canEdit && "cursor-grab active:cursor-grabbing",
+                            dragging && drag.from === index && "opacity-40",
+                            dragging && drag.over === index && drag.from !== index && "ring-1 ring-slate-400",
                           )}
                         >
-                          {nameOf(id)}
-                        </span>
-                        {canEdit && (
-                          <>
-                            <button
-                              className="px-1 text-slate-400 hover:text-slate-700"
-                              onClick={() => move(suite, index, -1)}
-                            >
-                              ↑
-                            </button>
-                            <button
-                              className="px-1 text-slate-400 hover:text-slate-700"
-                              onClick={() => move(suite, index, 1)}
-                            >
-                              ↓
-                            </button>
-                            <button
-                              className="px-1 text-slate-400 hover:text-rose-600"
-                              onClick={() =>
-                                onChange({
-                                  ...suite,
-                                  workflowIds: suite.workflowIds.filter((_item, position) => position !== index),
-                                })
-                              }
-                            >
-                              ×
-                            </button>
-                          </>
-                        )}
-                      </li>
-                    ))}
+                          <span className="w-4 text-right text-slate-400">{index + 1}.</span>
+                          <span
+                            className={cn(
+                              "h-1.5 w-1.5 shrink-0 rounded-full",
+                              flow ? WORKFLOW_STATUS_META[flow.status].dot : "bg-rose-400",
+                            )}
+                            title={flow ? WORKFLOW_STATUS_META[flow.status].label : "flujo eliminado"}
+                          />
+                          <span className={cn("flex-1 truncate", !flow && "text-rose-600")}>{nameOf(id)}</span>
+                          {canEdit && (
+                            <>
+                              <button
+                                className="px-1 text-slate-400 hover:text-slate-700"
+                                onClick={() => move(suite, index, -1)}
+                              >
+                                ↑
+                              </button>
+                              <button
+                                className="px-1 text-slate-400 hover:text-slate-700"
+                                onClick={() => move(suite, index, 1)}
+                              >
+                                ↓
+                              </button>
+                              <button
+                                className="px-1 text-slate-400 hover:text-rose-600"
+                                onClick={() =>
+                                  onChange({
+                                    ...suite,
+                                    workflowIds: suite.workflowIds.filter((_item, position) => position !== index),
+                                  })
+                                }
+                              >
+                                ×
+                              </button>
+                            </>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ol>
 
                   {canEdit && (
@@ -142,8 +176,10 @@ export function SuitesPanel({
                       <option value="">Añadir flujo…</option>
                       {workflows
                         // A flow already in the list is not offered again: the two runs would be
-                        // indistinguishable in the report, which makes it a bad way to say it.
-                        .filter((item) => !suite.workflowIds.includes(item.id))
+                        // indistinguishable in the report, which makes it a bad way to say it. An
+                        // archived flow is not offered either — a checklist should not quietly grow
+                        // a flow nobody meant to keep.
+                        .filter((item) => item.status !== "archived" && !suite.workflowIds.includes(item.id))
                         .map((item) => (
                           <option key={item.id} value={item.id}>
                             {item.name}
