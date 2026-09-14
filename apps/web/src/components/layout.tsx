@@ -59,6 +59,14 @@ export function projectSections(projectId: string | undefined) {
       tooltip: "Flujos de pasos encadenados que se pasan valores, con datos y suites.",
     },
     {
+      to: `${base}/performance`,
+      label: "Performance",
+      help: "performance",
+      end: false,
+      also: [] as string[],
+      tooltip: "Planes de carga (constant/ramp/spike), corridas en vivo, percentiles y umbrales.",
+    },
+    {
       to: `${base}/settings`,
       label: "Settings",
       help: "settings",
@@ -75,6 +83,7 @@ const SECTION_ICONS: Record<string, string> = {
     "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75",
   "Test Runs": "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
   "Flow Testing": "M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6M18 9a9 9 0 0 1-9 9",
+  Performance: "M3 3v18h18M7 15l4-6 4 3 5-8",
   Settings:
     "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-2.82 1.17V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 7 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3.6 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 3.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6 1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.14.34.45.6.82.68H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
 };

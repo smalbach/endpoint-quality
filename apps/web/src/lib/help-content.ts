@@ -131,6 +131,30 @@ export const HELP_TOPICS: HelpTopic[] = [
     ],
   },
   {
+    id: "performance",
+    title: "Performance",
+    intro: "Pruebas de carga: un plan que se ejecuta con usuarios virtuales y se juzga por umbrales.",
+    steps: [
+      {
+        title: "Escribe un plan",
+        body: "Escenarios con peso (mayor peso, más veces), cada uno con sus peticiones y una pausa entre ellas. Un escenario captura de una respuesta y las siguientes lo gastan como {{variable}}.",
+      },
+      {
+        title: "Elige la forma de la carga",
+        body: "Constante mantiene los usuarios; rampa sube de un número a otro; pico sube en el tercio central. La duración es en segundos.",
+      },
+      {
+        title: "Pon los umbrales",
+        body: "p95, p99, tasa de error máxima y peticiones por segundo mínimas. La corrida pasa si cumple todos; el que falta no se comprueba.",
+        tip: "El tráfico sale siempre desde el servidor y detrás del guard SSRF, con la credencial del entorno.",
+      },
+      {
+        title: "Lee la corrida",
+        body: "Timeline en vivo por ventanas de 5 s, resumen con percentiles, desglose por endpoint y el veredicto de cada umbral. El historial guarda cada corrida del plan.",
+      },
+    ],
+  },
+  {
     id: "settings",
     title: "Settings",
     intro: "El proyecto, su contrato, su configuración y sus entornos.",

@@ -26,6 +26,12 @@ import { ForgotPasswordPage, ResetPasswordPage } from "@/routes/password-reset";
 // The graph editor brings its own renderer and controls. Keep it out of the initial dashboard
 // bundle so users who only inspect the matrix do not download it on every visit.
 const WorkflowsPage = lazy(() => import("@/routes/workflows").then((module) => ({ default: module.WorkflowsPage })));
+const PerformancePage = lazy(() =>
+  import("@/routes/performance").then((module) => ({ default: module.PerformancePage })),
+);
+const PerformanceRunDetailPage = lazy(() =>
+  import("@/routes/performance").then((module) => ({ default: module.PerformanceRunDetailPage })),
+);
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -94,6 +100,22 @@ createRoot(document.getElementById("root")!).render(
                     <Route path="runs/:runId" element={<RunDetailPage />} />
                     <Route path="security" element={<SecurityRunsPage />} />
                     <Route path="security/:runId" element={<SecurityRunDetailPage />} />
+                    <Route
+                      path="performance"
+                      element={
+                        <Suspense fallback={<p className="text-sm text-slate-500">Cargando…</p>}>
+                          <PerformancePage />
+                        </Suspense>
+                      }
+                    />
+                    <Route
+                      path="performance/:runId"
+                      element={
+                        <Suspense fallback={<p className="text-sm text-slate-500">Cargando…</p>}>
+                          <PerformanceRunDetailPage />
+                        </Suspense>
+                      }
+                    />
                     <Route path="settings" element={<ProjectSettingsLayout />}>
                       <Route index element={<ProjectGeneralPage />} />
                       <Route path="contract" element={<ConfigPage />} />
