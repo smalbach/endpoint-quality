@@ -141,15 +141,15 @@ al pie.
 
 | Capacidad                                                                               | Estado                                                        |
 | --------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Grupos con arrastrar y soltar, reordenar, ejecutar grupo, estado por flujo              | ½ (suites sin DnD)                                            |
-| Duplicar flujo, renombrar en línea, estado draft/ready/archived                         | ✗                                                             |
-| Paleta de nodos: Auth, Request, Condition, Loop, Merge, Delay, Script                   | ½ (condición, bucle, espera y login son propiedades del paso) |
-| Menú contextual del nodo, duplicar, diálogo al borrar                                   | ✗                                                             |
-| Velocidad de ejecución, Ctrl+S, Ctrl+Enter                                              | ✗                                                             |
-| Panel de validación con «ir al nodo»                                                    | ½                                                             |
-| Timeline en vivo e informe con diagnóstico del error                                    | ½                                                             |
-| Editor de esquema de respuesta (visual, JSON, desde respuesta), extractores automáticos | ✗                                                             |
-| Mapeo de variables entre nodos, variables disponibles                                   | ½                                                             |
+| Grupos con arrastrar y soltar, reordenar, ejecutar grupo, estado por flujo              | ✔                                                                |
+| Duplicar flujo, renombrar en línea, estado draft/ready/archived                         | ✔                                                                |
+| Paleta de nodos: Auth, Request, Condition, Loop, Merge, Delay, Script                   | ½ (por diseño: cada nodo es una petición; los tipos son comportamientos. Sin Script) |
+| Menú contextual del nodo, duplicar, diálogo al borrar                                   | ✔                                                                |
+| Velocidad de ejecución, Ctrl+S, Ctrl+Enter                                              | ✔                                                                |
+| Panel de validación con «ir al nodo»                                                    | ✔                                                                |
+| Timeline en vivo e informe con diagnóstico del error                                    | ✔                                                                |
+| Editor de esquema de respuesta (visual, JSON, desde respuesta), extractores automáticos | ½ (extractores desde respuesta/pegado; sin editor de esquema visual aparte) |
+| Mapeo de variables entre nodos, variables disponibles                                   | ✔ (variables aguas arriba + valores calculados en el menú `{{`)  |
 
 ### Performance
 
@@ -203,7 +203,16 @@ Cada fase deja el producto funcionando y se prueba en el navegador antes de pasa
    imprimible (el PDF es «Guardar como PDF» del navegador, sin Chromium en el servidor); enlace
    público; e IA opcional (Anthropic si hay clave, análisis determinista si no) que escribe prosa
    pero nunca cambia la puntuación.
-7. **Flow Testing.** Grupos con DnD, tipos de nodo, informe con diagnóstico, esquema.
+7. **Flow Testing** · _hecha_. El motor (grafo con dependencias, captures, condición, bucle, login,
+   retry, onError) y su ejecución tras SAFE_FETCH ya existían; esta fase cierra el editor y el
+   informe. Estado por flujo (borrador/listo/archivado) con migración que deja «ready» lo guardado y
+   crea «draft» lo nuevo; duplicar (grafo + datasets); renombrar en línea; suites que se reordenan
+   arrastrando, muestran el estado de cada flujo y no ofrecen los archivados. Paleta de tipos de
+   nodo y menú contextual del nodo (editar, duplicar sin aristas, login/espera/merge, eliminar con
+   diálogo) —cada nodo sigue siendo una petición—. Extractores de captura desde una respuesta real
+   (o pegada), con id/token primero y las listas por su primer elemento. Panel de validación con «ir
+   al nodo». Velocidad de ejecución (el `delayMs` de la corrida), Ctrl+S/Ctrl+Enter, y diagnóstico
+   del caso fallido: qué paso y qué aserción lo tumbó.
 8. **Performance.**
 9. **Escáner de GitHub.**
 10. **Dashboard, historial, análisis desde fichero, importar de otro proyecto por elementos.**
