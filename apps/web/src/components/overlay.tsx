@@ -13,6 +13,72 @@ import { Button, Field, inputClass } from "@/components/ui";
 
 const SIZES = { sm: "max-w-sm", md: "max-w-lg", lg: "max-w-2xl", xl: "max-w-4xl" } as const;
 
+/**
+ * A panel that slides in from a side, over whatever is behind it.
+ *
+ * The canvas is the screen now, so the flow list, the library and the inspector no longer take a
+ * column beside it — they are drawers pulled over it when needed and pushed away when not. Same
+ * skin as {@link Modal}, but anchored to an edge and full height, because their content is a long
+ * list, not a short question. The scrim is lighter than a modal's: a drawer sits *next to* the work
+ * rather than blocking it, and clicking the canvas behind it is a normal way to dismiss it.
+ */
+export function Drawer({
+  title,
+  side = "right",
+  width = "24rem",
+  onClose,
+  children,
+  footer,
+}: {
+  title: ReactNode;
+  side?: "left" | "right";
+  width?: string;
+  onClose: () => void;
+  children: ReactNode;
+  footer?: ReactNode;
+}) {
+  const titleId = useId();
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-40">
+      <div className="absolute inset-0 bg-slate-900/10" onMouseDown={onClose} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        style={{ width }}
+        className={cn(
+          "absolute inset-y-0 flex max-w-[92vw] flex-col bg-white shadow-2xl",
+          side === "left" ? "left-0 border-r border-slate-200" : "right-0 border-l border-slate-200",
+        )}
+      >
+        <div className="flex items-center justify-between gap-4 border-b border-slate-100 px-4 py-3">
+          <h2 id={titleId} className="text-sm font-semibold text-slate-900">
+            {title}
+          </h2>
+          <button
+            aria-label="Cerrar"
+            className="-mr-1 grid size-7 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-50 hover:text-slate-700"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-4 py-3">{children}</div>
+        {footer && <div className="border-t border-slate-100 px-4 py-3">{footer}</div>}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export function Modal({
   title,
   description,

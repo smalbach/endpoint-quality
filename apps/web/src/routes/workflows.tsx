@@ -5,10 +5,10 @@
  * `definition` is, and both edit it. The graph is written whole on save, which is what makes «node
  * deleted, edge still pointing at it» a state that cannot be stored.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { PromptDialog } from "@/components/overlay";
-import { useRunProgress } from "@/routes/runs";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useParams } from "react-router-dom";
+import { Drawer, PromptDialog } from "@/components/overlay";
+import { RunProgress, useRunProgress } from "@/routes/runs";
 import { resolveActive, useActiveEnvironment } from "@/lib/active-environment";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -48,7 +48,6 @@ export function WorkflowsPage() {
   const { projectId } = useParams();
   const organization = useOrganization();
   const canEdit = useCan("editor");
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const base = `/orgs/${organization?.id}/projects/${projectId}`;
 
@@ -67,6 +66,13 @@ export function WorkflowsPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [datasetId, setDatasetId] = useState("");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  // The canvas is the screen now; everything else is pulled over it. `tab` swaps the whole area
+  // between the editor and the run being analysed (in place, never a URL away); `drawer` is which
+  // side panel is open, and `inspectorOpen` the node/settings panel — split out because a node
+  // click opens it while the dock buttons open the others.
+  const [tab, setTab] = useState<"editor" | "run">("editor");
+  const [drawer, setDrawer] = useState<null | "flows" | "library" | "data">(null);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
 
   // The live run being watched, if any. The hook no-ops on an empty id, so it is safe to call
   // every render; when a run is active its cases colour the canvas nodes as they execute.
@@ -316,276 +322,440 @@ export function WorkflowsPage() {
   const dirty = Boolean(draft && saved && (!unchanged(saved, draft) || Object.keys(templateEdits).length > 0));
 
   return (
-    <div className="space-y-4">
-      <Card className="p-4">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h1 className="text-base font-semibold text-slate-900">Flujos de ejecución</h1>
-            <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-500">
-              Compón pruebas reutilizables, conecta sus dependencias y captura valores de una respuesta para usarlos
-              como <span className="font-mono">{"{{variable}}"}</span> en los pasos siguientes. Un paso cuyo antecesor
-              falla no se ejecuta.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="ghost" onClick={switchView} disabled={!draft}>
-              {asJson ? "Volver al diagrama" : "Editar JSON"}
-            </Button>
-            {canEdit && (
-              <Button disabled={!dirty || save.isPending || problems.length > 0} onClick={() => save.mutate()}>
-                Guardar
-              </Button>
-            )}
-          </div>
+    <div className="-mx-6 -my-6 flex h-[calc(100dvh-49px)] flex-col bg-slate-50">
+      {/* La barra superior es lo único fijo: las dos pestañas a la izquierda, y a la derecha lo que
+          se aplica a todo el flujo (entorno, JSON, guardar). Todo lo demás flota sobre el lienzo. */}
+      <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-2">
+        <div className="flex items-center gap-1">
+          <TopTab active={tab === "editor"} onClick={() => setTab("editor")}>
+            Lienzo
+          </TopTab>
+          <TopTab active={tab === "run"} disabled={!activeRunId} onClick={() => setTab("run")}>
+            <span className="flex items-center gap-1.5">
+              Ejecución
+              {activeRunId && runProgress.running && (
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-sky-500" />
+              )}
+            </span>
+          </TopTab>
         </div>
-        {problems.length > 0 && (
-          <ul className="mt-3 space-y-1 text-xs text-rose-700">
-            {problems.map((problem, index) => (
-              <li key={`${problem.message}-${index}`} className="flex items-center gap-2">
-                <span>{problem.message}</span>
-                {problem.stepId && (
-                  <button
-                    className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 hover:bg-rose-100"
-                    onClick={() => {
-                      // The problem is a path into a node; the fix is at the node, so the panel jumps
-                      // to it — leaving the JSON view if that is where it was clicked.
-                      setAsJson(false);
-                      setSelectedStep(problem.stepId!);
-                    }}
-                  >
-                    Ir al nodo
-                  </button>
-                )}
-              </li>
+        <div className="flex min-w-0 items-center gap-2">
+          {saved && <span className="hidden truncate text-xs font-medium text-slate-500 sm:block">{saved.name}</span>}
+          <select
+            className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-600"
+            value={environmentId}
+            title="Entorno"
+            onChange={(event) => {
+              setEnvironmentId(event.target.value);
+              if (event.target.value) setActiveEnvironment(event.target.value);
+            }}
+          >
+            <option value="">Entorno…</option>
+            {(environments.data ?? []).map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
             ))}
-          </ul>
-        )}
-        {(message(save.error) ??
-          message(run.error) ??
-          message(createTemplate.error) ??
-          message(deleteTemplate.error)) && (
-          <p className="mt-3 text-xs text-rose-700">
-            {message(save.error) ??
-              message(run.error) ??
-              message(createTemplate.error) ??
-              message(deleteTemplate.error)}
-          </p>
-        )}
-      </Card>
+          </select>
+          <Button variant="ghost" className="h-8 px-2 text-xs" onClick={switchView} disabled={!draft}>
+            {asJson ? "Diagrama" : "JSON"}
+          </Button>
+          {canEdit && (
+            <Button
+              className="h-8 px-3 text-xs"
+              disabled={!dirty || save.isPending || problems.length > 0}
+              onClick={() => save.mutate()}
+            >
+              Guardar
+            </Button>
+          )}
+        </div>
+      </div>
 
-      {asJson ? (
-        <Card className="p-4">
-          <textarea
-            className="h-[60vh] w-full rounded-xl border border-slate-200 bg-slate-950 p-3 font-mono text-[11px] text-slate-100"
-            value={json}
-            spellCheck={false}
-            onChange={(event) => setJson(event.target.value)}
-          />
-          {jsonError && <p className="mt-2 text-xs text-rose-700">{jsonError}</p>}
-        </Card>
-      ) : (
-        <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)_300px]">
-          <Card className="p-3">
-            <div className="flex items-center justify-between">
-              <p className="text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Flujos</p>
-              {canEdit && (
-                <Button
-                  variant="ghost"
-                  className="h-7 px-2 text-xs"
-                  disabled={createWorkflow.isPending}
-                  onClick={() => setNaming(true)}
-                >
-                  + Nuevo
-                </Button>
-              )}
-              {naming && (
-                <PromptDialog
-                  title="Nuevo flujo"
-                  label="Nombre del flujo"
-                  hint="Lo que recorre, en pocas palabras: «alta y baja de pedido»."
-                  placeholder="Alta de pedido"
-                  onClose={() => setNaming(false)}
-                  onSubmit={(name) => {
-                    setNaming(false);
-                    createWorkflow.mutate(name);
-                  }}
-                />
-              )}
-            </div>
-            {renaming && saved && (
-              <PromptDialog
-                title="Renombrar flujo"
-                label="Nombre del flujo"
-                hint="Lo que recorre, en pocas palabras."
-                initialValue={saved.name}
-                onClose={() => setRenaming(false)}
-                onSubmit={(name) => {
-                  setRenaming(false);
-                  if (name.trim() && name !== saved.name) patchWorkflow.mutate({ id: saved.id, name });
-                }}
+      <div className="relative min-h-0 flex-1">
+        {tab === "run" ? (
+          <div className="h-full overflow-y-auto p-4">
+            {activeRunId ? (
+              <RunProgress base={base} runId={activeRunId} />
+            ) : (
+              <Empty title="Sin ejecuciones" hint="Ejecuta un flujo desde el lienzo para analizar aquí su resultado." />
+            )}
+          </div>
+        ) : asJson ? (
+          <div className="h-full overflow-y-auto p-4">
+            <Card className="p-4">
+              <textarea
+                className="h-[70vh] w-full rounded-xl border border-slate-200 bg-slate-950 p-3 font-mono text-[11px] text-slate-100"
+                value={json}
+                spellCheck={false}
+                onChange={(event) => setJson(event.target.value)}
               />
-            )}
-            <div className="mt-2 space-y-1">
-              {allWorkflows.length === 0 && <p className="text-[11px] text-slate-400">Ninguno todavía.</p>}
-              {visibleWorkflows.map((item) => {
-                const meta = WORKFLOW_STATUS_META[item.status];
-                const active = item.id === selectedId;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => setSelectedId(item.id)}
-                    className={cn(
-                      "w-full rounded-lg px-2 py-2 text-left text-xs",
-                      active ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50",
-                    )}
-                  >
-                    <span className="flex items-center gap-1.5">
-                      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", meta.dot)} title={meta.label} />
-                      <span className="flex-1 truncate font-medium">{item.name}</span>
-                    </span>
-                    <span className={cn("mt-0.5 block text-[10px]", active ? "text-slate-300" : "text-slate-400")}>
-                      {item.steps.length} pasos · {meta.label}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            {archivedCount > 0 && (
-              <button
-                className="mt-2 text-[10px] text-slate-400 hover:text-slate-600"
-                onClick={() => setShowArchived((value) => !value)}
-              >
-                {showArchived ? "Ocultar archivados" : `Ver archivados (${archivedCount})`}
-              </button>
-            )}
-            {canEdit && saved && (
-              <div className="mt-3 flex flex-wrap gap-1 border-t border-slate-100 pt-3">
-                <Button variant="ghost" className="h-6 px-1.5 text-[11px]" onClick={() => setRenaming(true)}>
-                  Renombrar
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="h-6 px-1.5 text-[11px]"
-                  disabled={duplicateWorkflow.isPending}
-                  onClick={() => duplicateWorkflow.mutate(saved.id)}
-                >
-                  Duplicar
-                </Button>
-                <select
-                  value={saved.status}
-                  disabled={patchWorkflow.isPending}
-                  onChange={(event) =>
-                    patchWorkflow.mutate({ id: saved.id, status: event.target.value as WorkflowStatusView })
-                  }
-                  className="h-6 rounded-md border border-slate-200 bg-white px-1 text-[11px] text-slate-600"
-                  title="Estado del flujo"
-                >
-                  <option value="draft">Borrador</option>
-                  <option value="ready">Listo</option>
-                  <option value="archived">Archivado</option>
-                </select>
-              </div>
-            )}
-            {message(duplicateWorkflow.error) && (
-              <p className="mt-2 text-[11px] text-rose-700">{message(duplicateWorkflow.error)}</p>
-            )}
-            <div className="mt-4 border-t border-slate-100 pt-3">
-              <SuitesPanel
-                suites={workflows.data?.suites ?? []}
-                workflows={workflows.data?.workflows ?? []}
-                canEdit={canEdit}
-                running={runSuite.isPending || !environmentId}
-                onCreate={(name) => createSuite.mutate(name)}
-                onChange={(suite) => saveSuite.mutate(suite)}
-                onDelete={(suiteId) => deleteSuite.mutate(suiteId)}
-                onRun={(suiteId) => runSuite.mutate(suiteId)}
-              />
-            </div>
-
-            <div className="mt-4 border-t border-slate-100 pt-3">
-              <TemplateLibrary
-                templates={templates}
-                operations={operations.data?.operations ?? []}
-                canEdit={canEdit}
-                addDisabled={!draft}
-                error={message(createTemplate.error) ?? message(deleteTemplate.error)}
-                onCreate={(template) => createTemplate.mutate(template)}
-                onDelete={(template) => deleteTemplate.mutate(template.id)}
-                onAdd={(template) => setSteps(addStep(steps, template))}
-              />
-              {canEdit && <ImportRequests base={base} onImported={() => void invalidate()} />}
-            </div>
-          </Card>
-
-          <Card className="h-[65vh] min-h-[520px] overflow-hidden">
+              {jsonError && <p className="mt-2 text-xs text-rose-700">{jsonError}</p>}
+            </Card>
+          </div>
+        ) : (
+          <>
             {!draft ? (
-              <Empty title="Crea tu primer flujo" hint="Después añade pruebas reutilizables desde la biblioteca." />
+              <div className="grid h-full place-items-center p-6">
+                <Empty title="Crea tu primer flujo" hint="Abre «Flujos» y crea uno; luego añade pruebas desde la biblioteca." />
+              </div>
             ) : (
               <WorkflowCanvas
                 steps={steps}
                 templates={templates}
                 operations={operations.data?.operations ?? []}
                 onChange={setSteps}
-                onSelect={setSelectedStep}
+                onSelect={(stepId) => {
+                  setSelectedStep(stepId);
+                  setInspectorOpen(true);
+                }}
                 runStatus={stepStatus}
               />
             )}
-          </Card>
 
-          <Card className="p-3">
+            {/* Muelle flotante arriba a la izquierda: cada botón abre su drawer. */}
+            <div className="pointer-events-none absolute top-3 left-3 z-30 flex flex-col gap-2">
+              <div className="pointer-events-auto flex flex-col gap-1 rounded-2xl border border-slate-200 bg-white/95 p-1 shadow-lg backdrop-blur">
+                <DockButton glyph="≣" label="Flujos" onClick={() => setDrawer(drawer === "flows" ? null : "flows")} />
+                <DockButton
+                  glyph="◈"
+                  label="Biblioteca"
+                  disabled={!draft}
+                  onClick={() => setDrawer(drawer === "library" ? null : "library")}
+                />
+                <DockButton
+                  glyph="▤"
+                  label="Datos"
+                  disabled={!draft}
+                  onClick={() => setDrawer(drawer === "data" ? null : "data")}
+                />
+                <DockButton
+                  glyph="⚙"
+                  label="Ajustes"
+                  disabled={!draft}
+                  onClick={() => setInspectorOpen((open) => !open)}
+                />
+              </div>
+            </div>
+
+            {/* Play: la acción principal, separada y grande, abajo a la derecha. */}
             {draft && (
-              <WorkflowInspector
-                base={base}
-                workflow={draft}
-                steps={steps}
-                selectedStep={selectedStep}
-                templates={templates}
-                operations={operations.data?.operations ?? []}
-                environments={environments.data ?? []}
-                environmentId={environmentId}
-                canEdit={canEdit}
-                onEnvironment={(next) => {
-                  setEnvironmentId(next);
-                  if (next) setActiveEnvironment(next);
-                }}
-                onWorkflow={(change) => setDraft((current) => (current ? { ...current, ...change } : current))}
-                onSteps={setSteps}
-                onTemplate={(template) => setTemplateEdits((current) => ({ ...current, [template.id]: template }))}
-                concurrency={concurrency}
-                onConcurrency={setConcurrency}
-                delayMs={delayMs}
-                onDelay={setDelayMs}
-                onRun={() => run.mutate()}
-                onDelete={() => deleteWorkflow.mutate(draft.id)}
-                running={run.isPending}
+              <button
+                onClick={() => run.mutate()}
+                disabled={!environmentId || !steps.length || run.isPending}
+                title={!environmentId ? "Elige un entorno arriba" : "Ejecutar flujo"}
+                className={cn(
+                  "absolute right-5 bottom-5 z-30 flex items-center gap-2 rounded-full px-5 py-3 text-sm font-semibold text-white shadow-xl transition",
+                  !environmentId || !steps.length || run.isPending
+                    ? "cursor-not-allowed bg-slate-300"
+                    : "bg-emerald-600 hover:bg-emerald-500",
+                )}
+              >
+                <span aria-hidden className="text-base">
+                  ▶
+                </span>
+                {run.isPending ? "Lanzando…" : "Ejecutar"}
+              </button>
+            )}
+
+            {/* Problemas del flujo: banner flotante compacto, no una columna. */}
+            {problems.length > 0 && (
+              <div className="absolute top-3 left-1/2 z-30 w-[min(560px,80vw)] -translate-x-1/2 rounded-xl border border-rose-200 bg-rose-50/95 px-3 py-2 shadow-lg backdrop-blur">
+                <ul className="space-y-1 text-xs text-rose-700">
+                  {problems.map((problem, index) => (
+                    <li key={`${problem.message}-${index}`} className="flex items-center gap-2">
+                      <span className="flex-1">{problem.message}</span>
+                      {problem.stepId && (
+                        <button
+                          className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 hover:bg-rose-200"
+                          onClick={() => {
+                            setSelectedStep(problem.stepId!);
+                            setInspectorOpen(true);
+                          }}
+                        >
+                          Ir al nodo
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {(message(save.error) ??
+              message(run.error) ??
+              message(createTemplate.error) ??
+              message(deleteTemplate.error)) && (
+              <div className="absolute bottom-5 left-1/2 z-30 w-[min(560px,80vw)] -translate-x-1/2 rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs text-rose-700 shadow-lg">
+                {message(save.error) ??
+                  message(run.error) ??
+                  message(createTemplate.error) ??
+                  message(deleteTemplate.error)}
+              </div>
+            )}
+
+            {activeRunId && (
+              <RunStrip
+                run={runProgress.run.data}
+                onOpen={() => setTab("run")}
+                onClose={() => setActiveRunId(null)}
               />
             )}
-            {draft && (
-              <DatasetsPanel
-                datasets={(workflows.data?.datasets ?? []).filter((dataset) => dataset.workflowId === draft.id)}
-                selectedId={datasetId}
-                canEdit={canEdit}
-                onSelect={setDatasetId}
-                onCreate={(name) => createDataset.mutate(name)}
-                onSave={(id, rows) => saveDataset.mutate({ id, rows })}
-                onDelete={(id) => deleteDataset.mutate(id)}
-                loadRows={async (id) => (await api<DatasetRowsView>(`${base}/datasets/${id}`)).rows}
-              />
+
+            {/* Drawer: Flujos (lista, estado, suites). */}
+            {drawer === "flows" && (
+              <Drawer title="Flujos" side="left" onClose={() => setDrawer(null)}>
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Flujos</p>
+                  {canEdit && (
+                    <Button
+                      variant="ghost"
+                      className="h-7 px-2 text-xs"
+                      disabled={createWorkflow.isPending}
+                      onClick={() => setNaming(true)}
+                    >
+                      + Nuevo
+                    </Button>
+                  )}
+                </div>
+                <div className="mt-2 space-y-1">
+                  {allWorkflows.length === 0 && <p className="text-[11px] text-slate-400">Ninguno todavía.</p>}
+                  {visibleWorkflows.map((item) => {
+                    const meta = WORKFLOW_STATUS_META[item.status];
+                    const active = item.id === selectedId;
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => setSelectedId(item.id)}
+                        className={cn(
+                          "w-full rounded-lg px-2 py-2 text-left text-xs",
+                          active ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50",
+                        )}
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", meta.dot)} title={meta.label} />
+                          <span className="flex-1 truncate font-medium">{item.name}</span>
+                        </span>
+                        <span className={cn("mt-0.5 block text-[10px]", active ? "text-slate-300" : "text-slate-400")}>
+                          {item.steps.length} pasos · {meta.label}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {archivedCount > 0 && (
+                  <button
+                    className="mt-2 text-[10px] text-slate-400 hover:text-slate-600"
+                    onClick={() => setShowArchived((value) => !value)}
+                  >
+                    {showArchived ? "Ocultar archivados" : `Ver archivados (${archivedCount})`}
+                  </button>
+                )}
+                {canEdit && saved && (
+                  <div className="mt-3 flex flex-wrap gap-1 border-t border-slate-100 pt-3">
+                    <Button variant="ghost" className="h-6 px-1.5 text-[11px]" onClick={() => setRenaming(true)}>
+                      Renombrar
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      className="h-6 px-1.5 text-[11px]"
+                      disabled={duplicateWorkflow.isPending}
+                      onClick={() => duplicateWorkflow.mutate(saved.id)}
+                    >
+                      Duplicar
+                    </Button>
+                    <select
+                      value={saved.status}
+                      disabled={patchWorkflow.isPending}
+                      onChange={(event) =>
+                        patchWorkflow.mutate({ id: saved.id, status: event.target.value as WorkflowStatusView })
+                      }
+                      className="h-6 rounded-md border border-slate-200 bg-white px-1 text-[11px] text-slate-600"
+                      title="Estado del flujo"
+                    >
+                      <option value="draft">Borrador</option>
+                      <option value="ready">Listo</option>
+                      <option value="archived">Archivado</option>
+                    </select>
+                  </div>
+                )}
+                {message(duplicateWorkflow.error) && (
+                  <p className="mt-2 text-[11px] text-rose-700">{message(duplicateWorkflow.error)}</p>
+                )}
+                <div className="mt-4 border-t border-slate-100 pt-3">
+                  <SuitesPanel
+                    suites={workflows.data?.suites ?? []}
+                    workflows={workflows.data?.workflows ?? []}
+                    canEdit={canEdit}
+                    running={runSuite.isPending || !environmentId}
+                    onCreate={(name) => createSuite.mutate(name)}
+                    onChange={(suite) => saveSuite.mutate(suite)}
+                    onDelete={(suiteId) => deleteSuite.mutate(suiteId)}
+                    onRun={(suiteId) => runSuite.mutate(suiteId)}
+                  />
+                </div>
+              </Drawer>
             )}
-          </Card>
-        </div>
+
+            {/* Drawer: Biblioteca de peticiones reutilizables + importación. */}
+            {drawer === "library" && draft && (
+              <Drawer title="Biblioteca" side="left" onClose={() => setDrawer(null)}>
+                <TemplateLibrary
+                  templates={templates}
+                  operations={operations.data?.operations ?? []}
+                  canEdit={canEdit}
+                  addDisabled={!draft}
+                  error={message(createTemplate.error) ?? message(deleteTemplate.error)}
+                  onCreate={(template) => createTemplate.mutate(template)}
+                  onDelete={(template) => deleteTemplate.mutate(template.id)}
+                  onAdd={(template) => setSteps(addStep(steps, template))}
+                />
+                {canEdit && (
+                  <div className="mt-4 border-t border-slate-100 pt-3">
+                    <ImportRequests base={base} onImported={() => void invalidate()} />
+                  </div>
+                )}
+              </Drawer>
+            )}
+
+            {/* Drawer: Datos (datasets del flujo abierto). */}
+            {drawer === "data" && draft && (
+              <Drawer title="Datos" side="right" onClose={() => setDrawer(null)}>
+                <DatasetsPanel
+                  datasets={(workflows.data?.datasets ?? []).filter((dataset) => dataset.workflowId === draft.id)}
+                  selectedId={datasetId}
+                  canEdit={canEdit}
+                  onSelect={setDatasetId}
+                  onCreate={(name) => createDataset.mutate(name)}
+                  onSave={(id, rows) => saveDataset.mutate({ id, rows })}
+                  onDelete={(id) => deleteDataset.mutate(id)}
+                  loadRows={async (id) => (await api<DatasetRowsView>(`${base}/datasets/${id}`)).rows}
+                />
+              </Drawer>
+            )}
+
+            {/* Drawer: Ajustes del nodo / del flujo y controles de ejecución. */}
+            {inspectorOpen && draft && (
+              <Drawer title={selectedStep ? "Nodo" : "Ajustes"} side="right" onClose={() => setInspectorOpen(false)}>
+                <WorkflowInspector
+                  base={base}
+                  workflow={draft}
+                  steps={steps}
+                  selectedStep={selectedStep}
+                  templates={templates}
+                  operations={operations.data?.operations ?? []}
+                  environments={environments.data ?? []}
+                  environmentId={environmentId}
+                  canEdit={canEdit}
+                  onEnvironment={(next) => {
+                    setEnvironmentId(next);
+                    if (next) setActiveEnvironment(next);
+                  }}
+                  onWorkflow={(change) => setDraft((current) => (current ? { ...current, ...change } : current))}
+                  onSteps={setSteps}
+                  onTemplate={(template) => setTemplateEdits((current) => ({ ...current, [template.id]: template }))}
+                  concurrency={concurrency}
+                  onConcurrency={setConcurrency}
+                  delayMs={delayMs}
+                  onDelay={setDelayMs}
+                  onRun={() => run.mutate()}
+                  onDelete={() => deleteWorkflow.mutate(draft.id)}
+                  running={run.isPending}
+                />
+              </Drawer>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Los diálogos de nombrar/renombrar viven fuera del lienzo: valen en cualquier pestaña. */}
+      {naming && (
+        <PromptDialog
+          title="Nuevo flujo"
+          label="Nombre del flujo"
+          hint="Lo que recorre, en pocas palabras: «alta y baja de pedido»."
+          placeholder="Alta de pedido"
+          onClose={() => setNaming(false)}
+          onSubmit={(name) => {
+            setNaming(false);
+            createWorkflow.mutate(name);
+          }}
+        />
       )}
-
-      {activeRunId && (
-        <RunStrip
-          run={runProgress.run.data}
-          onOpen={() => navigate(`/p/${projectId}/runs/${activeRunId}`)}
-          onClose={() => setActiveRunId(null)}
+      {renaming && saved && (
+        <PromptDialog
+          title="Renombrar flujo"
+          label="Nombre del flujo"
+          hint="Lo que recorre, en pocas palabras."
+          initialValue={saved.name}
+          onClose={() => setRenaming(false)}
+          onSubmit={(name) => {
+            setRenaming(false);
+            if (name.trim() && name !== saved.name) patchWorkflow.mutate({ id: saved.id, name });
+          }}
         />
       )}
     </div>
   );
 }
+
+/** A tab in the top bar: the whole content area swaps under it. */
+function TopTab({
+  active,
+  disabled,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "rounded-lg px-3 py-1.5 text-xs font-medium transition",
+        active ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100",
+        disabled && "cursor-not-allowed opacity-40 hover:bg-transparent",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** A button in the floating dock over the canvas: a glyph over a small label. */
+function DockButton({
+  glyph,
+  label,
+  disabled,
+  onClick,
+}: {
+  glyph: string;
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={label}
+      className={cn(
+        "flex w-16 flex-col items-center gap-0.5 rounded-xl px-1 py-2 text-[10px] font-medium text-slate-600 transition hover:bg-slate-100",
+        disabled && "cursor-not-allowed opacity-40 hover:bg-transparent",
+      )}
+    >
+      <span aria-hidden className="text-base leading-none">
+        {glyph}
+      </span>
+      {label}
+    </button>
+  );
+}
+
 
 /**
  * A slim bar that floats over the canvas while a run is watched: the verdict so far and the bar,
