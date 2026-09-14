@@ -51,6 +51,8 @@ describe("el dashboard", () => {
     assert.ok(project, "el proyecto está");
     assert.equal(project.endpoints, 1);
     assert.equal(project.securityScore, null, "sin corrida de seguridad todavía");
+    assert.ok(Array.isArray(project.trends.securityScores), "trae series de tendencia");
+    assert.deepEqual(project.trends.passRates, [], "sin corridas todavía, series vacías");
   });
 });
 

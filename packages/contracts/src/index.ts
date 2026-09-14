@@ -1078,6 +1078,17 @@ export type CodeScanDetailViewOf<T> = {
 // ---------------------------------------------------------------------------------------------
 
 /** One project's health at a glance, aggregated across its modules. Nulls mean «never run». */
+/** Recent runs of each kind, oldest→newest, for the sparklines on a project card. Each headline is
+ * the same number the card shows big; the series is where it has been. */
+export type DashboardTrendView = {
+  /** 0..100 security scores. */
+  securityScores: number[];
+  /** 0..1 contract pass rates. */
+  passRates: number[];
+  /** Load-test p95 in ms. */
+  perfP95Ms: number[];
+};
+
 export type DashboardProjectView = {
   id: string;
   name: string;
@@ -1089,6 +1100,7 @@ export type DashboardProjectView = {
   passRate: number | null;
   perfP95Ms: number | null;
   lastActivityAt: string | null;
+  trends: DashboardTrendView;
 };
 
 export type DashboardView = {

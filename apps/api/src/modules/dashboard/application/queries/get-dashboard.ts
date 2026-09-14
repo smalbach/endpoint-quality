@@ -14,6 +14,7 @@ export class GetDashboardQuery implements IQuery {
 }
 
 const TERMINAL = new Set(["passed", "failed", "cancelled", "error"]);
+const TREND_POINTS = 12;
 const time = (date: Date | null | undefined) => (date ? date.getTime() : 0);
 
 /**
@@ -78,6 +79,20 @@ export class GetDashboardHandler implements IQueryHandler<GetDashboardQuery, Das
       time(performance[0]?.startedAt),
     );
 
+    // The lists arrive newest-first; a sparkline reads left-to-right in time, so reverse the last few.
+    const recent = <T>(values: T[]) => values.slice(0, TREND_POINTS).reverse();
+    const trends = {
+      securityScores: recent(
+        security.filter((run) => TERMINAL.has(run.status) && run.score != null).map((run) => run.score as number),
+      ),
+      passRates: recent(
+        contract
+          .filter((run) => TERMINAL.has(run.status) && run.totals.passed + run.totals.failed > 0)
+          .map((run) => run.totals.passed / (run.totals.passed + run.totals.failed)),
+      ),
+      perfP95Ms: recent(performance.filter((run) => run.summary != null).map((run) => run.summary!.p95Ms)),
+    };
+
     return {
       id: projectId,
       name,
@@ -88,6 +103,7 @@ export class GetDashboardHandler implements IQueryHandler<GetDashboardQuery, Das
       passRate,
       perfP95Ms: lastPerf?.summary?.p95Ms ?? null,
       lastActivityAt: lastActivity ? new Date(lastActivity).toISOString() : null,
+      trends,
     };
   }
 }

@@ -87,19 +87,68 @@ function ProjectCard({ project }: { project: DashboardProjectView }) {
           <Metric
             label="Tasa de paso"
             value={project.passRate == null ? "—" : `${Math.round(project.passRate * 100)}%`}
+            spark={project.trends.passRates}
+            tone="stroke-emerald-500"
           />
-          <Metric label="p95 carga" value={project.perfP95Ms == null ? "—" : `${Math.round(project.perfP95Ms)} ms`} />
+          <Metric
+            label="p95 carga"
+            value={project.perfP95Ms == null ? "—" : `${Math.round(project.perfP95Ms)} ms`}
+            spark={project.trends.perfP95Ms}
+            tone="stroke-sky-500"
+          />
         </div>
+        {project.trends.securityScores.length > 1 && (
+          <div className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-3">
+            <span className="text-[10px] text-slate-400">Score</span>
+            <Sparkline values={project.trends.securityScores} tone="stroke-slate-400" className="h-6 flex-1" />
+          </div>
+        )}
       </Card>
     </Link>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, spark, tone }: { label: string; value: string; spark?: number[]; tone?: string }) {
   return (
     <div>
       <span className="block text-[10px] text-slate-400">{label}</span>
-      <span className="font-medium text-slate-700">{value}</span>
+      <span className="flex items-center gap-1.5">
+        <span className="font-medium text-slate-700">{value}</span>
+        {spark && spark.length > 1 && <Sparkline values={spark} tone={tone} className="h-4 w-12" />}
+      </span>
     </div>
+  );
+}
+
+/** A tiny trend line, scaled to its own min/max — the shape matters, not the axis. */
+function Sparkline({ values, tone, className }: { values: number[]; tone?: string; className?: string }) {
+  const width = 100;
+  const height = 24;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const points = values
+    .map((value, index) => {
+      const x = values.length <= 1 ? width / 2 : (index / (values.length - 1)) * width;
+      const y = height - ((value - min) / span) * (height - 4) - 2;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      className={className}
+      role="img"
+      aria-label="Tendencia"
+    >
+      <polyline
+        points={points}
+        fill="none"
+        className={tone ?? "stroke-slate-400"}
+        strokeWidth={2}
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
   );
 }
