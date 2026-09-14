@@ -52,7 +52,7 @@ describe("leer el código NestJS", () => {
     assert.deepEqual(list!.guards, ["AuthGuard"]);
     assert.equal(list!.requiresAuth, true);
 
-    const get = byKey.get("GET /api/orders/:id");
+    const get = byKey.get("GET /api/orders/{id}");
     assert.deepEqual(get!.roles, ["viewer"]);
 
     const create = byKey.get("POST /api/orders");
@@ -60,7 +60,7 @@ describe("leer el código NestJS", () => {
     assert.deepEqual(create!.roles, ["editor", "admin"]);
 
     // @Public en el método gana pese al @UseGuards de la clase.
-    const remove = byKey.get("DELETE /api/orders/:id");
+    const remove = byKey.get("DELETE /api/orders/{id}");
     assert.equal(remove!.requiresAuth, false);
 
     // El objeto { path } y @Public a nivel de método.
@@ -69,7 +69,7 @@ describe("leer el código NestJS", () => {
   });
 
   test("joinPath normaliza barras", () => {
-    assert.equal(joinPath("api", "/orders/", ":id"), "/api/orders/:id");
+    assert.equal(joinPath("api", "/orders/", ":id"), "/api/orders/{id}");
     assert.equal(joinPath("", "", ""), "/");
     assert.equal(joinPath("//a//", "b"), "/a/b");
   });
@@ -89,7 +89,7 @@ describe("el diff del escaneo", () => {
   test("clasifica en añadidos, quitados, cambiados y sin cambios", () => {
     const existing: ExistingEndpoint[] = [
       { id: "e1", method: "GET", path: "/api/orders", requiresAuth: true }, // igual → sin cambios
-      { id: "e2", method: "GET", path: "/api/orders/:id", requiresAuth: false }, // el código ahora exige auth
+      { id: "e2", method: "GET", path: "/api/orders/{id}", requiresAuth: false }, // el código ahora exige auth
       { id: "e3", method: "GET", path: "/api/legacy", requiresAuth: true }, // ya no está en el código
     ];
     const diff = diffEndpoints(scanned, existing);
@@ -98,7 +98,7 @@ describe("el diff del escaneo", () => {
     assert.equal(diff.changed[0].id, "e2");
     assert.equal(diff.removed.length, 1);
     assert.equal(diff.removed[0].id, "e3");
-    // POST /api/orders, DELETE /api/orders/:id y GET /api/health son nuevos.
+    // POST /api/orders, DELETE /api/orders/{id} y GET /api/health son nuevos.
     assert.equal(diff.added.length, 3);
   });
 

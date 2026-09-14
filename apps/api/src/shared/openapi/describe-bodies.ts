@@ -82,6 +82,7 @@ import {
   StartPerformanceRunDto,
   UpdatePlanDto,
 } from "@/modules/performance/presentation/dto/performance.dto";
+import { ImportScanDto, SaveConnectorDto, ScanUploadDto } from "@/modules/code-scan/presentation/dto/code-scan.dto";
 import {
   CreateDatasetDto,
   CreateRequestTemplateDto,
@@ -154,6 +155,9 @@ const DTOS = [
   CreatePlanDto,
   UpdatePlanDto,
   StartPerformanceRunDto,
+  SaveConnectorDto,
+  ScanUploadDto,
+  ImportScanDto,
 ];
 
 type Schema = Record<string, unknown>;

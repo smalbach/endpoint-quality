@@ -49,12 +49,20 @@ const HTTP_DECORATORS: Record<string, string> = {
   All: "ALL",
 };
 
-/** `a`, `/a`, `a/`, `//a//b` and `` all become one clean `/a/b` (or `/`). */
+/**
+ * `a`, `/a`, `a/`, `//a//b` and `` all become one clean `/a/b` (or `/`), and NestJS's `:param` is
+ * rewritten to this product's `{param}`.
+ *
+ * The rewrite matters as much as the joining: a scanned `/orders/:id` and a stored `/orders/{id}`
+ * are the same route, and without it every parameterised endpoint would read as «added» on the first
+ * scan and «removed» on the next. `:id?` (optional) drops the `?`; a `*` wildcard is left alone.
+ */
 export function joinPath(...parts: string[]): string {
   const segments = parts
     .flatMap((part) => part.split("/"))
     .map((segment) => segment.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((segment) => (segment.startsWith(":") ? `{${segment.slice(1).replace(/\?$/, "")}}` : segment));
   return `/${segments.join("/")}`;
 }
 

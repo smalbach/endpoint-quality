@@ -92,6 +92,10 @@ import { InMemoryPerformanceRunQueue } from "@/modules/performance/infrastructur
 import { PerformanceExecutor } from "@/modules/performance/infrastructure/performance-executor";
 import { PerformanceProgressStream } from "@/modules/performance/infrastructure/performance-progress.stream";
 import { PERFORMANCE_COMMAND_HANDLERS, PERFORMANCE_QUERY_HANDLERS } from "@/modules/performance/performance.module";
+import { CODE_CONNECTOR_REPOSITORY, CODE_SCAN_REPOSITORY, GITHUB_SOURCE } from "@/modules/code-scan/domain/ports";
+import { CodeScanController } from "@/modules/code-scan/presentation/code-scan.controller";
+import { GithubSource } from "@/modules/code-scan/infrastructure/github-source";
+import { CODE_SCAN_COMMAND_HANDLERS, CODE_SCAN_QUERY_HANDLERS } from "@/modules/code-scan/code-scan.module";
 import { CONFIG_COMMAND_HANDLERS, CONFIG_QUERY_HANDLERS } from "@/modules/config/config.module";
 import { ProjectConfigController } from "@/modules/config/presentation/config.controller";
 import { WORKFLOW_REPOSITORY } from "@/modules/workflows/domain/ports";
@@ -123,6 +127,8 @@ import {
   InMemorySecurityRunRepository,
   InMemoryPerformancePlanRepository,
   InMemoryPerformanceRunRepository,
+  InMemoryCodeConnectorRepository,
+  InMemoryCodeScanRepository,
   InMemoryProjectRepository,
   InMemoryRunRepository,
   InMemorySpecRepository,
@@ -217,6 +223,8 @@ export type TestContext = {
     securityRuns: InMemorySecurityRunRepository;
     performancePlans: InMemoryPerformancePlanRepository;
     performanceRuns: InMemoryPerformanceRunRepository;
+    codeConnectors: InMemoryCodeConnectorRepository;
+    codeScans: InMemoryCodeScanRepository;
     config: InMemoryConfigRepository;
     workflows: InMemoryWorkflowRepository;
     runs: InMemoryRunRepository;
@@ -249,6 +257,8 @@ export async function createTestApp(): Promise<TestContext> {
     securityRuns: new InMemorySecurityRunRepository(),
     performancePlans: new InMemoryPerformancePlanRepository(),
     performanceRuns: new InMemoryPerformanceRunRepository(),
+    codeConnectors: new InMemoryCodeConnectorRepository(),
+    codeScans: new InMemoryCodeScanRepository(),
     config: new InMemoryConfigRepository(),
     workflows: new InMemoryWorkflowRepository(),
     runs: new InMemoryRunRepository(),
@@ -281,6 +291,7 @@ export async function createTestApp(): Promise<TestContext> {
       RolesController,
       SecurityRunsController,
       PerformanceController,
+      CodeScanController,
     ],
     providers: [
       { provide: ENV, useValue: env },
@@ -326,6 +337,11 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: PERFORMANCE_RUN_QUEUE, useClass: InMemoryPerformanceRunQueue },
       PerformanceProgressStream,
       PerformanceExecutor,
+      { provide: CODE_CONNECTOR_REPOSITORY, useValue: repositories.codeConnectors },
+      { provide: CODE_SCAN_REPOSITORY, useValue: repositories.codeScans },
+      // The real GitHub adapter, but it goes through the same StubSafeFetch as everything else: a
+      // scan test registers a fake api.github.com in the network stub, so no real request leaves.
+      { provide: GITHUB_SOURCE, useClass: GithubSource },
       { provide: WORKFLOW_REPOSITORY, useValue: repositories.workflows },
       { provide: ENDPOINT_REPOSITORY, useValue: repositories.endpoints },
       // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the
@@ -357,6 +373,8 @@ export async function createTestApp(): Promise<TestContext> {
       ...SECURITY_RUN_QUERY_HANDLERS,
       ...PERFORMANCE_COMMAND_HANDLERS,
       ...PERFORMANCE_QUERY_HANDLERS,
+      ...CODE_SCAN_COMMAND_HANDLERS,
+      ...CODE_SCAN_QUERY_HANDLERS,
       // The global guard and filter are registered exactly as `AppModule` does, because half of
       // what these tests check is that the wiring protects what it should. Throttling is left
       // out: it is the one piece whose behaviour is a rate, and asserting it here would make

@@ -67,6 +67,8 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
     const tables = rows.map((row) => row.table_name).sort();
     assert.deepEqual(tables, [
       "api_tokens",
+      "code_connectors",
+      "code_scans",
       "endpoints",
       "environment_credentials",
       "environments",

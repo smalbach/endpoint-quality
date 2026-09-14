@@ -960,6 +960,71 @@ export type PerformanceRunDetailViewOf<T> = {
   finishedAt: T | null;
 };
 
+// ---------------------------------------------------------------------------------------------
+// Code scan (GitHub)
+// ---------------------------------------------------------------------------------------------
+
+export type ScanSourceView = "github" | "upload";
+export type CodeScanStatusView = "ok" | "error";
+
+/** The connector as a read shows it — the token is never returned, only whether one is stored. */
+export type CodeConnectorView = {
+  repo: string;
+  branch: string;
+  basePath: string;
+  prefix: string;
+  tokenSet: boolean;
+  updatedAt: string | null;
+};
+
+export type ScannedEndpointView = {
+  method: string;
+  path: string;
+  controller: string;
+  handler: string;
+  guards: string[];
+  roles: string[];
+  requiresAuth: boolean;
+  file: string;
+};
+export type ScanEndpointChangeView = { method: string; path: string; id: string; changes: string[] };
+export type ScanDiffView = {
+  added: ScannedEndpointView[];
+  removed: { id: string; method: string; path: string; requiresAuth: boolean }[];
+  changed: ScanEndpointChangeView[];
+  unchanged: number;
+};
+export type ScanImpactView = {
+  unknownRoles: string[];
+  removedWithPermissions: { method: string; path: string; permissions: number }[];
+  removedWithFlows: { method: string; path: string; flows: number }[];
+};
+
+/** The list row: a scan's head and how big its diff is, no endpoint bodies. */
+export type CodeScanSummaryViewOf<T> = {
+  id: string;
+  source: ScanSourceView;
+  ref: string;
+  status: CodeScanStatusView;
+  controllers: number;
+  files: number;
+  counts: { added: number; removed: number; changed: number; unchanged: number };
+  error: string | null;
+  createdAt: T;
+};
+
+export type CodeScanDetailViewOf<T> = {
+  id: string;
+  source: ScanSourceView;
+  ref: string;
+  status: CodeScanStatusView;
+  result: { endpoints: ScannedEndpointView[]; files: number; controllers: number };
+  diff: ScanDiffView;
+  impact: ScanImpactView;
+  error: string | null;
+  createdAt: T;
+};
+
 export type Member = MemberOf<string>;
 export type PendingInvitation = PendingInvitationOf<string>;
 export type MembersView = MembersViewOf<string>;
@@ -988,6 +1053,8 @@ export type EndpointPage = EndpointPageOf<string>;
 export type PerformancePlanView = PerformancePlanViewOf<string>;
 export type PerformanceRunSummaryView = PerformanceRunSummaryViewOf<string>;
 export type PerformanceRunDetailView = PerformanceRunDetailViewOf<string>;
+export type CodeScanSummaryView = CodeScanSummaryViewOf<string>;
+export type CodeScanDetailView = CodeScanDetailViewOf<string>;
 
 /** RFC 9457, which is what every error in this system is written as. */
 export type ProblemDetails = {

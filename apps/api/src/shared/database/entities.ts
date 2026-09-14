@@ -627,6 +627,43 @@ export class PerformanceRunEntity {
   @Column({ type: "text", nullable: true }) error: string | null;
 }
 
+/**
+ * A project's connection to a source repository. One row per project (unique `projectId`).
+ *
+ * The token is ciphertext, like every target credential, and decrypted only in memory at scan time.
+ */
+@Entity({ name: "code_connectors" })
+export class CodeConnectorEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index({ unique: true }) @Column("uuid") projectId: string;
+  @Column({ type: "varchar", length: 20, default: "github" }) provider: string;
+  @Column({ type: "varchar", length: 200 }) repo: string;
+  @Column({ type: "varchar", length: 200, default: "main" }) branch: string;
+  @Column({ type: "varchar", length: 300, default: "" }) basePath: string;
+  @Column({ type: "varchar", length: 100, default: "" }) prefix: string;
+  @Column({ type: "text", nullable: true }) tokenCiphertext: string | null;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) updatedAt: Date;
+  @Column("uuid") updatedBy: string;
+}
+
+/** One scan of the code: the routes it read, the diff against the project, and the impact. All three
+ * are read as a whole per scan, so they are `jsonb` and not tables. */
+@Entity({ name: "code_scans" })
+export class CodeScanEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Column({ type: "varchar", length: 20 }) source: string;
+  @Column({ type: "varchar", length: 120, default: "" }) ref: string;
+  @Column({ type: "varchar", length: 20 }) status: string;
+  @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) result: unknown;
+  @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) diff: unknown;
+  @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) impact: unknown;
+  @Column({ type: "text", nullable: true }) error: string | null;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column("uuid") createdBy: string;
+}
+
 // The line breaks group these by module, which is information a formatter cannot know and
 // one-per-line would lose.
 // prettier-ignore
@@ -641,4 +678,5 @@ export const ENTITIES = [
   RoleEntity, RolePermissionEntity, RoleRuleEntity,
   SecurityRunEntity,
   PerformancePlanEntity, PerformanceRunEntity,
+  CodeConnectorEntity, CodeScanEntity,
 ];

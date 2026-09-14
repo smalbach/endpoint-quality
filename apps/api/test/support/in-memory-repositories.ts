@@ -35,6 +35,8 @@ import type { SecurityRun } from "@/modules/security-runs/domain/model";
 import type { SecurityRunRepositoryPort } from "@/modules/security-runs/domain/ports";
 import type { PerformancePlanRow, PerformanceRun } from "@/modules/performance/domain/model";
 import type { PerformancePlanRepositoryPort, PerformanceRunRepositoryPort } from "@/modules/performance/domain/ports";
+import type { CodeConnector, CodeScan } from "@/modules/code-scan/domain/model";
+import type { CodeConnectorRepositoryPort, CodeScanRepositoryPort } from "@/modules/code-scan/domain/ports";
 import type { ConfigRepositoryPort, ConfigRow } from "@/modules/config/domain/ports";
 import type { ConfigSection } from "@eq/runner-core";
 import type { DatasetRow, RequestTemplateRow, SuiteRow, WorkflowRow } from "@/modules/workflows/domain/model";
@@ -687,5 +689,41 @@ export class InMemoryPerformanceRunRepository implements PerformanceRunRepositor
   async delete(projectId: string, runId: string): Promise<void> {
     const run = this.rows.get(runId);
     if (run && run.projectId === projectId) this.rows.delete(runId);
+  }
+}
+
+export class InMemoryCodeConnectorRepository implements CodeConnectorRepositoryPort {
+  readonly rows = new Map<string, CodeConnector>();
+  async find(projectId: string): Promise<CodeConnector | null> {
+    return (
+      [...this.rows.values()].map((row) => structuredClone(row)).find((row) => row.projectId === projectId) ?? null
+    );
+  }
+  async save(connector: CodeConnector): Promise<void> {
+    this.rows.set(connector.projectId, structuredClone(connector));
+  }
+  async delete(projectId: string): Promise<void> {
+    this.rows.delete(projectId);
+  }
+}
+
+export class InMemoryCodeScanRepository implements CodeScanRepositoryPort {
+  readonly rows = new Map<string, CodeScan>();
+  async list(projectId: string): Promise<CodeScan[]> {
+    return [...this.rows.values()]
+      .filter((row) => row.projectId === projectId)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .map((row) => structuredClone(row));
+  }
+  async find(projectId: string, scanId: string): Promise<CodeScan | null> {
+    const row = this.rows.get(scanId);
+    return row && row.projectId === projectId ? structuredClone(row) : null;
+  }
+  async save(scan: CodeScan): Promise<void> {
+    this.rows.set(scan.id, structuredClone(scan));
+  }
+  async delete(projectId: string, scanId: string): Promise<void> {
+    const row = this.rows.get(scanId);
+    if (row && row.projectId === projectId) this.rows.delete(scanId);
   }
 }

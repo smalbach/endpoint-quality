@@ -19,6 +19,7 @@ import { EndpointsModule } from "./modules/endpoints/endpoints.module";
 import { RolesModule } from "./modules/roles/roles.module";
 import { SecurityRunsModule } from "./modules/security-runs/security-runs.module";
 import { PerformanceModule } from "./modules/performance/performance.module";
+import { CodeScanModule } from "./modules/code-scan/code-scan.module";
 import { AuthGuard } from "./modules/auth/infrastructure/guards/auth.guard";
 import { HealthController } from "./shared/health.controller";
 
@@ -48,6 +49,7 @@ import { HealthController } from "./shared/health.controller";
     RolesModule,
     SecurityRunsModule,
     PerformanceModule,
+    CodeScanModule,
   ],
   controllers: [HealthController],
   providers: [
