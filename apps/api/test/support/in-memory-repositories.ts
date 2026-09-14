@@ -31,6 +31,8 @@ import type { EnvironmentRepositoryPort, SessionTokenRepositoryPort } from "@/mo
 import type { SessionToken } from "@/modules/environments/domain/session-token";
 import type { PermissionChange, Role, RolePermission, RoleRule } from "@/modules/roles/domain/model";
 import type { RoleRepositoryPort } from "@/modules/roles/domain/ports";
+import type { SecurityRun } from "@/modules/security-runs/domain/model";
+import type { SecurityRunRepositoryPort } from "@/modules/security-runs/domain/ports";
 import type { ConfigRepositoryPort, ConfigRow } from "@/modules/config/domain/ports";
 import type { ConfigSection } from "@eq/runner-core";
 import type { DatasetRow, RequestTemplateRow, SuiteRow, WorkflowRow } from "@/modules/workflows/domain/model";
@@ -604,5 +606,31 @@ export class InMemoryRoleRepository implements RoleRepositoryPort {
   async replaceRules(projectId: string, rules: RoleRule[]): Promise<void> {
     for (const [key, rule] of this.rules) if (rule.projectId === projectId) this.rules.delete(key);
     for (const rule of rules) this.rules.set(`${rule.sourceRoleId}:${rule.targetRoleId}`, { ...rule });
+  }
+}
+
+export class InMemorySecurityRunRepository implements SecurityRunRepositoryPort {
+  readonly rows = new Map<string, SecurityRun>();
+  async listForProject(projectId: string, limit: number): Promise<SecurityRun[]> {
+    return [...this.rows.values()]
+      .filter((run) => run.projectId === projectId)
+      .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
+      .slice(0, limit)
+      .map((run) => structuredClone(run));
+  }
+  async findById(id: string): Promise<SecurityRun | null> {
+    const run = this.rows.get(id);
+    return run ? structuredClone(run) : null;
+  }
+  async findByShareToken(shareToken: string): Promise<SecurityRun | null> {
+    return (
+      [...this.rows.values()].map((run) => structuredClone(run)).find((run) => run.shareToken === shareToken) ?? null
+    );
+  }
+  async save(run: SecurityRun): Promise<void> {
+    this.rows.set(run.id, structuredClone(run));
+  }
+  async remove(id: string): Promise<void> {
+    this.rows.delete(id);
   }
 }

@@ -108,10 +108,17 @@ describe("el contrato que publica esta API", () => {
     }
   });
 
-  test("y las cuatro públicas son las que tienen que serlo", () => {
-    // Each one has to be: `/health` is what a load balancer polls, and the other three are how a
-    // session begins — `refresh` in particular runs when there is no access token to present.
-    assert.deepEqual([...PUBLIC_PATHS].sort(), ["/auth/login", "/auth/refresh", "/auth/register", "/health"]);
+  test("y las públicas son las que tienen que serlo", () => {
+    // Each one has to be: `/health` is what a load balancer polls, three are how a session begins —
+    // `refresh` runs when there is no access token to present — and the shared run is read by a link
+    // whose token is the credential.
+    assert.deepEqual([...PUBLIC_PATHS].sort(), [
+      "/auth/login",
+      "/auth/refresh",
+      "/auth/register",
+      "/health",
+      "/shared/security-runs/{shareToken}",
+    ]);
   });
 
   test("ningún cuerpo de petición se publica vacío", async () => {

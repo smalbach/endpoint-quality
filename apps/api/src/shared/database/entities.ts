@@ -546,6 +546,35 @@ export class RoleRuleEntity {
   @Column({ type: "boolean", default: false }) canDelete: boolean;
 }
 
+/**
+ * Una corrida de seguridad. Los hallazgos y las sondas van en jsonb; las credenciales no están:
+ * se leen cifradas del entorno al ejecutar y no se persisten.
+ */
+@Entity({ name: "security_runs" })
+export class SecurityRunEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Column("uuid") environmentId: string;
+  @Column({ type: "varchar", length: 120, default: "" }) label: string;
+  @Column({ type: "varchar", length: 20 }) status: string;
+  @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) rules: Record<string, boolean>;
+  @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) options: unknown;
+  @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) progress: unknown;
+  @Column({ type: "int", nullable: true }) score: number | null;
+  @Column({ type: "varchar", length: 20, nullable: true }) risk: string | null;
+  @Column({ type: "jsonb", nullable: true }) summary: unknown;
+  @Column({ type: "jsonb", default: () => "'[]'::jsonb" }) findings: unknown[];
+  @Column({ type: "jsonb", default: () => "'[]'::jsonb" }) probes: unknown[];
+  @Column({ type: "jsonb", nullable: true }) ai: unknown;
+  @Column({ type: "varchar", length: 10, default: "private" }) visibility: string;
+  @Column({ type: "varchar", length: 36, nullable: true }) shareToken: string | null;
+  @Column({ type: "varchar", length: 20 }) triggeredByKind: string;
+  @Column("uuid") triggeredBy: string;
+  @Column({ type: "timestamptz" }) startedAt: Date;
+  @Column({ type: "timestamptz", nullable: true }) finishedAt: Date | null;
+  @Column({ type: "text", nullable: true }) error: string | null;
+}
+
 // The line breaks group these by module, which is information a formatter cannot know and
 // one-per-line would lose.
 // prettier-ignore
@@ -558,4 +587,5 @@ export const ENTITIES = [
   RunEntity, RunCaseEntity, RunStepEntity,
   EndpointEntity,
   RoleEntity, RolePermissionEntity, RoleRuleEntity,
+  SecurityRunEntity,
 ];

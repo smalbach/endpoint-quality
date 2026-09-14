@@ -84,6 +84,7 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
       "run_cases",
       "run_steps",
       "runs",
+      "security_runs",
       "session_tokens",
       "spec_operations",
       "spec_sources",

@@ -72,6 +72,15 @@ import { CONFIG_REPOSITORY } from "@/modules/config/domain/ports";
 import { ROLE_REPOSITORY } from "@/modules/roles/domain/ports";
 import { RolesController } from "@/modules/roles/presentation/roles.controller";
 import { ROLE_COMMAND_HANDLERS, ROLE_QUERY_HANDLERS } from "@/modules/roles/roles.module";
+import { SECURITY_RUN_QUEUE, SECURITY_RUN_REPOSITORY } from "@/modules/security-runs/domain/ports";
+import { SecurityRunsController } from "@/modules/security-runs/presentation/security-runs.controller";
+import { InMemorySecurityRunQueue } from "@/modules/security-runs/infrastructure/in-memory-security-queue";
+import { SecurityRunExecutor } from "@/modules/security-runs/infrastructure/security-run-executor";
+import { SecurityRunProgressStream } from "@/modules/security-runs/infrastructure/security-run-progress.stream";
+import {
+  SECURITY_RUN_COMMAND_HANDLERS,
+  SECURITY_RUN_QUERY_HANDLERS,
+} from "@/modules/security-runs/security-runs.module";
 import { CONFIG_COMMAND_HANDLERS, CONFIG_QUERY_HANDLERS } from "@/modules/config/config.module";
 import { ProjectConfigController } from "@/modules/config/presentation/config.controller";
 import { WORKFLOW_REPOSITORY } from "@/modules/workflows/domain/ports";
@@ -100,6 +109,7 @@ import {
   InMemoryEnvironmentRepository,
   InMemorySessionTokenRepository,
   InMemoryRoleRepository,
+  InMemorySecurityRunRepository,
   InMemoryProjectRepository,
   InMemoryRunRepository,
   InMemorySpecRepository,
@@ -191,6 +201,7 @@ export type TestContext = {
     environments: InMemoryEnvironmentRepository;
     sessionTokens: InMemorySessionTokenRepository;
     roles: InMemoryRoleRepository;
+    securityRuns: InMemorySecurityRunRepository;
     config: InMemoryConfigRepository;
     workflows: InMemoryWorkflowRepository;
     runs: InMemoryRunRepository;
@@ -220,6 +231,7 @@ export async function createTestApp(): Promise<TestContext> {
     environments: new InMemoryEnvironmentRepository(),
     sessionTokens: new InMemorySessionTokenRepository(),
     roles: new InMemoryRoleRepository(),
+    securityRuns: new InMemorySecurityRunRepository(),
     config: new InMemoryConfigRepository(),
     workflows: new InMemoryWorkflowRepository(),
     runs: new InMemoryRunRepository(),
@@ -250,6 +262,7 @@ export async function createTestApp(): Promise<TestContext> {
       RequestPreviewController,
       EndpointsController,
       RolesController,
+      SecurityRunsController,
     ],
     providers: [
       { provide: ENV, useValue: env },
@@ -285,6 +298,10 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: SCRIPT_SANDBOX, useClass: ProcessScriptSandbox },
       { provide: CONFIG_REPOSITORY, useValue: repositories.config },
       { provide: ROLE_REPOSITORY, useValue: repositories.roles },
+      { provide: SECURITY_RUN_REPOSITORY, useValue: repositories.securityRuns },
+      { provide: SECURITY_RUN_QUEUE, useClass: InMemorySecurityRunQueue },
+      SecurityRunProgressStream,
+      SecurityRunExecutor,
       { provide: WORKFLOW_REPOSITORY, useValue: repositories.workflows },
       { provide: ENDPOINT_REPOSITORY, useValue: repositories.endpoints },
       // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the
@@ -312,6 +329,8 @@ export async function createTestApp(): Promise<TestContext> {
       ...ENDPOINT_EVENT_HANDLERS,
       ...ROLE_COMMAND_HANDLERS,
       ...ROLE_QUERY_HANDLERS,
+      ...SECURITY_RUN_COMMAND_HANDLERS,
+      ...SECURITY_RUN_QUERY_HANDLERS,
       // The global guard and filter are registered exactly as `AppModule` does, because half of
       // what these tests check is that the wiring protects what it should. Throttling is left
       // out: it is the one piece whose behaviour is a rate, and asserting it here would make
@@ -357,6 +376,7 @@ export async function createTestApp(): Promise<TestContext> {
 
   // The worker starts listening exactly as `RunsModule.onApplicationBootstrap` does.
   moduleRef.get(RunOrchestrator).listen();
+  moduleRef.get(SecurityRunExecutor).listen();
 
   return {
     app,

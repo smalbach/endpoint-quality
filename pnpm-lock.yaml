@@ -41,6 +41,9 @@ importers:
       '@eq/runner-core':
         specifier: workspace:^
         version: link:../../packages/runner-core
+      '@eq/security-rules':
+        specifier: workspace:^
+        version: link:../../packages/security-rules
       '@eq/spec-import':
         specifier: workspace:^
         version: link:../../packages/spec-import

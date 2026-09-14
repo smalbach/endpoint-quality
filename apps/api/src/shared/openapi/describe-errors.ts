@@ -34,7 +34,14 @@ import type { OpenAPIObject } from "@nestjs/swagger";
  * asserted against the running app in the suite rather than trusted — a document that says a
  * route needs a token when it does not is worse than one that says nothing.
  */
-export const PUBLIC_PATHS = new Set(["/health", "/auth/register", "/auth/login", "/auth/refresh"]);
+export const PUBLIC_PATHS = new Set([
+  "/health",
+  "/auth/register",
+  "/auth/login",
+  "/auth/refresh",
+  // El enlace compartido de una corrida de seguridad: se lee sin sesión, protegido por el token.
+  "/shared/security-runs/{shareToken}",
+]);
 
 const PROBLEM_DETAILS = "ProblemDetails";
 

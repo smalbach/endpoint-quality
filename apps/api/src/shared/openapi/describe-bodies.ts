@@ -74,6 +74,10 @@ import {
   UpdateRoleDto,
 } from "@/modules/roles/presentation/dto/roles.dto";
 import {
+  SecurityRunVisibilityDto,
+  StartSecurityRunDto,
+} from "@/modules/security-runs/presentation/dto/security-runs.dto";
+import {
   CreateDatasetDto,
   CreateRequestTemplateDto,
   CreateSuiteDto,
@@ -94,6 +98,8 @@ import {
  * without being added here breaks a test rather than quietly publishing `{}`.
  */
 const DTOS = [
+  StartSecurityRunDto,
+  SecurityRunVisibilityDto,
   CreateRoleDto,
   UpdateRoleDto,
   RolePermissionItemDto,
