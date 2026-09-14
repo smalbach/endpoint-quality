@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api, streamRun } from "@/lib/api";
+import { api, openReport, streamRun } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { Badge, Button, Card, Empty } from "@/components/ui";
 import { ConfirmDialog } from "@/components/overlay";
@@ -248,6 +248,11 @@ export function SecurityRunDetailPage() {
       }),
     onSuccess: () => run.refetch(),
   });
+  const analyze = useMutation({
+    mutationFn: () => api<void>(`${base}/security-runs/${runId}/ai`, { method: "POST" }),
+    onSuccess: () => run.refetch(),
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   if (run.isLoading) return <p className="p-4 text-sm text-slate-500">Cargando…</p>;
   if (run.error || !run.data)
@@ -278,8 +283,25 @@ export function SecurityRunDetailPage() {
                 Cancelar
               </Button>
             )}
+            {isTerminal(data.status) && (
+              <Button
+                variant="ghost"
+                className="h-8 text-xs"
+                onClick={() => void openReport(`${base}/security-runs/${runId}/report?format=html`)}
+              >
+                Informe
+              </Button>
+            )}
             {isTerminal(data.status) && canEdit && (
               <>
+                <Button
+                  variant="ghost"
+                  className="h-8 text-xs"
+                  disabled={analyze.isPending}
+                  onClick={() => analyze.mutate()}
+                >
+                  {analyze.isPending ? "Analizando…" : data.ai ? "Reanalizar" : "Analizar con IA"}
+                </Button>
                 <Button
                   variant="ghost"
                   className="h-8 text-xs"
@@ -330,6 +352,28 @@ export function SecurityRunDetailPage() {
           </div>
         )}
       </Card>
+
+      {data.ai && (
+        <Card className="mt-4 p-4">
+          <p className="text-sm font-semibold text-slate-900">Análisis</p>
+          <p className="mt-2 text-xs leading-5 text-slate-700">{data.ai.executiveSummary}</p>
+          <p className="mt-1 text-[11px] text-slate-500">{data.ai.scoreJustification}</p>
+          {data.ai.top.length > 0 && (
+            <ol className="mt-3 space-y-1">
+              {data.ai.top.map((item, index) => (
+                <li key={index} className="text-[11px] text-slate-700">
+                  <span
+                    className={cn("mr-1 rounded px-1 py-0.5 text-[10px] font-semibold", SEVERITY_CLASS[item.severity])}
+                  >
+                    {SEVERITY_LABEL[item.severity]}
+                  </span>
+                  <span className="font-medium">{item.title}</span> — {item.description}
+                </li>
+              ))}
+            </ol>
+          )}
+        </Card>
+      )}
 
       {summary && summary.unprotected.length > 0 && (
         <Card className="mt-4 p-4">

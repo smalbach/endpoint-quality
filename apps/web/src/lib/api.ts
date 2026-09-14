@@ -58,6 +58,23 @@ export function onAccessTokenChange(listener: (token: string | null) => void): (
 
 type RequestOptions = { method?: string; body?: unknown; signal?: AbortSignal; retryOnUnauthorized?: boolean };
 
+/**
+ * Opens a report the browser cannot reach with a plain link: the route needs the Authorization
+ * header, so the bytes are fetched here and handed to a new tab as a blob. That new tab is where
+ * «Guardar como PDF» lives — the HTML report is print-styled for exactly that.
+ */
+export async function openReport(path: string): Promise<void> {
+  const response = await fetch(`${BASE}${path}`, {
+    headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+    credentials: "include",
+  });
+  if (!response.ok) throw new Error("No se pudo abrir el informe");
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  window.open(url, "_blank", "noopener");
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 export async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
   // A form goes as it is: the browser writes the multipart boundary into the Content-Type, and
   // setting the header by hand would send one without it.

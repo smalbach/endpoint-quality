@@ -118,6 +118,7 @@ describe("el contrato que publica esta API", () => {
       "/auth/register",
       "/health",
       "/shared/security-runs/{shareToken}",
+      "/shared/security-runs/{shareToken}/report",
     ]);
   });
 

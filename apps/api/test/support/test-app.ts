@@ -80,6 +80,7 @@ import { SecurityRunProgressStream } from "@/modules/security-runs/infrastructur
 import {
   SECURITY_RUN_COMMAND_HANDLERS,
   SECURITY_RUN_QUERY_HANDLERS,
+  SECURITY_AI_PROVIDER,
 } from "@/modules/security-runs/security-runs.module";
 import { CONFIG_COMMAND_HANDLERS, CONFIG_QUERY_HANDLERS } from "@/modules/config/config.module";
 import { ProjectConfigController } from "@/modules/config/presentation/config.controller";
@@ -302,6 +303,7 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: SECURITY_RUN_QUEUE, useClass: InMemorySecurityRunQueue },
       SecurityRunProgressStream,
       SecurityRunExecutor,
+      SECURITY_AI_PROVIDER,
       { provide: WORKFLOW_REPOSITORY, useValue: repositories.workflows },
       { provide: ENDPOINT_REPOSITORY, useValue: repositories.endpoints },
       // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the

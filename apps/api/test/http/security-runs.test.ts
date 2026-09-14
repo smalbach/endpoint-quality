@@ -119,6 +119,37 @@ describe("las corridas de seguridad", () => {
     assert.equal(closed.status, 404);
   });
 
+  test("el informe sale en JSON y en HTML imprimible, y el análisis se guarda", async () => {
+    const started = await api().post(`${base()}/security-runs`).set(as(owner)).send({});
+    const run = await finished(started.body.runId);
+
+    const json = await api().get(`${base()}/security-runs/${run.id}/report?format=json`).set(as(owner));
+    assert.equal(json.status, 200);
+    assert.equal(json.body.label, run.label);
+    assert.ok(Array.isArray(json.body.findings));
+
+    const html = await api().get(`${base()}/security-runs/${run.id}/report?format=html`).set(as(owner));
+    assert.equal(html.status, 200);
+    assert.match(html.headers["content-type"], /text\/html/);
+    assert.match(html.text, /Informe de seguridad/);
+
+    // Sin clave de IA: análisis determinista, siempre disponible.
+    const ai = await api().post(`${base()}/security-runs/${run.id}/ai`).set(as(owner));
+    assert.equal(ai.status, 201);
+    assert.ok(ai.body.ai.executiveSummary.length > 0);
+    const withAi = await api().get(`${base()}/security-runs/${run.id}`).set(as(owner));
+    assert.ok(withAi.body.ai.executiveSummary.length > 0);
+
+    // El informe compartido se lee sin sesión.
+    const shared = await api()
+      .patch(`${base()}/security-runs/${run.id}/visibility`)
+      .set(as(owner))
+      .send({ visibility: "public" });
+    const report = await api().get(`/shared/security-runs/${shared.body.shareToken}/report?format=html`);
+    assert.equal(report.status, 200);
+    assert.match(report.text, /Informe de seguridad/);
+  });
+
   test("borrar una corrida terminada la quita; otra organización no la ve", async () => {
     const started = await api().post(`${base()}/security-runs`).set(as(owner)).send({});
     const run = await finished(started.body.runId);

@@ -128,7 +128,7 @@ al pie.
 | Capacidad                                                                                                                                                                                                                                                          | Estado                       |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------- |
 | Modal: etiqueta, alcance (todos / seleccionados), credenciales usuario+contraseña+rol, timeout, iteraciones de rate limit, permutaciones entre usuarios, PDF, reglas                                                                                               | ✗                            |
-| 17 reglas (BOLA/IDOR, BFLA, JWT, ataques JWT, CORS, inyección, mass assignment, exposición de datos, error disclosure, verbose error, rate limit, cabeceras, method tampering, content-type, cross-user, consistencia entre versiones, tamaño anómalo) con presets | ✗                            |
+| 17 reglas (BOLA/IDOR, BFLA, JWT, ataques JWT, CORS, inyección, mass assignment, exposición de datos, error disclosure, verbose error, rate limit, cabeceras, method tampering, content-type, cross-user, consistencia entre versiones, tamaño anómalo) con presets | ✔                            |
 | Estrategias de ataque y descubrimiento de ids reales                                                                                                                                                                                                               | ✗                            |
 | Hallazgos con severidad, remediación, evidencia, pasos para reproducir                                                                                                                                                                                             | ✗                            |
 | Score, nivel de riesgo, endpoints sin proteger                                                                                                                                                                                                                     | ✗                            |
@@ -194,8 +194,15 @@ Cada fase deja el producto funcionando y se prueba en el navegador antes de pasa
    estados —permitido, denegado, sin decidir— y alcance de datos, reglas R/W/D entre roles); la sección
    `access` se deriva de ellas en cada cambio. Guardar permisos es un parche, no un reemplazo;
    renombrar un rol renombra sus credenciales y borrarlo se las lleva. Acceso por rol en el editor.
-6. **Test Runs de seguridad.** Paquete `security-rules` con las 17 reglas y estrategias, hallazgos,
-   score, modal, página con filtros, PDF, visibilidad, IA opcional.
+6. **Test Runs de seguridad** · _hecha_. Paquete puro `@eq/security-rules` con las 17 reglas, las
+   estrategias y la puntuación determinista; módulo API `security-runs` que ejecuta la matriz en
+   cola, con cancelación entre sondas, siempre detrás del guard SSRF y resolviendo la credencial de
+   cada rol desde el entorno (nunca desde el navegador ni en el formulario); web con modal de
+   lanzar (reglas por grupo con presets, alcance, avisos), lista y detalle con filtros, progreso en
+   vivo por SSE, hallazgos con remediación y las peticiones que los produjeron; informe JSON y HTML
+   imprimible (el PDF es «Guardar como PDF» del navegador, sin Chromium en el servidor); enlace
+   público; e IA opcional (Anthropic si hay clave, análisis determinista si no) que escribe prosa
+   pero nunca cambia la puntuación.
 7. **Flow Testing.** Grupos con DnD, tipos de nodo, informe con diagnóstico, esquema.
 8. **Performance.**
 9. **Escáner de GitHub.**

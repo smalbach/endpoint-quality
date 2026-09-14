@@ -41,6 +41,7 @@ export const PUBLIC_PATHS = new Set([
   "/auth/refresh",
   // El enlace compartido de una corrida de seguridad: se lee sin sesión, protegido por el token.
   "/shared/security-runs/{shareToken}",
+  "/shared/security-runs/{shareToken}/report",
 ]);
 
 const PROBLEM_DETAILS = "ProblemDetails";

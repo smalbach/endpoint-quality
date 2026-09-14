@@ -84,6 +84,15 @@ export const envSchema = z.object({
   BREVO_API_KEY: z.string().optional(),
   MAIL_FROM: z.string().email().default("no-reply@endpoint-quality.local"),
   MAIL_FROM_NAME: z.string().default("Endpoint Quality"),
+
+  /**
+   * The model that narrates a security run. Optional: with no key the run still gets a deterministic
+   * analysis built from its own numbers, so the feature degrades to «no prose» rather than «no
+   * feature». The model never sets the score — that is evidence, computed.
+   */
+  SECURITY_AI_DRIVER: z.enum(["off", "anthropic"]).default("off"),
+  ANTHROPIC_API_KEY: z.string().optional(),
+  SECURITY_AI_MODEL: z.string().default("claude-sonnet-4-6"),
 });
 
 const refinedEnvSchema = envSchema.superRefine((env, context) => {

@@ -6,7 +6,21 @@
  * a share token instead. There is no per-endpoint credential in any request: the run uses what the
  * environment stored.
  */
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Sse, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Res,
+  Sse,
+  UseGuards,
+} from "@nestjs/common";
+import type { Response } from "express";
 import { CommandBus, QueryBus } from "@nestjs/cqrs";
 import { concat, from, map, takeWhile, type Observable } from "rxjs";
 
@@ -31,6 +45,9 @@ import {
   type SecurityRunDetailView,
   type SecurityRunFilters,
 } from "../application/queries/get-security-run";
+import { GetSecurityReportQuery, GetSharedSecurityReportQuery } from "../application/queries/get-security-report";
+import { AnalyzeSecurityRunCommand } from "../application/commands/analyze-security-run";
+import { securityReportFormat } from "./report";
 import { SecurityRunProgressStream } from "../infrastructure/security-run-progress.stream";
 import { SecurityRunVisibilityDto, StartSecurityRunDto } from "./dto/security-runs.dto";
 
@@ -153,6 +170,55 @@ export class SecurityRunsController {
       })),
     );
     return concat(snapshot, this.progress.forRun(runId)).pipe(takeWhile((event) => event.type !== "finished", true));
+  }
+
+  @Post("orgs/:organizationId/projects/:projectId/security-runs/:runId/ai")
+  @UseGuards(OrgRoleGuard)
+  @RequireRole("editor")
+  async analyze(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("runId") runId: string,
+  ) {
+    return this.commandBus.execute(new AnalyzeSecurityRunCommand(organizationId, projectId, runId));
+  }
+
+  /** The run as a report: JSON, or a print-ready HTML page the reader saves as PDF. */
+  @Get("orgs/:organizationId/projects/:projectId/security-runs/:runId/report")
+  @UseGuards(OrgRoleGuard)
+  @RequireRole("viewer")
+  async report(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("runId") runId: string,
+    @Query("format") format: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const chosen = securityReportFormat(format);
+    const result = await this.queryBus.execute<GetSecurityReportQuery, { contentType: string; body: string | unknown }>(
+      new GetSecurityReportQuery(organizationId, projectId, runId, chosen),
+    );
+    if (chosen === "json") return result.body;
+    response.type(result.contentType);
+    response.header("Content-Disposition", `inline; filename="seguridad-${runId}.html"`);
+    return result.body;
+  }
+
+  @Get("shared/security-runs/:shareToken/report")
+  @Public()
+  async sharedReport(
+    @Param("shareToken") shareToken: string,
+    @Query("format") format: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const chosen = securityReportFormat(format);
+    const result = await this.queryBus.execute<
+      GetSharedSecurityReportQuery,
+      { contentType: string; body: string | unknown }
+    >(new GetSharedSecurityReportQuery(shareToken, chosen));
+    if (chosen === "json") return result.body;
+    response.type(result.contentType);
+    return result.body;
   }
 
   /** The public read of a shared run: no session, gated by the token. */
