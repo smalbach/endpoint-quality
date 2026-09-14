@@ -27,7 +27,8 @@ import type { ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import type { SpecOperation, SpecSource, SpecVersion, SpecVersionSummary } from "@/modules/specs/domain/model";
 import type { SpecRepositoryPort } from "@/modules/specs/domain/ports";
 import type { Credential, CredentialRole, Environment } from "@/modules/environments/domain/model";
-import type { EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
+import type { EnvironmentRepositoryPort, SessionTokenRepositoryPort } from "@/modules/environments/domain/ports";
+import type { SessionToken } from "@/modules/environments/domain/session-token";
 import type { ConfigRepositoryPort, ConfigRow } from "@/modules/config/domain/ports";
 import type { ConfigSection } from "@eq/runner-core";
 import type { DatasetRow, RequestTemplateRow, SuiteRow, WorkflowRow } from "@/modules/workflows/domain/model";
@@ -529,5 +530,18 @@ export class InMemoryWorkflowRepository implements WorkflowRepositoryPort {
   async deleteSuite(projectId: string, suiteId: string): Promise<void> {
     const row = this.suites.get(suiteId);
     if (row?.projectId === projectId) this.suites.delete(suiteId);
+  }
+}
+
+export class InMemorySessionTokenRepository implements SessionTokenRepositoryPort {
+  readonly rows = new Map<string, SessionToken>();
+  async find(actorId: string, projectId: string): Promise<SessionToken | null> {
+    return this.rows.get(`${actorId}:${projectId}`) ?? null;
+  }
+  async save(token: SessionToken): Promise<void> {
+    this.rows.set(`${token.actorId}:${token.projectId}`, { ...token });
+  }
+  async remove(actorId: string, projectId: string): Promise<void> {
+    this.rows.delete(`${actorId}:${projectId}`);
   }
 }

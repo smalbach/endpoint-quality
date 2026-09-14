@@ -105,7 +105,21 @@ export function EnvironmentsPage() {
                   : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
               )}
             >
-              <span className="block truncate text-sm font-medium">{environment.name}</span>
+              <span className="flex items-center gap-1.5">
+                <span className="block truncate text-sm font-medium">{environment.name}</span>
+                {environment.active && (
+                  <span
+                    className={cn(
+                      "rounded px-1 text-[10px] font-semibold",
+                      environment.id === selected
+                        ? "bg-emerald-400/20 text-emerald-200"
+                        : "bg-emerald-50 text-emerald-700",
+                    )}
+                  >
+                    activo
+                  </span>
+                )}
+              </span>
               <span
                 className={cn(
                   "mt-0.5 block truncate font-mono text-[11px]",
@@ -207,9 +221,35 @@ function EnvironmentDetail({
     mutationFn: () => api<void>(`${base}/environments/${environment.id}`, { method: "DELETE" }),
     onSuccess: onSaved,
   });
+  const activate = useMutation({
+    mutationFn: () => api<void>(`${base}/environments/${environment.id}/activate`, { method: "POST" }),
+    onSuccess: onSaved,
+  });
 
   return (
     <Card className="p-4">
+      <div className="mb-3 flex items-center gap-2 text-xs">
+        {environment.active ? (
+          <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">Entorno activo</Badge>
+        ) : (
+          <>
+            <Badge className="border-slate-200 bg-slate-50 text-slate-500">No activo</Badge>
+            {canEdit && (
+              <Button
+                variant="ghost"
+                className="h-7 px-2 text-xs"
+                disabled={activate.isPending}
+                onClick={() => activate.mutate()}
+              >
+                Activar
+              </Button>
+            )}
+          </>
+        )}
+        <span className="text-[11px] text-slate-400">
+          El activo es el que usan «Enviar», las corridas por defecto y el botón de la barra.
+        </span>
+      </div>
       <div className="flex flex-wrap items-end gap-3">
         <Field label="Nombre">
           <input

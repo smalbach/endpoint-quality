@@ -162,8 +162,11 @@ export class EndpointsController {
     @Param("projectId") projectId: string,
     @Body("request") request: string | undefined,
     @UploadedFiles() files: UploadedPart[] | undefined,
+    @CurrentUser() principal: Principal,
   ) {
-    return this.commandBus.execute(new SendEndpointRequestCommand(organizationId, projectId, request, files ?? []));
+    return this.commandBus.execute(
+      new SendEndpointRequestCommand(organizationId, projectId, request, files ?? [], actorId(principal)),
+    );
   }
 
   @Get(":endpointId")

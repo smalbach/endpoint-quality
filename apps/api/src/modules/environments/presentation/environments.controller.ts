@@ -9,17 +9,26 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, UseGuards } from "@nestjs/common";
 import { CommandBus, QueryBus } from "@nestjs/cqrs";
 
-import { OrgRoleGuard, RequireRole } from "@/modules/auth/infrastructure/guards/auth.guard";
+import {
+  CurrentUser,
+  OrgRoleGuard,
+  RequireRole,
+  type Principal,
+} from "@/modules/auth/infrastructure/guards/auth.guard";
 import {
   CreateEnvironmentCommand,
   DeleteEnvironmentCommand,
   UpdateEnvironmentCommand,
 } from "../application/commands/manage-environment";
 import { DeleteCredentialCommand, UpsertCredentialCommand } from "../application/commands/manage-credential";
+import { ActivateEnvironmentCommand } from "../application/commands/active-environment";
+import { ClearSessionTokenCommand, GetSessionTokenQuery } from "../application/commands/session-token";
 import { ListEnvironmentsQuery } from "../application/queries/list-environments";
 import { RevealVariablesQuery } from "../application/queries/reveal-variables";
 import { CreateEnvironmentDto, CredentialDto, UpdateEnvironmentDto } from "./dto/environments.dto";
 import type { CredentialRole } from "../domain/model";
+
+const actorId = (principal: Principal): string => (principal.kind === "user" ? principal.userId : principal.tokenId);
 
 @Controller("orgs/:organizationId/projects/:projectId")
 @UseGuards(OrgRoleGuard)
@@ -55,6 +64,40 @@ export class EnvironmentsController {
     @Body() body: CreateEnvironmentDto,
   ) {
     return this.commandBus.execute(new CreateEnvironmentCommand(organizationId, projectId, body));
+  }
+
+  /** Makes it the one every screen starts from. `editor`: it changes what everybody's «Enviar» uses. */
+  @Post("environments/:environmentId/activate")
+  @RequireRole("editor")
+  @HttpCode(204)
+  async activate(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("environmentId") environmentId: string,
+  ): Promise<void> {
+    await this.commandBus.execute(new ActivateEnvironmentCommand(organizationId, projectId, environmentId));
+  }
+
+  /** The caller's own captured token: who it says they are and when it runs out, never the token. */
+  @Get("session-token")
+  @RequireRole("viewer")
+  async sessionToken(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.queryBus.execute(new GetSessionTokenQuery(organizationId, projectId, actorId(principal)));
+  }
+
+  @Delete("session-token")
+  @RequireRole("viewer")
+  @HttpCode(204)
+  async clearSessionToken(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @CurrentUser() principal: Principal,
+  ): Promise<void> {
+    await this.commandBus.execute(new ClearSessionTokenCommand(organizationId, projectId, actorId(principal)));
   }
 
   @Patch("environments/:environmentId")

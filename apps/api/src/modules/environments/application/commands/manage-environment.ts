@@ -224,6 +224,9 @@ export class CreateEnvironmentHandler implements ICommandHandler<CreateEnvironme
       createdAt: this.clock.now(),
     };
     await this.environments.save(environment);
+    // The first environment of a project is the active one. A project with environments and none
+    // active is a state every screen would have to explain.
+    if (!project.activeEnvironmentId) await this.projects.save({ ...project, activeEnvironmentId: environment.id });
     return { environmentId: environment.id };
   }
 }
@@ -288,5 +291,13 @@ export class DeleteEnvironmentHandler implements ICommandHandler<DeleteEnvironme
     // leaving its stored secrets behind would be a set of credentials nothing can reach to
     // revoke.
     await this.environments.remove(environment.id);
+
+    // Deleting the active one promotes the oldest that remains. The analyzer left the project with
+    // none, and the bar kept saying «Sin entorno» next to three of them.
+    const project = await this.projects.findById(environment.projectId);
+    if (project && (project.activeEnvironmentId === environment.id || !project.activeEnvironmentId)) {
+      const [next] = await this.environments.listForProject(project.id);
+      await this.projects.save({ ...project, activeEnvironmentId: next?.id ?? null });
+    }
   }
 }

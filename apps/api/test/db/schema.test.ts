@@ -72,6 +72,7 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
       "run_cases",
       "run_steps",
       "runs",
+      "session_tokens",
       "spec_operations",
       "spec_sources",
       "spec_versions",
@@ -595,7 +596,9 @@ describe("retención en SQL", { skip: DATABASE_URL ? false : REASON }, () => {
 describe("endpoints", { skip: DATABASE_URL ? false : REASON }, () => {
   test("la migración copia como endpoints las operaciones del contrato activo de cada proyecto", async () => {
     const [userId, organizationId, projectId, versionId] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
-    // Back to before the table existed, with a project that already has a contract.
+    // Back to before the table existed, with a project that already has a contract. Two steps:
+    // the endpoints migration is no longer the last one.
+    await dataSource!.undoLastMigration();
     await dataSource!.undoLastMigration();
     try {
       await insertUser(userId, `endpoints-${userId}@example.com`);
@@ -684,5 +687,61 @@ describe("endpoints", { skip: DATABASE_URL ? false : REASON }, () => {
     await insert(new Date().toISOString());
     await insert(null);
     await assert.rejects(insert(null), /duplicate key|unique/i);
+  });
+});
+
+describe("entorno activo y token de sesión", { skip: DATABASE_URL ? false : REASON }, () => {
+  test("la migración activa el entorno más antiguo; borrarlo deja la clave en nulo; el token se va con el proyecto", async () => {
+    const [userId, organizationId, projectId, older, newer] = [
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+    ];
+    await dataSource!.undoLastMigration();
+    try {
+      await insertUser(userId, `active-${userId}@example.com`);
+      await insertOrganization(organizationId, `o-${organizationId.slice(0, 8)}`);
+      await dataSource!.query(
+        `INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`,
+        [projectId, organizationId, `a-${projectId.slice(0, 8)}`, userId],
+      );
+      const insertEnvironment = (id: string, name: string, createdAt: string) =>
+        dataSource!.query(
+          `INSERT INTO environments (id, "projectId", name, "baseUrl", "createdAt") VALUES ($1, $2, $3, 'http://x', $4)`,
+          [id, projectId, name, createdAt],
+        );
+      await insertEnvironment(newer, "staging", "2026-02-01T00:00:00Z");
+      await insertEnvironment(older, "local", "2026-01-01T00:00:00Z");
+    } finally {
+      await dataSource!.runMigrations();
+    }
+
+    const active = async () =>
+      (
+        (await dataSource!.query(`SELECT "activeEnvironmentId" FROM projects WHERE id = $1`, [projectId])) as {
+          activeEnvironmentId: string | null;
+        }[]
+      )[0].activeEnvironmentId;
+    assert.equal(await active(), older);
+
+    await dataSource!.query(`DELETE FROM environments WHERE id = $1`, [older]);
+    assert.equal(await active(), null);
+
+    await dataSource!.query(
+      `INSERT INTO session_tokens ("actorId", "projectId", "tokenCiphertext", "capturedAt", source) VALUES ($1, $2, 'v1.x', now(), 'script')`,
+      [userId, projectId],
+    );
+    await assert.rejects(
+      dataSource!.query(
+        `INSERT INTO session_tokens ("actorId", "projectId", "tokenCiphertext", "capturedAt", source) VALUES ($1, $2, 'v1.y', now(), 'login')`,
+        [userId, projectId],
+      ),
+      /duplicate key|unique/i,
+    );
+    await dataSource!.query(`DELETE FROM projects WHERE id = $1`, [projectId]);
+    const left: unknown[] = await dataSource!.query(`SELECT 1 FROM session_tokens WHERE "projectId" = $1`, [projectId]);
+    assert.equal(left.length, 0);
   });
 });

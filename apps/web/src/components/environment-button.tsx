@@ -1,27 +1,33 @@
 /**
- * The environment a project is working against, in the top bar.
+ * The environment a project is working against, in the top bar, and the session token next to it.
  *
  * Which one is active is the first thing somebody needs to know before pressing «Ejecutar» or
  * «Enviar», and the last thing they remember to check. So it is always on screen while inside a
- * project, with its variables one click away and a way to change it without leaving the page.
+ * project, with its variables one click away, a way to change it without leaving the page, and —
+ * the analyzer's other half of this button — the token the last login or script captured, with how
+ * long it has left.
  */
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
 import { api } from "@/lib/api";
-import { useOrganization } from "@/lib/auth";
+import { useCan, useOrganization } from "@/lib/auth";
 import { cn } from "@/lib/format";
 import { resolveActive, useActiveEnvironment } from "@/lib/active-environment";
+import { countdownTone, formatCountdown, useSessionToken, visibleClaims } from "@/lib/session-token";
+import { EnvironmentManager } from "@/components/environment-manager";
 import { useToast } from "@/components/toast";
-import type { Environment } from "@/lib/types";
+import type { Environment, SessionTokenView } from "@/lib/types";
 
 const MASK = "••••••••";
 
 export function EnvironmentButton({ projectId }: { projectId: string }) {
   const organization = useOrganization();
+  const canEdit = useCan("editor");
   const toast = useToast();
   const [open, setOpen] = useState(false);
-  const [stored, setStored] = useActiveEnvironment(projectId);
+  const [managing, setManaging] = useState(false);
+  const [stored, activate] = useActiveEnvironment(projectId);
   const root = useRef<HTMLDivElement>(null);
 
   const environments = useQuery({
@@ -29,8 +35,12 @@ export function EnvironmentButton({ projectId }: { projectId: string }) {
     enabled: Boolean(organization),
     queryFn: () => api<Environment[]>(`/orgs/${organization!.id}/projects/${projectId}/environments`),
   });
+  const session = useSessionToken(projectId);
   const list = environments.data ?? [];
   const active = resolveActive(stored, list);
+  const token = session.data ?? null;
+  const now = useNow(Boolean(token?.expiresAt));
+  const tokenLive = token && !token.expired && (!token.expiresAt || new Date(token.expiresAt).getTime() > now);
 
   useEffect(() => {
     if (!open) return;
@@ -59,6 +69,9 @@ export function EnvironmentButton({ projectId }: { projectId: string }) {
       >
         <span className={cn("size-2 rounded-full", active ? "bg-emerald-500" : "bg-slate-300")} />
         <span className="max-w-32 truncate">{active?.name ?? "Sin entorno"}</span>
+        {tokenLive && (
+          <span className="rounded bg-violet-50 px-1 text-[10px] font-semibold text-violet-700">Token</span>
+        )}
         <span className="text-slate-400">▾</span>
       </button>
 
@@ -76,12 +89,15 @@ export function EnvironmentButton({ projectId }: { projectId: string }) {
                 return (
                   <button
                     key={environment.id}
+                    disabled={!canEdit && !isActive}
+                    title={!canEdit ? "Cambiar el entorno activo necesita el rol editor" : undefined}
                     onClick={() => {
-                      setStored(environment.id);
-                      if (!isActive) toast.success(`Entorno «${environment.name}» activo`);
+                      if (isActive) return;
+                      activate(environment.id);
+                      toast.success(`Entorno «${environment.name}» activo`);
                     }}
                     className={cn(
-                      "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left",
+                      "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left disabled:cursor-not-allowed",
                       isActive ? "bg-slate-50" : "hover:bg-slate-50",
                     )}
                   >
@@ -132,15 +148,122 @@ export function EnvironmentButton({ projectId }: { projectId: string }) {
             </div>
           )}
 
+          <SessionTokenSection projectId={projectId} token={token} now={now} />
+
           <div className="px-4 py-3">
-            <Link
-              to={`/p/${projectId}/settings/environments`}
-              onClick={() => setOpen(false)}
-              className="block rounded-lg border border-dashed border-slate-300 px-3 py-2 text-center text-xs font-medium text-slate-600 hover:border-slate-400 hover:text-slate-900"
+            <button
+              onClick={() => {
+                setOpen(false);
+                setManaging(true);
+              }}
+              className="block w-full rounded-lg border border-dashed border-slate-300 px-3 py-2 text-center text-xs font-medium text-slate-600 hover:border-slate-400 hover:text-slate-900"
             >
               Gestionar entornos
-            </Link>
+            </button>
           </div>
+        </div>
+      )}
+
+      {managing && <EnvironmentManager projectId={projectId} onClose={() => setManaging(false)} />}
+    </div>
+  );
+}
+
+/** A clock that ticks every second while something on screen counts down, and not otherwise. */
+function useNow(ticking: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!ticking) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [ticking]);
+  return now;
+}
+
+const TONE: Record<ReturnType<typeof countdownTone>, string> = {
+  expired: "text-rose-600",
+  urgent: "text-rose-600",
+  soon: "text-amber-600",
+  ok: "text-emerald-600",
+};
+
+function SessionTokenSection({
+  projectId,
+  token,
+  now,
+}: {
+  projectId: string;
+  token: SessionTokenView | null;
+  now: number;
+}) {
+  const organization = useOrganization();
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const clear = useMutation({
+    mutationFn: () => api<void>(`/orgs/${organization?.id}/projects/${projectId}/session-token`, { method: "DELETE" }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["session-token", projectId] });
+      toast.success("Token de sesión olvidado");
+    },
+  });
+
+  return (
+    <div className="border-b border-slate-100 px-4 py-3">
+      <div className="flex items-center gap-2">
+        <p className="text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Token de sesión</p>
+        {token && (
+          <button
+            className="ml-auto text-[11px] text-slate-500 hover:text-rose-600"
+            disabled={clear.isPending}
+            onClick={() => clear.mutate()}
+          >
+            Olvidar
+          </button>
+        )}
+      </div>
+      {!token ? (
+        <div className="mt-2 space-y-1.5">
+          <p className="text-[11px] text-slate-500">
+            Ninguno capturado. Se captura al enviar el login del proyecto, o desde un script:
+          </p>
+          <pre className="overflow-x-auto rounded-lg bg-slate-950 px-2 py-1.5 font-mono text-[10px] leading-4 text-slate-100">
+            {'const data = pm.response.json();\npm.environment.set("token", data.access_token);'}
+          </pre>
+        </div>
+      ) : (
+        <div className="mt-2 space-y-1.5 text-[11px]">
+          <p className="text-slate-500">
+            {token.source === "login" ? "Del login" : "De un script"} ·{" "}
+            <span className="font-mono text-slate-600">{token.preview}</span>
+          </p>
+          <p>
+            <span className="text-slate-500">Caduca en: </span>
+            {token.expiresAt ? (
+              <span
+                className={cn(
+                  "font-semibold",
+                  TONE[countdownTone(token.expired ? 0 : new Date(token.expiresAt).getTime() - now)],
+                )}
+              >
+                {formatCountdown(token.expired ? 0 : new Date(token.expiresAt).getTime() - now)}
+              </span>
+            ) : (
+              <span className="text-slate-400">desconocido</span>
+            )}
+          </p>
+          {visibleClaims(token.claims).length > 0 && (
+            <dl className="max-h-32 space-y-0.5 overflow-y-auto rounded-lg bg-slate-50 px-2 py-1.5 font-mono text-[10px]">
+              {visibleClaims(token.claims).map(([name, value]) => (
+                <div key={name} className="flex gap-1.5">
+                  <dt className="shrink-0 text-slate-500">{name}:</dt>
+                  <dd className="min-w-0 truncate text-slate-700" title={value}>
+                    {value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          <p className="text-slate-400">«Enviar» con autenticación heredada lo usa mientras no caduque.</p>
         </div>
       )}
     </div>

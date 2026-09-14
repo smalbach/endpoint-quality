@@ -43,6 +43,7 @@ export class ListEnvironmentsHandler implements IQueryHandler<ListEnvironmentsQu
     return Promise.all(
       environments.map(async (environment) => ({
         ...environment,
+        active: environment.id === project.activeEnvironmentId,
         // Masked here rather than in the repository, because the repository is also what the run
         // orchestrator reads through, and a run needs the real value. One of the two callers has
         // to say which it wants; the one answering a browser is this one.

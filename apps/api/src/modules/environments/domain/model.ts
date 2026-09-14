@@ -159,3 +159,36 @@ export function credentialHeader(
 
 /** A credential as it leaves the API: named, typed, and without the secret in any form. */
 export type CredentialView = Omit<Credential, "secretCiphertext"> & { secretSet: true };
+
+/**
+ * What a script's `pm.environment.set` and `unset` do to the environment, stored.
+ *
+ * Only the **current** value moves, which is the whole point of the pair: a script capturing a
+ * token must not rewrite what the rest of the team pulls. A secret variable stays secret — the new
+ * value is encrypted like any other. A name the environment does not have yet is created, with an
+ * empty initial value, the way Postman does it; the analyzer dropped it without a word, and a
+ * script that «set» a variable nobody could then find was the first thing people asked about.
+ * `unset` empties the current value and keeps the variable, because deleting a shared variable is
+ * not something a request should be able to do.
+ */
+export function applyScriptWrites(
+  environment: Environment,
+  set: Record<string, string>,
+  unset: string[],
+  encrypt: (plain: string) => string,
+): Environment {
+  const variables = { ...environment.variables };
+  const disabledVariables = { ...environment.disabledVariables };
+  const write = (name: string, value: string) => {
+    const map = name in variables ? variables : name in disabledVariables ? disabledVariables : null;
+    if (!map) {
+      if (value) variables[name] = { initial: "", current: value, sensitive: false };
+      return;
+    }
+    const variable = map[name];
+    map[name] = { ...variable, current: variable.sensitive && value ? encrypt(value) : value };
+  };
+  for (const [name, value] of Object.entries(set)) write(name, value);
+  for (const name of unset) write(name, "");
+  return { ...environment, variables, disabledVariables };
+}

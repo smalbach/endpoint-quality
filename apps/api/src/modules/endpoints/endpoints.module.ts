@@ -9,6 +9,8 @@ import { ProjectsModule } from "@/modules/projects/projects.module";
 import { SpecsModule } from "@/modules/specs/specs.module";
 import { EnvironmentsModule } from "@/modules/environments/environments.module";
 import { ENDPOINT_REPOSITORY } from "./domain/ports";
+import { SCRIPT_SANDBOX } from "@/shared/scripts/script-sandbox";
+import { ProcessScriptSandbox } from "@/shared/scripts/process-script-sandbox";
 import { TypeOrmEndpointRepository } from "./infrastructure/persistence/typeorm-endpoint.repository";
 import {
   CreateEndpointHandler,
@@ -33,7 +35,10 @@ export const ENDPOINT_COMMAND_HANDLERS = [
 ];
 export const ENDPOINT_QUERY_HANDLERS = [ListEndpointsHandler, GetEndpointHandler];
 export const ENDPOINT_EVENT_HANDLERS = [SyncContractEndpointsHandler];
-export const ENDPOINT_ADAPTERS = [{ provide: ENDPOINT_REPOSITORY, useClass: TypeOrmEndpointRepository }];
+export const ENDPOINT_ADAPTERS = [
+  { provide: ENDPOINT_REPOSITORY, useClass: TypeOrmEndpointRepository },
+  { provide: SCRIPT_SANDBOX, useClass: ProcessScriptSandbox },
+];
 
 @Module({
   imports: [

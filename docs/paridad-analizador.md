@@ -109,10 +109,10 @@ al pie.
 | Capacidad                                                   | Estado |
 | ----------------------------------------------------------- | ------ |
 | CRUD, variables con inicial/actual/secreta/apagada, revelar | ✔      |
-| Entorno activo por proyecto y «activar»                     | ✗      |
-| Gestor de entornos en modal desde el botón de la barra      | ✗      |
-| Scripts que escriben el valor actual                        | ✗      |
-| Token de sesión capturado, JWT decodificado, cuenta atrás   | ✗      |
+| Entorno activo por proyecto y «activar»                     | ✔      |
+| Gestor de entornos en modal desde el botón de la barra      | ✔      |
+| Scripts que escriben el valor actual                        | ✔      |
+| Token de sesión capturado, JWT decodificado, cuenta atrás   | ✔      |
 
 ### Roles
 
@@ -184,8 +184,12 @@ Cada fase deja el producto funcionando y se prueba en el navegador antes de pasa
 3. **Endpoints** · _hecha_. Entidad propia que convive con las operaciones del contrato (importar un
    contrato crea o actualiza endpoints con origen `contract`), estados, árbol, bulk, importación de
    ficheros y cURL, editor tipo Postman con subida de ficheros.
-4. **Entornos activos y scripts.** Entorno activo, gestor modal, token de sesión; sandbox de
-   scripts en proceso aparte con la API `pm` y `env`.
+4. **Entornos activos y scripts** · _hecha_. Entorno activo en el servidor (el primero se activa solo y
+   borrar el activo promueve el siguiente), gestor modal, token de sesión por persona cifrado en el
+   servidor (del login o de un script, con claims y cuenta atrás); scripts previo y posterior en un
+   proceso aparte por script —sin variables de entorno, con el modelo de permisos de Node, sin generar
+   código desde texto, 3 s y 64 MB— con la API `pm`/`env`, `pm.test`/`pm.expect` y consola con los
+   secretos ocultos.
 5. **Roles.** Entidad de rol, permisos con alcance de datos, reglas R/W/D; se derivan a la sección
    `access` para que la matriz de contrato siga leyéndolos.
 6. **Test Runs de seguridad.** Paquete `security-rules` con las 17 reglas y estrategias, hallazgos,

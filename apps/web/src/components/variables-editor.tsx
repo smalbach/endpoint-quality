@@ -188,6 +188,10 @@ export function VariablesEditor({
               !row.enabled && !ghost && "text-slate-400",
               row.sensitive && "text-violet-700",
             );
+            // The analyzer's cue: a current value that is not the initial one was changed by somebody
+            // — a script, a capture, a debugging session — and one click puts it back. Not for a
+            // secret, whose two masks say nothing about whether they differ.
+            const changed = !ghost && !row.sensitive && row.current !== "" && row.current !== row.initial;
             return (
               <div key={index} className="border-b border-slate-100 last:border-b-0">
                 <div className="group grid grid-cols-[2rem_minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1.2fr)_3rem_4.5rem] items-center gap-2 px-2 py-1">
@@ -221,7 +225,7 @@ export function VariablesEditor({
                   />
                   <input
                     aria-label="Valor actual"
-                    className={valueClass}
+                    className={cn(valueClass, changed && "text-amber-700")}
                     value={revealed[row.name] ?? row.current}
                     placeholder={ghost ? "" : row.initial || "123"}
                     disabled={disabled}
@@ -244,6 +248,18 @@ export function VariablesEditor({
                   <span className="flex items-center justify-end gap-1">
                     {!ghost && (
                       <>
+                        {changed && (
+                          <button
+                            type="button"
+                            aria-label={`Restaurar ${row.name} al valor inicial`}
+                            title="Volver al valor inicial"
+                            className="rounded px-1 text-[11px] text-amber-600 hover:text-amber-800"
+                            disabled={disabled}
+                            onClick={() => edit(index, { current: row.initial })}
+                          >
+                            ↺
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="rounded px-1 text-[10px] text-slate-400 opacity-0 transition-opacity hover:text-slate-700 group-hover:opacity-100"

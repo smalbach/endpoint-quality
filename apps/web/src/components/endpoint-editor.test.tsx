@@ -53,6 +53,20 @@ const SENT: SentRequestView = {
   error: null,
   auth: "Token del proyecto",
   environment: null,
+  scripts: {
+    pre: null,
+    post: {
+      error: null,
+      logs: [{ level: "log", text: "id recibido 7" }],
+      tests: [
+        { name: "responde 201", passed: true, message: null },
+        { name: "id", passed: false, message: "se esperaba 8 y llegó 7" },
+      ],
+      environmentUpdates: ["lastId"],
+      durationMs: 31,
+    },
+  },
+  sessionToken: null,
 };
 
 function mount() {
@@ -61,6 +75,7 @@ function mount() {
     if (path === `${BASE}/endpoints/e1`) return VIEW;
     if (path === `${BASE}/environments`) return [];
     if (path === `${BASE}/endpoints/send`) return SENT;
+    if (path === `${BASE}/session-token`) return { token: null };
     if (path === BASE)
       return {
         baseUrl: "https://api.example.com",
@@ -107,8 +122,35 @@ describe("el editor de endpoints", () => {
       path: "/users/{id}",
       auth: { mode: "inherit" },
       environmentId: null,
+      preRequestScript: "",
+      postResponseScript: "",
     });
     expect(request.pathParameters).toEqual([{ name: "id", value: "7" }]);
+  });
+
+  test("la consola enseña lo que imprimió y probó cada script, y la cabecera cuenta las pruebas", async () => {
+    mount();
+    await screen.findByDisplayValue("/users/{id}");
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    expect(await screen.findByText("1/2 pruebas")).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Consola/ }));
+    expect(screen.getByText("Script posterior")).toBeDefined();
+    expect(screen.getByText("id recibido 7")).toBeDefined();
+    expect(screen.getByText(/se esperaba 8 y llegó 7/)).toBeDefined();
+    expect(screen.getByText("Guardó en el entorno: lastId")).toBeDefined();
+  });
+
+  test("un fragmento se añade al final del script", async () => {
+    mount();
+    await screen.findByDisplayValue("/users/{id}");
+    fireEvent.click(screen.getByRole("button", { name: "Scripts" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Estado 200" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Imprimir" }));
+    expect(screen.getByLabelText<HTMLTextAreaElement>("Script Post-response").value).toBe(
+      'pm.test("responde 200", () => pm.response.to.have.status(200));\nconsole.log(pm.response.json());',
+    );
+    expect(screen.getByLabelText("Cambios sin guardar")).toBeDefined();
   });
 
   test("Ctrl+S guarda solo si hay cambios", async () => {

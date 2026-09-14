@@ -3,68 +3,76 @@
  *
  * The analyzer keeps one active environment per project and every screen starts from it: the
  * editor sends against it, a run preselects it, the button in the bar says which one it is.
- * Without it each screen asked again and a person switching from «staging» to «local» had to do
- * it four times.
  *
- * Remembered per browser for now. A run still names its environment explicitly — this only
- * decides what is preselected — so two people on the same project picking different ones is fine.
+ * **It is the server's answer now**, `active` on each environment, and no longer a key in this
+ * browser's storage: two people on the same project see the same one, and a reload or another
+ * device does not quietly go back to the first environment of the list. Choosing one is a write,
+ * so it needs `editor`; for anyone below that the choice is shown and not offered.
  */
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-const KEY = "eq.active-environment";
-const listeners = new Set<() => void>();
-
-function read(): Record<string, string> {
-  try {
-    const raw = window.localStorage.getItem(KEY);
-    const parsed = raw ? (JSON.parse(raw) as unknown) : {};
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, string>) : {};
-  } catch {
-    return {};
-  }
-}
-
-// The snapshot must be referentially stable between changes, or useSyncExternalStore re-renders
-// forever. Parsed once, replaced only when something writes.
-let snapshot = typeof window === "undefined" ? {} : read();
-
-export function setActiveEnvironment(projectId: string, environmentId: string | null): void {
-  const nextValue = { ...snapshot };
-  if (environmentId) nextValue[projectId] = environmentId;
-  else delete nextValue[projectId];
-  snapshot = nextValue;
-  try {
-    window.localStorage.setItem(KEY, JSON.stringify(nextValue));
-  } catch {
-    // Storage denied: the choice holds for this tab.
-  }
-  for (const listener of listeners) listener();
-}
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
+import { api } from "@/lib/api";
+import { useCan, useOrganization } from "@/lib/auth";
+import type { Environment } from "@/lib/types";
 
 export function useActiveEnvironment(
   projectId: string | undefined,
 ): [string | null, (environmentId: string | null) => void] {
-  const all = useSyncExternalStore(subscribe, () => snapshot);
+  const organization = useOrganization();
+  const canEdit = useCan("editor");
+  const queryClient = useQueryClient();
+  const base = `/orgs/${organization?.id}/projects/${projectId}`;
+
+  const environments = useQuery({
+    queryKey: ["environments", projectId],
+    enabled: Boolean(organization && projectId),
+    queryFn: () => api<Environment[]>(`${base}/environments`),
+  });
+
+  const activate = useMutation({
+    mutationFn: (environmentId: string) =>
+      api<void>(`${base}/environments/${environmentId}/activate`, { method: "POST" }),
+    // Moved in the cache first, so the bar, the editor and the selects agree the moment it is
+    // clicked; the refetch afterwards is what makes it true.
+    onMutate: (environmentId) => {
+      queryClient.setQueryData<Environment[]>(["environments", projectId], (current) =>
+        current?.map((environment) => ({ ...environment, active: environment.id === environmentId })),
+      );
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["environments", projectId] });
+      void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+    },
+  });
+
+  const { mutate } = activate;
   const set = useCallback(
     (environmentId: string | null) => {
-      if (projectId) setActiveEnvironment(projectId, environmentId);
+      if (!projectId || !environmentId || !canEdit) return;
+      const current = environments.data?.find((environment) => environment.active)?.id;
+      if (current !== environmentId) mutate(environmentId);
     },
-    [projectId],
+    [projectId, canEdit, environments.data, mutate],
   );
-  return [projectId ? (all[projectId] ?? null) : null, set];
+
+  return [environments.data?.find((environment) => environment.active)?.id ?? null, set];
 }
 
 /**
- * The active environment if it still exists, else the first one.
+ * The environment a screen should use: the one it was told about, else the project's active one.
  *
- * A deleted environment must not stay «active»: every screen would preselect an id no select can
- * show, and the run button would be disabled with nothing on the screen saying why.
+ * Never «the first of the list» any more. The server keeps exactly one active whenever there is
+ * any, so a missing one means there are none — and a select preselecting an arbitrary environment
+ * would be a guess shown as a decision.
  */
-export function resolveActive<T extends { id: string }>(stored: string | null, environments: T[]): T | null {
-  return environments.find((environment) => environment.id === stored) ?? environments[0] ?? null;
+export function resolveActive<T extends { id: string; active?: boolean }>(
+  stored: string | null,
+  environments: T[],
+): T | null {
+  return (
+    environments.find((environment) => environment.id === stored) ??
+    environments.find((environment) => environment.active) ??
+    null
+  );
 }

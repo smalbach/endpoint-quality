@@ -112,6 +112,8 @@ export type ProjectSummaryOf<T> = {
   description: string;
   archivedAt: T | null;
   baseUrl: string;
+  /** The environment every screen starts from; null while the project has none. */
+  activeEnvironmentId: string | null;
   tags: string[];
   auth: ProjectAuthView;
   lastRun: ProjectLastRunOf<T> | null;
@@ -172,7 +174,24 @@ export type EnvironmentSummaryOf<T> = {
   disabledVariables: Record<string, EnvironmentVariableView>;
   writesAllowed: boolean;
   authEnforced: boolean;
+  /** The project's active environment. Exactly one is, whenever there is any. */
+  active: boolean;
   credentials: CredentialSummaryOf<T>[];
+};
+
+/**
+ * The token a person captured in a project — from its login, or set by a script as `token`.
+ *
+ * The token itself never leaves the API; this is what the bar shows about it. `claims` is the JWT
+ * payload undecoded-and-unverified, or null when the token is not a JWT.
+ */
+export type SessionTokenViewOf<T> = {
+  source: "login" | "script";
+  capturedAt: T;
+  expiresAt: T | null;
+  expired: boolean;
+  claims: Record<string, unknown> | null;
+  preview: string;
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -658,6 +677,20 @@ export type SentRequestView = {
   error: string | null;
   auth: string;
   environment: { id: string; name: string } | null;
+  /** What each script did, or null when that script is empty. */
+  scripts: { pre: ScriptRunView | null; post: ScriptRunView | null };
+  /** Set when this request captured a session token, and how. */
+  sessionToken: "login" | "script" | null;
+};
+
+/** One script's run, as the console shows it. Secrets in the output are already masked. */
+export type ScriptRunView = {
+  error: string | null;
+  logs: { level: "log" | "info" | "warn" | "error"; text: string }[];
+  tests: { name: string; passed: boolean; message: string | null }[];
+  /** Names of the environment variables whose current value it changed. */
+  environmentUpdates: string[];
+  durationMs: number;
 };
 
 export type Member = MemberOf<string>;
@@ -668,6 +701,7 @@ export type ContractSummary = ContractSummaryOf<string>;
 export type ProjectSummary = ProjectSummaryOf<string>;
 export type CredentialSummary = CredentialSummaryOf<string>;
 export type Environment = EnvironmentSummaryOf<string>;
+export type SessionTokenView = SessionTokenViewOf<string>;
 export type RequestTemplateView = RequestTemplateViewOf<string>;
 export type WorkflowView = WorkflowViewOf<string>;
 export type WorkflowsView = WorkflowsViewOf<string>;

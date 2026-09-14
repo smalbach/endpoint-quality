@@ -13,7 +13,7 @@
  *   literal text and came back as a 400 about a value the person never meant to send.
  * - **The request goes through the SSRF guard**, like every other address a customer types.
  */
-import { BODY_MODES, type EndpointBody, type EndpointHeader, type EndpointMethod } from "./model";
+import { BODY_MODES, MAX_SCRIPT, type EndpointBody, type EndpointHeader, type EndpointMethod } from "./model";
 
 export const MAX_UPLOAD_FILES = 10;
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
@@ -38,6 +38,9 @@ export type SendInput = {
   headers: EndpointHeader[];
   body: EndpointBody;
   auth: { mode: SendAuthMode; token: string };
+  /** What is in the editor, saved or not: «Enviar» runs the scripts on screen. */
+  preRequestScript: string;
+  postResponseScript: string;
 };
 
 type Problem = { field: string; detail: string };
@@ -90,6 +93,10 @@ export function readSendInput(raw: string | undefined): { input: SendInput } | {
       problems.push({ field: `headers.${index}.value`, detail: "Una cabecera no lleva saltos de línea" });
   });
 
+  for (const field of ["preRequestScript", "postResponseScript"] as const) {
+    if (text(value[field]).length > MAX_SCRIPT) problems.push({ field, detail: `Como mucho ${MAX_SCRIPT} caracteres` });
+  }
+
   if (problems.length) return { problems };
   return {
     input: {
@@ -115,6 +122,8 @@ export function readSendInput(raw: string | undefined): { input: SendInput } | {
         })),
       },
       auth: { mode: authMode as SendAuthMode, token: text(auth.token) },
+      preRequestScript: text(value.preRequestScript),
+      postResponseScript: text(value.postResponseScript),
     },
   };
 }

@@ -53,6 +53,7 @@ export class CreateProjectHandler implements ICommandHandler<
       // importing is a step that can fail — against an unreachable URL, or a document that does
       // not parse — and losing the project along with the failed import helps nobody.
       activeSpecVersionId: null,
+      activeEnvironmentId: null,
       baseUrl: command.settings.baseUrl?.trim() ?? "",
       tags: normalizeTags(command.settings.tags ?? []),
       auth: command.settings.auth ? storeProjectAuth(command.settings.auth, NO_AUTH, this.cipher) : NO_AUTH,

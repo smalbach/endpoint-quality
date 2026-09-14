@@ -170,6 +170,8 @@ export function sendForm(
       headers: payload.headers,
       body: payload.body,
       auth,
+      preRequestScript: payload.preRequestScript,
+      postResponseScript: payload.postResponseScript,
     }),
   );
   if (payload.body.mode === "form-data") {

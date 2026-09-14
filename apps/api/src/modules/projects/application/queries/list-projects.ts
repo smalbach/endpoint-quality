@@ -77,6 +77,7 @@ async function summarize(
     description: project.description,
     archivedAt: project.archivedAt,
     baseUrl: project.baseUrl,
+    activeEnvironmentId: project.activeEnvironmentId,
     tags: project.tags,
     auth: viewProjectAuth(project.auth),
     lastRun: lastRun

@@ -20,6 +20,9 @@ export type Project = {
    * on a date; removing the project to tidy a list would destroy the history. */
   archivedAt: Date | null;
   activeSpecVersionId: string | null;
+  /** Where «Enviar», a run and the bar start from. Kept pointing at an environment of this project
+   * by the environment commands: creating the first one sets it, deleting it promotes the next. */
+  activeEnvironmentId: string | null;
   /** The API this project points at. Each environment still has its own URL; this is the one a
    * new environment starts from and the one the analyzer's screens show. */
   baseUrl: string;

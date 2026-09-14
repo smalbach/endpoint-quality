@@ -9,7 +9,8 @@
  *   exists.
  * - **the credential is explicit**: inherit the project's, none, or a token for this request only.
  * - **unsaved changes are marked**, `Ctrl+S` saves and `Ctrl+Enter` sends.
- * - scripts are stored but not run yet; the tab says so rather than pretending.
+ * - scripts run on «Enviar», each in a process of its own; «Consola» shows what they printed and tested,
+ *   with every secret masked.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -17,6 +18,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { useOrganization } from "@/lib/auth";
 import { resolveActive, useActiveEnvironment } from "@/lib/active-environment";
+import { useSessionToken } from "@/lib/session-token";
 import { Badge, Button, inputClass } from "@/components/ui";
 import { Modal } from "@/components/overlay";
 import { useToast } from "@/components/toast";
@@ -49,7 +51,9 @@ import type {
   EndpointView,
   Environment,
   ProjectSummary,
+  ScriptRunView,
   SentRequestView,
+  SessionTokenView,
 } from "@/lib/types";
 
 const TABS = [
@@ -116,6 +120,7 @@ export function EndpointEditor({
   const environment = resolveActive(storedEnvironment, environments.data ?? []);
   const variables = useMemo(() => variablesOf(environment), [environment]);
   const variableNames = useMemo(() => Object.keys(variables).sort(), [variables]);
+  const sessionToken = useSessionToken(projectId);
 
   const [draft, setDraft] = useState<EndpointDraft>(NEW_ENDPOINT);
   const [saved, setSaved] = useState<EndpointDraft | null>(null);
@@ -162,6 +167,22 @@ export function EndpointEditor({
         method: "POST",
         body: sendForm(draft, environment?.id ?? null, auth, files),
       }),
+    onSuccess: async (result) => {
+      // What the scripts wrote is already stored; the bar and the variable suggestions catch up.
+      const updated = [
+        ...(result.scripts.pre?.environmentUpdates ?? []),
+        ...(result.scripts.post?.environmentUpdates ?? []),
+      ];
+      if (updated.length) await queryClient.invalidateQueries({ queryKey: ["environments", projectId] });
+      if (result.sessionToken) {
+        await queryClient.invalidateQueries({ queryKey: ["session-token", projectId] });
+        toast.success(
+          result.sessionToken === "login"
+            ? "Token de sesión capturado del login"
+            : "Token de sesión capturado por el script",
+        );
+      }
+    },
   });
 
   const canSend = canEdit && draft.path.trim().length > 0 && missing.length === 0 && !send.isPending;
@@ -323,18 +344,16 @@ export function EndpointEditor({
             project={project.data}
             environment={environment}
             variables={variableNames}
+            sessionToken={sessionToken.data ?? null}
           />
         )}
 
         {tab === "scripts" && (
           <div className="space-y-3">
-            <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-800">
-              Los scripts se guardan con el endpoint. Todavía no se ejecutan al enviar: correrán en un proceso aislado,
-              sin acceso a los secretos del servidor, con <code>pm.environment</code>, <code>pm.response</code> y{" "}
-              <code>console.log</code>.
-            </p>
+            <ScriptReference />
             <ScriptField
               label="Pre-request"
+              snippets={PRE_SNIPPETS}
               value={draft.preRequestScript}
               disabled={!canEdit}
               placeholder={"// Antes de la petición\n// pm.environment.set('timestamp', Date.now().toString());"}
@@ -342,6 +361,7 @@ export function EndpointEditor({
             />
             <ScriptField
               label="Post-response"
+              snippets={POST_SNIPPETS}
               value={draft.postResponseScript}
               disabled={!canEdit}
               placeholder={
@@ -548,9 +568,10 @@ export function EndpointEditor({
               aria-label="Entorno"
               className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700"
               value={environment?.id ?? ""}
+              disabled={!environments.data?.length}
               onChange={(event) => setActiveEnvironment(event.target.value || null)}
             >
-              <option value="">Ninguno · URL base del proyecto</option>
+              {!environments.data?.length && <option value="">Sin entornos · URL base del proyecto</option>}
               {environments.data?.map((entry) => (
                 <option key={entry.id} value={entry.id}>
                   {entry.name}
@@ -978,12 +999,14 @@ function AuthTab({
   project,
   environment,
   variables,
+  sessionToken,
 }: {
   auth: SendAuth;
   setAuth: (auth: SendAuth) => void;
   project: ProjectSummary | undefined;
   environment: Environment | null;
   variables: string[];
+  sessionToken: SessionTokenView | null;
 }) {
   const inherited = !project
     ? "…"
@@ -1000,7 +1023,16 @@ function AuthTab({
             : "El proyecto no tiene autenticación";
 
   const options: { value: SendAuth["mode"]; label: string; hint: string }[] = [
-    { value: "inherit", label: "Heredar", hint: inherited },
+    {
+      value: "inherit",
+      label: "Heredar",
+      // The captured token goes first, as the API applies it: a person who just logged in from the
+      // editor expects the next request to carry that token, not the project's.
+      hint:
+        sessionToken && !sessionToken.expired
+          ? `Token de sesión capturado ${sessionToken.source === "login" ? "del login" : "por un script"}. Sin él: ${inherited}`
+          : inherited,
+    },
     { value: "none", label: "Sin autenticación", hint: "No se añade ninguna credencial." },
     { value: "bearer", label: "Bearer token", hint: "Solo para esta petición; no se guarda." },
   ];
@@ -1046,22 +1078,98 @@ function AuthTab({
   );
 }
 
+const PRE_SNIPPETS: { label: string; code: string }[] = [
+  { label: "Marca de tiempo", code: 'pm.environment.set("timestamp", Date.now().toString());' },
+  { label: "Id aleatorio", code: 'pm.variables.set("requestId", crypto.randomUUID());' },
+  {
+    label: "Cabecera",
+    code: 'pm.request.headers.upsert({ key: "X-Request-Id", value: pm.variables.get("requestId") });',
+  },
+  {
+    label: "Basic auth",
+    code: 'pm.request.headers.upsert({\n  key: "Authorization",\n  value: "Basic " + btoa(pm.environment.get("user") + ":" + pm.environment.get("password")),\n});',
+  },
+];
+
+const POST_SNIPPETS: { label: string; code: string }[] = [
+  { label: "Estado 200", code: 'pm.test("responde 200", () => pm.response.to.have.status(200));' },
+  {
+    label: "Guardar token",
+    code: 'const data = pm.response.json();\npm.environment.set("token", data.access_token);',
+  },
+  { label: "Guardar id", code: 'pm.environment.set("id", String(pm.response.json().id));' },
+  {
+    label: "Tiempo",
+    code: 'pm.test("responde en menos de 500 ms", () => pm.expect(pm.response.responseTime).to.be.below(500));',
+  },
+  { label: "Imprimir", code: "console.log(pm.response.json());" },
+];
+
+/** The API a script has, on one strip — the analyzer's reference, with what this sandbox adds. */
+function ScriptReference() {
+  const members = [
+    "pm.environment.get / set / unset",
+    "pm.variables.get / set",
+    "pm.request.headers.upsert / remove",
+    "pm.response.json() · code · headers · responseTime",
+    "pm.test(nombre, fn)",
+    "pm.expect(x).to.equal(…)",
+    "console.log",
+    "btoa · atob · crypto.randomUUID()",
+  ];
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+      <p className="text-[11px] font-semibold text-slate-700">API de los scripts · sintaxis compatible con Postman</p>
+      <p className="mt-1 flex flex-wrap gap-1">
+        {members.map((member) => (
+          <code
+            key={member}
+            className="rounded bg-white px-1.5 py-0.5 font-mono text-[10px] text-slate-600 ring-1 ring-slate-200"
+          >
+            {member}
+          </code>
+        ))}
+      </p>
+      <p className="mt-1.5 text-[11px] leading-5 text-slate-500">
+        Corren al enviar, cada uno en un proceso aislado y sin acceso al servidor, 3 s como mucho.{" "}
+        <code>pm.environment.set</code> cambia el valor actual del entorno activo; guardar <code>token</code> captura el
+        token de sesión. Si el previo falla, la petición no sale. La consola oculta los secretos.
+      </p>
+    </div>
+  );
+}
+
 function ScriptField({
   label,
   value,
   onChange,
   placeholder,
   disabled,
+  snippets,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
   disabled: boolean;
+  snippets: { label: string; code: string }[];
 }) {
   return (
     <div>
-      <p className="mb-1 text-xs font-semibold text-slate-700">{label}</p>
+      <div className="mb-1 flex flex-wrap items-center gap-1">
+        <p className="mr-1 text-xs font-semibold text-slate-700">{label}</p>
+        {!disabled &&
+          snippets.map((snippet) => (
+            <button
+              key={snippet.label}
+              type="button"
+              className="rounded-md border border-slate-200 px-1.5 py-0.5 text-[10px] text-slate-500 hover:border-slate-400 hover:text-slate-800"
+              onClick={() => onChange(value.trim() ? `${value.replace(/\s+$/, "")}\n${snippet.code}` : snippet.code)}
+            >
+              + {snippet.label}
+            </button>
+          ))}
+      </div>
       <textarea
         aria-label={`Script ${label}`}
         className="h-36 w-full rounded-lg border border-slate-200 bg-slate-950 p-3 font-mono text-[11px] leading-5 text-slate-100 outline-none"
@@ -1087,6 +1195,15 @@ function ResponsePanel({ send }: { send: { data?: SentRequestView; error: Error 
   const [copied, setCopied] = useState(false);
   const result = send.data;
   const body = result?.response ? prettyBody(result.response.body) : null;
+  // A pre-request script that failed is why there is no response, and its console is the answer.
+  useEffect(() => {
+    if (result?.scripts.pre?.error) setTab("console");
+  }, [result]);
+  const runs = result
+    ? [result.scripts.pre, result.scripts.post].filter((run): run is ScriptRunView => run !== null)
+    : [];
+  const tests = runs.flatMap((run) => run.tests);
+  const consoleCount = runs.reduce((total, run) => total + run.logs.length + run.tests.length + (run.error ? 1 : 0), 0);
   const headersText = result?.response
     ? Object.entries(result.response.headers)
         .map(([name, value]) => `${name}: ${value}`)
@@ -1123,6 +1240,17 @@ function ResponsePanel({ send }: { send: { data?: SentRequestView; error: Error 
             <span className="text-[11px] text-slate-500">{formatDuration(result.response.durationMs)}</span>
             <span className="text-[11px] text-slate-500">{formatBytes(result.response.sizeBytes)}</span>
           </>
+        )}
+        {tests.length > 0 && (
+          <Badge
+            className={
+              tests.every((test) => test.passed)
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-rose-200 bg-rose-50 text-rose-700"
+            }
+          >
+            {tests.filter((test) => test.passed).length}/{tests.length} pruebas
+          </Badge>
         )}
         {result && (
           <span className="ml-auto truncate text-[11px] text-slate-400" title={result.auth}>
@@ -1163,6 +1291,9 @@ function ResponsePanel({ send }: { send: { data?: SentRequestView; error: Error 
                 )}
               >
                 {entry.label}
+                {entry.id === "console" && consoleCount > 0 && (
+                  <span className="ml-1 text-slate-400">{consoleCount}</span>
+                )}
               </button>
             ))}
             {tab !== "console" && (
@@ -1175,9 +1306,7 @@ function ResponsePanel({ send }: { send: { data?: SentRequestView; error: Error 
             )}
           </div>
           {tab === "console" ? (
-            <p className="mt-2 rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-[11px] text-slate-400">
-              Sin salida. La consola mostrará lo que escriban los scripts cuando se ejecuten.
-            </p>
+            <ScriptConsole scripts={result.scripts} />
           ) : (
             <pre className="mt-2 max-h-96 min-h-24 overflow-auto rounded-xl bg-slate-950 p-3 font-mono text-[11px] leading-5 whitespace-pre-wrap text-slate-200">
               {shown || (tab === "body" ? "(sin cuerpo)" : "")}
@@ -1185,6 +1314,77 @@ function ResponsePanel({ send }: { send: { data?: SentRequestView; error: Error 
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+const LOG_TONE: Record<ScriptRunView["logs"][number]["level"], string> = {
+  log: "text-slate-200",
+  info: "text-sky-300",
+  warn: "text-amber-300",
+  error: "text-rose-300",
+};
+
+/** What each script printed, tested and saved — one block per script that ran. */
+function ScriptConsole({ scripts }: { scripts: SentRequestView["scripts"] }) {
+  const runs: [string, ScriptRunView][] = [];
+  if (scripts.pre) runs.push(["Script previo", scripts.pre]);
+  if (scripts.post) runs.push(["Script posterior", scripts.post]);
+  if (runs.length === 0)
+    return (
+      <p className="mt-2 rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-[11px] text-slate-400">
+        Sin scripts. Lo que un script imprima con console.log y sus pm.test aparecen aquí.
+      </p>
+    );
+  return (
+    <div className="mt-2 space-y-3">
+      {runs.map(([label, run]) => {
+        const passed = run.tests.filter((test) => test.passed).length;
+        return (
+          <div key={label} className="overflow-hidden rounded-xl border border-slate-200">
+            <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50 px-3 py-1.5 text-[11px]">
+              <span className="font-semibold text-slate-700">{label}</span>
+              <span className="text-slate-400">{formatDuration(run.durationMs)}</span>
+              {run.tests.length > 0 && (
+                <span className={passed === run.tests.length ? "text-emerald-700" : "text-rose-700"}>
+                  {passed}/{run.tests.length} pruebas
+                </span>
+              )}
+              {run.environmentUpdates.length > 0 && (
+                <span className="ml-auto truncate text-slate-500" title={run.environmentUpdates.join(", ")}>
+                  Guardó en el entorno: {run.environmentUpdates.join(", ")}
+                </span>
+              )}
+            </div>
+            {run.error && <p className="bg-rose-50 px-3 py-1.5 font-mono text-[11px] text-rose-700">{run.error}</p>}
+            {run.tests.length > 0 && (
+              <ul className="space-y-0.5 px-3 py-1.5">
+                {run.tests.map((test, index) => (
+                  <li key={index} className="text-[11px] text-slate-700">
+                    <span className={test.passed ? "text-emerald-600" : "text-rose-600"}>
+                      {test.passed ? "✓" : "✗"}
+                    </span>{" "}
+                    {test.name}
+                    {test.message && <span className="text-rose-600"> — {test.message}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {run.logs.length > 0 && (
+              <pre className="max-h-64 overflow-auto bg-slate-950 p-3 font-mono text-[11px] leading-5 whitespace-pre-wrap">
+                {run.logs.map((log, index) => (
+                  <div key={index} className={LOG_TONE[log.level]}>
+                    {log.text}
+                  </div>
+                ))}
+              </pre>
+            )}
+            {!run.error && run.tests.length === 0 && run.logs.length === 0 && (
+              <p className="px-3 py-2 text-[11px] text-slate-400">Sin salida.</p>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

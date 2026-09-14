@@ -24,7 +24,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       },
       {
         title: "Crea un entorno",
-        body: "En Settings → Entornos: una URL base, sus variables y las credenciales de cada rol. Elige cuál es el activo desde el botón de entorno de la barra superior.",
+        body: "En Settings → Entornos: una URL base, sus variables y las credenciales de cada rol. Elige cuál es el activo —el mismo para todo el proyecto— desde el botón de entorno de la barra superior, que también abre el gestor de entornos y enseña el token de sesión capturado.",
       },
       {
         title: "Lanza la corrida",
@@ -48,7 +48,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       },
       {
         title: "Probar",
-        body: "El editor manda lo que hay en pantalla, guardado o no, contra el entorno elegido: parámetros, cabeceras, cuerpo (JSON, texto, form-data con ficheros, urlencoded o binario) y la autenticación heredada del proyecto o un token solo para esa petición. Ctrl+Enter envía y Ctrl+S guarda.",
+        body: "El editor manda lo que hay en pantalla, guardado o no, contra el entorno elegido: parámetros, cabeceras, cuerpo (JSON, texto, form-data con ficheros, urlencoded o binario) y la autenticación heredada del proyecto —o el token de sesión que capturó el login— o un token solo para esa petición. Los scripts previo y posterior corren en un proceso aislado con la API pm (pm.environment, pm.variables, pm.request.headers, pm.response, pm.test, pm.expect) y console.log; la pestaña Consola enseña su salida con los secretos ocultos. Ctrl+Enter envía y Ctrl+S guarda.",
         tip: "Un entorno sin escrituras permitidas no deja enviar POST, PUT, PATCH ni DELETE.",
       },
       {

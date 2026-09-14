@@ -128,6 +128,8 @@ export class ProjectEntity {
   @Column({ type: "timestamptz", nullable: true }) archivedAt: Date | null;
   /** The version the runs use. Null until the first import succeeds. */
   @Column({ type: "uuid", nullable: true }) activeSpecVersionId: string | null;
+  /** The environment every screen starts from. Null only while the project has none. */
+  @Column({ type: "uuid", nullable: true }) activeEnvironmentId: string | null;
   @Column({ type: "varchar", length: 2000, default: "" }) baseUrl: string;
   @Column({ type: "jsonb", default: () => "'[]'::jsonb" }) tags: string[];
   /** `none`, `bearer`, `basic` or `api_key`. */
@@ -493,6 +495,21 @@ export class EndpointEntity {
   @Column({ type: "timestamptz", nullable: true }) deletedAt: Date | null;
 }
 
+/**
+ * The token one person captured in one project: from the project's login, or set by a script.
+ * Encrypted, and never returned — the claims are, because they already travel in clear inside it.
+ */
+@Entity({ name: "session_tokens" })
+export class SessionTokenEntity {
+  @PrimaryColumn("uuid") actorId: string;
+  @PrimaryColumn("uuid") projectId: string;
+  @Column({ type: "text" }) tokenCiphertext: string;
+  @Column({ type: "jsonb", nullable: true }) claims: Record<string, unknown> | null;
+  @Column({ type: "timestamptz", nullable: true }) expiresAt: Date | null;
+  @Column({ type: "timestamptz" }) capturedAt: Date;
+  @Column({ type: "varchar", length: 20 }) source: string;
+}
+
 // The line breaks group these by module, which is information a formatter cannot know and
 // one-per-line would lose.
 // prettier-ignore
@@ -500,7 +517,7 @@ export const ENTITIES = [
   UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity,
   PasswordResetTokenEntity,
   ProjectEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity,
-  EnvironmentEntity, EnvironmentCredentialEntity, ProjectConfigEntity,
+  EnvironmentEntity, EnvironmentCredentialEntity, SessionTokenEntity, ProjectConfigEntity,
   RequestTemplateEntity, WorkflowEntity, WorkflowDatasetEntity, WorkflowSuiteEntity,
   RunEntity, RunCaseEntity, RunStepEntity,
   EndpointEntity,

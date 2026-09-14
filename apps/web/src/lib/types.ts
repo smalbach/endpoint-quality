@@ -21,6 +21,8 @@ export type {
   CoverageView,
   CurrentUser,
   Environment,
+  ScriptRunView,
+  SessionTokenView,
   EndpointBodyMode,
   EndpointBodyView,
   EndpointFormFieldView,
