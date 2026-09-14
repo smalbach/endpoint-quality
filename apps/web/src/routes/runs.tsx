@@ -397,6 +397,12 @@ export function RunDetailPage() {
  * and all three are shown: a flow that writes to a database should show everything it wrote and
  * everything it undid. */
 function CaseDetail({ runCase }: { runCase: RunCaseView }) {
+  // The one line worth reading first on a red case: which step broke, and the assertion that broke
+  // it — so the diagnosis is at the top instead of hunted for down a list of green steps. A passed
+  // case has no broken step, so the banner never shows.
+  const brokenStep = runCase.steps.find((step) => !step.ok);
+  const brokenAssertion = brokenStep?.assertions.find((assertion) => !assertion.pass);
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -405,6 +411,22 @@ function CaseDetail({ runCase }: { runCase: RunCaseView }) {
         <Badge className={cn("border-transparent", statusClass[runCase.status])}>{runCase.status}</Badge>
         <span className="ml-auto font-mono text-[10px] text-slate-400">{runCase.scenarioId}</span>
       </div>
+
+      {brokenStep && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold">Falló en «{brokenStep.label}»</span>
+            {runCase.failure && <FailureTag failure={runCase.failure} />}
+            <span className="rounded bg-white/60 px-1.5 py-0.5 text-[10px] text-rose-700">{brokenStep.purpose}</span>
+          </div>
+          <p className="mt-1 leading-5">
+            {brokenAssertion?.detail ?? "El paso no pasó. Mira sus aserciones más abajo."}
+          </p>
+          {brokenStep.actual && (
+            <p className="mt-1 font-mono text-[10px] text-rose-600">respondió {brokenStep.actual.status}</p>
+          )}
+        </div>
+      )}
 
       {runCase.steps.map((step) => (
         <div key={step.id} className="rounded-xl border border-slate-200">

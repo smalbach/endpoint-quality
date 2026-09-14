@@ -59,6 +59,9 @@ export function WorkflowsPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [datasetId, setDatasetId] = useState("");
   const [concurrency, setConcurrency] = useState(1);
+  // A pause between steps, so the live timeline can be watched. It is the run's `delayMs`, which the
+  // orchestrator already honours; it changes the rhythm, never what is tested.
+  const [delayMs, setDelayMs] = useState(0);
 
   const enabled = Boolean(organization && projectId);
   const workflows = useQuery({
@@ -194,14 +197,17 @@ export function WorkflowsPage() {
     mutationFn: () =>
       api<{ runId: string }>(`${base}/runs`, {
         method: "POST",
-        body: { environmentId, workflowId: draft?.id, concurrency, ...(datasetId ? { datasetId } : {}) },
+        body: { environmentId, workflowId: draft?.id, concurrency, delayMs, ...(datasetId ? { datasetId } : {}) },
       }),
     onSuccess: ({ runId }) => void navigate(`/p/${projectId}/runs/${runId}`),
   });
 
   const runSuite = useMutation({
     mutationFn: (suiteId: string) =>
-      api<{ runId: string }>(`${base}/runs`, { method: "POST", body: { environmentId, suiteId, concurrency } }),
+      api<{ runId: string }>(`${base}/runs`, {
+        method: "POST",
+        body: { environmentId, suiteId, concurrency, delayMs },
+      }),
     onSuccess: ({ runId }) => void navigate(`/p/${projectId}/runs/${runId}`),
   });
 
@@ -241,6 +247,26 @@ export function WorkflowsPage() {
     mutationFn: (suiteId: string) => api<void>(`${base}/suites/${suiteId}`, { method: "DELETE" }),
     onSuccess: invalidate,
   });
+
+  // Ctrl/Cmd+S guarda, Ctrl/Cmd+Enter ejecuta. Por un ref actualizado en cada render, para que el
+  // atajo vea el estado de ahora sin volver a suscribir el listener en cada tecla.
+  const shortcut = useRef<(event: KeyboardEvent) => void>(() => {});
+  shortcut.current = (event: KeyboardEvent) => {
+    if (!(event.metaKey || event.ctrlKey)) return;
+    if (event.key === "s" || event.key === "S") {
+      event.preventDefault();
+      const isDirty = Boolean(draft && saved && (!unchanged(saved, draft) || Object.keys(templateEdits).length > 0));
+      if (canEdit && draft && isDirty && problems.length === 0 && !save.isPending) save.mutate();
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      if (draft && environmentId && steps.length && !run.isPending) run.mutate();
+    }
+  };
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => shortcut.current(event);
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   function setSteps(next: WorkflowStepView[]) {
     setDraft((current) => (current ? { ...current, steps: next } : current));
@@ -507,6 +533,8 @@ export function WorkflowsPage() {
                 onTemplate={(template) => setTemplateEdits((current) => ({ ...current, [template.id]: template }))}
                 concurrency={concurrency}
                 onConcurrency={setConcurrency}
+                delayMs={delayMs}
+                onDelay={setDelayMs}
                 onRun={() => run.mutate()}
                 onDelete={() => deleteWorkflow.mutate(draft.id)}
                 running={run.isPending}

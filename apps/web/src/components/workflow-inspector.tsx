@@ -65,9 +65,11 @@ export function WorkflowInspector({
   environments,
   environmentId,
   concurrency,
+  delayMs,
   canEdit,
   onEnvironment,
   onConcurrency,
+  onDelay,
   onWorkflow,
   onSteps,
   onTemplate,
@@ -86,9 +88,11 @@ export function WorkflowInspector({
   environments: Environment[];
   environmentId: string;
   concurrency: number;
+  delayMs: number;
   canEdit: boolean;
   onEnvironment: (id: string) => void;
   onConcurrency: (value: number) => void;
+  onDelay: (value: number) => void;
   onWorkflow: (change: Partial<Pick<WorkflowView, "name" | "description">>) => void;
   onSteps: (steps: WorkflowStepView[]) => void;
   onTemplate: (template: RequestTemplateView) => void;
@@ -168,6 +172,17 @@ export function WorkflowInspector({
             value={concurrency}
             onChange={(event) => onConcurrency(Math.min(10, Math.max(1, Number(event.target.value) || 1)))}
           />
+        </Field>
+        <Field
+          label="Velocidad"
+          hint="Una pausa entre pasos, para poder mirar el timeline mientras corre. No es una espera del paso: no cambia lo que se prueba, solo el ritmo."
+        >
+          <select className={inputClass} value={delayMs} onChange={(event) => onDelay(Number(event.target.value))}>
+            <option value={0}>Rápido</option>
+            <option value={300}>Normal</option>
+            <option value={1000}>Lento</option>
+            <option value={2500}>Paso a paso</option>
+          </select>
         </Field>
         <Button className="mt-2 w-full" disabled={!environmentId || !steps.length || running} onClick={onRun}>
           Ejecutar flujo
