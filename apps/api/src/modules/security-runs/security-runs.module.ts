@@ -83,6 +83,7 @@ export const SECURITY_AI_PROVIDER = {
     ...SECURITY_RUN_COMMAND_HANDLERS,
     ...SECURITY_RUN_QUERY_HANDLERS,
   ],
+  exports: [SECURITY_RUN_REPOSITORY],
 })
 export class SecurityRunsModule implements OnApplicationBootstrap {
   constructor(private readonly executor: SecurityRunExecutor) {}

@@ -51,5 +51,6 @@ export const CODE_SCAN_ADAPTERS = [
   ],
   controllers: [CodeScanController],
   providers: [...CODE_SCAN_ADAPTERS, ...CODE_SCAN_COMMAND_HANDLERS, ...CODE_SCAN_QUERY_HANDLERS],
+  exports: [CODE_SCAN_REPOSITORY],
 })
 export class CodeScanModule {}

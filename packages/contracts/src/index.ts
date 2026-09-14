@@ -1025,6 +1025,53 @@ export type CodeScanDetailViewOf<T> = {
   createdAt: T;
 };
 
+// ---------------------------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------------------------
+
+/** One project's health at a glance, aggregated across its modules. Nulls mean «never run». */
+export type DashboardProjectView = {
+  id: string;
+  name: string;
+  archived: boolean;
+  endpoints: number;
+  flows: number;
+  securityScore: number | null;
+  /** 0..1 over the latest contract run's cases. */
+  passRate: number | null;
+  perfP95Ms: number | null;
+  lastActivityAt: string | null;
+};
+
+export type DashboardView = {
+  totals: { projects: number; endpoints: number; avgSecurityScore: number | null };
+  projects: DashboardProjectView[];
+};
+
+// ---------------------------------------------------------------------------------------------
+// History (standalone analyses across modules)
+// ---------------------------------------------------------------------------------------------
+
+export type HistoryKind = "security" | "contract" | "performance" | "scan";
+
+/** One analysis someone ran, whatever module produced it — the unified history row. */
+export type HistoryEntryView = {
+  id: string;
+  projectId: string;
+  projectName: string;
+  kind: HistoryKind;
+  /** A short human line: «Corrida de seguridad», «Plan: Carga básica», … */
+  title: string;
+  status: string;
+  /** The headline number for the kind: a score, a pass rate, a p95 — as text, ready to show. */
+  metric: string | null;
+  /** Where to open it. */
+  href: string;
+  createdAt: string;
+};
+
+export type HistoryPageView = { entries: HistoryEntryView[]; total: number; page: number; pageSize: number };
+
 export type Member = MemberOf<string>;
 export type PendingInvitation = PendingInvitationOf<string>;
 export type MembersView = MembersViewOf<string>;

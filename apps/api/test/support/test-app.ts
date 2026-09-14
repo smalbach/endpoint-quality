@@ -96,6 +96,8 @@ import { CODE_CONNECTOR_REPOSITORY, CODE_SCAN_REPOSITORY, GITHUB_SOURCE } from "
 import { CodeScanController } from "@/modules/code-scan/presentation/code-scan.controller";
 import { GithubSource } from "@/modules/code-scan/infrastructure/github-source";
 import { CODE_SCAN_COMMAND_HANDLERS, CODE_SCAN_QUERY_HANDLERS } from "@/modules/code-scan/code-scan.module";
+import { DashboardController } from "@/modules/dashboard/presentation/dashboard.controller";
+import { DASHBOARD_QUERY_HANDLERS } from "@/modules/dashboard/dashboard.module";
 import { CONFIG_COMMAND_HANDLERS, CONFIG_QUERY_HANDLERS } from "@/modules/config/config.module";
 import { ProjectConfigController } from "@/modules/config/presentation/config.controller";
 import { WORKFLOW_REPOSITORY } from "@/modules/workflows/domain/ports";
@@ -292,6 +294,7 @@ export async function createTestApp(): Promise<TestContext> {
       SecurityRunsController,
       PerformanceController,
       CodeScanController,
+      DashboardController,
     ],
     providers: [
       { provide: ENV, useValue: env },
@@ -375,6 +378,7 @@ export async function createTestApp(): Promise<TestContext> {
       ...PERFORMANCE_QUERY_HANDLERS,
       ...CODE_SCAN_COMMAND_HANDLERS,
       ...CODE_SCAN_QUERY_HANDLERS,
+      ...DASHBOARD_QUERY_HANDLERS,
       // The global guard and filter are registered exactly as `AppModule` does, because half of
       // what these tests check is that the wiring protects what it should. Throttling is left
       // out: it is the one piece whose behaviour is a rate, and asserting it here would make
