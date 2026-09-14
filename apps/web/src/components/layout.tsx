@@ -11,7 +11,11 @@ import { useHelp } from "@/components/help-panel";
 import { EnvironmentButton } from "@/components/environment-button";
 
 /** The menu of the bar across the top, for a signed-in person. */
-export const GLOBAL_NAV = [{ to: "/projects", label: "Proyectos" }] as const;
+export const GLOBAL_NAV = [
+  { to: "/dashboard", label: "Panel" },
+  { to: "/projects", label: "Proyectos" },
+  { to: "/history", label: "Historial" },
+] as const;
 
 /**
  * The sections of a project, as absolute paths, in the analyzer's order.

@@ -115,4 +115,9 @@ export type {
   CodeScanStatusView,
   CodeScanSummaryView,
   CodeScanDetailView,
+  DashboardView,
+  DashboardProjectView,
+  HistoryKind,
+  HistoryEntryView,
+  HistoryPageView,
 } from "@eq/contracts";

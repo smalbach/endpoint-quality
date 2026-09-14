@@ -11,6 +11,8 @@ import { ToastProvider } from "@/components/toast";
 import { HelpProvider } from "@/components/help-panel";
 import { LoginPage } from "@/routes/login";
 import { ProjectsPage } from "@/routes/projects";
+import { DashboardPage } from "@/routes/dashboard";
+import { HistoryPage } from "@/routes/history";
 import { SettingsPage } from "@/routes/settings";
 import { MatrixPage } from "@/routes/matrix";
 import { EndpointEditorPage, EndpointsPage } from "@/routes/endpoints";
@@ -80,7 +82,9 @@ createRoot(document.getElementById("root")!).render(
                 <Route element={<Protected />}>
                   <Route element={<PageLayout />}>
                     <Route index element={<Navigate to="/projects" replace />} />
+                    <Route path="dashboard" element={<DashboardPage />} />
                     <Route path="projects" element={<ProjectsPage />} />
+                    <Route path="history" element={<HistoryPage />} />
                     <Route path="settings/org" element={<SettingsPage />} />
                     <Route path="*" element={<NotFoundPage />} />
                   </Route>
