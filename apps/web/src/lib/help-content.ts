@@ -64,7 +64,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     steps: [
       {
         title: "Declara los roles",
-        body: "Escribe los roles de la API (vendedor, comprador, admin…). Cada entorno guarda la credencial de cada uno.",
+        body: "En Roles → «+ Nuevo rol»: nombre, descripción, color y si dos usuarios del mismo rol deben estar aislados. Luego decide por endpoint —o por carpeta— si el rol debe pasar, debe ser rechazado o queda sin decidir, y qué datos ve. Cada entorno guarda la credencial de cada rol.",
       },
       {
         title: "Rellena la matriz",

@@ -47,6 +47,15 @@ const insertUser = (id: string, email: string) =>
     `INSERT INTO users (id, email, name, "passwordDigest", status, "createdAt") VALUES ($1, $2, 'x', 'x', 'active', now())`,
     [id, email],
   );
+/** Reverts migrations, newest first, until `name` itself has been reverted. */
+async function undoUntil(name: string): Promise<void> {
+  for (;;) {
+    const [last]: { name: string }[] = await dataSource!.query(`SELECT name FROM migrations ORDER BY id DESC LIMIT 1`);
+    await dataSource!.undoLastMigration();
+    if (!last || last.name === name) return;
+  }
+}
+
 const insertOrganization = (id: string, slug: string) =>
   dataSource!.query(`INSERT INTO organizations (id, name, slug, "createdAt") VALUES ($1, 'x', $2, now())`, [id, slug]);
 
@@ -66,9 +75,12 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
       "organizations",
       "password_reset_tokens",
       "project_config",
+      "project_roles",
       "projects",
       "refresh_tokens",
       "request_templates",
+      "role_endpoint_permissions",
+      "role_rules",
       "run_cases",
       "run_steps",
       "runs",
@@ -596,10 +608,9 @@ describe("retención en SQL", { skip: DATABASE_URL ? false : REASON }, () => {
 describe("endpoints", { skip: DATABASE_URL ? false : REASON }, () => {
   test("la migración copia como endpoints las operaciones del contrato activo de cada proyecto", async () => {
     const [userId, organizationId, projectId, versionId] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
-    // Back to before the table existed, with a project that already has a contract. Two steps:
-    // the endpoints migration is no longer the last one.
-    await dataSource!.undoLastMigration();
-    await dataSource!.undoLastMigration();
+    // Back to before the table existed, with a project that already has a contract: every
+    // migration after the endpoints one is undone first.
+    await undoUntil("Endpoints1700000014000");
     try {
       await insertUser(userId, `endpoints-${userId}@example.com`);
       await insertOrganization(organizationId, `o-${organizationId.slice(0, 8)}`);
@@ -699,7 +710,7 @@ describe("entorno activo y token de sesión", { skip: DATABASE_URL ? false : REA
       randomUUID(),
       randomUUID(),
     ];
-    await dataSource!.undoLastMigration();
+    await undoUntil("ActiveEnvironmentAndSessionTokens1700000015000");
     try {
       await insertUser(userId, `active-${userId}@example.com`);
       await insertOrganization(organizationId, `o-${organizationId.slice(0, 8)}`);
@@ -742,6 +753,83 @@ describe("entorno activo y token de sesión", { skip: DATABASE_URL ? false : REA
     );
     await dataSource!.query(`DELETE FROM projects WHERE id = $1`, [projectId]);
     const left: unknown[] = await dataSource!.query(`SELECT 1 FROM session_tokens WHERE "projectId" = $1`, [projectId]);
+    assert.equal(left.length, 0);
+  });
+});
+
+describe("roles", { skip: DATABASE_URL ? false : REASON }, () => {
+  test("la migración convierte access en roles y permisos; un nombre por proyecto; un rol no es regla sobre sí", async () => {
+    const [userId, organizationId, projectId, endpointId] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    await undoUntil("Roles1700000016000");
+    try {
+      await insertUser(userId, `roles-${userId}@example.com`);
+      await insertOrganization(organizationId, `o-${organizationId.slice(0, 8)}`);
+      await dataSource!.query(
+        `INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`,
+        [projectId, organizationId, `r-${projectId.slice(0, 8)}`, userId],
+      );
+      await dataSource!.query(
+        `INSERT INTO endpoints (id, "projectId", method, path, "operationId", "createdAt", "updatedAt", "updatedBy")
+         VALUES ($1, $2, 'GET', '/orders', 'listOrders', now(), now(), $3)`,
+        [endpointId, projectId, userId],
+      );
+      await dataSource!.query(
+        `INSERT INTO project_config ("projectId", section, data, "updatedAt", "updatedBy") VALUES ($1, 'access', $2::jsonb, now(), $3)`,
+        [
+          projectId,
+          JSON.stringify({
+            access: {
+              roles: ["vendedor", "comprador"],
+              deniedStatuses: [403, 404],
+              rules: [{ operationId: "listOrders", allow: ["vendedor"], deny: ["comprador"] }],
+              crossRole: [],
+            },
+          }),
+          userId,
+        ],
+      );
+    } finally {
+      await dataSource!.runMigrations();
+    }
+
+    const roles: { id: string; name: string; color: string; position: number }[] = await dataSource!.query(
+      `SELECT id, name, color, position FROM project_roles WHERE "projectId" = $1 ORDER BY position`,
+      [projectId],
+    );
+    assert.deepEqual(
+      roles.map((role) => [role.name, role.color, role.position]),
+      [
+        ["vendedor", "#6366f1", 0],
+        ["comprador", "#8b5cf6", 1],
+      ],
+    );
+    const cells: { roleId: string; access: string }[] = await dataSource!.query(
+      `SELECT "roleId", access FROM role_endpoint_permissions WHERE "endpointId" = $1`,
+      [endpointId],
+    );
+    assert.deepEqual(cells.map((cell) => [roles.find((role) => role.id === cell.roleId)!.name, cell.access]).sort(), [
+      ["comprador", "deny"],
+      ["vendedor", "allow"],
+    ]);
+
+    await assert.rejects(
+      dataSource!.query(
+        `INSERT INTO project_roles (id, "projectId", name, color, "createdAt", "updatedAt") VALUES ($1, $2, 'vendedor', '#000000', now(), now())`,
+        [randomUUID(), projectId],
+      ),
+      /duplicate key|unique/i,
+    );
+    await assert.rejects(
+      dataSource!.query(
+        `INSERT INTO role_rules ("projectId", "sourceRoleId", "targetRoleId", "canRead") VALUES ($1, $2, $2, true)`,
+        [projectId, roles[0].id],
+      ),
+      /check constraint/i,
+    );
+    await dataSource!.query(`DELETE FROM project_roles WHERE id = $1`, [roles[0].id]);
+    const left: unknown[] = await dataSource!.query(`SELECT 1 FROM role_endpoint_permissions WHERE "roleId" = $1`, [
+      roles[0].id,
+    ]);
     assert.equal(left.length, 0);
   });
 });

@@ -683,6 +683,44 @@ export type SentRequestView = {
   sessionToken: "login" | "script" | null;
 };
 
+// ---------------------------------------------------------------------------------------------
+// Roles
+// ---------------------------------------------------------------------------------------------
+
+export type DataScope = "all" | "own" | "none";
+/** A missing permission is `undecided`: it generates no case, and the screen says so. */
+export type RoleAccess = "allow" | "deny" | "undecided";
+
+export type RoleViewOf<T> = {
+  id: string;
+  name: string;
+  description: string;
+  color: string;
+  sameRoleDataIsolation: boolean;
+  position: number;
+  createdAt: T;
+  updatedAt: T;
+  /** Endpoints this role was decided to reach, and to be refused. */
+  allowed: number;
+  denied: number;
+};
+
+export type RolePermissionView = { endpointId: string; access: Exclude<RoleAccess, "undecided">; dataScope: DataScope };
+export type EndpointRoleAccessView = {
+  roleId: string;
+  name: string;
+  color: string;
+  access: RoleAccess;
+  dataScope: DataScope;
+};
+export type RoleRuleView = {
+  sourceRoleId: string;
+  targetRoleId: string;
+  canRead: boolean;
+  canWrite: boolean;
+  canDelete: boolean;
+};
+
 /** One script's run, as the console shows it. Secrets in the output are already masked. */
 export type ScriptRunView = {
   error: string | null;
@@ -701,6 +739,7 @@ export type ContractSummary = ContractSummaryOf<string>;
 export type ProjectSummary = ProjectSummaryOf<string>;
 export type CredentialSummary = CredentialSummaryOf<string>;
 export type Environment = EnvironmentSummaryOf<string>;
+export type RoleView = RoleViewOf<string>;
 export type SessionTokenView = SessionTokenViewOf<string>;
 export type RequestTemplateView = RequestTemplateViewOf<string>;
 export type WorkflowView = WorkflowViewOf<string>;

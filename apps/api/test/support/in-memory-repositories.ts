@@ -29,6 +29,8 @@ import type { SpecRepositoryPort } from "@/modules/specs/domain/ports";
 import type { Credential, CredentialRole, Environment } from "@/modules/environments/domain/model";
 import type { EnvironmentRepositoryPort, SessionTokenRepositoryPort } from "@/modules/environments/domain/ports";
 import type { SessionToken } from "@/modules/environments/domain/session-token";
+import type { PermissionChange, Role, RolePermission, RoleRule } from "@/modules/roles/domain/model";
+import type { RoleRepositoryPort } from "@/modules/roles/domain/ports";
 import type { ConfigRepositoryPort, ConfigRow } from "@/modules/config/domain/ports";
 import type { ConfigSection } from "@eq/runner-core";
 import type { DatasetRow, RequestTemplateRow, SuiteRow, WorkflowRow } from "@/modules/workflows/domain/model";
@@ -543,5 +545,64 @@ export class InMemorySessionTokenRepository implements SessionTokenRepositoryPor
   }
   async remove(actorId: string, projectId: string): Promise<void> {
     this.rows.delete(`${actorId}:${projectId}`);
+  }
+}
+
+export class InMemoryRoleRepository implements RoleRepositoryPort {
+  readonly roles = new Map<string, Role>();
+  readonly permissions = new Map<string, RolePermission>();
+  readonly rules = new Map<string, RoleRule>();
+
+  async list(projectId: string): Promise<Role[]> {
+    return [...this.roles.values()]
+      .filter((role) => role.projectId === projectId)
+      .sort((a, b) => a.position - b.position || a.createdAt.getTime() - b.createdAt.getTime());
+  }
+  async findById(projectId: string, id: string): Promise<Role | null> {
+    const role = this.roles.get(id);
+    return role && role.projectId === projectId ? { ...role } : null;
+  }
+  async save(role: Role): Promise<void> {
+    // The unique index of the migration, honoured: a fake that stored two «admin» would hide the 409.
+    for (const other of this.roles.values())
+      if (other.projectId === role.projectId && other.name === role.name && other.id !== role.id)
+        throw new Error("duplicate key value violates unique constraint ux_project_roles_name");
+    this.roles.set(role.id, { ...role });
+  }
+  async remove(projectId: string, id: string): Promise<void> {
+    if (this.roles.get(id)?.projectId !== projectId) return;
+    this.roles.delete(id);
+    for (const [key, cell] of this.permissions) if (cell.roleId === id) this.permissions.delete(key);
+    for (const [key, rule] of this.rules)
+      if (rule.sourceRoleId === id || rule.targetRoleId === id) this.rules.delete(key);
+  }
+  async listPermissions(projectId: string, filter: { roleId?: string; endpointId?: string } = {}) {
+    const ids = new Set((await this.list(projectId)).map((role) => role.id));
+    return [...this.permissions.values()].filter(
+      (cell) =>
+        ids.has(cell.roleId) &&
+        (!filter.roleId || cell.roleId === filter.roleId) &&
+        (!filter.endpointId || cell.endpointId === filter.endpointId),
+    );
+  }
+  async applyPermissions(changes: PermissionChange[]): Promise<void> {
+    for (const change of changes) {
+      const key = `${change.roleId}:${change.endpointId}`;
+      if (change.access === "undecided") this.permissions.delete(key);
+      else
+        this.permissions.set(key, {
+          roleId: change.roleId,
+          endpointId: change.endpointId,
+          access: change.access,
+          dataScope: change.dataScope,
+        });
+    }
+  }
+  async listRules(projectId: string): Promise<RoleRule[]> {
+    return [...this.rules.values()].filter((rule) => rule.projectId === projectId);
+  }
+  async replaceRules(projectId: string, rules: RoleRule[]): Promise<void> {
+    for (const [key, rule] of this.rules) if (rule.projectId === projectId) this.rules.delete(key);
+    for (const rule of rules) this.rules.set(`${rule.sourceRoleId}:${rule.targetRoleId}`, { ...rule });
   }
 }

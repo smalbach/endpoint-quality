@@ -19,6 +19,7 @@ import { api, ApiError } from "@/lib/api";
 import { useOrganization } from "@/lib/auth";
 import { resolveActive, useActiveEnvironment } from "@/lib/active-environment";
 import { useSessionToken } from "@/lib/session-token";
+import { EndpointRoleAccess } from "@/components/endpoint-role-access";
 import { Badge, Button, inputClass } from "@/components/ui";
 import { Modal } from "@/components/overlay";
 import { useToast } from "@/components/toast";
@@ -427,15 +428,15 @@ export function EndpointEditor({
                 />
               </div>
             </Section>
-            <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
-              Los permisos por rol de este endpoint se configuran en la sección Roles.
-              {endpoint.data?.operationId && (
-                <>
-                  {" "}
-                  Operación del contrato: <span className="font-mono">{endpoint.data.operationId}</span>.
-                </>
-              )}
-            </p>
+            <Section title="Acceso por rol">
+              <EndpointRoleAccess
+                base={base}
+                projectId={projectId}
+                endpointId={endpointId}
+                operationId={endpoint.data?.operationId ?? null}
+                canEdit={canEdit}
+              />
+            </Section>
           </div>
         )}
       </div>

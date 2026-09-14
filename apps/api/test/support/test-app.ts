@@ -69,6 +69,9 @@ import { ProcessScriptSandbox } from "@/shared/scripts/process-script-sandbox";
 import { EnvironmentsController } from "@/modules/environments/presentation/environments.controller";
 import { ENVIRONMENT_COMMAND_HANDLERS, ENVIRONMENT_QUERY_HANDLERS } from "@/modules/environments/environments.module";
 import { CONFIG_REPOSITORY } from "@/modules/config/domain/ports";
+import { ROLE_REPOSITORY } from "@/modules/roles/domain/ports";
+import { RolesController } from "@/modules/roles/presentation/roles.controller";
+import { ROLE_COMMAND_HANDLERS, ROLE_QUERY_HANDLERS } from "@/modules/roles/roles.module";
 import { CONFIG_COMMAND_HANDLERS, CONFIG_QUERY_HANDLERS } from "@/modules/config/config.module";
 import { ProjectConfigController } from "@/modules/config/presentation/config.controller";
 import { WORKFLOW_REPOSITORY } from "@/modules/workflows/domain/ports";
@@ -96,6 +99,7 @@ import {
   InMemoryWorkflowRepository,
   InMemoryEnvironmentRepository,
   InMemorySessionTokenRepository,
+  InMemoryRoleRepository,
   InMemoryProjectRepository,
   InMemoryRunRepository,
   InMemorySpecRepository,
@@ -186,6 +190,7 @@ export type TestContext = {
     specs: InMemorySpecRepository;
     environments: InMemoryEnvironmentRepository;
     sessionTokens: InMemorySessionTokenRepository;
+    roles: InMemoryRoleRepository;
     config: InMemoryConfigRepository;
     workflows: InMemoryWorkflowRepository;
     runs: InMemoryRunRepository;
@@ -214,6 +219,7 @@ export async function createTestApp(): Promise<TestContext> {
     specs: new InMemorySpecRepository(),
     environments: new InMemoryEnvironmentRepository(),
     sessionTokens: new InMemorySessionTokenRepository(),
+    roles: new InMemoryRoleRepository(),
     config: new InMemoryConfigRepository(),
     workflows: new InMemoryWorkflowRepository(),
     runs: new InMemoryRunRepository(),
@@ -243,6 +249,7 @@ export async function createTestApp(): Promise<TestContext> {
       RunsController,
       RequestPreviewController,
       EndpointsController,
+      RolesController,
     ],
     providers: [
       { provide: ENV, useValue: env },
@@ -277,6 +284,7 @@ export async function createTestApp(): Promise<TestContext> {
       // does and a fake would not — the timeout, the missing environment, the refused escape.
       { provide: SCRIPT_SANDBOX, useClass: ProcessScriptSandbox },
       { provide: CONFIG_REPOSITORY, useValue: repositories.config },
+      { provide: ROLE_REPOSITORY, useValue: repositories.roles },
       { provide: WORKFLOW_REPOSITORY, useValue: repositories.workflows },
       { provide: ENDPOINT_REPOSITORY, useValue: repositories.endpoints },
       // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the
@@ -302,6 +310,8 @@ export async function createTestApp(): Promise<TestContext> {
       ...ENDPOINT_COMMAND_HANDLERS,
       ...ENDPOINT_QUERY_HANDLERS,
       ...ENDPOINT_EVENT_HANDLERS,
+      ...ROLE_COMMAND_HANDLERS,
+      ...ROLE_QUERY_HANDLERS,
       // The global guard and filter are registered exactly as `AppModule` does, because half of
       // what these tests check is that the wiring protects what it should. Throttling is left
       // out: it is the one piece whose behaviour is a rate, and asserting it here would make

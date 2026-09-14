@@ -22,6 +22,7 @@ import { RequestBodyTypes1700000012000 } from "./migrations/1700000012000-Reques
 import { ProjectSettingsAndAccountRecovery1700000013000 } from "./migrations/1700000013000-ProjectSettingsAndAccountRecovery";
 import { Endpoints1700000014000 } from "./migrations/1700000014000-Endpoints";
 import { ActiveEnvironmentAndSessionTokens1700000015000 } from "./migrations/1700000015000-ActiveEnvironmentAndSessionTokens";
+import { Roles1700000016000 } from "./migrations/1700000016000-Roles";
 
 // Ordered. TypeORM runs them by the timestamp in the class name, and the second one adds a
 // foreign key into a table the first creates.
@@ -42,6 +43,7 @@ export const MIGRATIONS = [
   ProjectSettingsAndAccountRecovery1700000013000,
   Endpoints1700000014000,
   ActiveEnvironmentAndSessionTokens1700000015000,
+  Roles1700000016000,
 ];
 
 export function buildDataSourceOptions(databaseUrl: string) {

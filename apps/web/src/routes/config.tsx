@@ -277,6 +277,7 @@ export function SectionEditor({
   disabled,
   operationIds,
   onSaved,
+  derivedRoles,
 }: {
   base: string;
   section: string;
@@ -287,6 +288,7 @@ export function SectionEditor({
   disabled: boolean;
   operationIds: string[];
   onSaved: () => void;
+  derivedRoles?: boolean;
 }) {
   const Editor = SECTION_EDITORS[section];
   const [open, setOpen] = useState(defaultOpen);
@@ -385,7 +387,13 @@ export function SectionEditor({
 
           <div className="mt-3">
             {Editor && !asJson ? (
-              <Editor value={draft} onChange={setDraft} disabled={disabled} operationIds={operationIds} />
+              <Editor
+                value={draft}
+                onChange={setDraft}
+                disabled={disabled}
+                operationIds={operationIds}
+                derivedRoles={derivedRoles}
+              />
             ) : (
               <textarea
                 className="h-64 w-full rounded-lg border border-slate-200 p-3 font-mono text-[11px] outline-none focus:border-slate-900 disabled:bg-slate-50"

@@ -510,6 +510,42 @@ export class SessionTokenEntity {
   @Column({ type: "varchar", length: 20 }) source: string;
 }
 
+/** A role of the API a project tests. The `access` section is derived from these rows. */
+@Entity({ name: "project_roles" })
+export class RoleEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Column({ type: "varchar", length: 20 }) name: string;
+  @Column({ type: "text", default: "" }) description: string;
+  @Column({ type: "varchar", length: 7 }) color: string;
+  @Column({ type: "boolean", default: false }) sameRoleDataIsolation: boolean;
+  @Column({ type: "int", default: 0 }) position: number;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) updatedAt: Date;
+}
+
+/** One decided cell: a role over an endpoint. No row is «sin decidir». */
+@Entity({ name: "role_endpoint_permissions" })
+export class RolePermissionEntity {
+  @PrimaryColumn("uuid") roleId: string;
+  @PrimaryColumn("uuid") endpointId: string;
+  /** `allow` or `deny`. */
+  @Column({ type: "varchar", length: 10 }) access: string;
+  /** `all`, `own` or `none`. */
+  @Column({ type: "varchar", length: 10, default: "all" }) dataScope: string;
+}
+
+/** Whether `target` may read, write and delete what `source` created. */
+@Entity({ name: "role_rules" })
+export class RoleRuleEntity {
+  @PrimaryColumn("uuid") sourceRoleId: string;
+  @PrimaryColumn("uuid") targetRoleId: string;
+  @Index() @Column("uuid") projectId: string;
+  @Column({ type: "boolean", default: false }) canRead: boolean;
+  @Column({ type: "boolean", default: false }) canWrite: boolean;
+  @Column({ type: "boolean", default: false }) canDelete: boolean;
+}
+
 // The line breaks group these by module, which is information a formatter cannot know and
 // one-per-line would lose.
 // prettier-ignore
@@ -521,4 +557,5 @@ export const ENTITIES = [
   RequestTemplateEntity, WorkflowEntity, WorkflowDatasetEntity, WorkflowSuiteEntity,
   RunEntity, RunCaseEntity, RunStepEntity,
   EndpointEntity,
+  RoleEntity, RolePermissionEntity, RoleRuleEntity,
 ];

@@ -64,6 +64,16 @@ import {
 } from "@/modules/projects/presentation/dto/projects.dto";
 import { PreviewRequestDto, StartRunDto } from "@/modules/runs/presentation/dto/runs.dto";
 import {
+  CreateRoleDto,
+  EndpointRoleAccessItemDto,
+  ReplaceRoleRulesDto,
+  RolePermissionItemDto,
+  RoleRuleItemDto,
+  SetEndpointRoleAccessDto,
+  SetRolePermissionsDto,
+  UpdateRoleDto,
+} from "@/modules/roles/presentation/dto/roles.dto";
+import {
   CreateDatasetDto,
   CreateRequestTemplateDto,
   CreateSuiteDto,
@@ -84,6 +94,14 @@ import {
  * without being added here breaks a test rather than quietly publishing `{}`.
  */
 const DTOS = [
+  CreateRoleDto,
+  UpdateRoleDto,
+  RolePermissionItemDto,
+  SetRolePermissionsDto,
+  EndpointRoleAccessItemDto,
+  SetEndpointRoleAccessDto,
+  RoleRuleItemDto,
+  ReplaceRoleRulesDto,
   RegisterDto,
   LoginDto,
   RefreshDto,

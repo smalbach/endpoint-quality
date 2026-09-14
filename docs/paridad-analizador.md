@@ -116,12 +116,12 @@ al pie.
 
 ### Roles
 
-| Capacidad                                                                    | Estado                                    |
-| ---------------------------------------------------------------------------- | ----------------------------------------- |
-| Rol con nombre, descripción, color, aislamiento entre mismo rol              | ½ (lista de nombres)                      |
-| Permisos por endpoint: acceso y alcance de datos all / own / none, por grupo | ½ (allow/deny por operación, sin alcance) |
-| Reglas entre roles R / W / D                                                 | ½ (un solo `allowed`)                     |
-| Acceso por rol desde el editor del endpoint                                  | ✗                                         |
+| Capacidad                                                                    | Estado |
+| ---------------------------------------------------------------------------- | ------ |
+| Rol con nombre, descripción, color, aislamiento entre mismo rol              | ✔      |
+| Permisos por endpoint: acceso y alcance de datos all / own / none, por grupo | ✔      |
+| Reglas entre roles R / W / D                                                 | ✔      |
+| Acceso por rol desde el editor del endpoint                                  | ✔      |
 
 ### Test Runs de seguridad
 
@@ -190,8 +190,10 @@ Cada fase deja el producto funcionando y se prueba en el navegador antes de pasa
    proceso aparte por script —sin variables de entorno, con el modelo de permisos de Node, sin generar
    código desde texto, 3 s y 64 MB— con la API `pm`/`env`, `pm.test`/`pm.expect` y consola con los
    secretos ocultos.
-5. **Roles.** Entidad de rol, permisos con alcance de datos, reglas R/W/D; se derivan a la sección
-   `access` para que la matriz de contrato siga leyéndolos.
+5. **Roles** · _hecha_. Tablas propias (rol con color y aislamiento, permiso por endpoint con tres
+   estados —permitido, denegado, sin decidir— y alcance de datos, reglas R/W/D entre roles); la sección
+   `access` se deriva de ellas en cada cambio. Guardar permisos es un parche, no un reemplazo;
+   renombrar un rol renombra sus credenciales y borrarlo se las lleva. Acceso por rol en el editor.
 6. **Test Runs de seguridad.** Paquete `security-rules` con las 17 reglas y estrategias, hallazgos,
    score, modal, página con filtros, PDF, visibilidad, IA opcional.
 7. **Flow Testing.** Grupos con DnD, tipos de nodo, informe con diagnóstico, esquema.

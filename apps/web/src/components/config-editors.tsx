@@ -24,7 +24,14 @@ import { compact, HTTP_METHODS, move, removeAt, replaceAt, slugId, type HttpMeth
 import { Button } from "@/components/ui";
 
 type Draft = Record<string, unknown>;
-type EditorProps = { value: Draft; onChange: (next: Draft) => void; disabled: boolean; operationIds: string[] };
+type EditorProps = {
+  value: Draft;
+  onChange: (next: Draft) => void;
+  disabled: boolean;
+  operationIds: string[];
+  /** `access` only: roles and their rules come from the Roles tables, so they are shown, not edited. */
+  derivedRoles?: boolean;
+};
 
 const field =
   "h-8 rounded-lg border border-slate-200 px-2 text-xs outline-none focus:border-slate-900 disabled:bg-slate-50";
@@ -805,7 +812,7 @@ function TextEditor({ value, onChange, disabled }: EditorProps) {
  * caso. Una rejilla de casillas —marcada o no— no podría decirlo, y convertiría cada silencio en
  * una afirmación que nadie escribió.
  */
-function AccessEditor({ value, onChange, disabled, operationIds }: EditorProps) {
+function AccessEditor({ value, onChange, disabled, operationIds, derivedRoles }: EditorProps) {
   const access = (value.access as Record<string, unknown>) ?? {};
   const roles = (access.roles as string[]) ?? [];
   const rules = (access.rules as Record<string, unknown>[]) ?? [];
@@ -836,27 +843,34 @@ function AccessEditor({ value, onChange, disabled, operationIds }: EditorProps) 
 
   return (
     <div className="space-y-3">
-      <div>
-        <p className={label}>Roles del proyecto</p>
-        <input
-          className={`${field} w-full font-mono`}
-          value={roles.join(", ")}
-          placeholder="vendedor, comprador, admin"
-          disabled={disabled}
-          onChange={(event) =>
-            edit({
-              roles: event.target.value
-                .split(",")
-                .map((role) => role.trim())
-                .filter(Boolean),
-            })
-          }
-        />
-        <p className="mt-1 text-[10px] leading-4 text-slate-400">
-          Se declaran aquí y no se leen de las credenciales de un entorno: «esta API tiene estos roles» es verdad del
-          proyecto, y «este token es el del vendedor» lo es de un entorno. Cada entorno guarda una credencial por rol.
+      {derivedRoles ? (
+        <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-5 text-slate-500">
+          Los roles ({roles.length ? roles.join(", ") : "ninguno"}) y sus permisos por operación salen de la lista de
+          roles y de sus permisos por endpoint. Aquí se decide qué cuenta como rechazo y los casos que cruzan dos roles.
         </p>
-      </div>
+      ) : (
+        <div>
+          <p className={label}>Roles del proyecto</p>
+          <input
+            className={`${field} w-full font-mono`}
+            value={roles.join(", ")}
+            placeholder="vendedor, comprador, admin"
+            disabled={disabled}
+            onChange={(event) =>
+              edit({
+                roles: event.target.value
+                  .split(",")
+                  .map((role) => role.trim())
+                  .filter(Boolean),
+              })
+            }
+          />
+          <p className="mt-1 text-[10px] leading-4 text-slate-400">
+            Se declaran aquí y no se leen de las credenciales de un entorno: «esta API tiene estos roles» es verdad del
+            proyecto, y «este token es el del vendedor» lo es de un entorno. Cada entorno guarda una credencial por rol.
+          </p>
+        </div>
+      )}
 
       <div>
         <p className={label}>Qué cuenta como rechazo</p>
@@ -879,7 +893,7 @@ function AccessEditor({ value, onChange, disabled, operationIds }: EditorProps) 
         </p>
       </div>
 
-      {roles.length === 0 ? (
+      {derivedRoles ? null : roles.length === 0 ? (
         <p className="text-xs text-slate-500">Escribe los roles para dibujar la matriz.</p>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200">
