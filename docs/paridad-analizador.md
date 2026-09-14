@@ -139,23 +139,25 @@ al pie.
 
 ### Flow Testing
 
-| Capacidad                                                                               | Estado                                                        |
-| --------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Grupos con arrastrar y soltar, reordenar, ejecutar grupo, estado por flujo              | ✔                                                                |
-| Duplicar flujo, renombrar en línea, estado draft/ready/archived                         | ✔                                                                |
+| Capacidad                                                                               | Estado                                                                               |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Grupos con arrastrar y soltar, reordenar, ejecutar grupo, estado por flujo              | ✔                                                                                    |
+| Duplicar flujo, renombrar en línea, estado draft/ready/archived                         | ✔                                                                                    |
 | Paleta de nodos: Auth, Request, Condition, Loop, Merge, Delay, Script                   | ½ (por diseño: cada nodo es una petición; los tipos son comportamientos. Sin Script) |
-| Menú contextual del nodo, duplicar, diálogo al borrar                                   | ✔                                                                |
-| Velocidad de ejecución, Ctrl+S, Ctrl+Enter                                              | ✔                                                                |
-| Panel de validación con «ir al nodo»                                                    | ✔                                                                |
-| Timeline en vivo e informe con diagnóstico del error                                    | ✔                                                                |
-| Editor de esquema de respuesta (visual, JSON, desde respuesta), extractores automáticos | ½ (extractores desde respuesta/pegado; sin editor de esquema visual aparte) |
-| Mapeo de variables entre nodos, variables disponibles                                   | ✔ (variables aguas arriba + valores calculados en el menú `{{`)  |
+| Menú contextual del nodo, duplicar, diálogo al borrar                                   | ✔                                                                                    |
+| Velocidad de ejecución, Ctrl+S, Ctrl+Enter                                              | ✔                                                                                    |
+| Panel de validación con «ir al nodo»                                                    | ✔                                                                                    |
+| Timeline en vivo e informe con diagnóstico del error                                    | ✔                                                                                    |
+| Editor de esquema de respuesta (visual, JSON, desde respuesta), extractores automáticos | ½ (extractores desde respuesta/pegado; sin editor de esquema visual aparte)          |
+| Mapeo de variables entre nodos, variables disponibles                                   | ✔ (variables aguas arriba + valores calculados en el menú `{{`)                      |
 
 ### Performance
 
-Todo falta: planes (escenarios con peso, pasos, think time, extractores, aserciones), perfil de
-carga constant / ramp / spike con VUs y duración, umbrales p50…p99, errorRate, rps; ejecución con
-ventanas de 5 s, resumen, desglose por endpoint, historial por plan y comparativas.
+Hecha (módulo propio `performance`). Planes con escenarios con peso, think time, peticiones con
+extractores y comprobaciones; perfil de carga constant / ramp / spike con VUs y duración; umbrales
+p95/p99, tasa de error y rps. Ejecución en modelo cerrado de VUs detrás del guard SSRF, con
+ventanas de 5 s, resumen (percentiles, rps, tasa de error), desglose por endpoint, veredicto por
+umbrales, progreso por SSE e historial por plan. Falta: comparativa entre dos corridas.
 
 ### Escáner de GitHub
 
@@ -213,6 +215,11 @@ Cada fase deja el producto funcionando y se prueba en el navegador antes de pasa
    (o pegada), con id/token primero y las listas por su primer elemento. Panel de validación con «ir
    al nodo». Velocidad de ejecución (el `delayMs` de la corrida), Ctrl+S/Ctrl+Enter, y diagnóstico
    del caso fallido: qué paso y qué aserción lo tumbó.
-8. **Performance.**
+8. **Performance** · _hecha_. Módulo `performance`: núcleo puro (perfil constant/ramp/spike,
+   percentiles nearest-rank, ventanas de 5 s, umbrales) con tests; motor de VUs en modelo cerrado
+   detrás del guard SSRF que substituye variables del entorno y extractos, mide latencia y juzga con
+   checks; corrida en cola con cancelación, progreso SSE y veredicto por umbrales; web con editor de
+   planes, lanzar, detalle en vivo (resumen, timeline, desglose) e historial. Queda la comparativa
+   entre corridas.
 9. **Escáner de GitHub.**
 10. **Dashboard, historial, análisis desde fichero, importar de otro proyecto por elementos.**
