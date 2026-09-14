@@ -170,10 +170,14 @@ desconocidos y endpoints quitados que un permiso o un flujo aún referencian).
 
 ### Dashboard, historial, ayuda
 
-Todo falta: dashboard con proyectos, endpoints, corridas, score medio, flujos, tasa de paso,
-tiempo medio de rendimiento, gráficas (score, vulnerabilidades, historial, estados), corridas y
-proyectos recientes; historial de análisis sueltos con búsqueda y paginación; análisis desde
-fichero markdown con progreso; panel «Ayuda y documentación» con ocho temas; biblioteca de iconos.
+Hecha en su mayoría. **Panel** (módulo `dashboard`): totales de la organización y una tarjeta por
+proyecto con endpoints, flujos, score de seguridad, tasa de paso del contrato y p95 de carga.
+**Historial**: una línea de tiempo con todos los análisis (seguridad, contrato, rendimiento,
+escaneo) con filtro por tipo, búsqueda y paginación. **Análisis desde markdown**: el import de
+endpoints lee tablas «| Método | Ruta |» y listas `GET /users`, además de los curl. **Importar de
+otro proyecto por elementos**: vista previa y copia selectiva de endpoints, flujos y entornos. El
+panel «Ayuda y documentación» ya existía por sección. Pendiente menor: biblioteca de iconos y
+gráficas históricas más ricas en el panel.
 
 ---
 
@@ -230,4 +234,9 @@ Cada fase deja el producto funcionando y se prueba en el navegador antes de pasa
    (repo/rama/base path/prefijo); escaneo por la API de GitHub tras el guard SSRF o por subida;
    importar (crea endpoints, actualiza requiresAuth, crea roles que faltan, sin borrar nada);
    historial; impacto sobre permisos y flujos. Web con conector, subida, diff, impacto e importar.
-10. **Dashboard, historial, análisis desde fichero, importar de otro proyecto por elementos.**
+10. **Dashboard, historial, análisis desde fichero, importar de otro proyecto por elementos** ·
+    _hecha_. Módulo `dashboard` (panel con métricas reales por proyecto e historial unificado con
+    búsqueda/paginación, lecturas agregadas entre módulos); el import de markdown lee tablas y listas
+    de método+ruta; importar de otro proyecto eligiendo endpoints, flujos y entornos uno a uno (vista
+    previa + copia selectiva, sin duplicar ni copiar secretos). Menor pendiente: biblioteca de iconos
+    y comparativa entre corridas de Performance.
