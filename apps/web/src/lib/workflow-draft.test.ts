@@ -4,6 +4,7 @@ import {
   applyPositions,
   connectStep,
   disconnectEdges,
+  duplicateStep,
   mergeNodes,
   positionFor,
   problemsWith,
@@ -49,6 +50,32 @@ describe("los pasos de un flujo", () => {
     const next = removeStep(steps(), "crear");
     expect(next).toHaveLength(1);
     expect(next[0].dependsOn).toBeUndefined();
+  });
+
+  test("duplicar un nodo copia su comportamiento con un id nuevo, desplazado y sin aristas", () => {
+    const source: WorkflowStepView[] = [
+      {
+        id: "login",
+        requestTemplateId: "t1",
+        position: { x: 10, y: 20 },
+        dependsOn: [],
+        authorizes: { from: "body", path: "token" },
+        captures: [{ variable: "id", from: "body", path: "data.id" }],
+      },
+      { id: "consultar", requestTemplateId: "t2", dependsOn: ["login"] },
+    ];
+    const next = duplicateStep(source, "login");
+    expect(next).toHaveLength(3);
+    const copy = next[2];
+    expect(copy.id).toBe("login-2");
+    expect(copy.requestTemplateId).toBe("t1");
+    expect(copy.authorizes).toEqual({ from: "body", path: "token" });
+    expect(copy.captures).toEqual([{ variable: "id", from: "body", path: "data.id" }]);
+    // A duplicate is «another one», not «this wired in where that was»: no edges, offset so it does
+    // not land on top of its source, and it never touches the steps that depended on the original.
+    expect("dependsOn" in copy).toBe(false);
+    expect(copy.position).toEqual({ x: 58, y: 68 });
+    expect(next[1].dependsOn).toEqual(["login"]);
   });
 
   test("conectar es idempotente y no admite un lazo sobre sí mismo", () => {

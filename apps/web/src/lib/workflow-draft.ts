@@ -40,6 +40,29 @@ export function addStep(steps: WorkflowStepView[], template: RequestTemplateView
 }
 
 /**
+ * A copy of one node: same request and same behaviours, a fresh id, and no edges.
+ *
+ * No edges on purpose. A duplicate is «another one of these», not «this, wired in where that was» —
+ * copying `dependsOn` would attach the new node to a graph it was never placed in, and copying the
+ * nodes that depend on the original would silently fan them out to two. So it lands unconnected, a
+ * short drag from its source, for the person to wire where they mean. Its captures come with it as
+ * they are: two steps writing the same variable is a real footgun, but it is the honest copy, and
+ * the inspector is where the second name gets changed.
+ */
+export function duplicateStep(steps: WorkflowStepView[], stepId: string): WorkflowStepView[] {
+  const source = steps.find((step) => step.id === stepId);
+  if (!source) return steps;
+  const id = nextStepId(
+    source.id.replace(/-\d+$/, ""),
+    steps.map((step) => step.id),
+  );
+  const at = source.position ?? positionFor(steps.length);
+  const clone: WorkflowStepView = { ...source, id, position: { x: at.x + 48, y: at.y + 48 } };
+  delete clone.dependsOn;
+  return [...steps, clone];
+}
+
+/**
  * Removing a node removes the edges into it too.
  *
  * Leaving them behind is the state the whole document-shaped storage exists to prevent, and the

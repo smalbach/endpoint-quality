@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Background,
   Controls,
@@ -15,10 +15,42 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { Badge } from "@/components/ui";
+import { ConfirmDialog } from "@/components/overlay";
 import { cn, methodStyle } from "@/lib/format";
-import { applyPositions, connectStep, disconnectEdges, mergeNodes, toEdges, toNodes } from "@/lib/workflow-draft";
+import {
+  applyPositions,
+  connectStep,
+  disconnectEdges,
+  duplicateStep,
+  mergeNodes,
+  removeStep,
+  replaceStep,
+  toEdges,
+  toNodes,
+} from "@/lib/workflow-draft";
 import type { OperationSummary } from "@/lib/workflow-draft";
 import type { RequestTemplateView, WorkflowStepView } from "@/lib/types";
+
+/**
+ * The node «types», as this editor means them.
+ *
+ * The reference tool draws Auth, Condition, Loop, Merge and Delay as separate draggable shapes.
+ * Here every node is a request — a node with no HTTP would be a case with no request, a row in the
+ * report that means something different from every other row — so these are not other kinds of
+ * node: they are a request wearing a behaviour. The palette says which behaviours exist and marks
+ * the glyph each one shows on the canvas; the behaviour itself is set from the node's menu, or in
+ * the inspector where the ones that need a dependency (condition, loop, merge) belong.
+ */
+const PALETTE = [
+  { glyph: "●", label: "Petición", hint: "Cada nodo es una petición reutilizable" },
+  { glyph: "🔑", label: "Login", hint: "Su respuesta da la credencial de los pasos siguientes" },
+  { glyph: "◇", label: "Condición", hint: "Se ejecuta solo si un paso anterior cumple algo" },
+  { glyph: "↻", label: "Bucle", hint: "Una vez por elemento de una lista que devolvió otro paso" },
+  { glyph: "⇉", label: "Merge", hint: "Con varias dependencias, basta con que llegue una" },
+  { glyph: "⏱", label: "Espera", hint: "Pausa antes de enviar, para lo que tarda en verse" },
+] as const;
+
+const AUTH_DEFAULT = { from: "body", path: "token", header: "Authorization", scheme: "Bearer " } as const;
 
 type StepNodeData = {
   name: string;
@@ -92,6 +124,8 @@ export function WorkflowCanvas({
     [steps, templates, operations],
   );
   const [nodes, setNodes] = useState<Node<StepNodeData>[]>(fromDocument);
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
 
   // The document decides which nodes exist, what they say and where they are; the canvas keeps
   // what it measured of each one. `mergeNodes` is where that division is written down and tested.
@@ -100,42 +134,150 @@ export function WorkflowCanvas({
   }, [fromDocument]);
 
   const edges: Edge[] = toEdges(steps);
+  const menuStep = menu ? steps.find((step) => step.id === menu.id) : undefined;
+
+  /** Write one changed step back into the document and close the menu. */
+  const put = (next: WorkflowStepView) => {
+    onChange(replaceStep(steps, next));
+    setMenu(null);
+  };
+
+  /** Turn a behaviour off by dropping its key, never by setting it to `undefined`: the step type's
+   * fields are truly optional, and an explicit `undefined` is a different thing the compiler rejects. */
+  const drop = (step: WorkflowStepView, key: keyof WorkflowStepView): WorkflowStepView => {
+    const next = { ...step };
+    delete next[key];
+    return next;
+  };
 
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      nodeTypes={nodeTypes}
-      fitView
-      deleteKeyCode={["Backspace", "Delete"]}
-      onNodesChange={(changes) => {
-        const next = applyNodeChanges(changes, nodes);
-        setNodes(next);
-        // Written to the document when the drag ends, not on every frame: a step per mouse move
-        // would mark the flow dirty sixty times a second and save a position nobody chose yet.
-        if (changes.some((change) => change.type === "position" && !change.dragging)) {
-          onChange(
-            applyPositions(
-              steps,
-              next.map((node) => ({ id: node.id, position: node.position })),
-            ),
-          );
-        }
-      }}
-      onConnect={(connection: Connection) => onChange(connectStep(steps, connection.source, connection.target))}
-      onEdgesDelete={(deleted) =>
-        onChange(
-          disconnectEdges(
-            steps,
-            deleted.map((edge) => ({ source: edge.source, target: edge.target })),
-          ),
-        )
-      }
-      onNodeClick={(_event, node) => onSelect(node.id)}
+    <div className="flex h-full flex-col">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-100 px-3 py-2">
+        <span className="text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Tipos de nodo</span>
+        {PALETTE.map((item) => (
+          <span key={item.label} className="flex items-center gap-1 text-[11px] text-slate-500" title={item.hint}>
+            <span aria-hidden>{item.glyph}</span>
+            {item.label}
+          </span>
+        ))}
+        <span className="ml-auto text-[10px] text-slate-400">Clic derecho en un nodo para su menú</span>
+      </div>
+      <div className="relative flex-1" onClick={() => setMenu(null)}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          fitView
+          deleteKeyCode={["Backspace", "Delete"]}
+          onNodesChange={(changes) => {
+            const next = applyNodeChanges(changes, nodes);
+            setNodes(next);
+            // Written to the document when the drag ends, not on every frame: a step per mouse move
+            // would mark the flow dirty sixty times a second and save a position nobody chose yet.
+            if (changes.some((change) => change.type === "position" && !change.dragging)) {
+              onChange(
+                applyPositions(
+                  steps,
+                  next.map((node) => ({ id: node.id, position: node.position })),
+                ),
+              );
+            }
+          }}
+          onConnect={(connection: Connection) => onChange(connectStep(steps, connection.source, connection.target))}
+          onEdgesDelete={(deleted) =>
+            onChange(
+              disconnectEdges(
+                steps,
+                deleted.map((edge) => ({ source: edge.source, target: edge.target })),
+              ),
+            )
+          }
+          onNodeClick={(_event, node) => onSelect(node.id)}
+          onNodeContextMenu={(event, node) => {
+            event.preventDefault();
+            onSelect(node.id);
+            setMenu({ id: node.id, x: event.clientX, y: event.clientY });
+          }}
+          onPaneClick={() => setMenu(null)}
+        >
+          <Background gap={20} size={1} />
+          <MiniMap pannable zoomable />
+          <Controls />
+        </ReactFlow>
+
+        {menu && menuStep && (
+          <div
+            className="fixed z-50 w-52 rounded-lg border border-slate-200 bg-white py-1 text-xs shadow-lg"
+            style={{ top: menu.y, left: menu.x }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <MenuItem onClick={() => (onSelect(menu.id), setMenu(null))}>Editar…</MenuItem>
+            <MenuItem
+              onClick={() => {
+                onChange(duplicateStep(steps, menu.id));
+                setMenu(null);
+              }}
+            >
+              Duplicar nodo
+            </MenuItem>
+            <div className="my-1 border-t border-slate-100" />
+            <MenuItem
+              onClick={() =>
+                put(
+                  menuStep.authorizes ? drop(menuStep, "authorizes") : { ...menuStep, authorizes: { ...AUTH_DEFAULT } },
+                )
+              }
+            >
+              {menuStep.authorizes ? "🔑 Quitar login" : "🔑 Marcar como login"}
+            </MenuItem>
+            <MenuItem onClick={() => put(menuStep.waitMs ? drop(menuStep, "waitMs") : { ...menuStep, waitMs: 1000 })}>
+              {menuStep.waitMs ? "⏱ Quitar espera" : "⏱ Añadir espera"}
+            </MenuItem>
+            {(menuStep.dependsOn?.length ?? 0) >= 2 && (
+              <MenuItem onClick={() => put({ ...menuStep, waits: menuStep.waits === "any" ? "all" : "any" })}>
+                {menuStep.waits === "any" ? "⇉ Esperar a todas" : "⇉ Basta con una (merge)"}
+              </MenuItem>
+            )}
+            <div className="my-1 border-t border-slate-100" />
+            <MenuItem
+              danger
+              onClick={() => {
+                setConfirmId(menu.id);
+                setMenu(null);
+              }}
+            >
+              Eliminar nodo
+            </MenuItem>
+          </div>
+        )}
+
+        {confirmId && (
+          <ConfirmDialog
+            title="Eliminar nodo"
+            message="Se quita del flujo junto con las conexiones que llegan a él. Esta acción no borra la petición reutilizable."
+            confirmLabel="Eliminar"
+            onClose={() => setConfirmId(null)}
+            onConfirm={() => {
+              onChange(removeStep(steps, confirmId));
+              setConfirmId(null);
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MenuItem({ children, onClick, danger }: { children: ReactNode; onClick: () => void; danger?: boolean }) {
+  return (
+    <button
+      className={cn(
+        "block w-full px-3 py-1.5 text-left hover:bg-slate-50",
+        danger ? "text-rose-600 hover:bg-rose-50" : "text-slate-700",
+      )}
+      onClick={onClick}
     >
-      <Background gap={20} size={1} />
-      <MiniMap pannable zoomable />
-      <Controls />
-    </ReactFlow>
+      {children}
+    </button>
   );
 }
