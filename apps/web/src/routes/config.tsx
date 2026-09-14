@@ -6,6 +6,7 @@ import { useCan, useOrganization } from "@/lib/auth";
 import { Badge, Button, Card, Field, inputClass } from "@/components/ui";
 import { SECTION_EDITORS } from "@/components/config-editors";
 import { CopyFromProject } from "@/components/copy-from-project";
+import { ImportElements } from "@/components/import-elements";
 import { unchanged } from "@/lib/config-draft";
 import { cn, formatDate } from "@/lib/format";
 import type { ConfigView, ProjectSummary } from "@/lib/types";
@@ -223,6 +224,13 @@ function ImportContract({
             organizationId={organizationId}
             disabled={disabled}
             onCopied={onImported}
+          />
+          <ImportElements
+            base={base}
+            projectId={projectId}
+            organizationId={organizationId}
+            disabled={disabled}
+            onImported={onImported}
           />
         </div>
         <div>

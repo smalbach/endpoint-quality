@@ -120,4 +120,6 @@ export type {
   HistoryKind,
   HistoryEntryView,
   HistoryPageView,
+  ImportPreviewView,
+  ImportElementsResultView,
 } from "@eq/contracts";
