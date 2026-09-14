@@ -78,6 +78,11 @@ import {
   StartSecurityRunDto,
 } from "@/modules/security-runs/presentation/dto/security-runs.dto";
 import {
+  CreatePlanDto,
+  StartPerformanceRunDto,
+  UpdatePlanDto,
+} from "@/modules/performance/presentation/dto/performance.dto";
+import {
   CreateDatasetDto,
   CreateRequestTemplateDto,
   CreateSuiteDto,
@@ -146,6 +151,9 @@ const DTOS = [
   BulkEndpointStatusDto,
   BulkDeleteEndpointsDto,
   ImportEndpointCurlDto,
+  CreatePlanDto,
+  UpdatePlanDto,
+  StartPerformanceRunDto,
 ];
 
 type Schema = Record<string, unknown>;

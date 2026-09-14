@@ -82,6 +82,16 @@ import {
   SECURITY_RUN_QUERY_HANDLERS,
   SECURITY_AI_PROVIDER,
 } from "@/modules/security-runs/security-runs.module";
+import {
+  PERFORMANCE_PLAN_REPOSITORY,
+  PERFORMANCE_RUN_QUEUE,
+  PERFORMANCE_RUN_REPOSITORY,
+} from "@/modules/performance/domain/ports";
+import { PerformanceController } from "@/modules/performance/presentation/performance.controller";
+import { InMemoryPerformanceRunQueue } from "@/modules/performance/infrastructure/in-memory-performance-queue";
+import { PerformanceExecutor } from "@/modules/performance/infrastructure/performance-executor";
+import { PerformanceProgressStream } from "@/modules/performance/infrastructure/performance-progress.stream";
+import { PERFORMANCE_COMMAND_HANDLERS, PERFORMANCE_QUERY_HANDLERS } from "@/modules/performance/performance.module";
 import { CONFIG_COMMAND_HANDLERS, CONFIG_QUERY_HANDLERS } from "@/modules/config/config.module";
 import { ProjectConfigController } from "@/modules/config/presentation/config.controller";
 import { WORKFLOW_REPOSITORY } from "@/modules/workflows/domain/ports";
@@ -111,6 +121,8 @@ import {
   InMemorySessionTokenRepository,
   InMemoryRoleRepository,
   InMemorySecurityRunRepository,
+  InMemoryPerformancePlanRepository,
+  InMemoryPerformanceRunRepository,
   InMemoryProjectRepository,
   InMemoryRunRepository,
   InMemorySpecRepository,
@@ -203,6 +215,8 @@ export type TestContext = {
     sessionTokens: InMemorySessionTokenRepository;
     roles: InMemoryRoleRepository;
     securityRuns: InMemorySecurityRunRepository;
+    performancePlans: InMemoryPerformancePlanRepository;
+    performanceRuns: InMemoryPerformanceRunRepository;
     config: InMemoryConfigRepository;
     workflows: InMemoryWorkflowRepository;
     runs: InMemoryRunRepository;
@@ -233,6 +247,8 @@ export async function createTestApp(): Promise<TestContext> {
     sessionTokens: new InMemorySessionTokenRepository(),
     roles: new InMemoryRoleRepository(),
     securityRuns: new InMemorySecurityRunRepository(),
+    performancePlans: new InMemoryPerformancePlanRepository(),
+    performanceRuns: new InMemoryPerformanceRunRepository(),
     config: new InMemoryConfigRepository(),
     workflows: new InMemoryWorkflowRepository(),
     runs: new InMemoryRunRepository(),
@@ -264,6 +280,7 @@ export async function createTestApp(): Promise<TestContext> {
       EndpointsController,
       RolesController,
       SecurityRunsController,
+      PerformanceController,
     ],
     providers: [
       { provide: ENV, useValue: env },
@@ -304,6 +321,11 @@ export async function createTestApp(): Promise<TestContext> {
       SecurityRunProgressStream,
       SecurityRunExecutor,
       SECURITY_AI_PROVIDER,
+      { provide: PERFORMANCE_PLAN_REPOSITORY, useValue: repositories.performancePlans },
+      { provide: PERFORMANCE_RUN_REPOSITORY, useValue: repositories.performanceRuns },
+      { provide: PERFORMANCE_RUN_QUEUE, useClass: InMemoryPerformanceRunQueue },
+      PerformanceProgressStream,
+      PerformanceExecutor,
       { provide: WORKFLOW_REPOSITORY, useValue: repositories.workflows },
       { provide: ENDPOINT_REPOSITORY, useValue: repositories.endpoints },
       // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the
@@ -333,6 +355,8 @@ export async function createTestApp(): Promise<TestContext> {
       ...ROLE_QUERY_HANDLERS,
       ...SECURITY_RUN_COMMAND_HANDLERS,
       ...SECURITY_RUN_QUERY_HANDLERS,
+      ...PERFORMANCE_COMMAND_HANDLERS,
+      ...PERFORMANCE_QUERY_HANDLERS,
       // The global guard and filter are registered exactly as `AppModule` does, because half of
       // what these tests check is that the wiring protects what it should. Throttling is left
       // out: it is the one piece whose behaviour is a rate, and asserting it here would make
@@ -379,6 +403,7 @@ export async function createTestApp(): Promise<TestContext> {
   // The worker starts listening exactly as `RunsModule.onApplicationBootstrap` does.
   moduleRef.get(RunOrchestrator).listen();
   moduleRef.get(SecurityRunExecutor).listen();
+  moduleRef.get(PerformanceExecutor).listen();
 
   return {
     app,

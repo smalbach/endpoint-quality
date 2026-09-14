@@ -846,6 +846,120 @@ export type SecurityRunDetailView = {
   error: string | null;
 };
 
+// ---------------------------------------------------------------------------------------------
+// Performance (load testing)
+// ---------------------------------------------------------------------------------------------
+
+export type LoadProfileTypeView = "constant" | "ramp" | "spike";
+export type PerfCheckSourceView = "status" | "durationMs" | "body";
+export type PerfCheckOperatorView = "equals" | "not_equals" | "less_than" | "greater_than" | "contains" | "exists";
+
+export type PerformanceExtractView = { variable: string; path: string };
+export type PerformanceCheckView = {
+  source: PerfCheckSourceView;
+  path?: string;
+  operator: PerfCheckOperatorView;
+  value?: unknown;
+};
+export type PerformanceRequestView = {
+  method: string;
+  path: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+  extract?: PerformanceExtractView[];
+  checks?: PerformanceCheckView[];
+};
+export type PerformanceScenarioView = {
+  id: string;
+  name: string;
+  weight: number;
+  thinkMs: number;
+  requests: PerformanceRequestView[];
+};
+export type LoadProfileView =
+  | { type: "constant"; vus: number; durationS: number }
+  | { type: "ramp"; startVus: number; endVus: number; durationS: number }
+  | { type: "spike"; baseVus: number; peakVus: number; durationS: number };
+export type PerformanceThresholdsView = { p95Ms?: number; p99Ms?: number; maxErrorRate?: number; minRps?: number };
+export type PerformancePlanDefinitionView = {
+  scenarios: PerformanceScenarioView[];
+  profile: LoadProfileView;
+  thresholds: PerformanceThresholdsView;
+};
+
+export type PerformancePlanViewOf<T> = {
+  id: string;
+  name: string;
+  description: string | null;
+  definition: PerformancePlanDefinitionView;
+  updatedAt: T;
+};
+
+export type PerformanceRunStatusView = "queued" | "running" | "passed" | "failed" | "cancelled" | "error";
+
+export type PerformanceSummaryView = {
+  requests: number;
+  failures: number;
+  errorRate: number;
+  rps: number;
+  minMs: number;
+  maxMs: number;
+  avgMs: number;
+  p50Ms: number;
+  p90Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+};
+export type PerformanceWindowView = {
+  atS: number;
+  requests: number;
+  failures: number;
+  rps: number;
+  errorRate: number;
+  p95Ms: number;
+  vus: number;
+};
+export type PerformanceEndpointStatView = {
+  method: string;
+  path: string;
+  requests: number;
+  failures: number;
+  errorRate: number;
+  p95Ms: number;
+  avgMs: number;
+};
+export type PerformanceThresholdResultView = { label: string; ok: boolean; actual: string; limit: string };
+
+/** The list row: the head of a run and its summary, no windows or per-endpoint detail. */
+export type PerformanceRunSummaryViewOf<T> = {
+  id: string;
+  planId: string | null;
+  planName: string;
+  status: PerformanceRunStatusView;
+  summary: PerformanceSummaryView | null;
+  startedAt: T;
+  finishedAt: T | null;
+};
+
+/** The detail view: everything a run produced. */
+export type PerformanceRunDetailViewOf<T> = {
+  id: string;
+  projectId: string;
+  planId: string | null;
+  planName: string;
+  environmentId: string | null;
+  status: PerformanceRunStatusView;
+  definition: PerformancePlanDefinitionView;
+  progress: { elapsedS: number; totalS: number; requests: number; vus: number };
+  summary: PerformanceSummaryView | null;
+  windows: PerformanceWindowView[];
+  endpoints: PerformanceEndpointStatView[];
+  thresholds: PerformanceThresholdResultView[];
+  error: string | null;
+  startedAt: T;
+  finishedAt: T | null;
+};
+
 export type Member = MemberOf<string>;
 export type PendingInvitation = PendingInvitationOf<string>;
 export type MembersView = MembersViewOf<string>;
@@ -871,6 +985,9 @@ export type RunCaseView = RunCaseViewOf<string>;
 export type RunReport = RunReportOf<string>;
 export type EndpointView = EndpointViewOf<string>;
 export type EndpointPage = EndpointPageOf<string>;
+export type PerformancePlanView = PerformancePlanViewOf<string>;
+export type PerformanceRunSummaryView = PerformanceRunSummaryViewOf<string>;
+export type PerformanceRunDetailView = PerformanceRunDetailViewOf<string>;
 
 /** RFC 9457, which is what every error in this system is written as. */
 export type ProblemDetails = {

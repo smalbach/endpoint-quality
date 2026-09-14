@@ -578,6 +578,55 @@ export class SecurityRunEntity {
   @Column({ type: "text", nullable: true }) error: string | null;
 }
 
+/**
+ * A saved load-testing plan: scenarios, load profile and thresholds as one `jsonb` document.
+ *
+ * A document and not three tables for the same reason a workflow is one: the unit of change is the
+ * whole plan, and a scenario's weight means nothing apart from the scenarios it competes with.
+ */
+@Entity({ name: "performance_plans" })
+export class PerformancePlanEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Column({ type: "varchar", length: 120 }) name: string;
+  @Column({ type: "text", nullable: true }) description: string | null;
+  @Column({
+    type: "jsonb",
+    default: () => `'{"scenarios":[],"profile":{"type":"constant","vus":1,"durationS":30},"thresholds":{}}'::jsonb`,
+  })
+  definition: unknown;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) updatedAt: Date;
+  @Column("uuid") updatedBy: string;
+}
+
+/**
+ * One execution of a plan: the plan as it was, and the numbers it produced.
+ *
+ * The definition is snapshotted, not a foreign key: a run is a fact about a minute, and editing the
+ * plan afterwards must not rewrite what a past run measured. Windows, per-endpoint stats and the
+ * threshold results are `jsonb` for the same reason the security findings are — they are read as a
+ * whole, per run, and never queried across runs.
+ */
+@Entity({ name: "performance_runs" })
+export class PerformanceRunEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Index() @Column({ type: "uuid", nullable: true }) planId: string | null;
+  @Column({ type: "varchar", length: 120, default: "" }) planName: string;
+  @Column({ type: "uuid", nullable: true }) environmentId: string | null;
+  @Column({ type: "varchar", length: 20 }) status: string;
+  @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) definition: unknown;
+  @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) progress: unknown;
+  @Column({ type: "jsonb", nullable: true }) summary: unknown;
+  @Column({ type: "jsonb", default: () => "'[]'::jsonb" }) windows: unknown[];
+  @Column({ type: "jsonb", default: () => "'[]'::jsonb" }) endpoints: unknown[];
+  @Column({ type: "jsonb", default: () => "'[]'::jsonb" }) thresholds: unknown[];
+  @Column({ type: "timestamptz" }) startedAt: Date;
+  @Column({ type: "timestamptz", nullable: true }) finishedAt: Date | null;
+  @Column({ type: "text", nullable: true }) error: string | null;
+}
+
 // The line breaks group these by module, which is information a formatter cannot know and
 // one-per-line would lose.
 // prettier-ignore
@@ -591,4 +640,5 @@ export const ENTITIES = [
   EndpointEntity,
   RoleEntity, RolePermissionEntity, RoleRuleEntity,
   SecurityRunEntity,
+  PerformancePlanEntity, PerformanceRunEntity,
 ];

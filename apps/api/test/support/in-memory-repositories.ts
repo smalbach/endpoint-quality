@@ -33,6 +33,8 @@ import type { PermissionChange, Role, RolePermission, RoleRule } from "@/modules
 import type { RoleRepositoryPort } from "@/modules/roles/domain/ports";
 import type { SecurityRun } from "@/modules/security-runs/domain/model";
 import type { SecurityRunRepositoryPort } from "@/modules/security-runs/domain/ports";
+import type { PerformancePlanRow, PerformanceRun } from "@/modules/performance/domain/model";
+import type { PerformancePlanRepositoryPort, PerformanceRunRepositoryPort } from "@/modules/performance/domain/ports";
 import type { ConfigRepositoryPort, ConfigRow } from "@/modules/config/domain/ports";
 import type { ConfigSection } from "@eq/runner-core";
 import type { DatasetRow, RequestTemplateRow, SuiteRow, WorkflowRow } from "@/modules/workflows/domain/model";
@@ -632,5 +634,58 @@ export class InMemorySecurityRunRepository implements SecurityRunRepositoryPort 
   }
   async remove(id: string): Promise<void> {
     this.rows.delete(id);
+  }
+}
+
+export class InMemoryPerformancePlanRepository implements PerformancePlanRepositoryPort {
+  readonly rows = new Map<string, PerformancePlanRow>();
+  async list(projectId: string): Promise<PerformancePlanRow[]> {
+    return [...this.rows.values()]
+      .filter((plan) => plan.projectId === projectId)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((plan) => structuredClone(plan));
+  }
+  async find(projectId: string, planId: string): Promise<PerformancePlanRow | null> {
+    const plan = this.rows.get(planId);
+    return plan && plan.projectId === projectId ? structuredClone(plan) : null;
+  }
+  async findByName(projectId: string, name: string): Promise<PerformancePlanRow | null> {
+    return (
+      [...this.rows.values()]
+        .map((plan) => structuredClone(plan))
+        .find((plan) => plan.projectId === projectId && plan.name === name) ?? null
+    );
+  }
+  async save(row: PerformancePlanRow): Promise<void> {
+    this.rows.set(row.id, structuredClone(row));
+  }
+  async delete(projectId: string, planId: string): Promise<void> {
+    const plan = this.rows.get(planId);
+    if (plan && plan.projectId === projectId) this.rows.delete(planId);
+  }
+}
+
+export class InMemoryPerformanceRunRepository implements PerformanceRunRepositoryPort {
+  readonly rows = new Map<string, PerformanceRun>();
+  async list(projectId: string, planId?: string): Promise<PerformanceRun[]> {
+    return [...this.rows.values()]
+      .filter((run) => run.projectId === projectId && (planId ? run.planId === planId : true))
+      .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
+      .map((run) => structuredClone(run));
+  }
+  async find(projectId: string, runId: string): Promise<PerformanceRun | null> {
+    const run = this.rows.get(runId);
+    return run && run.projectId === projectId ? structuredClone(run) : null;
+  }
+  async findById(runId: string): Promise<PerformanceRun | null> {
+    const run = this.rows.get(runId);
+    return run ? structuredClone(run) : null;
+  }
+  async save(run: PerformanceRun): Promise<void> {
+    this.rows.set(run.id, structuredClone(run));
+  }
+  async delete(projectId: string, runId: string): Promise<void> {
+    const run = this.rows.get(runId);
+    if (run && run.projectId === projectId) this.rows.delete(runId);
   }
 }

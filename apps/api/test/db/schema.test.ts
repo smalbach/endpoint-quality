@@ -74,6 +74,8 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
       "memberships",
       "organizations",
       "password_reset_tokens",
+      "performance_plans",
+      "performance_runs",
       "project_config",
       "project_roles",
       "projects",
