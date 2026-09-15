@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  addedNodeId,
   addControlStep,
   addBranchStep,
   addStep,
@@ -8,6 +9,7 @@ import {
   disconnectEdges,
   duplicateStep,
   flowNodeStatuses,
+  freeSpot,
   mergeNodes,
   positionFor,
   predecessorFor,
@@ -525,5 +527,43 @@ describe("la paleta de nodos: soltar y conectar libre", () => {
     ];
     const byId = Object.fromEntries(toNodes(steps, [template("t1", "Entrar")], []).map((n) => [n.id, n.type]));
     expect(byId).toEqual({ login: "login", espera: "wait", union: "merge", valida: "validate" });
+  });
+});
+
+describe("addedNodeId — a qué nodo llevar la vista tras añadirlo", () => {
+  test("el nodo nuevo, cuando el documento gana uno", () => {
+    expect(addedNodeId(["salud", "crear"], ["salud", "crear", "if"])).toBe("if");
+  });
+
+  test("también en un flujo vacío", () => {
+    expect(addedNodeId([], ["espera"])).toBe("espera");
+  });
+
+  test("nada si no hay con qué comparar (primer render o flujo recién abierto)", () => {
+    expect(addedNodeId(undefined, ["salud", "crear"])).toBeUndefined();
+  });
+
+  test("nada si solo se movió o se quitó un nodo", () => {
+    expect(addedNodeId(["salud", "crear"], ["salud", "crear"])).toBeUndefined();
+    expect(addedNodeId(["salud", "crear"], ["salud"])).toBeUndefined();
+  });
+
+  test("nada si llega un documento entero de golpe", () => {
+    expect(addedNodeId([], ["a", "b", "c"])).toBeUndefined();
+  });
+});
+
+describe("freeSpot — un nodo nuevo no cae encima de otro", () => {
+  test("dos If colgados del mismo nodo no se apilan", () => {
+    const flow: WorkflowStepView[] = [{ id: "crear", requestTemplateId: "t1", position: { x: 40, y: 60 } }];
+    const first = addControlStep(flow, "branch", "crear");
+    const second = addControlStep(first.steps, "branch", "crear");
+    const [a, b] = second.steps.slice(1).map((step) => step.position);
+    expect(a).toEqual({ x: 350, y: 60 });
+    expect(b).toEqual({ x: 350, y: 210 });
+  });
+
+  test("un sitio libre se queda como está", () => {
+    expect(freeSpot([{ id: "a", requestTemplateId: "t1", position: { x: 0, y: 0 } }], { x: 400, y: 0 })).toEqual({ x: 400, y: 0 });
   });
 });

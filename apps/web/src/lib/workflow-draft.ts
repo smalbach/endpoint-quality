@@ -29,6 +29,19 @@ export const WORKFLOW_STATUS_META: Record<WorkflowStatusView, { label: string; b
 export const positionFor = (index: number) => ({ x: 40 + (index % 3) * 310, y: 60 + Math.floor(index / 3) * 170 });
 
 /**
+ * `at`, or the first spot below it with no node already there. Without it a second If off the same
+ * request lands exactly on the first, and the canvas going to it shows nothing new.
+ */
+export function freeSpot(steps: WorkflowStepView[], at: { x: number; y: number }): { x: number; y: number } {
+  const occupied = steps.map((step, index) => step.position ?? positionFor(index));
+  const taken = (spot: { x: number; y: number }) =>
+    occupied.some((other) => Math.abs(other.x - spot.x) < 280 && Math.abs(other.y - spot.y) < 130);
+  let spot = at;
+  for (let tries = 0; tries < 50 && taken(spot); tries++) spot = { x: at.x, y: spot.y + 150 };
+  return spot;
+}
+
+/**
  * A readable, unique step id derived from the request's name.
  *
  * Derived and not random: it travels into `run_cases.scenarioId`, so `workflow:…:crear-pedido` is
@@ -89,7 +102,7 @@ export function addStep(steps: WorkflowStepView[], template: RequestTemplateView
     template.name,
     steps.map((step) => step.id),
   );
-  return [...steps, { id, requestTemplateId: template.id, position: positionFor(steps.length) }];
+  return [...steps, { id, requestTemplateId: template.id, position: freeSpot(steps, positionFor(steps.length)) }];
 }
 
 /**
@@ -201,7 +214,7 @@ export function addControlStep(
 ): { steps: WorkflowStepView[]; id: string } {
   const id = nextStepId(CONTROL_BASE_ID[kind], steps.map((step) => step.id));
   const source = from ? steps.find((step) => step.id === from) : undefined;
-  const at = source?.position ? { x: source.position.x + 310, y: source.position.y } : positionFor(steps.length);
+  const at = freeSpot(steps, source?.position ? { x: source.position.x + 310, y: source.position.y } : positionFor(steps.length));
   const check = { source: "status" as const, operator: "equals", value: "200" };
   const node: WorkflowStepView = { id, kind, position: at };
   if (from) node.dependsOn = [from];
@@ -271,6 +284,22 @@ export function toEdges(steps: WorkflowStepView[]) {
       };
     }),
   );
+}
+
+/**
+ * The node that just landed on the canvas, so the view can be taken to it: a node dropped from the
+ * palette goes wherever `positionFor` or its source put it, often outside what is on screen. It is
+ * the newest id the document gained since the last one the canvas saw. `previousIds` is
+ * `undefined` when there is nothing to compare against — the first render, or a different flow
+ * just opened (flows share step ids, so the caller resets on a flow change, not on ids).
+ */
+export function addedNodeId(previousIds: string[] | undefined, nextIds: string[]): string | undefined {
+  if (!previousIds) return undefined;
+  const known = new Set(previousIds);
+  const added = nextIds.filter((id) => !known.has(id));
+  // A handful at most: a document arriving whole (a flow's first load) is not something to fly to.
+  if (added.length === 0 || added.length > 2) return undefined;
+  return added[added.length - 1];
 }
 
 /**

@@ -1,0 +1,28 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@eq/web", "exec", "vite", "--port", "5173", "--strictPort"],
+      "port": 5173
+    },
+    {
+      "name": "api-local",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "/private/tmp/claude-501/-Users-smalbach-Documents-GiProjectos-endpoint-quality/3a2b5352-667e-4b75-a4d8-e3b089c07f6b/scratchpad/run-api-local.sh"
+      ],
+      "port": 3002
+    },
+    {
+      "name": "web-local-api",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/smalbach/Documents/GiProjectos/endpoint-quality/apps/web && VITE_API_URL=http://localhost:3002 exec npx vite --port 5174 --strictPort"
+      ],
+      "port": 5174
+    }
+  ]
+}

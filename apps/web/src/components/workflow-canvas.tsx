@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Background,
   Controls,
@@ -11,6 +11,7 @@ import {
   type Edge,
   type Node,
   type NodeProps,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -19,6 +20,7 @@ import { ConfirmDialog } from "@/components/overlay";
 import { cn, methodStyle } from "@/lib/format";
 import {
   addControlStep,
+  addedNodeId,
   applyPositions,
   connectStep,
   CONTROL_PALETTE,
@@ -291,7 +293,10 @@ export function WorkflowCanvas({
   onAddRequest,
   onAddLogin,
   runStatus,
+  flowId,
 }: {
+  /** Which flow is open. Flows share step ids, so this — not the ids — tells a flow switch from an add. */
+  flowId?: string;
   steps: WorkflowStepView[];
   templates: RequestTemplateView[];
   operations: OperationSummary[];
@@ -315,6 +320,46 @@ export function WorkflowCanvas({
   useEffect(() => {
     setNodes((current) => mergeNodes(current, fromDocument));
   }, [fromDocument]);
+
+  // A node added from the palette (or the catalogue, or a duplicate) lands wherever its position
+  // says, often off screen. Remember it, and once React Flow has measured it, take the view there.
+  const [flow, setFlow] = useState<ReactFlowInstance<Node, Edge> | null>(null);
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const seen = useRef<{ flowId?: string; ids?: string[] }>({});
+  const paneRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const ids = steps.map((step) => step.id);
+    const previous = seen.current.flowId === flowId ? seen.current.ids : undefined;
+    seen.current = { flowId, ids };
+    const added = addedNodeId(previous, ids);
+    if (added) setFocusId(added);
+  }, [steps, flowId]);
+
+  useEffect(() => {
+    if (!focusId || !flow) return;
+    const node = nodes.find((entry) => entry.id === focusId);
+    if (!node) return;
+    const { width, height } = node.measured ?? {};
+    if (!width || !height) return;
+    const zoom = Math.max(flow.getZoom(), 1);
+    // Adding a node opens its panel, a non-modal drawer laid over the canvas: centre the node in
+    // the part of the canvas still in sight, not behind the panel.
+    const pane = paneRef.current?.getBoundingClientRect();
+    let shift = 0;
+    if (pane) {
+      let left = pane.left;
+      let right = pane.right;
+      for (const panel of document.querySelectorAll('[role="dialog"][aria-modal="false"]')) {
+        const rect = panel.getBoundingClientRect();
+        if (rect.left > pane.left + pane.width / 2) right = Math.min(right, rect.left);
+        else if (rect.right < pane.right - pane.width / 2) left = Math.max(left, rect.right);
+      }
+      if (right - left > width * zoom) shift = (pane.left + pane.right - left - right) / 2 / zoom;
+    }
+    void flow.setCenter(node.position.x + width / 2 + shift, node.position.y + height / 2, { zoom, duration: 400 });
+    setFocusId(null);
+  }, [focusId, flow, nodes]);
 
   const edges: Edge[] = toEdges(steps);
   const menuStep = menu ? steps.find((step) => step.id === menu.id) : undefined;
@@ -346,11 +391,12 @@ export function WorkflowCanvas({
           </span>
         </div>
       )}
-      <div className="relative flex-1" onClick={() => setMenu(null)}>
+      <div ref={paneRef} className="relative flex-1" onClick={() => setMenu(null)}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
+          onInit={setFlow}
           fitView
           deleteKeyCode={["Backspace", "Delete"]}
           onNodesChange={(changes) => {

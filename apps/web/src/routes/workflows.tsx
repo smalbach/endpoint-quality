@@ -506,6 +506,7 @@ export function WorkflowsPage() {
               </div>
             ) : (
               <WorkflowCanvas
+                flowId={draft.id}
                 steps={steps}
                 templates={templates}
                 operations={operations.data?.operations ?? []}
