@@ -31,6 +31,10 @@ import {
   type HttpMethod,
   type ResolvedOperation,
   type StepFetch,
+  type StepGraphql,
+  graphqlAssertion,
+  graphqlBody,
+  parseGraphqlVariables,
   type StepOutcome,
   type StepRequest,
   type TestScenario,
@@ -276,6 +280,83 @@ export class CaseExecutor {
       durationMs: response.durationMs,
       sent,
     });
+  }
+
+  /**
+   * A `graphql` node's operation: a fetch whose body is `{query, variables, operationName}`, judged
+   * also on the `errors` array a GraphQL server answers with a 200.
+   *
+   * Everything is substituted here, once, and the call handed to {@link fetch} with nothing left to
+   * substitute. So the fetch's guards all apply — SAFE_FETCH, masked credentials, the session only
+   * when asked, writes refused against an environment that forbids them — and a captured value that
+   * happens to hold `{{braces}}` is not substituted a second time, unescaped, into the JSON body.
+   * The variables are text until then: substituted first, parsed second, and a text that stopped
+   * being an object (a value with a quote in it) is refused before anything leaves.
+   */
+  async graphql(input: { call: StepGraphql; target: ExecutionTarget }): Promise<ExecutedCase> {
+    const started = Date.now();
+    const label = `GQL ${input.call.operationName || input.call.url}`;
+    const call = interpolateValue(input.call, input.target.variables, computedSeed());
+    const url = fetchUrl(call.url, input.target.baseUrl);
+    const refuse = (detail: string, assertion: string): ExecutedCase => {
+      const request: StepRequest = {
+        index: 0,
+        purpose: "act",
+        label,
+        operationId: "",
+        method: "POST",
+        operationPath: call.url,
+        requestPath: url,
+        headers: call.headers ?? {},
+        expectedStatus: call.expectedStatus ?? 200,
+        expectedShape: "",
+        auth: "none",
+        samples: 1,
+      };
+      const sent = {
+        method: "POST",
+        url,
+        headers: maskHeaders(call.headers ?? {}),
+        body: { query: call.query, variables: call.variables ?? null, operationName: call.operationName ?? null },
+      };
+      return { ok: false, steps: [blocked(request, sent, detail, assertion, "config")], durationMs: Date.now() - started };
+    };
+
+    const missingVariables = unresolvedVariables({
+      url: call.url,
+      query: call.query,
+      variables: call.variables,
+      headers: call.headers,
+    });
+    if (missingVariables.length) return refuse(`Faltan variables: ${missingVariables.join(", ")}`, "Variables del entorno");
+    const variables = parseGraphqlVariables(call.variables);
+    if (!variables.ok) return refuse(variables.problem, "Variables de GraphQL");
+
+    const headers = { ...call.headers };
+    if (!Object.keys(headers).some((name) => name.toLowerCase() === "content-type")) headers["Content-Type"] = "application/json";
+    const executed = await this.fetch({
+      call: {
+        method: "POST",
+        url: call.url,
+        headers,
+        body: graphqlBody({ query: call.query, variables: variables.value, operationName: call.operationName }),
+        ...(call.expectedStatus ? { expectedStatus: call.expectedStatus } : {}),
+        ...(call.useSession ? { useSession: true } : {}),
+      },
+      // Already substituted: an empty map leaves the fetch nothing to replace a second time.
+      target: { ...input.target, variables: {} },
+    });
+
+    const step = executed.steps[0];
+    step.request = { ...step.request, label };
+    // Refused or unanswered: the fetch already said why, and there is no body to read errors from.
+    if (!step.actual) return executed;
+    step.assertions.push(graphqlAssertion(step.actual.body, call.allowErrors));
+    const ok = holds(step.assertions);
+    // The status held and the body did not: the shape of the answer, not the verb, is what failed.
+    if (!ok && step.ok) step.failure = "contract";
+    step.ok = ok;
+    return { ...executed, ok, durationMs: Date.now() - started };
   }
 
   private async perform(

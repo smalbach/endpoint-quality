@@ -14,6 +14,7 @@ import { z } from "zod";
 import { scenarioCredentialSchema } from "./schema.ts";
 import type { WorkflowStep } from "./workflows.ts";
 import { VARIABLE_NAME } from "./variables.ts";
+import { GRAPHQL_OPERATION_NAME, graphqlVariablesProblem } from "./graphql.ts";
 import { CHECK_OPERATORS, CHECK_SOURCES } from "./checks.ts";
 import { stepNotifySchema } from "./notify.ts";
 import { CAPTURE_SOURCES, FETCH_METHODS, STEP_ON_ERROR, STEP_WAITS, concurrentPairs, loopBody } from "./workflows.ts";
@@ -182,7 +183,7 @@ export const workflowStepSchema = z.object({
   // `request` and a `login` node must (checked below).
   requestTemplateId: z.string().uuid().optional(),
   kind: z
-    .enum(["request", "login", "branch", "wait", "merge", "validate", "fetch", "set", "script", "poll", "loop", "schema", "notify", "subflow"])
+    .enum(["request", "login", "branch", "wait", "merge", "validate", "fetch", "set", "script", "poll", "loop", "schema", "notify", "subflow", "graphql"])
     .optional(),
   // The `notify` node: channel, the NAME of the variable holding the webhook URL, and the message.
   notify: stepNotifySchema.optional(),
@@ -210,6 +211,29 @@ export const workflowStepSchema = z.object({
         .max(50)
         .optional(),
       outputs: z.array(z.string().regex(VARIABLE_NAME, "nombre de variable inválido")).max(50).optional(),
+    })
+    .optional(),
+  // The `graphql` node: one operation, sent the way a fetch sends its call. The variables are checked
+  // as the JSON object they must become with every `{{template}}` standing in for a value — the
+  // values themselves only exist at run time, where the engine parses the substituted text again.
+  graphql: z
+    .object({
+      url: z.string().min(1, "un nodo GraphQL necesita una URL").max(2000).regex(/^[^\r\n]*$/, "la URL no puede llevar un salto de línea"),
+      query: z.string().max(200_000).refine((query) => query.trim().length > 0, "un nodo GraphQL necesita su query"),
+      variables: z
+        .string()
+        .max(1_000_000)
+        .optional()
+        .superRefine((text, context) => {
+          const problem = graphqlVariablesProblem(text);
+          if (problem) context.addIssue({ code: "custom", message: problem });
+        }),
+      operationName: z.string().max(200).regex(GRAPHQL_OPERATION_NAME, "operationName no es un nombre GraphQL válido").optional(),
+      headers: z.record(headerName, headerValue).optional(),
+      disabledHeaders: z.record(headerName, headerValue).optional(),
+      expectedStatus: z.number().int().min(100).max(599).optional(),
+      useSession: z.boolean().optional(),
+      allowErrors: z.boolean().optional(),
     })
     .optional(),
   // The `loop` node: the list it walks. Same ceilings as a `forEach`, for the same reason.
@@ -403,7 +427,7 @@ export const workflowDocumentSchema = z
       if (!sendsRequest && step.requestTemplateId) {
         context.addIssue({
           code: "custom",
-          message: kind === "fetch" ? "un nodo fetch lleva su petición escrita, no una guardada" : "un nodo de control no envía ninguna petición",
+          message: kind === "fetch" || kind === "graphql" ? `un nodo ${kind} lleva su petición escrita, no una guardada` : "un nodo de control no envía ninguna petición",
           path: ["steps", index, "requestTemplateId"],
         });
       }
@@ -515,6 +539,12 @@ export const workflowDocumentSchema = z
         if (step.forEach) {
           context.addIssue({ code: "custom", message: "un sub-flujo no recorre una lista", path: ["steps", index, "forEach"] });
         }
+      }
+      if (step.graphql && kind !== "graphql") {
+        context.addIssue({ code: "custom", message: "solo un nodo GraphQL lleva su bloque graphql", path: ["steps", index, "graphql"] });
+      }
+      if (kind === "graphql" && !step.graphql) {
+        context.addIssue({ code: "custom", message: "un nodo GraphQL necesita su URL y su query", path: ["steps", index, "graphql"] });
       }
       if (step.poll && kind !== "poll") {
         context.addIssue({ code: "custom", message: "solo un nodo reintento lleva su bloque poll", path: ["steps", index, "poll"] });

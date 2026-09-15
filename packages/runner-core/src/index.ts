@@ -19,4 +19,5 @@ export * from "./workflows.ts";
 export * from "./workflow-schema.ts";
 export * from "./notify.ts";
 export * from "./subflows.ts";
+export * from "./graphql.ts";
 export * as presets from "./presets.ts";

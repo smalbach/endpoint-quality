@@ -6,6 +6,7 @@
  * a cycle must be caught before it is saved — and none of them are display concerns. Tested here,
  * with no renderer in sight.
  */
+import { DEFAULT_GRAPHQL_QUERY, GRAPHQL_OPERATION_NAME, graphqlVariablesProblem } from "@/lib/graphql-draft";
 import type {
   CaseStatus,
   WorkflowCaptureView,
@@ -227,6 +228,7 @@ export const CONTROL_PALETTE: { kind: ControlKind; glyph: string; label: string;
   { kind: "schema", glyph: "⊨", label: "Esquema", hint: "Valida el body de una respuesta contra el JSON Schema del contrato o uno escrito a mano" },
   { kind: "notify", glyph: "✉", label: "Notificar", hint: "Envía un mensaje a Slack, Teams o un webhook; la URL sale de una variable del entorno" },
   { kind: "subflow", glyph: "⧉", label: "Sub-flujo", hint: "Ejecuta otro flujo del proyecto como un paso de este: le pasa variables y recoge las que devuelve" },
+  { kind: "graphql", glyph: "◈", label: "GraphQL", hint: "Una operación GraphQL (query, variables, operationName): falla si la respuesta trae errors" },
 ];
 
 /** Why the JSON Schema written on a schema node cannot be used, or null. The server refuses the same
@@ -254,7 +256,7 @@ export function schemaJsonProblem(json: string | undefined): string | null {
 /** The kinds the palette drops straight onto the canvas. `fetch` sends a call, but one written on the
  * node itself, so it needs no operation from the catalogue and lands like the control kinds; `poll`
  * re-sends the request of the node wired into it. */
-type ControlKind = "branch" | "wait" | "merge" | "validate" | "fetch" | "set" | "script" | "poll" | "loop" | "schema" | "notify" | "subflow";
+type ControlKind = "branch" | "wait" | "merge" | "validate" | "fetch" | "set" | "script" | "poll" | "loop" | "schema" | "notify" | "subflow" | "graphql";
 const CONTROL_BASE_ID: Record<ControlKind, string> = {
   branch: "rama",
   wait: "espera",
@@ -268,6 +270,7 @@ const CONTROL_BASE_ID: Record<ControlKind, string> = {
   schema: "esquema",
   notify: "notificar",
   subflow: "subflujo",
+  graphql: "graphql",
 };
 
 /**
@@ -321,6 +324,7 @@ export function addControlStep(
   if (kind === "set") node.set = { assignments: [{ variable: "", value: "" }] };
   if (kind === "script") node.script = from ? { code: "", from } : { code: "" };
   if (kind === "loop") node.loop = { from: from ?? "", path: "data", as: "item", max: 50 };
+  if (kind === "graphql") node.graphql = { url: "", query: DEFAULT_GRAPHQL_QUERY };
   if (kind === "schema") node.schema = { from: from ?? "", source: "custom", json: '{\n  "type": "object"\n}' };
   if (kind === "notify") node.notify = defaultNotify();
   // No flow yet: the inspector's selector picks it, and flowProblems asks for it until then.
@@ -588,6 +592,23 @@ export function toNodes(
           attempts: step.poll?.attempts ?? 0,
           delayMs: step.poll?.delayMs ?? 0,
           checks: step.checks?.length ?? 0,
+          runStatus: runStatusFor,
+        },
+      };
+    }
+    if (kind === "graphql") {
+      return {
+        id: step.id,
+        type: "graphql",
+        position,
+        data: {
+          name: step.id,
+          url: step.graphql?.url ?? "",
+          operationName: step.graphql?.operationName ?? "",
+          captures: step.captures?.length ?? 0,
+          checks: step.checks?.length ?? 0,
+          useSession: Boolean(step.graphql?.useSession),
+          allowErrors: Boolean(step.graphql?.allowErrors),
           runStatus: runStatusFor,
         },
       };
@@ -900,6 +921,14 @@ export function flowProblems(steps: WorkflowStepView[]): FlowProblem[] {
     }
     if (kind === "fetch" && !step.fetch?.url?.trim())
       problems.push({ message: `El fetch «${step.id}» no tiene URL.`, stepId: step.id });
+    if (kind === "graphql") {
+      if (!step.graphql?.url?.trim()) problems.push({ message: `El nodo GraphQL «${step.id}» no tiene URL.`, stepId: step.id });
+      if (!step.graphql?.query?.trim()) problems.push({ message: `El nodo GraphQL «${step.id}» no tiene query.`, stepId: step.id });
+      const variablesProblem = graphqlVariablesProblem(step.graphql?.variables);
+      if (variablesProblem) problems.push({ message: `El nodo GraphQL «${step.id}»: ${variablesProblem}`, stepId: step.id });
+      if (step.graphql?.operationName && !GRAPHQL_OPERATION_NAME.test(step.graphql.operationName))
+        problems.push({ message: `El nodo GraphQL «${step.id}»: «${step.graphql.operationName}» no es un operationName válido.`, stepId: step.id });
+    }
     if (kind === "login" && !step.authorizes)
       problems.push({ message: `El login «${step.id}» no dice de dónde sale la credencial.`, stepId: step.id });
   }

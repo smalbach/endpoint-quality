@@ -6,6 +6,7 @@
  * templates are rows the API owns — not part of `ProjectConfig` — because a template is
  * referenced by several flows, and «delete it» has to be answerable by a query.
  */
+import type { StepGraphql } from "./graphql.ts";
 import { valueAtPath, type RuntimeVariables } from "./variables.ts";
 import type { StepCheck } from "./checks.ts";
 import type { ScenarioAuth } from "./types.ts";
@@ -190,6 +191,8 @@ export type StepWaits = (typeof STEP_WAITS)[number];
  *   that operation and status, or one written on the node.
  * - `subflow` runs another flow of the same project inline, as one step of this one — see
  *   {@link StepSubflow}.
+ * - `graphql` sends one GraphQL operation — a `POST` of `{query, variables, operationName}` — and
+ *   fails on a non-empty `errors` array, which a GraphQL server answers with a 200. See {@link StepGraphql}.
  *
  * The ones that send no request (`branch`, `wait`, `merge`, `validate`, `set`, `script`, `schema`) are
  * *control* nodes: they produce a case that records what the flow did, not one that made an HTTP
@@ -210,7 +213,8 @@ export type StepKind =
   // Posts a message to a chat/webhook URL held in an environment variable (see `notify.ts`). It
   // does send a request, but not to the API under test, so it records a control row (`NOTIFY`).
   | "notify"
-  | "subflow";
+  | "subflow"
+  | "graphql";
 
 /** The control kinds — the nodes that record a decision instead of making a request. */
 export const CONTROL_KINDS: StepKind[] = ["branch", "wait", "merge", "validate", "set", "script", "schema", "subflow"];
@@ -389,6 +393,8 @@ export type WorkflowStep = {
   notify?: StepNotify;
   /** On a `subflow` node: the flow it runs, what goes in and what comes back. */
   subflow?: StepSubflow;
+  /** On a `graphql` node: the operation it sends. */
+  graphql?: StepGraphql;
   /** On a node downstream of a branch: which path it sits on. */
   branch?: StepBranch;
   waits?: StepWaits;

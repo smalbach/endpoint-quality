@@ -265,7 +265,24 @@ export type StepKind =
   | "loop"
   | "schema"
   | "notify"
-  | "subflow";
+  | "subflow"
+  | "graphql";
+
+/** A `graphql` node: one operation sent as `POST` `{query, variables, operationName}` the way a fetch
+ * sends its call (URL absolute or under the base URL, session only with `useSession`). `variables` is
+ * JSON object text with `{{templates}}`, substituted then parsed. It fails on a non-empty `errors`
+ * array unless `allowErrors`; `expectedStatus` absent means any 2xx. */
+export type StepGraphqlView = {
+  url: string;
+  query: string;
+  variables?: string;
+  operationName?: string;
+  headers?: Record<string, string>;
+  disabledHeaders?: Record<string, string>;
+  useSession?: boolean;
+  expectedStatus?: number;
+  allowErrors?: boolean;
+};
 
 /** A `notify` node: posts `message` (a template) to the webhook URL held in the environment variable
  * named `urlVariable` — the URL itself is a secret and never lives in the flow. `slack` sends
@@ -356,6 +373,8 @@ export type WorkflowStepView = {
   notify?: StepNotifyView;
   /** On a `subflow` node: the flow it runs, its inputs and the variables it hands back. */
   subflow?: StepSubflowView;
+  /** On a `graphql` node: the operation it sends. */
+  graphql?: StepGraphqlView;
   /** On any node downstream of an `If`: which of its two paths this node sits on. */
   branch?: StepBranchView;
   dependsOn?: string[];

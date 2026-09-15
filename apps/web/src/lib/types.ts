@@ -84,6 +84,7 @@ export type {
   StepCheckView,
   StepConditionView,
   StepFetchView,
+  StepGraphqlView,
   StepForEachView,
   StepKind,
   StepRetryView,

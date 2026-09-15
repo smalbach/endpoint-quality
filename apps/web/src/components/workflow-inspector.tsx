@@ -4,6 +4,7 @@ import { RequestBodyEditor } from "@/components/request-body-editor";
 import { RequestFieldsEditor } from "@/components/request-fields-editor";
 import { RequestPreviewPanel } from "@/components/request-preview";
 import { cn } from "@/lib/format";
+import { GRAPHQL_OPERATION_NAME, graphqlVariablesProblem } from "@/lib/graphql-draft";
 import { fieldMapsFrom, fieldProblems, fieldRowsFrom, type FieldRow } from "@/lib/request-fields";
 import {
   loopBodyIds,
@@ -30,6 +31,7 @@ import type {
   StepCheckView,
   StepConditionView,
   StepFetchView,
+  StepGraphqlView,
   WorkflowCaptureView,
   WorkflowStepView,
   WorkflowView,
@@ -218,6 +220,8 @@ export function WorkflowInspector({
         />
       ) : kind === "poll" ? (
         <PollInspector step={step} steps={steps} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
+      ) : kind === "graphql" ? (
+        <GraphqlInspector step={step} variables={variables} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
       ) : kind === "fetch" ? (
         <FetchInspector step={step} variables={variables} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
       ) : (
@@ -1240,6 +1244,192 @@ function FetchInspector({
           label: "Comprobaciones",
           count: step.checks?.length,
           content: <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />,
+        },
+        {
+          id: "schedule",
+          label: "Cuándo",
+          marked: scheduled(step),
+          content: <ScheduleEditor step={step} canEdit={canEdit} onChange={onChange} />,
+        },
+        {
+          id: "failure",
+          label: "Si falla",
+          marked: failureSet(step),
+          content: <FailureEditor step={step} canEdit={canEdit} onChange={onChange} />,
+        },
+      ]}
+    />
+  );
+}
+
+/** A GraphQL node: the operation — URL, query, variables, operationName, headers — then the same
+ * captures, checks and failure handling as a fetch. Always a JSON POST, so there is no method to pick. */
+function GraphqlInspector({
+  step,
+  variables,
+  canEdit,
+  onChange,
+  onRemove,
+}: {
+  step: WorkflowStepView;
+  variables: string[];
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+  onRemove: () => void;
+}) {
+  const call: StepGraphqlView = step.graphql ?? { url: "", query: "" };
+  const setCall = (change: Partial<StepGraphqlView>) => onChange({ ...step, graphql: { ...call, ...change } });
+  const variablesProblem = graphqlVariablesProblem(call.variables);
+  const badName = Boolean(call.operationName) && !GRAPHQL_OPERATION_NAME.test(call.operationName ?? "");
+
+  return (
+    <NodePanel
+      title="GraphQL"
+      subtitle={call.url ? `${call.operationName || "anónima"} · ${call.url} · ${step.id}` : step.id}
+      description={
+        <>
+          Una operación GraphQL enviada como POST JSON. Falla si la respuesta trae{" "}
+          <span className="font-mono">errors</span>, aunque el estado sea 200. Las capturas y comprobaciones leen el
+          body: <span className="font-mono">data.…</span>. URL, query, variables y cabeceras aceptan{" "}
+          <span className="font-mono">{"{{variables}}"}</span>.
+        </>
+      }
+      canEdit={canEdit}
+      onRemove={onRemove}
+      tabs={[
+        {
+          id: "request",
+          label: "Petición",
+          count: Object.keys(call.headers ?? {}).length,
+          content: (
+            <>
+              <div className="grid gap-3 @3xl:grid-cols-[minmax(0,1fr)_12rem_8rem]">
+                <Field label="URL">
+                  <input
+                    className={`${inputClass} font-mono text-[11px]`}
+                    value={call.url}
+                    placeholder="/graphql o https://api.ejemplo.com/graphql"
+                    list={`graphql-vars-${step.id}`}
+                    disabled={!canEdit}
+                    onChange={(event) => setCall({ url: event.target.value })}
+                  />
+                </Field>
+                <Field label="operationName">
+                  <input
+                    className={`${inputClass} font-mono text-[11px]`}
+                    value={call.operationName ?? ""}
+                    placeholder="opcional"
+                    disabled={!canEdit}
+                    onChange={(event) => setCall({ operationName: event.target.value || undefined })}
+                  />
+                </Field>
+                <Field label="Estado esperado">
+                  <input
+                    className={inputClass}
+                    type="number"
+                    min={100}
+                    max={599}
+                    placeholder="2xx"
+                    value={call.expectedStatus ?? ""}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      setCall({ expectedStatus: event.target.value ? Number(event.target.value) : undefined })
+                    }
+                  />
+                </Field>
+              </div>
+              {badName && (
+                <p className="mt-1 text-[11px] text-rose-600">
+                  Un operationName solo lleva letras, números y _, sin empezar por número.
+                </p>
+              )}
+              <datalist id={`graphql-vars-${step.id}`}>
+                {variables.map((name) => (
+                  <option key={name} value={`{{${name}}}`} />
+                ))}
+              </datalist>
+              <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1">
+                <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(call.useSession)}
+                    disabled={!canEdit}
+                    onChange={(event) => setCall({ useSession: event.target.checked || undefined })}
+                  />
+                  Enviar sesión del login
+                </label>
+                <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(call.allowErrors)}
+                    disabled={!canEdit}
+                    onChange={(event) => setCall({ allowErrors: event.target.checked || undefined })}
+                  />
+                  Admitir errors en la respuesta
+                </label>
+              </div>
+              {call.useSession && /^https?:\/\//i.test(call.url) && (
+                <p className="mt-1 text-[11px] text-amber-700">
+                  La credencial obtenida en el login viajará a esta URL. Úsalo solo con hosts de confianza.
+                </p>
+              )}
+              <div className="mt-3 grid gap-3 @3xl:grid-cols-2">
+                <Field label="Query">
+                  <textarea
+                    className={`${inputClass} h-[18rem] font-mono text-[11px]`}
+                    placeholder={"query Cosa($id: ID!) {\n  cosa(id: $id) { id nombre }\n}"}
+                    value={call.query}
+                    disabled={!canEdit}
+                    spellCheck={false}
+                    onChange={(event) => setCall({ query: event.target.value })}
+                  />
+                </Field>
+                <Field label="Variables (JSON)">
+                  <textarea
+                    className={cn(`${inputClass} h-[18rem] font-mono text-[11px]`, variablesProblem && "border-rose-300")}
+                    placeholder={'{\n  "id": "{{thingId}}"\n}'}
+                    value={call.variables ?? ""}
+                    disabled={!canEdit}
+                    spellCheck={false}
+                    onChange={(event) => setCall({ variables: event.target.value || undefined })}
+                  />
+                  {variablesProblem && <p className="mt-1 text-[11px] text-rose-600">{variablesProblem}</p>}
+                </Field>
+              </div>
+              <div className="mt-3 border-t border-slate-100 pt-1">
+                <RequestFieldsRows
+                  label="Cabeceras"
+                  kind="header"
+                  hint="Content-Type: application/json se añade si no la pones."
+                  namePlaceholder="Authorization"
+                  valuePlaceholder="Bearer {{token}}"
+                  enabled={call.headers ?? {}}
+                  disabledMap={call.disabledHeaders ?? {}}
+                  variables={variables}
+                  canEdit={canEdit}
+                  onChange={(maps) =>
+                    setCall({
+                      headers: Object.keys(maps.enabled).length ? maps.enabled : undefined,
+                      disabledHeaders: Object.keys(maps.disabled).length ? maps.disabled : undefined,
+                    })
+                  }
+                />
+              </div>
+            </>
+          ),
+        },
+        {
+          id: "checks",
+          label: "Comprobaciones",
+          count: step.checks?.length,
+          content: <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />,
+        },
+        {
+          id: "captures",
+          label: "Capturas",
+          count: step.captures?.length,
+          marked: Boolean(step.authorizes),
+          content: <CapturesTab step={step} canEdit={canEdit} session onChange={onChange} />,
         },
         {
           id: "schedule",

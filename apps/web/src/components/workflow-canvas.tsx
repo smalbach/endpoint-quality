@@ -530,7 +530,53 @@ function NotifyNode({ data, selected }: NodeProps<Node<NotifyNodeData>>) {
   );
 }
 
+type GraphqlNodeData = {
+  name: string;
+  url: string;
+  operationName: string;
+  captures: number;
+  checks: number;
+  useSession: boolean;
+  allowErrors: boolean;
+  runStatus?: CaseStatus;
+};
+
+/** A GraphQL operation: a POST of query and variables, red when the answer carries `errors`. */
+function GraphqlNode({ data, selected }: NodeProps<Node<GraphqlNodeData>>) {
+  const status = data.runStatus;
+  return (
+    <div
+      className={cn(
+        "w-64 rounded-xl border bg-white p-3 shadow-sm transition-colors",
+        status ? RUN_NODE_CLASS[status] : "border-fuchsia-300",
+        selected && "border-slate-900 ring-2 ring-slate-200",
+      )}
+    >
+      <Handle type="target" position={Position.Left} />
+      <div className="flex items-center gap-2">
+        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-fuchsia-100 text-fuchsia-700" title="GraphQL">
+          ◈
+        </span>
+        <Badge className="w-14 justify-center border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700">GQL</Badge>
+        <span className="truncate text-xs font-semibold text-slate-800">{data.name}</span>
+        {data.useSession && <span title="Presenta la sesión del login">🔑</span>}
+        <RunDot status={status} />
+      </div>
+      <p className="mt-2 truncate font-mono text-[10px] text-slate-500">
+        {data.operationName ? `${data.operationName} · ` : ""}
+        {data.url || "sin URL"}
+      </p>
+      <p className="mt-1 text-[10px] text-slate-400">
+        {data.captures} capturas{data.checks > 0 && ` · ${data.checks} comprob.`}
+        {data.allowErrors && " · admite errors"}
+      </p>
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+}
+
 const nodeTypes = {
+  graphql: GraphqlNode,
   notify: NotifyNode,
   subflow: SubflowNode,
   schema: SchemaNode,

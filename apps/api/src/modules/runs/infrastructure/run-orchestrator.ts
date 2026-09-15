@@ -495,6 +495,20 @@ export class RunOrchestrator {
           } satisfies RunCase,
         };
       }
+      // A GraphQL node names its operation, or the URL when the operation is anonymous.
+      if (step.kind === "graphql") {
+        return {
+          step,
+          template: null,
+          operation: null,
+          runCase: {
+            ...base,
+            operationId: "",
+            method: "GQL",
+            path: step.graphql?.operationName || step.graphql?.url || "",
+          } satisfies RunCase,
+        };
+      }
       const template = templates.get(step.requestTemplateId!);
       if (!template)
         throw new Error(`El paso "${step.id}" referencia la prueba inexistente "${step.requestTemplateId}"`);
@@ -1136,6 +1150,9 @@ export class RunOrchestrator {
    * prepareWorkflow only builds with a template and an operation, hence the non-null assertions.
    */
   private send(run: Run, context: ExecutionContext, item: PreparedItem): Promise<ExecutedCase> {
+    if (item.step.kind === "graphql" && item.step.graphql) {
+      return this.executor.graphql({ call: item.step.graphql, target: context.target });
+    }
     return item.step.kind === "fetch" && item.step.fetch
       ? this.executor.fetch({ call: item.step.fetch, target: context.target })
       : this.executor.run({
