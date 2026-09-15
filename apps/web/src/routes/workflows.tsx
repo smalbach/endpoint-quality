@@ -495,6 +495,7 @@ export function WorkflowsPage() {
                   setSelectedStep(stepId);
                   setInspectorOpen(true);
                 }}
+                onAddRequest={canEdit ? () => setDrawer("library") : undefined}
                 runStatus={stepStatus}
               />
             )}

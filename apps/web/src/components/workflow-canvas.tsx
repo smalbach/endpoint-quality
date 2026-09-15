@@ -39,26 +39,107 @@ const CASE_STATUS_LABEL: Record<CaseStatus, string> = {
   queued: "En cola",
 };
 
+const AUTH_DEFAULT = { from: "body", path: "token", header: "Authorization", scheme: "Bearer " } as const;
+
+/** Turn a behaviour off by dropping its key, never by setting `undefined`: the step's fields are
+ * truly optional and an explicit `undefined` is a different thing the compiler rejects. */
+const withoutKey = (step: WorkflowStepView, key: keyof WorkflowStepView): WorkflowStepView => {
+  const next = { ...step };
+  delete next[key];
+  return next;
+};
+
 /**
- * The node «types», as this editor means them.
+ * The behaviours a node can wear, as the toolbar offers them.
  *
  * The reference tool draws Auth, Condition, Loop, Merge and Delay as separate draggable shapes.
  * Here every node is a request — a node with no HTTP would be a case with no request, a row in the
  * report that means something different from every other row — so these are not other kinds of
- * node: they are a request wearing a behaviour. The palette says which behaviours exist and marks
- * the glyph each one shows on the canvas; the behaviour itself is set from the node's menu, or in
- * the inspector where the ones that need a dependency (condition, loop, merge) belong.
+ * node: they are a request wearing a behaviour. The toolbar applies one to the selected node with a
+ * click (and shows it lit when it is on); the ones that read a previous step —condition, loop,
+ * merge— light up only when the node hangs off another, which is where they have something to read.
+ * The inspector is where each one's detail is tuned.
  */
-const PALETTE = [
-  { glyph: "●", label: "Petición", hint: "Cada nodo es una petición reutilizable" },
-  { glyph: "🔑", label: "Login", hint: "Su respuesta da la credencial de los pasos siguientes" },
-  { glyph: "◇", label: "Condición", hint: "Se ejecuta solo si un paso anterior cumple algo" },
-  { glyph: "↻", label: "Bucle", hint: "Una vez por elemento de una lista que devolvió otro paso" },
-  { glyph: "⇉", label: "Merge", hint: "Con varias dependencias, basta con que llegue una" },
-  { glyph: "⏱", label: "Espera", hint: "Pausa antes de enviar, para lo que tarda en verse" },
-] as const;
+type NodeBehaviour = {
+  glyph: string;
+  label: string;
+  hint: string;
+  active: (step: WorkflowStepView) => boolean;
+  enabled: (step: WorkflowStepView) => boolean;
+  disabledHint?: string;
+  apply: (step: WorkflowStepView) => WorkflowStepView;
+};
 
-const AUTH_DEFAULT = { from: "body", path: "token", header: "Authorization", scheme: "Bearer " } as const;
+const BEHAVIOURS: NodeBehaviour[] = [
+  {
+    glyph: "🔑",
+    label: "Login",
+    hint: "Su respuesta da la credencial de los pasos siguientes",
+    active: (step) => Boolean(step.authorizes),
+    enabled: () => true,
+    apply: (step) => (step.authorizes ? withoutKey(step, "authorizes") : { ...step, authorizes: { ...AUTH_DEFAULT } }),
+  },
+  {
+    glyph: "◇",
+    label: "Condición",
+    hint: "Se ejecuta solo si un paso anterior cumple algo",
+    active: (step) => Boolean(step.runIf),
+    enabled: (step) => (step.dependsOn?.length ?? 0) >= 1,
+    disabledHint: "Conéctalo a otro nodo primero",
+    apply: (step) =>
+      step.runIf
+        ? withoutKey(step, "runIf")
+        : { ...step, runIf: { from: step.dependsOn![0], check: { source: "status", operator: "equals", value: "200" } } },
+  },
+  {
+    glyph: "↻",
+    label: "Bucle",
+    hint: "Una vez por elemento de una lista que devolvió otro paso",
+    active: (step) => Boolean(step.forEach),
+    enabled: (step) => (step.dependsOn?.length ?? 0) >= 1,
+    disabledHint: "Conéctalo a otro nodo primero",
+    apply: (step) =>
+      step.forEach
+        ? withoutKey(step, "forEach")
+        : { ...step, forEach: { from: step.dependsOn![0], path: "data", as: "item", max: 50 } },
+  },
+  {
+    glyph: "⇉",
+    label: "Merge",
+    hint: "Con varias dependencias, basta con que llegue una",
+    active: (step) => step.waits === "any",
+    enabled: (step) => (step.dependsOn?.length ?? 0) >= 2,
+    disabledHint: "Necesita dos o más dependencias",
+    apply: (step) => (step.waits === "any" ? withoutKey(step, "waits") : { ...step, waits: "any" }),
+  },
+  {
+    glyph: "⏱",
+    label: "Espera",
+    hint: "Pausa antes de enviar, para lo que tarda en verse",
+    active: (step) => Boolean(step.waitMs),
+    enabled: () => true,
+    apply: (step) => (step.waitMs ? withoutKey(step, "waitMs") : { ...step, waitMs: 1000 }),
+  },
+  {
+    glyph: "✓",
+    label: "Comprobación",
+    hint: "Añade una aserción sobre la respuesta (status u otra)",
+    active: (step) => (step.checks?.length ?? 0) > 0,
+    enabled: () => true,
+    apply: (step) => ({
+      ...step,
+      checks: [...(step.checks ?? []), { source: "status", operator: "equals", value: "200" }],
+    }),
+  },
+  {
+    glyph: "↺",
+    label: "Reintento",
+    hint: "Repite el paso cuando falla, con espera entre intentos",
+    active: (step) => Boolean(step.retry),
+    enabled: () => true,
+    apply: (step) => (step.retry ? withoutKey(step, "retry") : { ...step, retry: { attempts: 2, delayMs: 500, backoff: 2 } }),
+  },
+];
 
 type StepNodeData = {
   name: string;
@@ -153,6 +234,7 @@ export function WorkflowCanvas({
   operations,
   onChange,
   onSelect,
+  onAddRequest,
   runStatus,
 }: {
   steps: WorkflowStepView[];
@@ -160,6 +242,8 @@ export function WorkflowCanvas({
   operations: OperationSummary[];
   onChange: (steps: WorkflowStepView[]) => void;
   onSelect: (stepId: string) => void;
+  /** Open the request catalogue so a new node can be added. The toolbar's «Petición» calls it. */
+  onAddRequest?: () => void;
   /** Per-step live status while a run is being watched; nodes light up by it. */
   runStatus?: Record<string, CaseStatus>;
 }) {
@@ -179,6 +263,10 @@ export function WorkflowCanvas({
 
   const edges: Edge[] = toEdges(steps);
   const menuStep = menu ? steps.find((step) => step.id === menu.id) : undefined;
+  // The node the toolbar acts on: whichever one ReactFlow has selected. Selection lives in the
+  // canvas node state (mergeNodes keeps it), so a click on a toolbar behaviour reads it from there.
+  const selectedId = nodes.find((node) => node.selected)?.id;
+  const selectedStep = selectedId ? steps.find((step) => step.id === selectedId) : undefined;
 
   /** Write one changed step back into the document and close the menu. */
   const put = (next: WorkflowStepView) => {
@@ -196,15 +284,48 @@ export function WorkflowCanvas({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-100 px-3 py-2">
-        <span className="text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Tipos de nodo</span>
-        {PALETTE.map((item) => (
-          <span key={item.label} className="flex items-center gap-1 text-[11px] text-slate-500" title={item.hint}>
-            <span aria-hidden>{item.glyph}</span>
-            {item.label}
-          </span>
-        ))}
-        <span className="ml-auto text-[10px] text-slate-400">Clic derecho en un nodo para su menú</span>
+      <div className="flex flex-wrap items-center gap-1 border-b border-slate-100 px-3 py-2">
+        {onAddRequest && (
+          <>
+            <button
+              onClick={onAddRequest}
+              title="Añadir una petición al flujo"
+              className="flex items-center gap-1 rounded px-1.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
+            >
+              <span aria-hidden>＋</span> Petición
+            </button>
+            <span className="mx-1 h-4 w-px bg-slate-200" aria-hidden />
+          </>
+        )}
+        {BEHAVIOURS.map((behaviour) => {
+          const on = selectedStep ? behaviour.active(selectedStep) : false;
+          const can = Boolean(selectedStep) && behaviour.enabled(selectedStep!);
+          return (
+            <button
+              key={behaviour.label}
+              disabled={!can}
+              title={
+                !selectedStep
+                  ? "Selecciona un nodo para aplicarlo"
+                  : !can
+                    ? (behaviour.disabledHint ?? behaviour.hint)
+                    : behaviour.hint
+              }
+              onClick={() => selectedStep && onChange(replaceStep(steps, behaviour.apply(selectedStep)))}
+              className={cn(
+                "flex items-center gap-1 rounded px-1.5 py-1 text-[11px] transition-colors",
+                on ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100",
+                !can && "cursor-not-allowed opacity-40 hover:bg-transparent",
+              )}
+            >
+              <span aria-hidden>{behaviour.glyph}</span>
+              {behaviour.label}
+            </button>
+          );
+        })}
+        <span className="ml-auto text-[10px] text-slate-400">
+          {selectedStep ? "Se aplica al nodo seleccionado" : "Elige un nodo · clic derecho para su menú"}
+        </span>
       </div>
       <div className="relative flex-1" onClick={() => setMenu(null)}>
         <ReactFlow
