@@ -138,10 +138,12 @@ export class ImportElementsHandler implements ICommandHandler<ImportElementsComm
     const existingWorkflows = new Set((await this.workflows.listWorkflows(targetId)).map((row) => row.name));
     const datasets = await this.workflows.listDatasets(source);
     for (const workflow of workflows) {
-      const steps = workflow.definition.steps.map((step) => ({
-        ...step,
-        requestTemplateId: templateIds.get(step.requestTemplateId) ?? step.requestTemplateId,
-      }));
+      const steps = workflow.definition.steps.map((step) =>
+        // A branch node has no template to remap; leave it untouched.
+        step.requestTemplateId
+          ? { ...step, requestTemplateId: templateIds.get(step.requestTemplateId) ?? step.requestTemplateId }
+          : step,
+      );
       const name = uniqueName(workflow.name, existingWorkflows);
       existingWorkflows.add(name);
       const workflowId = randomUUID();

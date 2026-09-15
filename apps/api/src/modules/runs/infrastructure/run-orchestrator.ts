@@ -378,7 +378,33 @@ export class RunOrchestrator {
       // walking — the ceiling is what the author wrote, the length is what the target answers, and
       // `position` has to be unique across the whole run either way.
       cursor += step.forEach ? (step.forEach.max ?? 50) : 1;
-      const template = templates.get(step.requestTemplateId);
+      const base = {
+        id: randomUUID(),
+        runId: run.id,
+        scenarioId: `workflow:${workflow.id}:${step.id}${suffix}`,
+        status: "queued" as const,
+        failure: null,
+        position,
+        durationMs: null,
+        startedAt: null,
+        finishedAt: null,
+      };
+      // A branch node sends no request, so it has no template and no operation: it is a control
+      // row that records which way the flow went. `IF` and the step it reads name it in the report.
+      if ((step.kind ?? "request") === "branch") {
+        return {
+          step,
+          template: null,
+          operation: null,
+          runCase: {
+            ...base,
+            operationId: "",
+            method: "IF",
+            path: `si ${step.condition?.from ?? ""}`,
+          } satisfies RunCase,
+        };
+      }
+      const template = templates.get(step.requestTemplateId!);
       if (!template)
         throw new Error(`El paso "${step.id}" referencia la prueba inexistente "${step.requestTemplateId}"`);
       const operation = resolved.find((candidate) => candidate.id === template.operationId);
@@ -390,18 +416,10 @@ export class RunOrchestrator {
         template,
         operation,
         runCase: {
-          id: randomUUID(),
-          runId: run.id,
+          ...base,
           operationId: operation.id,
-          scenarioId: `workflow:${workflow.id}:${step.id}${suffix}`,
           method: operation.method,
           path: operation.path,
-          status: "queued" as const,
-          failure: null,
-          position,
-          durationMs: null,
-          startedAt: null,
-          finishedAt: null,
         } satisfies RunCase,
       };
     });
@@ -435,6 +453,9 @@ export class RunOrchestrator {
       // the duration of one run and never beyond it: two runs of the same flow must not be able to
       // read each other's responses, for the same reason their variables are a copy.
       responses: new Map(),
+      // Which way each branch went, set the moment its node decides and read by the nodes on its
+      // two sides. Same run-scoped life as the responses it judges.
+      branches: new Map(),
       // What a failed step lets through. `continue` is the step whose failure the rest does not
       // actually depend on — a cleanup that 404s because there was nothing to clean.
       permissive: new Set(prepared.filter((item) => item.step.onError === "continue").map((item) => item.step.id)),
@@ -502,7 +523,7 @@ export class RunOrchestrator {
     item: ReturnType<RunOrchestrator["prepareWorkflow"]>["items"][number],
     state: WalkState,
   ): Promise<void> {
-    const { passed, responses, permissive, budget } = state;
+    const { passed, responses, permissive, budget, branches } = state;
     const startedAt = this.clock.now();
     if (!dependenciesHeld(item.step, passed, permissive)) {
       const skipped: RunCase = {
@@ -515,6 +536,41 @@ export class RunOrchestrator {
       passed.set(item.step.id, false);
       await this.runs.saveCase(skipped);
       await this.announce(run, skipped);
+      return;
+    }
+
+    // A node on one side of a branch runs only when that branch went its way. The other side is
+    // not a failure — the flow chose — so it is skipped and still counts as «did not fail» for a
+    // step that later merges the two paths back together.
+    if (item.step.branch) {
+      const wanted = item.step.branch.take === "then";
+      if (branches.get(item.step.branch.of) !== wanted) {
+        const at = this.clock.now();
+        const skipped: RunCase = { ...item.runCase, status: "skipped", startedAt, finishedAt: at, durationMs: 0 };
+        passed.set(item.step.id, true);
+        await this.runs.saveCase(skipped);
+        await this.announce(run, skipped);
+        return;
+      }
+    }
+
+    // A branch node sends no request: it reads its condition over what a dependency answered and
+    // records which way the flow goes. It does not fail — it decides — so the case is «passed» and
+    // its verdict is what the two sides read.
+    if ((item.step.kind ?? "request") === "branch") {
+      const condition = item.step.condition;
+      const source = condition ? responses.get(condition.from) : undefined;
+      const [verdict] = condition
+        ? source
+          ? evaluateChecks([condition.check], { response: source.actual, durationMs: source.durationMs })
+          : [{ label: "condición", pass: false, detail: `El paso ${condition.from} no respondió` }]
+        : [{ label: "condición", pass: false, detail: "sin condición" }];
+      branches.set(item.step.id, verdict.pass);
+      const at = this.clock.now();
+      const decided: RunCase = { ...item.runCase, status: "passed", startedAt, finishedAt: at, durationMs: 0 };
+      passed.set(item.step.id, true);
+      await this.runs.saveCase(decided);
+      await this.announce(run, decided);
       return;
     }
 
@@ -589,9 +645,11 @@ export class RunOrchestrator {
       await this.runs.saveCase(started);
       this.eventBus.publish(new RunCaseStartedEvent(run.projectId, run.id, started));
       const executed = await this.attempt(run, runCase.id, item.step, () =>
+        // Non-null here by construction: a branch node has already returned above, so what remains
+        // is a request node, which prepareWorkflow only builds with a template and an operation.
         this.executor.run({
-          operation: item.operation,
-          scenario: scenarioFor(item.template),
+          operation: item.operation!,
+          scenario: scenarioFor(item.template!),
           operations: context.resolved,
           config: context.config,
           target: context.target,
@@ -699,6 +757,8 @@ export class RunOrchestrator {
 type WalkState = {
   passed: Map<string, boolean>;
   responses: Map<string, { actual: ActualResponse; durationMs: number }>;
+  /** Each branch node's verdict, so the nodes on its «sí» and «no» sides know whether they run. */
+  branches: Map<string, boolean>;
   permissive: Set<string>;
   budget: { extra: number };
   stopped: boolean;

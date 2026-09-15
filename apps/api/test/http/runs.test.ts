@@ -253,6 +253,59 @@ describe("flujos reutilizables y variables de entorno", () => {
     await flow.target.stop();
   });
 
+  test("una bifurcación ejecuta la rama sí y salta la no", async () => {
+    const flow = await flowAgainst({ entityName: "con-rama" });
+    // crear → rama(If: ¿el crear respondió 201?) → leer-sí / leer-no. El crear responde 201, así
+    // que la rama va por «sí»: leer-sí se ejecuta y leer-no se salta sin fallar.
+    const saved = await api()
+      .put(`${flow.projectBase}/workflows/${flow.workflowId}`)
+      .set(as(owner))
+      .send({
+        definition: {
+          steps: [
+            {
+              id: "crear",
+              requestTemplateId: flow.createTemplateId,
+              captures: [{ variable: "thingId", from: "body", path: "data.id" }],
+            },
+            {
+              id: "rama",
+              kind: "branch",
+              dependsOn: ["crear"],
+              condition: { from: "crear", check: { source: "status", operator: "equals", value: "201" } },
+            },
+            {
+              id: "leer-si",
+              requestTemplateId: flow.readTemplateId,
+              dependsOn: ["rama"],
+              branch: { of: "rama", take: "then" },
+            },
+            {
+              id: "leer-no",
+              requestTemplateId: flow.readTemplateId,
+              dependsOn: ["rama"],
+              branch: { of: "rama", take: "else" },
+            },
+          ],
+        },
+      });
+    assert.equal(saved.status, 204, JSON.stringify(saved.body));
+
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    const statusOf = (stepId: string) =>
+      run.cases.find((item: RunCaseRow) => item.scenarioId.endsWith(`:${stepId}`))?.status;
+
+    assert.equal(run.cases.length, 4);
+    assert.equal(statusOf("crear"), "passed");
+    assert.equal(statusOf("rama"), "passed");
+    assert.equal(statusOf("leer-si"), "passed");
+    assert.equal(statusOf("leer-no"), "skipped");
+    await flow.target.stop();
+  });
+
   test("las posiciones del lienzo sobreviven a la ida y vuelta", async () => {
     const flow = await flowAgainst();
     const listed = await api().get(`${flow.projectBase}/workflows`).set(as(owner));

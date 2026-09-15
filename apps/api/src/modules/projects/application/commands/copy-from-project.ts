@@ -201,15 +201,19 @@ export class CopyFromProjectHandler implements ICommandHandler<CopyFromProjectCo
     const existingWorkflows = new Set((await this.workflows.listWorkflows(targetId)).map((row) => row.name));
     const workflowIds = new Map<string, string>();
     for (const workflow of await this.workflows.listWorkflows(sourceId)) {
-      const steps = workflow.definition.steps.map((step) => ({
-        ...step,
-        requestTemplateId: templateIds.get(step.requestTemplateId) ?? step.requestTemplateId,
-      }));
+      const steps = workflow.definition.steps.map((step) =>
+        // A branch node has no template to remap; leave it untouched.
+        step.requestTemplateId
+          ? { ...step, requestTemplateId: templateIds.get(step.requestTemplateId) ?? step.requestTemplateId }
+          : step,
+      );
       // A step naming a request that is not in the source either — a row somebody deleted around an
       // old flow — comes across unresolved rather than silently dropped: the flow is saved as it
       // was, and the editor already says which step points at nothing. Said out loud anyway,
       // because a flow that cannot run is worth hearing about now rather than at the first run.
-      const dangling = workflow.definition.steps.filter((step) => !templateIds.has(step.requestTemplateId));
+      const dangling = workflow.definition.steps.filter(
+        (step) => step.requestTemplateId && !templateIds.has(step.requestTemplateId),
+      );
       if (dangling.length) {
         const ids = dangling.map((step) => step.id).join(", ");
         skippedPush(outcome, "paso", `${workflow.name}: ${ids} apunta a una prueba que no existe en el origen`);

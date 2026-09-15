@@ -72,6 +72,7 @@ async function projectData(
   for (const flow of flows) {
     const operations = new Set<string>();
     for (const step of flow.definition.steps) {
+      if (!step.requestTemplateId) continue;
       const operationId = operationByTemplate.get(step.requestTemplateId);
       if (operationId) operations.add(operationId);
     }

@@ -94,7 +94,7 @@ async function validatedDefinition(
   const known = new Set((await workflows.listTemplates(projectId)).map((template) => template.id));
   const missing = definition.steps
     .map((step, index) => ({ step, index }))
-    .filter(({ step }) => !known.has(step.requestTemplateId));
+    .filter(({ step }) => step.requestTemplateId !== undefined && !known.has(step.requestTemplateId));
   if (missing.length) {
     throw new InvalidInputError(
       "El flujo no es válido",
