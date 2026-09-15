@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+import { InfoTip } from "@/components/ui";
 import { VariableSuggest } from "@/components/variable-suggest";
 import { cn } from "@/lib/format";
 import { emptyFieldRow, isBlankField, type FieldRow } from "@/lib/request-fields";
@@ -22,6 +24,7 @@ import { emptyFieldRow, isBlankField, type FieldRow } from "@/lib/request-fields
 export function RequestFieldsEditor({
   label,
   hint,
+  info,
   rows,
   problems,
   namePlaceholder,
@@ -32,6 +35,8 @@ export function RequestFieldsEditor({
 }: {
   label: string;
   hint?: string;
+  /** What these rows are for, behind an «i» next to the label. */
+  info?: ReactNode;
   rows: FieldRow[];
   problems: { index: number; detail: string }[];
   namePlaceholder: string;
@@ -57,7 +62,10 @@ export function RequestFieldsEditor({
   return (
     <div className="mt-2">
       <div className="flex items-baseline gap-2">
-        <span className="text-xs font-medium text-slate-600">{label}</span>
+        <span className="flex items-center text-xs font-medium text-slate-600">
+          {label}
+          {info && <InfoTip label={`Qué es «${label}»`}>{info}</InfoTip>}
+        </span>
         {parked > 0 && (
           <span className="text-[10px] text-slate-400">
             {parked} {parked === 1 ? "apagado" : "apagados"}

@@ -9,6 +9,7 @@ import {
   disconnectEdges,
   duplicateStep,
   flowNodeRetries,
+  flowProblems,
   flowNodeStartedAt,
   flowNodeStatuses,
   freeSpot,
@@ -18,6 +19,7 @@ import {
   predecessorFor,
   problemsWith,
   removeStep,
+  rerunPathIds,
   suggestCaptures,
   templateUsage,
   toEdges,
@@ -821,5 +823,62 @@ describe("los reintentos de cada nodo durante una corrida", () => {
     );
     expect(leer.data).toMatchObject({ runStatus: "running", retry });
     expect(espera.data).not.toHaveProperty("retry");
+  });
+});
+
+describe("el nodo reintento", () => {
+  const flow: WorkflowStepView[] = [
+    { id: "crear", requestTemplateId: "t1" },
+    { id: "borrar", requestTemplateId: "t1", dependsOn: ["crear"] },
+    { id: "leer", requestTemplateId: "t1", dependsOn: ["borrar"] },
+    { id: "listar", requestTemplateId: "t1", dependsOn: ["crear"] },
+  ];
+
+  test("se conecta al paso que vigila y, sin más, repite ese mismo paso", () => {
+    const { steps, id } = addControlStep(flow, "retry");
+    expect(steps.find((step) => step.id === id)!.rerun).toEqual({ from: "", target: "", attempts: 3, delayMs: 1000 });
+    const wired = connectStep(steps, "leer", id);
+    const node = wired.find((step) => step.id === id)!;
+    expect(node.dependsOn).toEqual(["leer"]);
+    expect(node.rerun).toMatchObject({ from: "leer", target: "leer" });
+  });
+
+  test("su salida «reintentar» fija desde dónde repite sin crear una dependencia", () => {
+    const { steps, id } = addControlStep(flow, "retry", "leer");
+    const wired = connectStep(steps, id, "crear", "retry");
+    expect(wired.find((step) => step.id === id)!.rerun?.target).toBe("crear");
+    expect(wired.find((step) => step.id === "crear")!.dependsOn).toBeUndefined();
+
+    const edges = toEdges(connectStep(wired, id, "listar", "exhausted"));
+    expect(edges.find((edge) => edge.target === "crear" && edge.source === id)).toMatchObject({ sourceHandle: "retry", label: "reintentar" });
+    expect(edges.find((edge) => edge.target === "listar" && edge.source === id)).toMatchObject({ sourceHandle: "exhausted", label: "si se agota" });
+
+    expect(disconnectEdges(wired, [{ source: id, target: "crear" }]).find((step) => step.id === id)!.rerun?.target).toBe("");
+    expect(disconnectEdges(wired, [{ source: "leer", target: id }]).find((step) => step.id === id)!.rerun?.from).toBe("");
+    expect(removeStep(wired, "crear").find((step) => step.id === id)!.rerun).toMatchObject({ from: "leer", target: "" });
+  });
+
+  test("el tramo va de donde repite al paso vigilado, y el editor avisa si no hay camino", () => {
+    expect(rerunPathIds(flow, "crear", "leer")).toEqual(["crear", "borrar", "leer"]);
+    expect(rerunPathIds(flow, "listar", "leer")).toBeNull();
+
+    const { steps, id } = addControlStep(flow, "retry", "leer");
+    const good = connectStep(steps, id, "borrar", "retry");
+    expect(flowProblems(good).filter((problem) => problem.stepId === id)).toEqual([]);
+    const bad = connectStep(steps, id, "listar", "retry");
+    expect(flowProblems(bad).map((problem) => problem.message)).toContain(
+      `El reintento «${id}» repite desde «listar», que no va antes de «leer».`,
+    );
+    // Un ciclo no: la vuelta atrás no es una dependencia.
+    expect(flowProblems(good).some((problem) => /ciclo/.test(problem.message))).toBe(false);
+  });
+
+  test("en el lienzo es su propio nodo con lo que vigila y hacia dónde repite", () => {
+    const [, , , , node] = toNodes(
+      [...flow, { id: "r", kind: "retry", dependsOn: ["leer"], rerun: { from: "leer", target: "crear", attempts: 2, delayMs: 500 } }],
+      [],
+      [],
+    );
+    expect(node).toMatchObject({ type: "retry", data: { from: "leer", target: "crear", attempts: 2, delayMs: 500 } });
   });
 });

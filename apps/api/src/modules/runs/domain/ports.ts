@@ -15,6 +15,8 @@ export interface RunRepositoryPort {
   findCase(id: string): Promise<RunCase | null>;
   saveCase(runCase: RunCase): Promise<void>;
   saveSteps(steps: RunStep[]): Promise<void>;
+  /** Removes a case's steps: a case a retry node walks again shows its latest walk, not every one. */
+  deleteSteps(runCaseId: string): Promise<void>;
   listSteps(runCaseId: string): Promise<RunStep[]>;
   /** Every step of every case of a run, in one read.
    *

@@ -185,6 +185,8 @@ export type StepWaits = (typeof STEP_WAITS)[number];
  *   variables.
  * - `poll` re-sends the request of the step it reads until the answer passes its checks — the job
  *   that is `pending` until it is `done`. It records one case, with the last attempt in it.
+ * - `retry` watches one step and, when it fails, walks the flow again from `target` down to it —
+ *   see {@link StepRerun}. What hangs off it runs only when every attempt failed.
  * - `loop` walks a list a step returned and runs its body — what hangs off its «cada» output, see
  *   {@link loopBody} — once per element, before the steps on its «fin» side.
  * - `schema` judges a step's response body against a JSON Schema: the one the contract declares for
@@ -210,6 +212,7 @@ export type StepKind =
   | "set"
   | "script"
   | "poll"
+  | "retry"
   | "loop"
   | "schema"
   // Posts a message to a chat/webhook URL held in an environment variable (see `notify.ts`). It
@@ -309,6 +312,61 @@ export type StepPoll = {
 };
 
 /**
+ * A `retry` node: the step it watches, where the flow is walked again from, and how many times.
+ *
+ * Wired as three edges on the canvas: `from` into its input (a real dependency), its «reintentar»
+ * output to `target` — **not** a dependency, it points back up the flow and would be a cycle — and
+ * its «si se agota» output to the nodes that depend on it. When `from` passes, nothing happens: the
+ * node is skipped and so is what hangs off it. When `from` fails, the stretch between `target` and
+ * `from` ({@link rerunPath}) is walked again, up to `attempts` times, `delayMs` before each. If `from`
+ * ends up passing, the flow goes on from `from` as if it had passed the first time; if not, the node
+ * fails and its dependents run.
+ *
+ * Not the step's own `retry`, which resends one request and cannot go back to the step that created
+ * what it reads; and not `poll`, which repeats a step that passed until its answer changes.
+ */
+export type StepRerun = {
+  /** The step it watches. Its only dependency. */
+  from: string;
+  /** Where the walk starts again: `from` itself or a step upstream of it. */
+  target: string;
+  /** Walks after the first failure. */
+  attempts: number;
+  /** Wait before each walk. */
+  delayMs: number;
+};
+
+/**
+ * The steps a `retry` node walks again, in the order of `steps`: `target` and everything downstream
+ * of it that is also upstream of `from` — the stretch between the two, both ends included. Null when
+ * `target` is neither `from` nor upstream of it: there is no way back from there.
+ */
+export function rerunPath(steps: WorkflowStep[], target: string, from: string): string[] | null {
+  const byId = new Map(steps.map((step) => [step.id, step]));
+  const upstream = new Set<string>();
+  const walk = [from];
+  while (walk.length) {
+    const id = walk.pop()!;
+    if (upstream.has(id) || !byId.has(id)) continue;
+    upstream.add(id);
+    walk.push(...(byId.get(id)!.dependsOn ?? []));
+  }
+  if (!upstream.has(target)) return null;
+  const between = new Set([target]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const step of steps) {
+      if (between.has(step.id) || !upstream.has(step.id)) continue;
+      if ((step.dependsOn ?? []).some((id) => between.has(id))) {
+        between.add(step.id);
+        grew = true;
+      }
+    }
+  }
+  return steps.filter((step) => between.has(step.id)).map((step) => step.id);
+}
+
+/**
  * A `loop` node: where the list is and what each element is called.
  *
  * Not `forEach`, which repeats **one** step. A loop repeats a piece of the graph — read the product,
@@ -403,6 +461,8 @@ export type WorkflowStep = {
   script?: StepScript;
   /** On a `poll` node: the step it repeats until its checks pass. */
   poll?: StepPoll;
+  /** On a `retry` node: the step it watches and where it walks the flow again from. */
+  rerun?: StepRerun;
   /** On a `loop` node: the list it walks. */
   loop?: StepLoop;
   /** On a node wired to a loop's «cada» output: the loop whose body it starts. */

@@ -45,6 +45,9 @@ export class TypeOrmRunRepository implements RunRepositoryPort {
   async saveSteps(steps: RunStep[]): Promise<void> {
     if (steps.length) await this.steps.save(steps as unknown as RunStepEntity[], { chunk: 100 });
   }
+  async deleteSteps(runCaseId: string): Promise<void> {
+    await this.steps.delete({ runCaseId });
+  }
   async listSteps(runCaseId: string): Promise<RunStep[]> {
     return (await this.steps.find({ where: { runCaseId }, order: { index: "ASC" } })).map(toStep);
   }

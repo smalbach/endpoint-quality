@@ -4,6 +4,8 @@
  * Written for what this product does, not copied from the analyzer's: a help text that describes
  * a button that is not there teaches people to stop reading the help.
  */
+import { NODE_HELP } from "@/lib/node-help";
+
 export type HelpStep = { title: string; body: string; tip?: string };
 export type HelpTopic = { id: string; title: string; intro: string; steps: HelpStep[] };
 
@@ -129,6 +131,17 @@ export const HELP_TOPICS: HelpTopic[] = [
         tip: "Escribe {{ en cualquier campo para ver las variables disponibles.",
       },
     ],
+  },
+  {
+    id: "nodos",
+    title: "Nodos de flujo",
+    intro:
+      "Qué hace cada nodo del lienzo. Dentro del flujo, cada nodo tiene además su pestaña «Ayuda» y una «i» en cada campo.",
+    steps: Object.values(NODE_HELP).map((help) => ({
+      title: help.title,
+      body: `${help.summary} Ejemplo: ${help.example}`,
+      tip: help.pitfalls[0],
+    })),
   },
   {
     id: "performance",

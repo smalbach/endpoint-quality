@@ -361,6 +361,9 @@ export class InMemoryRunRepository implements RunRepositoryPort {
   async saveSteps(steps: RunStep[]): Promise<void> {
     for (const step of steps) this.steps.set(step.id, { ...step });
   }
+  async deleteSteps(runCaseId: string): Promise<void> {
+    for (const [id, step] of this.steps) if (step.runCaseId === runCaseId) this.steps.delete(id);
+  }
   async listSteps(runCaseId: string): Promise<RunStep[]> {
     return [...this.steps.values()].filter((step) => step.runCaseId === runCaseId).sort((a, b) => a.index - b.index);
   }

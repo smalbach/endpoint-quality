@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { describe } from "node:test";
-import { applyCaptures, loopBody, orderWorkflowSteps, withinBudget, type WorkflowStep } from "../src/workflows.ts";
+import { applyCaptures, loopBody, orderWorkflowSteps, rerunPath, withinBudget, type WorkflowStep } from "../src/workflows.ts";
 import { safeParseWorkflowDocument } from "../src/workflow-schema.ts";
 
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -283,6 +283,48 @@ describe("nodos de la paleta (login, espera, merge, validación)", () => {
     assert.equal(parse([req("crear"), poll("crear", { poll: { from: "crear", attempts: 21, delayMs: 0 } })]), false);
     assert.equal(parse([req("crear"), { id: "p", kind: "poll", dependsOn: ["crear"], checks: [check] }]), false);
     assert.equal(parse([{ ...req("crear"), poll: { from: "crear", attempts: 1, delayMs: 0 } }]), false);
+  });
+
+  test("un nodo reintento vigila un paso que puede fallar y repite desde él o desde uno anterior", () => {
+    const parse = (steps: unknown[]) => safeParseWorkflowDocument({ steps }).ok;
+    const retry = (from: string, target: string, extra: Record<string, unknown> = {}) => ({
+      id: "r",
+      kind: "retry",
+      dependsOn: [from],
+      rerun: { from, target, attempts: 3, delayMs: 0 },
+      ...extra,
+    });
+    const leer = req("leer", { dependsOn: ["crear"] });
+    assert.equal(parse([req("crear"), leer, retry("leer", "leer")]), true);
+    assert.equal(parse([req("crear"), leer, retry("leer", "crear")]), true);
+    // Lo que cuelga del reintento es su salida «si se agota».
+    assert.equal(parse([req("crear"), leer, retry("leer", "crear"), req("plan-b", { dependsOn: ["r"] })]), true);
+    // Solo desde el paso vigilado o uno anterior: ni un paso suelto ni uno posterior.
+    assert.equal(parse([req("crear"), leer, req("suelto"), retry("leer", "suelto")]), false);
+    assert.equal(parse([req("crear"), leer, req("tras", { dependsOn: ["leer"] }), retry("leer", "tras")]), false);
+    assert.equal(parse([req("crear"), leer, retry("leer", "no-existe")]), false);
+    // Su única entrada es el paso vigilado, y ese paso tiene que poder fallar.
+    assert.equal(parse([req("crear"), leer, retry("leer", "leer", { dependsOn: ["leer", "crear"] })]), false);
+    assert.equal(parse([{ id: "w", kind: "wait", waitMs: 10 }, retry("w", "w")]), false);
+    assert.equal(parse([req("crear"), leer, retry("leer", "leer"), { ...retry("leer", "leer"), id: "r2" }]), false);
+    assert.equal(parse([req("crear"), leer, { id: "r", kind: "retry", dependsOn: ["leer"] }]), false);
+    assert.equal(parse([req("crear"), leer, retry("leer", "leer", { rerun: { from: "leer", target: "leer", attempts: 11, delayMs: 0 } })]), false);
+    assert.equal(parse([req("crear", { rerun: { from: "crear", target: "crear", attempts: 1, delayMs: 0 } })]), false);
+    // El tramo no pasa por un sondeo, que repite por su cuenta.
+    const sondeo = { id: "p", kind: "poll", dependsOn: ["crear"], poll: { from: "crear", attempts: 2, delayMs: 0 }, checks: [check] };
+    assert.equal(parse([req("crear"), sondeo, req("leer", { dependsOn: ["p"] }), retry("leer", "crear")]), false);
+  });
+
+  test("el tramo de un reintento va desde donde repite hasta el paso vigilado, sin ramas ajenas", () => {
+    const steps: WorkflowStep[] = [
+      { id: "crear", requestTemplateId: uuid(1) },
+      { id: "listar", requestTemplateId: uuid(1), dependsOn: ["crear"] },
+      { id: "borrar", requestTemplateId: uuid(1), dependsOn: ["crear"] },
+      { id: "leer", requestTemplateId: uuid(1), dependsOn: ["borrar"] },
+    ];
+    assert.deepEqual(rerunPath(steps, "crear", "leer"), ["crear", "borrar", "leer"]);
+    assert.deepEqual(rerunPath(steps, "leer", "leer"), ["leer"]);
+    assert.equal(rerunPath(steps, "listar", "leer"), null);
   });
 
   test("un esquema valida un paso del que depende; el del contrato solo sobre una petición guardada", () => {

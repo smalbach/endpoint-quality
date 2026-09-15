@@ -262,6 +262,7 @@ export type StepKind =
   | "set"
   | "script"
   | "poll"
+  | "retry"
   | "loop"
   | "schema"
   | "notify"
@@ -327,6 +328,11 @@ export type StepLoopView = { from: string; path: string; as: string; max?: numbe
  * `checks` pass on the answer. `from` must be a request or fetch node this one depends on. */
 export type StepPollView = { from: string; attempts: number; delayMs: number };
 
+/** A `retry` node: watches `from` and, when it fails, walks the flow again from `target` (`from` itself
+ * or a step upstream of it) down to `from`, up to `attempts` times `delayMs` apart. The nodes that
+ * depend on it run only when every attempt failed. `target` is its «reintentar» edge, not a dependency. */
+export type StepRerunView = { from: string; target: string; attempts: number; delayMs: number };
+
 /** A `set` node: each assignment is a variable name and a template resolved when the node runs. */
 export type StepSetView = { assignments: { variable: string; value: string }[] };
 
@@ -375,6 +381,8 @@ export type WorkflowStepView = {
   script?: StepScriptView;
   /** On a `poll` node: the step it repeats until its checks pass. */
   poll?: StepPollView;
+  /** On a `retry` node: the step it watches and where it walks the flow again from. */
+  rerun?: StepRerunView;
   /** On a `loop` node: the list it walks. */
   loop?: StepLoopView;
   /** On a node wired to a loop's «cada» output: that loop's id. */

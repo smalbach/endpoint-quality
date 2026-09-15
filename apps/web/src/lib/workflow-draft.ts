@@ -166,6 +166,16 @@ export function removeStep(steps: WorkflowStepView[], stepId: string): WorkflowS
       if (next.validate?.from === stepId) next = { ...next, validate: { ...next.validate, from: "" } };
       if (next.script?.from === stepId) next = { ...next, script: { code: next.script.code } };
       if (next.poll?.from === stepId) next = { ...next, poll: { ...next.poll, from: "" } };
+      if (next.rerun && (next.rerun.from === stepId || next.rerun.target === stepId)) {
+        next = {
+          ...next,
+          rerun: {
+            ...next.rerun,
+            from: next.rerun.from === stepId ? "" : next.rerun.from,
+            target: next.rerun.target === stepId ? "" : next.rerun.target,
+          },
+        };
+      }
       if (next.loop?.from === stepId) next = { ...next, loop: { ...next.loop, from: "" } };
       if (next.schema?.from === stepId) next = { ...next, schema: { ...next.schema, from: "" } };
       if (next.inLoop === stepId) {
@@ -183,6 +193,13 @@ export function connectStep(
   handle?: string | null,
 ): WorkflowStepView[] {
   if (!source || !target || source === target) return steps;
+  // A retry's «reintentar» output is not a dependency — it points back up the flow — so the wire only
+  // records where the walk starts again.
+  if (handle === "retry" && steps.find((step) => step.id === source)?.kind === "retry") {
+    return steps.map((step) =>
+      step.id === source ? { ...step, rerun: { ...DEFAULT_RERUN, ...step.rerun, target } } : step,
+    );
+  }
   const branching = (steps.find((step) => step.id === source)?.kind ?? "request") === "branch";
   const take = handle === "then" || handle === "else" ? handle : undefined;
   const looping = steps.find((step) => step.id === source)?.kind === "loop";
@@ -209,6 +226,10 @@ export function connectStep(
     if (linked.kind === "script" && !linked.script?.from) {
       return { ...linked, script: { code: linked.script?.code ?? "", from: source } };
     }
+    // Wired into a retry, the step it watches; until its «reintentar» goes somewhere, it repeats that step.
+    if (linked.kind === "retry" && !linked.rerun?.from) {
+      return { ...linked, rerun: { ...DEFAULT_RERUN, ...linked.rerun, from: source, target: linked.rerun?.target || source } };
+    }
     if (linked.kind === "poll" && !linked.poll?.from) {
       return { ...linked, poll: { attempts: 5, delayMs: 2000, ...linked.poll, from: source } };
     }
@@ -229,7 +250,8 @@ export const CONTROL_PALETTE: { kind: ControlKind; glyph: string; label: string;
   { kind: "fetch", glyph: "⇄", label: "Fetch", hint: "Petición HTTP escrita a mano: cualquier URL, método, cabeceras y body" },
   { kind: "set", glyph: "𝑥", label: "Set", hint: "Asigna variables desde plantillas ({{otra}}, {{$uuid}}) sin hacer peticiones" },
   { kind: "script", glyph: "{ }", label: "Script", hint: "JavaScript en un proceso aislado: lee una respuesta, escribe variables, pm.test" },
-  { kind: "poll", glyph: "↻", label: "Reintento", hint: "Repite la petición de un paso hasta que su respuesta cumpla las comprobaciones (polling)" },
+  { kind: "retry", glyph: "↻", label: "Reintento", hint: "Si el paso conectado falla, repite el flujo desde el nodo al que apuntes; si se agotan los intentos, sigue por «si se agota»" },
+  { kind: "poll", glyph: "⧗", label: "Sondeo", hint: "Repite la petición de un paso que pasó hasta que su respuesta cumpla las comprobaciones (polling)" },
   { kind: "loop", glyph: "∀", label: "Bucle", hint: "Recorre una lista: lo que cuelga de «cada» se ejecuta una vez por elemento, y «fin» sigue después" },
   { kind: "schema", glyph: "⊨", label: "Esquema", hint: "Valida el body de una respuesta contra el JSON Schema del contrato o uno escrito a mano" },
   { kind: "notify", glyph: "✉", label: "Notificar", hint: "Envía un mensaje a Slack, Teams o un webhook; la URL sale de una variable del entorno" },
@@ -272,12 +294,20 @@ type ControlKind =
   | "set"
   | "script"
   | "poll"
+  | "retry"
   | "loop"
   | "schema"
   | "notify"
   | "subflow"
   | "graphql"
   | "mock";
+
+/** A retry node's settings before anything is wired to it. */
+const DEFAULT_RERUN = { from: "", target: "", attempts: 3, delayMs: 1000 };
+
+/** The kinds a retry node can watch: the ones that fail on their own. Same list as the server's. */
+const RETRY_WATCHES = ["request", "login", "fetch", "graphql", "validate", "schema", "script"];
+
 const CONTROL_BASE_ID: Record<ControlKind, string> = {
   branch: "rama",
   wait: "espera",
@@ -286,7 +316,8 @@ const CONTROL_BASE_ID: Record<ControlKind, string> = {
   fetch: "fetch",
   set: "variables",
   script: "script",
-  poll: "reintento",
+  poll: "sondeo",
+  retry: "reintento",
   loop: "bucle",
   schema: "esquema",
   notify: "notificar",
@@ -314,6 +345,36 @@ export function loopBodyIds(steps: WorkflowStepView[], loopId: string): string[]
     }
   }
   return steps.filter((step) => body.has(step.id)).map((step) => step.id);
+}
+
+/**
+ * The nodes a retry walks again, in document order: where it repeats from and everything after that
+ * which leads to the step it watches. Null when `target` does not come before `from`. Same rule as
+ * the engine's `rerunPath`, so the editor refuses what the server would.
+ */
+export function rerunPathIds(steps: WorkflowStepView[], target: string, from: string): string[] | null {
+  const byId = new Map(steps.map((step) => [step.id, step]));
+  const upstream = new Set<string>();
+  const walk = [from];
+  while (walk.length) {
+    const id = walk.pop()!;
+    if (upstream.has(id) || !byId.has(id)) continue;
+    upstream.add(id);
+    walk.push(...(byId.get(id)!.dependsOn ?? []));
+  }
+  if (!upstream.has(target)) return null;
+  const between = new Set([target]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const step of steps) {
+      if (between.has(step.id) || !upstream.has(step.id)) continue;
+      if ((step.dependsOn ?? []).some((id) => between.has(id))) {
+        between.add(step.id);
+        grew = true;
+      }
+    }
+  }
+  return steps.filter((step) => between.has(step.id)).map((step) => step.id);
 }
 
 /**
@@ -354,6 +415,7 @@ export function addControlStep(
   // No flow yet: the inspector's selector picks it, and flowProblems asks for it until then.
   if (kind === "subflow") node.subflow = { workflowId: "", inputs: [], outputs: [] };
   if (kind === "mock") node.mock = defaultMock();
+  if (kind === "retry") node.rerun = { ...DEFAULT_RERUN, from: from ?? "", target: from ?? "" };
   if (kind === "poll") {
     node.poll = { from: from ?? "", attempts: 5, delayMs: 2000 };
     node.checks = [check];
@@ -372,6 +434,10 @@ export function disconnectEdges(
   removed: { source: string; target: string }[],
 ): WorkflowStepView[] {
   return steps.map((step) => {
+    // A retry's «reintentar» wire is its `target`, not a dependency of the node it points at.
+    if (step.rerun?.target && removed.some((edge) => edge.source === step.id && edge.target === step.rerun!.target)) {
+      step = { ...step, rerun: { ...step.rerun, target: "" } };
+    }
     const cut = removed.filter((edge) => edge.target === step.id).map((edge) => edge.source);
     if (!cut.length) return step;
     let next = withDependencies(
@@ -383,6 +449,7 @@ export function disconnectEdges(
     if (next.validate && cut.includes(next.validate.from)) next = { ...next, validate: { ...next.validate, from: "" } };
     if (next.script?.from && cut.includes(next.script.from)) next = { ...next, script: { code: next.script.code } };
     if (next.poll && cut.includes(next.poll.from)) next = { ...next, poll: { ...next.poll, from: "" } };
+    if (next.rerun && cut.includes(next.rerun.from)) next = { ...next, rerun: { ...next.rerun, from: "" } };
     if (next.loop && cut.includes(next.loop.from)) next = { ...next, loop: { ...next.loop, from: "" } };
     if (next.schema && cut.includes(next.schema.from)) next = { ...next, schema: { ...next.schema, from: "" } };
     if (next.inLoop && cut.includes(next.inLoop)) {
@@ -412,7 +479,26 @@ export function replaceStep(steps: WorkflowStepView[], next: WorkflowStepView): 
 
 export function toEdges(steps: WorkflowStepView[]) {
   const loops = new Set(steps.filter((step) => step.kind === "loop").map((step) => step.id));
-  return steps.flatMap((step) =>
+  const retries = new Set(steps.filter((step) => step.kind === "retry").map((step) => step.id));
+  // A retry's «reintentar» wire goes back up the flow to where it repeats from. Drawn dashed and
+  // amber: it is a way back, not an order the steps run in.
+  const back = steps.flatMap((step) =>
+    step.kind === "retry" && step.rerun?.target
+      ? [
+          {
+            id: `${step.id}~reintentar~${step.rerun.target}`,
+            source: step.id,
+            target: step.rerun.target,
+            animated: true,
+            sourceHandle: "retry",
+            label: "reintentar",
+            style: { stroke: "#f59e0b", strokeDasharray: "6 4" },
+            labelStyle: { fill: "#b45309" },
+          },
+        ]
+      : [],
+  );
+  const forward = steps.flatMap((step) =>
     (step.dependsOn ?? []).map((source) => {
       // An edge that leaves a branch leaves one of its two handles: the «sí» (then) or the «no»
       // (else). Labelled so the path a node sits on is readable without opening it.
@@ -428,10 +514,13 @@ export function toEdges(steps: WorkflowStepView[]) {
           ? { sourceHandle: take, label: take === "then" ? "sí" : "no" }
           : side
             ? { sourceHandle: side, label: side === "each" ? "cada" : "fin" }
-            : {}),
+            : retries.has(source)
+              ? { sourceHandle: "exhausted", label: "si se agota" }
+              : {}),
       };
     }),
   );
+  return [...forward, ...back];
 }
 
 /**
@@ -622,6 +711,21 @@ export function toNodes(
           delayMs: step.mock?.delayMs ?? 0,
           captures: step.captures?.length ?? 0,
           checks: step.checks?.length ?? 0,
+          runStatus: runStatusFor,
+        },
+      };
+    }
+    if (kind === "retry") {
+      return {
+        id: step.id,
+        type: "retry",
+        position,
+        data: {
+          name: step.id,
+          from: step.rerun?.from ?? "",
+          target: step.rerun?.target ?? "",
+          attempts: step.rerun?.attempts ?? 0,
+          delayMs: step.rerun?.delayMs ?? 0,
           runStatus: runStatusFor,
         },
       };
@@ -1008,14 +1112,53 @@ export function flowProblems(steps: WorkflowStepView[]): FlowProblem[] {
     if (kind === "poll") {
       const source = steps.find((other) => other.id === step.poll?.from);
       if (!step.poll?.from)
-        problems.push({ message: `El reintento «${step.id}» no está conectado a ninguna petición que repetir.`, stepId: step.id });
+        problems.push({ message: `El sondeo «${step.id}» no está conectado a ninguna petición que repetir.`, stepId: step.id });
       else if (source && (!["request", "fetch"].includes(source.kind ?? "request") || source.forEach || source.authorizes))
         problems.push({
-          message: `El reintento «${step.id}» solo puede repetir una petición o un fetch, sin bucle ni login.`,
+          message: `El sondeo «${step.id}» solo puede repetir una petición o un fetch, sin bucle ni login.`,
           stepId: step.id,
         });
       if (!step.checks?.length)
-        problems.push({ message: `El reintento «${step.id}» no tiene comprobaciones: nada dice cuándo parar.`, stepId: step.id });
+        problems.push({ message: `El sondeo «${step.id}» no tiene comprobaciones: nada dice cuándo parar.`, stepId: step.id });
+    }
+    if (kind === "retry") {
+      const rerun = step.rerun;
+      const source = steps.find((other) => other.id === rerun?.from);
+      if (!rerun?.from)
+        problems.push({ message: `El reintento «${step.id}» no está conectado a ningún paso que vigilar.`, stepId: step.id });
+      else if (source && !RETRY_WATCHES.includes(source.kind ?? "request"))
+        problems.push({
+          message: `El reintento «${step.id}» solo vigila una petición, un login, un fetch, GraphQL, una validación, un esquema o un script.`,
+          stepId: step.id,
+        });
+      if (!rerun?.target)
+        problems.push({
+          message: `El reintento «${step.id}» no tiene conectada su salida «reintentar»: arrástrala al nodo desde el que repetir.`,
+          stepId: step.id,
+        });
+      else if (rerun.from) {
+        const path = rerunPathIds(steps, rerun.target, rerun.from);
+        const blocked = path?.find((id) => {
+          const inner = steps.find((other) => other.id === id);
+          return inner && (["loop", "subflow", "poll", "retry"].includes(inner.kind ?? "request") || inner.forEach);
+        });
+        if (!path)
+          problems.push({
+            message: `El reintento «${step.id}» repite desde «${rerun.target}», que no va antes de «${rerun.from}».`,
+            stepId: step.id,
+          });
+        else if (blocked)
+          problems.push({
+            message: `El reintento «${step.id}» pasaría por «${blocked}», que no se puede repetir (bucle, sub-flujo, sondeo, reintento o forEach).`,
+            stepId: step.id,
+          });
+      }
+      if ((step.dependsOn ?? []).some((id) => id !== rerun?.from))
+        problems.push({ message: `El reintento «${step.id}» solo se conecta al paso que vigila.`, stepId: step.id });
+      if (rerun?.from && steps.some((other) => other.id !== step.id && other.kind === "retry" && other.rerun?.from === rerun.from))
+        problems.push({ message: `Hay más de un reintento vigilando «${rerun.from}».`, stepId: step.id });
+      if (steps.some((loop) => loop.kind === "loop" && loopBodyIds(steps, loop.id).includes(step.id)))
+        problems.push({ message: `El reintento «${step.id}» está dentro de un bucle: no puede ir ahí.`, stepId: step.id });
     }
     if (kind === "schema") {
       const source = steps.find((other) => other.id === step.schema?.from);

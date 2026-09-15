@@ -34,6 +34,7 @@ import {
   loopBody,
   orderWorkflowSteps,
   readAuthorization,
+  rerunPath,
   responseSchema,
   subflowProblems,
   subflowSteps,
@@ -47,6 +48,7 @@ import {
   type ResolvedOperation,
   type StepLoop,
   type StepPoll,
+  type StepRerun,
   type StepRequest,
   type StepSubflow,
   type WorkflowStep,
@@ -571,6 +573,14 @@ export class RunOrchestrator {
       // Every step of this walk by id, for the node that sends another step's request again.
       items: new Map(prepared.map((item) => [item.step.id, item])),
       bodies: loopBodies(prepared),
+      // Each watched step's retry node. What depends on the step waits for that node's verdict too.
+      watchers: new Map(
+        prepared.flatMap((item) =>
+          item.step.kind === "retry" && item.step.rerun ? [[item.step.rerun.from, item.step.id] as const] : [],
+        ),
+      ),
+      skipped: new Set(),
+      rerunning: 0,
       budget,
       stopped: false,
       pause,
@@ -595,7 +605,7 @@ export class RunOrchestrator {
 
       for (const item of [...remaining.values()]) {
         if (running.size >= concurrency) break;
-        if (!readyToRun(item.step, state.passed)) continue;
+        if (!readyToRun(item.step, state.passed, state.watchers)) continue;
         remaining.delete(item.step.id);
         // The pause is between dispatches rather than between finishes: what it is for is the
         // target's rate limit, and that counts requests leaving, not answers arriving.
@@ -662,6 +672,8 @@ export class RunOrchestrator {
         durationMs: 0,
       };
       passed.set(item.step.id, false);
+      // Remembered apart from «failed»: a retry node has something to repeat only when its step ran.
+      state.skipped.add(item.step.id);
       await this.runs.saveCase(skipped);
       await this.announce(run, skipped);
       return;
@@ -774,7 +786,7 @@ export class RunOrchestrator {
       passed.set(item.step.id, verdict);
       await this.runs.saveCase(judged);
       await this.announce(run, judged);
-      if (!verdict && stopsOnFailure(run, item.step)) state.stopped = true;
+      if (!verdict && stopsWalk(run, item.step, state)) state.stopped = true;
       return;
     }
 
@@ -947,6 +959,12 @@ export class RunOrchestrator {
     // checks — the job that answers `pending` until it is `done`.
     if (item.step.kind === "poll" && item.step.poll) {
       await this.poll(run, context, item, state, startedAt, item.step.poll);
+      return;
+    }
+
+    // A retry node walks the flow again from where it points when the step it watches failed.
+    if (item.step.kind === "retry" && item.step.rerun) {
+      await this.rerun(run, context, item, state, startedAt, item.step.rerun);
       return;
     }
 
@@ -1137,7 +1155,7 @@ export class RunOrchestrator {
     // `stop` is for the step whose failure makes everything after it report something other than
     // what it is testing: with no session, every later 401 is the same fact restated. The rest are
     // marked skipped rather than left queued — a case with no verdict is not a result.
-    if (!allPassed && stopsOnFailure(run, item.step)) state.stopped = true;
+    if (!allPassed && stopsWalk(run, item.step, state)) state.stopped = true;
   }
 
   /**
@@ -1197,6 +1215,106 @@ export class RunOrchestrator {
           target: context.target,
           samples: run.plan.samples,
         });
+  }
+
+  /**
+   * A retry node: when the step it watches failed, walk the stretch from `target` down to it again —
+   * the same case rows, each holding its latest walk — until the step passes or the attempts run out.
+   *
+   * The walk is sequential and happens inside this node. The rest of the graph keeps going, except
+   * what depends on the watched step, which waits for this verdict (see `readyToRun`). If the step
+   * ends up passing, the flow goes on from it; if not, this node fails and routes the flow to what
+   * hangs off it, its «si se agota» side.
+   */
+  private async rerun(
+    run: Run,
+    context: ExecutionContext,
+    item: PreparedItem,
+    state: WalkState,
+    startedAt: Date,
+    config: StepRerun,
+  ): Promise<void> {
+    const sent = { method: "RETRY", url: `reintenta ${config.from} desde ${config.target}`, headers: {}, body: null };
+    // Nothing to retry: the step passed, or never ran because what it needs did not hold. The node is
+    // skipped, and so is its «si se agota» side.
+    if (state.passed.get(config.from) !== false || state.skipped.has(config.from)) {
+      const skipped: RunCase = { ...item.runCase, status: "skipped", startedAt, finishedAt: startedAt, durationMs: 0 };
+      state.passed.set(item.step.id, false);
+      await this.runs.saveCase(skipped);
+      await this.announce(run, skipped);
+      return;
+    }
+
+    // In walking order: the items are prepared from the ordered steps.
+    const path = rerunPath(
+      [...state.items.values()].map((entry) => entry.step),
+      config.target,
+      config.from,
+    )?.map((id) => state.items.get(id)!);
+    if (!path) {
+      await this.finishControl(run, item, state, startedAt, {
+        ok: false,
+        failure: "config",
+        assertions: [
+          { label: "Reintento", pass: false, detail: `«${config.target}» no va antes de «${config.from}»: no hay desde dónde repetir` },
+        ],
+        sent,
+        routes: true,
+      });
+      return;
+    }
+
+    const started: RunCase = { ...item.runCase, status: "running", startedAt };
+    await this.runs.saveCase(started);
+    this.eventBus.publish(new RunCaseStartedEvent(run.projectId, run.id, started));
+
+    let walks = 0;
+    state.rerunning += 1;
+    try {
+      while (walks < config.attempts && state.passed.get(config.from) !== true && !state.stopped) {
+        if (await this.queue.isCancelled(run.id)) break;
+        walks += 1;
+        // Numbered like a step's own retry — the failure that woke the node was attempt one — so a
+        // follower reads «2 de 4».
+        this.eventBus.publish(
+          new RunCaseRetryingEvent(run.projectId, run.id, item.runCase.id, walks + 1, config.attempts + 1, config.delayMs),
+        );
+        if (config.delayMs > 0) await delay(config.delayMs);
+        // Forgotten before the walk, so no step of it reads the last walk's verdict or answer.
+        for (const entry of path) {
+          state.passed.delete(entry.step.id);
+          state.responses.delete(entry.step.id);
+          state.branches.delete(entry.step.id);
+          state.skipped.delete(entry.step.id);
+        }
+        for (const entry of path) {
+          await this.runs.deleteSteps(entry.runCase.id);
+          await this.runStep(run, context, entry, state);
+        }
+      }
+    } finally {
+      state.rerunning -= 1;
+    }
+
+    const ok = state.passed.get(config.from) === true;
+    await this.finishControl(run, item, state, startedAt, {
+      ok,
+      failure: ok ? null : "flow",
+      assertions: [
+        {
+          label: "Reintento",
+          pass: ok,
+          detail: ok
+            ? `«${config.from}» pasó en el intento ${walks + 1} de ${config.attempts + 1}, repitiendo desde «${config.target}»`
+            : walks === 0
+              ? "La corrida se canceló antes de repetir"
+              : `«${config.from}» siguió fallando tras ${walks} ${walks === 1 ? "reintento" : "reintentos"}: el flujo sigue por «si se agota»`,
+        },
+      ],
+      sent,
+      durationMs: this.clock.now().getTime() - startedAt.getTime(),
+      routes: !ok,
+    });
   }
 
   /**
@@ -1584,6 +1702,8 @@ export class RunOrchestrator {
       sent: ExecutedStep["sent"];
       steps?: ExecutedStep[];
       durationMs?: number;
+      /** A retry node's own rule for what hangs off it: those run when it failed, not when it passed. */
+      routes?: boolean;
     },
   ): Promise<void> {
     const request: StepRequest = {
@@ -1624,10 +1744,11 @@ export class RunOrchestrator {
       finishedAt: this.clock.now(),
       durationMs: result.durationMs ?? 0,
     };
-    state.passed.set(item.step.id, result.ok);
+    state.passed.set(item.step.id, result.routes ?? result.ok);
     await this.runs.saveCase(done);
     await this.announce(run, done);
-    if (!result.ok && stopsOnFailure(run, item.step)) state.stopped = true;
+    // A retry node that ran out has routed the flow; stopping it there would undo that.
+    if (!result.ok && result.routes === undefined && stopsWalk(run, item.step, state)) state.stopped = true;
   }
 
   /** Progress, per case, so a follower sees it happening instead of a result at the end. */
@@ -1656,6 +1777,12 @@ const PAUSE_POLL_MS = 150;
  * `continue`, which is a statement that its failure does not matter. */
 function stopsOnFailure(run: Run, step: WorkflowStep): boolean {
   return step.onError === "stop" || (run.plan.stopOnFailure === true && step.onError !== "continue");
+}
+
+/** Whether a failure stops the walk here. Not a step a retry node watches — its failure is what the
+ * node is there for — and not while a retry node walks a stretch again, which ends in its verdict. */
+function stopsWalk(run: Run, step: WorkflowStep, state: WalkState): boolean {
+  return stopsOnFailure(run, step) && !state.watchers.has(step.id) && state.rerunning === 0;
 }
 
 /** Whether a ready step is going to execute rather than be skipped — the same two tests `runStep`
@@ -1701,6 +1828,12 @@ type WalkState = {
   items: Map<string, PreparedItem>;
   /** Each loop node's body, as prepared items in walking order. */
   bodies: Map<string, PreparedItem[]>;
+  /** Each step a retry node watches, by the node watching it. */
+  watchers: Map<string, string>;
+  /** The steps skipped because what they needed did not hold, as opposed to run and failed. */
+  skipped: Set<string>;
+  /** How many retry nodes are walking a stretch again right now. */
+  rerunning: number;
   budget: { extra: number };
   stopped: boolean;
   /** The run's pause, so a subflow's child walk stops where the parent's would. */
@@ -1716,10 +1849,15 @@ type WalkState = {
  * only one of several routes to have arrived, and starts as soon as the first does — which is
  * also why it does not wait for the rest to disagree with it.
  */
-function readyToRun(step: WorkflowStep, passed: Map<string, boolean>): boolean {
+function readyToRun(step: WorkflowStep, passed: Map<string, boolean>, watchers: Map<string, string> = new Map()): boolean {
   const dependencies = step.dependsOn ?? [];
   if (!dependencies.length) return true;
-  const resolved = dependencies.filter((id) => passed.has(id));
+  // A watched step is not over until its retry node says so, except for that node itself.
+  const settled = (id: string) => {
+    const watcher = watchers.get(id);
+    return passed.has(id) && (watcher === undefined || watcher === step.id || passed.has(watcher));
+  };
+  const resolved = dependencies.filter(settled);
   return step.waits === "any" ? resolved.length > 0 : resolved.length === dependencies.length;
 }
 
@@ -1728,7 +1866,8 @@ function readyToRun(step: WorkflowStep, passed: Map<string, boolean>): boolean {
 function dependenciesHeld(step: WorkflowStep, passed: Map<string, boolean>, permissive: Set<string>): boolean {
   const dependencies = step.dependsOn ?? [];
   if (!dependencies.length) return true;
-  const held = dependencies.filter((id) => passed.get(id) === true || permissive.has(id));
+  // A retry node runs over the step it watches whatever that step did: its failure is the point.
+  const held = dependencies.filter((id) => passed.get(id) === true || permissive.has(id) || step.rerun?.from === id);
   return step.waits === "any" ? held.length > 0 : held.length === dependencies.length;
 }
 
@@ -1803,6 +1942,8 @@ function controlCaseFields(step: WorkflowStep): { operationId: string; method: s
       return { operationId: "", method: "SCRIPT", path: step.script?.from ? `lee ${step.script.from}` : "script" };
     case "poll":
       return { operationId: "", method: "RETRY", path: `repite ${step.poll?.from ?? ""}` };
+    case "retry":
+      return { operationId: "", method: "RETRY", path: `reintenta ${step.rerun?.from ?? ""} desde ${step.rerun?.target ?? ""}` };
     case "loop":
       return { operationId: "", method: "LOOP", path: `recorre ${step.loop?.from ?? ""}.${step.loop?.path ?? ""}` };
     case "schema":

@@ -460,6 +460,61 @@ type PollNodeData = {
   retry?: RetryNote;
 };
 
+type RetryNodeData = {
+  name: string;
+  from: string;
+  target: string;
+  attempts: number;
+  delayMs: number;
+  runStatus?: CaseStatus;
+  retry?: RetryNote;
+};
+
+/**
+ * A retry: watches the step wired into it and, when that step fails, walks the flow again from the
+ * node its «reintentar» output points at. «si se agota» is where the flow goes when no attempt passed.
+ */
+function RetryNode({ data, selected }: NodeProps<Node<RetryNodeData>>) {
+  const status = data.runStatus;
+  return (
+    <div
+      className={cn(
+        "relative w-56 rounded-xl border bg-white px-3 py-2 shadow-sm transition-colors",
+        status ? runNodeClass(status, data.retry) : "border-amber-400",
+        selected && "border-slate-900 ring-2 ring-slate-200",
+      )}
+    >
+      <Handle type="target" position={Position.Left} />
+      <div className="flex items-center gap-2">
+        <span className="grid h-6 w-6 place-items-center rounded-md bg-amber-100 text-amber-700" title="Reintento">
+          ↻
+        </span>
+        <span className="truncate text-xs font-semibold text-slate-800">Reintento · {data.name}</span>
+        <RunDot status={status} />
+      </div>
+      <p className="mt-1 truncate font-mono text-[10px] text-slate-500">
+        {data.from ? `si falla ${data.from}` : "conéctale el paso que vigila"}
+      </p>
+      <p className="mt-0.5 text-[10px] text-amber-700">
+        hasta {data.attempts} × cada {data.delayMs} ms
+      </p>
+      <RetryMeter retry={data.retry} status={status} />
+      <div className="mt-2 flex flex-col gap-1 text-[10px] leading-4 font-semibold">
+        <span
+          className="self-end truncate text-amber-600"
+          title={data.target ? `Repite desde ${data.target}` : "Arrástrala al nodo desde el que repetir"}
+        >
+          {data.target ? `reintentar → ${data.target}` : "reintentar (sin conectar)"} ▸
+        </span>
+        <span className="self-end text-rose-500">si se agota ▸</span>
+      </div>
+      {/* Pinned to the bottom, beside their labels: the retry meter above changes the node's height. */}
+      <Handle id="retry" type="source" position={Position.Right} style={{ top: "auto", bottom: 26, background: "#f59e0b" }} />
+      <Handle id="exhausted" type="source" position={Position.Right} style={{ top: "auto", bottom: 6, background: "#f43f5e" }} />
+    </div>
+  );
+}
+
 /** A poll: repeats a step's request until its checks pass — the job that is pending until it is done. */
 function PollNode({ data, selected }: NodeProps<Node<PollNodeData>>) {
   const status = data.runStatus;
@@ -473,10 +528,10 @@ function PollNode({ data, selected }: NodeProps<Node<PollNodeData>>) {
     >
       <Handle type="target" position={Position.Left} />
       <div className="flex items-center gap-2">
-        <span className="grid h-6 w-6 place-items-center rounded-md bg-orange-100 text-orange-700" title="Reintento">
-          ↻
+        <span className="grid h-6 w-6 place-items-center rounded-md bg-orange-100 text-orange-700" title="Sondeo">
+          ⧗
         </span>
-        <span className="truncate text-xs font-semibold text-slate-800">Reintento · {data.name}</span>
+        <span className="truncate text-xs font-semibold text-slate-800">Sondeo · {data.name}</span>
         <RunDot status={status} />
       </div>
       <p className="mt-1 truncate font-mono text-[10px] text-slate-500">
@@ -720,6 +775,7 @@ const nodeTypes = {
   schema: SchemaNode,
   loop: LoopNode,
   poll: PollNode,
+  retry: RetryNode,
   set: SetNode,
   script: ScriptNode,
   fetch: FetchNode,

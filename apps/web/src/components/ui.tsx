@@ -5,7 +5,8 @@
  * language is worth keeping — it reads well and an operator already knows it — and reproducing
  * it needs less than a component library.
  */
-import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type HTMLAttributes, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/format";
 
 export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
@@ -43,17 +44,23 @@ export function Button({ className, variant = "primary", ...props }: ButtonProps
 export function Field({
   label,
   hint,
+  info,
   error,
   children,
 }: {
   label: string;
   hint?: string;
+  /** What the field means and how it is used, behind an «i» next to the label. */
+  info?: ReactNode;
   error?: string;
   children: ReactNode;
 }) {
   return (
     <label className="block">
-      <span className="text-xs font-medium text-slate-600">{label}</span>
+      <span className="flex items-center text-xs font-medium text-slate-600">
+        {label}
+        {info && <InfoTip label={`Qué es «${label}»`}>{info}</InfoTip>}
+      </span>
       {children}
       {/* The error wins over the hint: when both are present the hint is what the person already
           read and did not help. */}
@@ -63,6 +70,83 @@ export function Field({
         <span className="mt-1 block text-xs text-slate-400">{hint}</span>
       ) : null}
     </label>
+  );
+}
+
+/**
+ * A small «i» that opens an explanation.
+ *
+ * Opened by click, not hover, so it works on touch and stays open while it is read. The bubble is
+ * portalled and fixed: the inspector it lives in scrolls and clips, and a bubble cut in half by the
+ * panel edge is worse than none. It closes on Escape, on a click elsewhere, and on scroll — a fixed
+ * bubble left behind by a scroll points at the wrong field.
+ */
+export function InfoTip({ children, label = "Más información" }: { children: ReactNode; label?: string }) {
+  const button = useRef<HTMLButtonElement>(null);
+  const [at, setAt] = useState<{ left: number; top: number; above: boolean } | null>(null);
+
+  useEffect(() => {
+    if (!at) return;
+    const close = (event: Event) => {
+      if (event.type === "keydown" && (event as KeyboardEvent).key !== "Escape") return;
+      if (event.type === "mousedown" && button.current?.contains(event.target as Node)) return;
+      if (event.type === "mousedown" && (event.target as Element).closest?.("[data-info-bubble]")) return;
+      setAt(null);
+    };
+    document.addEventListener("keydown", close);
+    document.addEventListener("mousedown", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("keydown", close);
+      document.removeEventListener("mousedown", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [at]);
+
+  const toggle = (event: { preventDefault: () => void; stopPropagation: () => void }) => {
+    // Inside a <label>, a click would also focus the input or flip the checkbox.
+    event.preventDefault();
+    event.stopPropagation();
+    if (at || !button.current) return setAt(null);
+    const rect = button.current.getBoundingClientRect();
+    const width = 288;
+    const left = Math.min(Math.max(8, rect.left - 12), window.innerWidth - width - 8);
+    const above = rect.bottom + 220 > window.innerHeight && rect.top > 240;
+    setAt({ left, top: above ? rect.top - 6 : rect.bottom + 6, above });
+  };
+
+  return (
+    <>
+      <button
+        ref={button}
+        type="button"
+        aria-label={label}
+        aria-expanded={Boolean(at)}
+        onClick={toggle}
+        className={cn(
+          "ml-1 inline-grid size-3.5 shrink-0 place-items-center rounded-full border text-[9px] leading-none font-semibold normal-case",
+          at
+            ? "border-sky-500 bg-sky-500 text-white"
+            : "border-slate-300 text-slate-400 hover:border-slate-500 hover:text-slate-700",
+        )}
+      >
+        i
+      </button>
+      {at &&
+        createPortal(
+          <div
+            data-info-bubble
+            role="tooltip"
+            style={{ left: at.left, top: at.top, width: 288, transform: at.above ? "translateY(-100%)" : undefined }}
+            className="fixed z-[60] rounded-lg border border-slate-200 bg-white p-3 text-[11px] leading-5 font-normal tracking-normal whitespace-pre-line text-slate-600 normal-case shadow-lg"
+          >
+            {children}
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 

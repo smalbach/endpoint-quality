@@ -1,13 +1,15 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
-import { Button, Field, inputClass } from "@/components/ui";
+import { Button, Field, InfoTip, inputClass } from "@/components/ui";
 import { RequestBodyEditor } from "@/components/request-body-editor";
 import { RequestFieldsEditor } from "@/components/request-fields-editor";
 import { RequestPreviewPanel } from "@/components/request-preview";
 import { cn } from "@/lib/format";
+import { NODE_HELP, type NodeKind } from "@/lib/node-help";
 import { GRAPHQL_OPERATION_NAME, graphqlVariablesProblem } from "@/lib/graphql-draft";
 import { fieldMapsFrom, fieldProblems, fieldRowsFrom, type FieldRow } from "@/lib/request-fields";
 import {
   loopBodyIds,
+  rerunPathIds,
   removeStep,
   replaceStep,
   schemaJsonProblem,
@@ -221,6 +223,8 @@ export function WorkflowInspector({
           onChange={onChange}
           onRemove={onRemove}
         />
+      ) : kind === "retry" ? (
+        <RetryInspector step={step} steps={steps} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
       ) : kind === "poll" ? (
         <PollInspector step={step} steps={steps} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
       ) : kind === "graphql" ? (
@@ -283,7 +287,7 @@ function FlowSettings({
   return (
     <div className="grid gap-x-6 gap-y-4 @3xl:grid-cols-2">
       <div>
-        <Field label="Nombre del flujo">
+        <Field label="Nombre del flujo" info={"Cómo aparece el flujo en la lista, en las suites y en el informe. No se puede repetir dentro del proyecto."}>
           <input
             className={inputClass}
             value={workflow.name}
@@ -292,7 +296,7 @@ function FlowSettings({
           />
         </Field>
         <div className="mt-3">
-          <Field label="Descripción">
+          <Field label="Descripción" info={"Texto libre para quien lea el flujo después: qué prueba y por qué. No cambia cómo se ejecuta."}>
             <textarea
               className={`${inputClass} h-20`}
               value={workflow.description ?? ""}
@@ -304,7 +308,7 @@ function FlowSettings({
       </div>
 
       <div className="border-t border-slate-100 pt-3 @3xl:border-t-0 @3xl:pt-0">
-        <Field label="Entorno">
+        <Field label="Entorno" info={"Contra qué entorno se ejecuta: URL base, variables y credenciales de cada rol. Las {{variables}} de los nodos salen de aquí y de lo que capturen los pasos anteriores."}>
           <select className={inputClass} value={environmentId} onChange={(event) => onEnvironment(event.target.value)}>
             <option value="">Selecciona…</option>
             {environments.map((item) => (
@@ -363,6 +367,7 @@ const InspectorShell = createContext<{
  * captures from.
  */
 function NodePanel({
+  kind,
   title,
   subtitle,
   description,
@@ -371,6 +376,8 @@ function NodePanel({
   removeLabel = "Eliminar nodo",
   onRemove,
 }: {
+  /** Which node's help the «Ayuda» tab shows. */
+  kind: NodeKind;
   title: ReactNode;
   subtitle?: ReactNode;
   description?: ReactNode;
@@ -381,7 +388,7 @@ function NodePanel({
 }) {
   const shell = useContext(InspectorShell);
   if (!shell) throw new Error("NodePanel outside WorkflowInspector");
-  const all = [...tabs, shell.flowTab];
+  const all: InspectorTab[] = [...tabs, { id: "help", label: "Ayuda", content: <NodeHelpView kind={kind} /> }, shell.flowTab];
   const current = all.find((item) => item.id === shell.active) ?? all[0];
 
   return (
@@ -411,7 +418,7 @@ function NodePanel({
                 onClick={() => shell.setActive(item.id)}
                 className={cn(
                   "-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-xs font-medium whitespace-nowrap",
-                  item.id === "flow" && "ml-auto",
+                  item.id === "help" && "ml-auto",
                   selected
                     ? "border-slate-900 text-slate-900"
                     : "border-transparent text-slate-500 hover:text-slate-800",
@@ -442,6 +449,47 @@ function NodePanel({
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** The «Ayuda» tab: what the node does, how it runs, an example, and the mistakes people make with it. */
+function NodeHelpView({ kind }: { kind: NodeKind }) {
+  const help = NODE_HELP[kind];
+  const heading = "text-[10px] font-semibold tracking-wide text-slate-400 uppercase";
+  return (
+    <div className="grid max-w-5xl gap-x-8 gap-y-5 text-xs leading-5 text-slate-600 @3xl:grid-cols-2">
+      <section className="@3xl:col-span-2">
+        <p className={heading}>Qué hace · {help.title}</p>
+        <p className="mt-1 text-sm text-slate-800">{help.summary}</p>
+      </section>
+      <section>
+        <p className={heading}>Cómo funciona</p>
+        <ol className="mt-1.5 list-decimal space-y-1.5 pl-4 marker:text-slate-400">
+          {help.how.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ol>
+      </section>
+      <div className="space-y-5">
+        <section>
+          <p className={heading}>Ejemplo</p>
+          <p className="mt-1.5 rounded-lg bg-slate-50 px-3 py-2 text-slate-700 ring-1 ring-slate-200">{help.example}</p>
+        </section>
+        <section>
+          <p className={heading}>Errores comunes</p>
+          <ul className="mt-1.5 space-y-1.5">
+            {help.pitfalls.map((line) => (
+              <li key={line} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+                {line}
+              </li>
+            ))}
+          </ul>
+        </section>
+      </div>
+      <p className="text-[11px] text-slate-400 @3xl:col-span-2">
+        Cada campo lleva una <span className="font-semibold">i</span> junto a su nombre con lo que significa.
+      </p>
     </div>
   );
 }
@@ -558,6 +606,7 @@ function BranchInspector({
 
   return (
     <NodePanel
+      kind="branch"
       title="Bifurcación (If)"
       subtitle={step.id}
       description={
@@ -578,7 +627,7 @@ function BranchInspector({
               <p className="text-[11px] text-amber-700">Conéctalo a la petición que quieres leer para poder decidir.</p>
             ) : (
               <div className="grid gap-3 @3xl:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_9rem_minmax(0,1fr)]">
-                <Field label="Lee el paso">
+                <Field label="Lee el paso" info={"El paso cuya respuesta decide la condición. Solo aparecen los conectados a la entrada del If: sin arista no hay garantía de que ya haya respondido."}>
                   <select
                     className={inputClass}
                     value={condition.from}
@@ -592,7 +641,7 @@ function BranchInspector({
                     ))}
                   </select>
                 </Field>
-                <Field label="Origen">
+                <Field label="Origen" info={"Qué parte de la respuesta se lee:\n• status: el código HTTP (200, 404…).\n• body: el JSON de la respuesta, con una ruta.\n• header: una cabecera, por su nombre.\n• durationMs: lo que tardó, en milisegundos."}>
                   <select
                     className={inputClass}
                     value={condition.check.source}
@@ -606,7 +655,7 @@ function BranchInspector({
                     ))}
                   </select>
                 </Field>
-                <Field label="Ruta">
+                <Field label="Ruta" info={"Solo para body y header.\n• body: ruta con puntos, p. ej. data.id o data.items.0.name (los índices de lista son números). Vacía lee el body entero.\n• header: el nombre de la cabecera, p. ej. X-Total-Count.\nCon status y durationMs no se usa."}>
                   <input
                     aria-label="Ruta de la condición"
                     className={inputClass}
@@ -618,7 +667,7 @@ function BranchInspector({
                     onChange={(event) => setCheck({ path: event.target.value })}
                   />
                 </Field>
-                <Field label="Operador">
+                <Field label="Operador" info={"• equals / not_equals: igual o distinto. Compara como texto (200 y «200» son lo mismo); objetos y listas, completos.\n• contains / not_contains: en una lista, que tenga ese elemento; en un texto, que lo incluya.\n• greater_than / less_than: comparación numérica.\n• exists / not_exists: que el valor esté (ni ausente ni null).\n• matches: expresión regular sobre el texto.\n• is_array: que sea una lista.\n• is_not_empty: lista, texto u objeto con al menos un elemento.\n• has_length: tamaño exacto (elementos, caracteres o claves)."}>
                   <select
                     aria-label="Operador de la condición"
                     className={inputClass}
@@ -634,7 +683,7 @@ function BranchInspector({
                   </select>
                 </Field>
                 {!WITHOUT_OPERAND.includes(condition.check.operator) && (
-                  <Field label="Valor">
+                  <Field label="Valor" info={"Lo que se espera, como texto o número (con matches, una expresión regular). No aparece con los operadores que no comparan: exists, not_exists, is_array, is_not_empty."}>
                     <input
                       aria-label="Valor de la condición"
                       className={inputClass}
@@ -666,6 +715,7 @@ function WaitInspector({
 }) {
   return (
     <NodePanel
+      kind="wait"
       title="Espera"
       subtitle={step.id}
       description="Pausa antes de dejar pasar el flujo. No es un reintento —«no era el momento», no «el fallo no era real»— para el destino que acepta una escritura y tarda un momento en hacerla legible."
@@ -677,7 +727,7 @@ function WaitInspector({
           label: "Espera",
           content: (
             <div className="max-w-xs">
-              <Field label="Milisegundos">
+              <Field label="Milisegundos" info={"Cuánto dura la pausa: de 0 a 60 000 ms (un minuto). El nodo siempre pasa; lo conectado a su salida empieza al acabar."}>
                 <input
                   className={inputClass}
                   type="number"
@@ -713,6 +763,7 @@ function MergeInspector({
   const count = step.dependsOn?.length ?? 0;
   return (
     <NodePanel
+      kind="merge"
       title="Merge (unión)"
       subtitle={step.id}
       description="Junta varias ramas en una. Conecta a su entrada las que quieres unir; el flujo sigue por su salida cuando se cumple la condición de abajo."
@@ -729,7 +780,7 @@ function MergeInspector({
                 Ramas conectadas: <span className="font-medium text-slate-700">{count}</span>
               </p>
               <div className="mt-2">
-                <Field label="Cuándo continúa">
+                <Field label="Cuándo continúa" info={"• Cuando llegan todas: espera a que terminen todas las ramas conectadas.\n• Basta con que llegue una: sigue con la primera que termine. Úsalo cuando las ramas son alternativas, como las salidas «sí» y «no» de un If."}>
                   <select
                     className={inputClass}
                     value={step.waits ?? "all"}
@@ -768,6 +819,7 @@ function ValidateInspector({
 
   return (
     <NodePanel
+      kind="validate"
       title="Validación"
       subtitle={step.id}
       description="Lee la respuesta de un paso anterior y la juzga. Si no pasa, lo que depende de esta validación se salta. Conéctalo al paso que quieres validar arrastrando una arista hasta su entrada."
@@ -784,7 +836,7 @@ function ValidateInspector({
                 <p className="text-[11px] text-amber-700">Conéctalo a la petición cuya respuesta quieres validar.</p>
               ) : (
                 <div className="max-w-sm">
-                  <Field label="Lee el paso">
+                  <Field label="Lee el paso" info={"El paso cuya respuesta se juzga. Solo aparecen los conectados a la entrada de la validación."}>
                     <select
                       className={inputClass}
                       value={from}
@@ -906,7 +958,7 @@ function StepInspector({
           </div>
         )}
         <div className="grid gap-3 @3xl:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)_6.5rem_8rem]">
-          <Field label="Operación">
+          <Field label="Operación" info={"La operación del contrato que envía el paso (método y ruta). De ella salen los parámetros que existen y el esquema con el que se valida la respuesta. Si esta petición la comparten varios nodos, cambiarla crea una copia solo para este."}>
             <select
               className={inputClass}
               value={template.operationId}
@@ -926,7 +978,7 @@ function StepInspector({
               ))}
             </select>
           </Field>
-          <Field label="Nombre">
+          <Field label="Nombre" info={"Nombre de la prueba reutilizable: es el título del nodo y el nombre en el informe. Cambia en todos los nodos que compartan la petición."}>
             <input
               className={inputClass}
               value={template.name}
@@ -934,7 +986,7 @@ function StepInspector({
               onChange={(event) => onTemplate({ ...template, name: event.target.value })}
             />
           </Field>
-          <Field label="Estado">
+          <Field label="Estado" info={"Código HTTP que debe responder: 200 al leer, 201 al crear, 204 al borrar, 404 si esperas que ya no exista… Si llega otro, el paso falla con «status». Junto al esquema del contrato y las comprobaciones, decide si el paso pasa."}>
             <input
               className={inputClass}
               type="number"
@@ -945,7 +997,7 @@ function StepInspector({
               onChange={(event) => onTemplate({ ...template, expectedStatus: Number(event.target.value) })}
             />
           </Field>
-          <Field label="Auth">
+          <Field label="Auth" info={"Qué credencial del entorno presenta el paso:\n• default: la principal del rol, o el token de un login anterior.\n• none: ninguna; para comprobar que responde 401.\n• insufficient: una que autentica pero sin permisos; para comprobar el 403.\n• api-key: la credencial alternativa (clave API) del entorno."}>
             <select
               className={inputClass}
               value={template.auth}
@@ -962,7 +1014,7 @@ function StepInspector({
         </div>
         <div className="mt-4 grid gap-x-6 gap-y-2 border-t border-slate-100 pt-1 @3xl:grid-cols-2">
           <RequestFieldsRows
-            label="Parámetros"
+            label="Parámetros" info={"Parámetros de ruta ({id} en /widgets/{id}) y de consulta (?page=2), por nombre. El valor acepta {{variables}}: id = {{widgetId}}. Un parámetro de ruta que no pongas se rellena con un valor de ejemplo, no con lo que creó un paso anterior. El interruptor de cada fila la apaga sin borrarla."}
             kind="parameter"
             hint="De ruta y de consulta. Acepta {{variables}} del entorno o capturadas antes."
             namePlaceholder="id"
@@ -976,7 +1028,7 @@ function StepInspector({
             }
           />
           <RequestFieldsRows
-            label="Cabeceras"
+            label="Cabeceras" info={"Cabeceras extra por nombre y valor; aceptan {{variables}}. Ganan sobre las que pone el motor. El interruptor de cada fila la apaga sin borrarla."}
             kind="header"
             hint="Lo que el contrato no declara y la petición necesita igual. Ganan sobre las que pone el motor."
             namePlaceholder="X-Tenant"
@@ -998,6 +1050,7 @@ function StepInspector({
 
   return (
     <NodePanel
+      kind={step.kind === "login" ? "login" : "request"}
       title={template?.name || "Prueba reutilizable"}
       subtitle={operation ? `${operation.method} ${operation.path} · ${step.id}` : step.id}
       canEdit={canEdit}
@@ -1115,6 +1168,7 @@ function FetchInspector({
 
   return (
     <NodePanel
+      kind="fetch"
       title="Fetch"
       subtitle={call.url ? `${call.method} ${call.url} · ${step.id}` : step.id}
       description={
@@ -1134,7 +1188,7 @@ function FetchInspector({
           content: (
             <>
               <div className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-3 @3xl:grid-cols-[6.5rem_minmax(0,1fr)_8rem]">
-                <Field label="Método">
+                <Field label="Método" info={"Método HTTP de la llamada. GET y HEAD no llevan body. Con un entorno sin escrituras permitidas, POST, PUT, PATCH y DELETE al mismo origen se bloquean."}>
                   <select
                     className={inputClass}
                     value={call.method}
@@ -1148,7 +1202,7 @@ function FetchInspector({
                     ))}
                   </select>
                 </Field>
-                <Field label="URL">
+                <Field label="URL" info={"Absoluta (https://api.ejemplo.com/cosas) o una ruta (/cosas), que se añade a la URL base del entorno. Acepta {{variables}}: /widgets/{{widgetId}}."}>
                   <input
                     className={`${inputClass} font-mono text-[11px]`}
                     value={call.url}
@@ -1158,7 +1212,7 @@ function FetchInspector({
                     onChange={(event) => setCall({ url: event.target.value })}
                   />
                 </Field>
-                <Field label="Estado esperado">
+                <Field label="Estado esperado" info={"Código HTTP que debe responder. Vacío acepta cualquier 2xx. Si llega otro, el nodo falla."}>
                   <input
                     className={inputClass}
                     type="number"
@@ -1186,6 +1240,7 @@ function FetchInspector({
                   onChange={(event) => setCall({ useSession: event.target.checked || undefined })}
                 />
                 Enviar sesión del login
+                <InfoTip label={"Qué es «Enviar sesión del login»"}>{"Envía el token del login anterior, con su cabecera y prefijo. Sin marcar, la llamada va sin sesión. Con una URL absoluta a otro host, el token viaja a ese host."}</InfoTip>
               </label>
               {call.useSession && /^https?:\/\//i.test(call.url) && (
                 <p className="mt-1 text-[11px] text-amber-700">
@@ -1194,7 +1249,7 @@ function FetchInspector({
               )}
               <div className="mt-3 border-t border-slate-100 pt-1">
                 <RequestFieldsRows
-                  label="Cabeceras"
+                  label="Cabeceras" info={"Cabeceras de la llamada; aceptan {{variables}}. Para autenticar a mano: Authorization = Bearer {{token}}. Content-Type se deduce del body si no la pones."}
                   kind="header"
                   hint="Content-Type se deduce del body si no la pones."
                   namePlaceholder="Authorization"
@@ -1221,7 +1276,7 @@ function FetchInspector({
                 label: "Body",
                 marked: Boolean(call.body),
                 content: (
-                  <Field label="Body">
+                  <Field label="Body" info={"Cuerpo de la petición, normalmente JSON: {\"id\": \"{{thingId}}\"}. Las {{variables}} se sustituyen antes de enviar. Content-Type se deduce si no lo pones en las cabeceras."}>
                     <textarea
                       className={`${inputClass} h-[24rem] font-mono text-[11px]`}
                       placeholder={'{"id": "{{thingId}}"}'}
@@ -1287,6 +1342,7 @@ function GraphqlInspector({
 
   return (
     <NodePanel
+      kind="graphql"
       title="GraphQL"
       subtitle={call.url ? `${call.operationName || "anónima"} · ${call.url} · ${step.id}` : step.id}
       description={
@@ -1307,7 +1363,7 @@ function GraphqlInspector({
           content: (
             <>
               <div className="grid gap-3 @3xl:grid-cols-[minmax(0,1fr)_12rem_8rem]">
-                <Field label="URL">
+                <Field label="URL" info={"Endpoint GraphQL: absoluta o una ruta (/graphql) bajo la URL base del entorno. Acepta {{variables}}."}>
                   <input
                     className={`${inputClass} font-mono text-[11px]`}
                     value={call.url}
@@ -1317,7 +1373,7 @@ function GraphqlInspector({
                     onChange={(event) => setCall({ url: event.target.value })}
                   />
                 </Field>
-                <Field label="operationName">
+                <Field label="operationName" info={"Qué operación ejecutar cuando la query define varias. Opcional si solo hay una. Solo letras, números y _, sin empezar por número."}>
                   <input
                     className={`${inputClass} font-mono text-[11px]`}
                     value={call.operationName ?? ""}
@@ -1326,7 +1382,7 @@ function GraphqlInspector({
                     onChange={(event) => setCall({ operationName: event.target.value || undefined })}
                   />
                 </Field>
-                <Field label="Estado esperado">
+                <Field label="Estado esperado" info={"Código HTTP que debe responder. Vacío acepta cualquier 2xx. Aunque llegue 200, el nodo falla si la respuesta trae errors (salvo «Admitir errors»)."}>
                   <input
                     className={inputClass}
                     type="number"
@@ -1360,6 +1416,7 @@ function GraphqlInspector({
                     onChange={(event) => setCall({ useSession: event.target.checked || undefined })}
                   />
                   Enviar sesión del login
+                  <InfoTip label={"Qué es «Enviar sesión del login»"}>{"Envía el token del login anterior, con su cabecera y prefijo. Sin marcar, la llamada va sin sesión. Con una URL absoluta a otro host, el token viaja a ese host."}</InfoTip>
                 </label>
                 <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
                   <input
@@ -1369,6 +1426,7 @@ function GraphqlInspector({
                     onChange={(event) => setCall({ allowErrors: event.target.checked || undefined })}
                   />
                   Admitir errors en la respuesta
+                  <InfoTip label={"Qué es «Admitir errors en la respuesta»"}>{"Por defecto una respuesta con errors no vacío falla aunque sea 200. Márcalo si esperas errores parciales y los juzgas con comprobaciones."}</InfoTip>
                 </label>
               </div>
               {call.useSession && /^https?:\/\//i.test(call.url) && (
@@ -1377,7 +1435,7 @@ function GraphqlInspector({
                 </p>
               )}
               <div className="mt-3 grid gap-3 @3xl:grid-cols-2">
-                <Field label="Query">
+                <Field label="Query" info={"El documento GraphQL: query o mutation, con sus $variables declaradas. Ejemplo: query Widget($id: ID!) { widget(id: $id) { id } }."}>
                   <textarea
                     className={`${inputClass} h-[18rem] font-mono text-[11px]`}
                     placeholder={"query Cosa($id: ID!) {\n  cosa(id: $id) { id nombre }\n}"}
@@ -1387,7 +1445,7 @@ function GraphqlInspector({
                     onChange={(event) => setCall({ query: event.target.value })}
                   />
                 </Field>
-                <Field label="Variables (JSON)">
+                <Field label="Variables (JSON)" info={"Objeto JSON con los valores de las $variables de la query: {\"id\": \"{{widgetId}}\"}. Las {{variables}} se sustituyen antes de interpretar el JSON."}>
                   <textarea
                     className={cn(`${inputClass} h-[18rem] font-mono text-[11px]`, variablesProblem && "border-rose-300")}
                     placeholder={'{\n  "id": "{{thingId}}"\n}'}
@@ -1401,7 +1459,7 @@ function GraphqlInspector({
               </div>
               <div className="mt-3 border-t border-slate-100 pt-1">
                 <RequestFieldsRows
-                  label="Cabeceras"
+                  label="Cabeceras" info={"Cabeceras de la llamada; aceptan {{variables}}. Content-Type: application/json se añade si no la pones."}
                   kind="header"
                   hint="Content-Type: application/json se añade si no la pones."
                   namePlaceholder="Authorization"
@@ -1471,6 +1529,7 @@ function SetInspector({
 
   return (
     <NodePanel
+      kind="set"
       title="Set (variables)"
       subtitle={step.id}
       description={
@@ -1496,9 +1555,9 @@ function SetInspector({
               </datalist>
               {assignments.length > 0 && (
                 <div className="mb-1 hidden grid-cols-[minmax(0,1fr)_1rem_minmax(0,1.6fr)_1.5rem] gap-1.5 text-[10px] font-medium tracking-wide text-slate-400 uppercase @3xl:grid">
-                  <span>Variable</span>
+                  <span className="flex items-center">Variable<InfoTip label={"Qué es «Variable»"}>{"Nombre de la variable que se escribe. Si ya existe, se sobrescribe para el resto de la corrida."}</InfoTip></span>
                   <span />
-                  <span>Valor</span>
+                  <span className="flex items-center">Valor<InfoTip label={"Qué es «Valor»"}>{"Plantilla que se resuelve al ejecutar: texto con {{variables}} y valores generados como {{$uuid}}. Si usa una variable que no existe, el nodo falla."}</InfoTip></span>
                 </div>
               )}
               <div className="space-y-2">
@@ -1589,6 +1648,7 @@ function ScriptInspector({
 
   return (
     <NodePanel
+      kind="script"
       title="Script"
       subtitle={step.id}
       description={
@@ -1610,7 +1670,7 @@ function ScriptInspector({
           content: (
             <>
               <div className="max-w-sm">
-                <Field label="Lee la respuesta de">
+                <Field label="Lee la respuesta de" info={"Paso cuya respuesta queda en pm.response dentro del script. «Ninguna» si el script solo trabaja con variables. Solo aparecen los conectados a la entrada."}>
                   <select
                     className={inputClass}
                     value={script.from ?? ""}
@@ -1679,6 +1739,7 @@ function LoopInspector({
 
   return (
     <NodePanel
+      kind="loop"
       title="Bucle"
       subtitle={step.id}
       description="Recorre una lista que devolvió un paso anterior. Lo que conectes a la salida «cada» —y todo lo que cuelgue de ello— se ejecuta una vez por elemento, en orden, y cada vuelta deja su propio caso por nodo. La salida «fin» sigue cuando terminan todas las vueltas."
@@ -1694,7 +1755,7 @@ function LoopInspector({
                 {sources.length === 0 ? (
                   <p className="text-[11px] text-amber-700 @3xl:self-center">Conéctalo al paso cuya respuesta trae la lista.</p>
                 ) : (
-                  <Field label="Lee la lista de">
+                  <Field label="Lee la lista de" info={"Paso cuya respuesta trae la lista a recorrer. Solo aparecen los conectados a la entrada del bucle."}>
                     <select
                       className={inputClass}
                       value={loop.from}
@@ -1710,7 +1771,7 @@ function LoopInspector({
                     </select>
                   </Field>
                 )}
-                <Field label="Ruta a la lista en el body">
+                <Field label="Ruta a la lista en el body" info={"Ruta con puntos hasta el array dentro del body: data, data.items. Si no apunta a una lista, el nodo falla."}>
                   <input
                     className={`${inputClass} font-mono text-xs`}
                     value={loop.path}
@@ -1719,7 +1780,7 @@ function LoopInspector({
                     onChange={(event) => setLoop({ path: event.target.value })}
                   />
                 </Field>
-                <Field label="Cada elemento">
+                <Field label="Cada elemento" info={"Nombre de la variable con el elemento de cada vuelta. Con «item»: {{item}} es el elemento entero en JSON y {{item.id}} uno de sus campos."}>
                   <input
                     className={`${inputClass} font-mono text-xs`}
                     value={loop.as}
@@ -1727,7 +1788,7 @@ function LoopInspector({
                     onChange={(event) => setLoop({ as: event.target.value })}
                   />
                 </Field>
-                <Field label="Máx. vueltas">
+                <Field label="Máx. vueltas" info={"Tope de vueltas (1–200), para que una lista más larga de lo esperado no alargue la corrida sin límite."}>
                   <input
                     className={inputClass}
                     type="number"
@@ -1788,6 +1849,7 @@ function NotifyInspector({
 
   return (
     <NodePanel
+      kind="notify"
       title="Notificar"
       subtitle={step.id}
       description={
@@ -1807,7 +1869,7 @@ function NotifyInspector({
           content: (
             <>
               <div className="grid gap-3 @3xl:grid-cols-2">
-                <Field label="Canal" hint={channel?.hint}>
+                <Field label="Canal" info={"Formato del mensaje:\n• Slack: incoming webhook de Slack.\n• Microsoft Teams: webhook entrante de Teams.\n• Webhook: tu propia URL.\nLa ayuda bajo el selector dice qué cuerpo recibe cada uno."} hint={channel?.hint}>
                   <select
                     className={inputClass}
                     value={notify.channel}
@@ -1822,7 +1884,7 @@ function NotifyInspector({
                   </select>
                 </Field>
                 <div>
-                  <Field label="Variable del entorno con la URL">
+                  <Field label="Variable del entorno con la URL" info={"Nombre (no el valor) de la variable del entorno activo que guarda la URL del webhook, p. ej. SLACK_WEBHOOK_URL. Márcala como sensible: la URL es un secreto y en el informe sale enmascarada. Si no existe en el entorno, el nodo falla."}>
                     <input
                       aria-label="Variable del entorno con la URL"
                       className={cn(inputClass, "font-mono text-[11px]")}
@@ -1848,7 +1910,7 @@ function NotifyInspector({
                   )}
                 </div>
               </div>
-              <Field label="Mensaje">
+              <Field label="Mensaje" info={"Texto a enviar. Escribe {{ para insertar variables: {{orderId}}, {{baseUrl}}… Si alguna no existe al ejecutar, el nodo falla sin enviar nada."}>
                 <VariableSuggest variables={variables} value={notify.message} onChange={(message) => setNotify({ message })}>
                   {(suggest) => (
                     <textarea
@@ -1874,6 +1936,7 @@ function NotifyInspector({
                   onChange={(event) => setNotify({ onError: event.target.checked ? "fail" : "continue" })}
                 />
                 Fallar el nodo si el mensaje no llega (respuesta no 2xx o sin conexión)
+                <InfoTip label={"Qué es «Fallar el nodo si el mensaje no llega (respuesta no 2xx o sin conexión)»"}>{"Sin marcar, un envío fallido deja el nodo en verde con un aviso: una caída del chat no es un fallo de la API. Márcalo si que el aviso llegue es parte de lo que pruebas."}</InfoTip>
               </label>
               <p className="mt-1 text-[11px] leading-5 text-slate-500">
                 Desmarcado, un envío fallido deja el nodo en verde con un aviso: una caída del chat no es un fallo de la API.
@@ -1914,6 +1977,7 @@ function MockInspector({
 
   return (
     <NodePanel
+      kind="mock"
       title="Mock (respuesta simulada)"
       subtitle={`${mock.status} · ${step.id}`}
       description={
@@ -1934,7 +1998,7 @@ function MockInspector({
           content: (
             <>
               <div className="grid grid-cols-2 gap-3 @3xl:grid-cols-[8rem_10rem]">
-                <Field label="Estado">
+                <Field label="Estado" info={"Código HTTP de la respuesta simulada (100–599). Las comprobaciones y los nodos siguientes lo leen como si fuera real."}>
                   <input
                     className={inputClass}
                     type="number"
@@ -1945,7 +2009,7 @@ function MockInspector({
                     onChange={(event) => setMock({ status: Number(event.target.value) })}
                   />
                 </Field>
-                <Field label="Retardo (ms)">
+                <Field label="Retardo (ms)" info={"Cuánto tarda el mock en responder (0–60 000 ms), para simular un servicio lento. Vacío = inmediato."}>
                   <input
                     className={inputClass}
                     type="number"
@@ -1967,7 +2031,7 @@ function MockInspector({
               </datalist>
               <div className="mt-3 border-t border-slate-100 pt-1">
                 <RequestFieldsRows
-                  label="Cabeceras"
+                  label="Cabeceras" info={"Cabeceras de la respuesta simulada. Las comprobaciones de header y las capturas las leen."}
                   kind="header"
                   hint="Sin Content-Type se deduce del body: application/json si es JSON, text/plain si no."
                   namePlaceholder="Content-Type"
@@ -1984,7 +2048,7 @@ function MockInspector({
                   }
                 />
               </div>
-              <Field label="Body">
+              <Field label="Body" info={"Body de la respuesta simulada. Si es JSON, las capturas y comprobaciones lo recorren con rutas (data.id). Acepta {{variables}}; una que no exista hace fallar el nodo."}>
                 <textarea
                   aria-label="Body simulado"
                   className={`${inputClass} h-[18rem] font-mono text-[11px]`}
@@ -2047,6 +2111,7 @@ function SchemaInspector({
 
   return (
     <NodePanel
+      kind="schema"
       title="Esquema"
       subtitle={step.id}
       description="Valida el body de la respuesta de un paso contra un JSON Schema: el que el contrato declara para esa operación y el código que llegó, o uno escrito aquí —para un fetch a un servicio que el contrato no describe—. En modo estricto también falla con los campos que el esquema no declara."
@@ -2062,7 +2127,7 @@ function SchemaInspector({
                 {sources.length === 0 ? (
                   <p className="text-[11px] text-amber-700 @3xl:self-center">Conéctalo al paso cuya respuesta quieres validar.</p>
                 ) : (
-                  <Field label="Valida el paso">
+                  <Field label="Valida el paso" info={"Paso cuyo body se valida. Solo aparecen los conectados a la entrada."}>
                     <select
                       className={inputClass}
                       value={schema.from}
@@ -2078,7 +2143,7 @@ function SchemaInspector({
                     </select>
                   </Field>
                 )}
-                <Field label="Contra">
+                <Field label="Contra" info={"• El contrato (OpenAPI): el esquema que declara la operación de ese paso para el código que respondió. Solo para peticiones y logins.\n• Un esquema propio: el JSON Schema escrito debajo; sirve para fetch, GraphQL o mock."}>
                   <select
                     className={inputClass}
                     value={schema.source}
@@ -2099,6 +2164,7 @@ function SchemaInspector({
                     onChange={(event) => setSchema({ strict: event.target.checked })}
                   />
                   Estricto: sin campos no declarados
+                  <InfoTip label={"Qué es «Estricto: sin campos no declarados»"}>{"Además de lo que exige el esquema, falla si el body trae campos que el esquema no declara. Sirve para detectar datos de más, como un password en la respuesta."}</InfoTip>
                 </label>
               </div>
               {schema.source === "contract" ? (
@@ -2169,6 +2235,7 @@ function SubflowInspector({
 
   return (
     <NodePanel
+      kind="subflow"
       title="Sub-flujo"
       subtitle={step.id}
       description="Ejecuta otro flujo del proyecto como un paso de este. El hijo empieza con una copia de las variables de la corrida más sus entradas; al terminar solo vuelven las variables de «Salidas» (y la sesión, si inicia una). Sus pasos salen en el informe bajo este nodo, y el nodo pasa si pasan todos."
@@ -2180,7 +2247,7 @@ function SubflowInspector({
           label: "Flujo",
           content: (
             <>
-              <Field label="Ejecuta el flujo">
+              <Field label="Ejecuta el flujo" info={"Flujo del proyecto que se ejecuta en este punto. No se ofrecen los archivados ni los que ya ejecutan este (formarían un ciclo). Como mucho 3 niveles de sub-flujos."}>
                 <select
                   className={inputClass}
                   value={config.workflowId}
@@ -2361,6 +2428,103 @@ function SubflowInspector({
   );
 }
 
+/** A retry node: the step it watches, where the flow is walked again from, how many times, how far apart. */
+function RetryInspector({
+  step,
+  steps,
+  canEdit,
+  onChange,
+  onRemove,
+}: {
+  step: WorkflowStepView;
+  steps: WorkflowStepView[];
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+  onRemove: () => void;
+}) {
+  const rerun = step.rerun ?? { from: "", target: "", attempts: 3, delayMs: 1000 };
+  const setRerun = (change: Partial<typeof rerun>) => onChange({ ...step, rerun: { ...rerun, ...change } });
+  // Where it can start again: the watched step itself or any node before it.
+  const targets = rerun.from ? steps.map((other) => other.id).filter((id) => rerunPathIds(steps, id, rerun.from) !== null) : [];
+  const path = rerun.from && rerun.target ? rerunPathIds(steps, rerun.target, rerun.from) : null;
+
+  return (
+    <NodePanel
+      kind="retry"
+      title="Reintento"
+      subtitle={step.id}
+      description="Vigila el paso conectado a su entrada. Si pasa, no hace nada. Si falla, vuelve a ejecutar el flujo desde el nodo al que apunta «reintentar» hasta ese paso, las veces indicadas. En cuanto el paso pase, el flujo sigue desde él; si se agotan los intentos, sigue por «si se agota»."
+      canEdit={canEdit}
+      onRemove={onRemove}
+      tabs={[
+        {
+          id: "main",
+          label: "Reintento",
+          content: (
+            <>
+              <div className="grid gap-3 @3xl:grid-cols-2">
+                <Field label="Vigila el paso" info={"El paso conectado a la entrada de este nodo. Cuando falla, empieza el reintento. Cambia la conexión en el lienzo para vigilar otro."}>
+                  {rerun.from ? (
+                    <p className="py-1.5 font-mono text-xs text-slate-700">{rerun.from}</p>
+                  ) : (
+                    <p className="py-1.5 text-[11px] text-amber-700">Conecta a su entrada el paso que puede fallar.</p>
+                  )}
+                </Field>
+                <Field label="Repite desde" info={"El nodo desde el que se vuelve a ejecutar el flujo: el mismo paso, o uno anterior (por ejemplo, el que crea lo que el paso lee). También se elige arrastrando la salida «reintentar» a ese nodo."}>
+                  <select
+                    className={inputClass}
+                    value={rerun.target}
+                    disabled={!canEdit || targets.length === 0}
+                    onChange={(event) => setRerun({ target: event.target.value })}
+                  >
+                    {!targets.includes(rerun.target) && <option value="">Elige un nodo</option>}
+                    {targets.map((id) => (
+                      <option key={id} value={id}>
+                        {id === rerun.from ? `${id} (el mismo paso)` : id}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Reintentos (máx.)" info={"Cuántas veces, como mucho, se vuelve a ejecutar el tramo después del primer fallo (1–10)."}>
+                  <input
+                    className={inputClass}
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={rerun.attempts}
+                    disabled={!canEdit}
+                    onChange={(event) => setRerun({ attempts: Math.min(10, Math.max(1, Number(event.target.value) || 1)) })}
+                  />
+                </Field>
+                <Field label="Espera antes de cada uno (ms)" info={"Pausa antes de cada reintento (0–60 000 ms)."}>
+                  <input
+                    className={inputClass}
+                    type="number"
+                    min={0}
+                    max={60000}
+                    step={500}
+                    value={rerun.delayMs}
+                    disabled={!canEdit}
+                    onChange={(event) => setRerun({ delayMs: Math.min(60000, Math.max(0, Number(event.target.value) || 0)) })}
+                  />
+                </Field>
+              </div>
+              {path && (
+                <p className="mt-3 text-[11px] leading-5 text-slate-600">
+                  Cada reintento ejecuta: <span className="font-mono">{path.join(" → ")}</span>
+                </p>
+              )}
+              <p className="mt-2 text-[11px] leading-5 text-amber-700">
+                Si en ese tramo hay peticiones que escriben (POST, DELETE…), vuelven a escribir en cada reintento.
+              </p>
+            </>
+          ),
+        },
+      ]}
+    />
+  );
+}
+
 /** A poll node: the request it repeats, how often, and the checks that say when to stop. */
 function PollInspector({
   step,
@@ -2385,7 +2549,8 @@ function PollInspector({
 
   return (
     <NodePanel
-      title="Reintento"
+      kind="poll"
+      title="Sondeo"
       subtitle={step.id}
       description="Repite la petición de un paso hasta que su respuesta cumpla las comprobaciones: el trabajo que responde «pendiente» hasta que termina. Primero juzga la respuesta que ese paso ya obtuvo; si ya cumple, no reenvía nada. Lo que cuelgue de este nodo lee la última respuesta."
       canEdit={canEdit}
@@ -2393,7 +2558,7 @@ function PollInspector({
       tabs={[
         {
           id: "main",
-          label: "Reintento",
+          label: "Sondeo",
           content: (
             <>
               <div className="grid gap-3 @3xl:grid-cols-[minmax(0,1fr)_9rem_9rem]">
@@ -2402,7 +2567,7 @@ function PollInspector({
                     Conéctalo a una petición o un fetch (sin bucle ni login) que repetir.
                   </p>
                 ) : (
-                  <Field label="Repite el paso">
+                  <Field label="Repite el paso" info={"Petición o fetch conectado a la entrada cuya llamada se reenvía. Tiene que haber PASADO: si falla, el Sondeo queda saltado. Para repetir un paso que falla, usa el nodo Reintento."}>
                     <select
                       className={inputClass}
                       value={poll.from}
@@ -2418,7 +2583,7 @@ function PollInspector({
                     </select>
                   </Field>
                 )}
-                <Field label="Reenvíos (máx.)">
+                <Field label="Reenvíos (máx.)" info={"Cuántas veces, como mucho, se vuelve a enviar (1–20) después de juzgar la primera respuesta. Si ninguna cumple las comprobaciones, el nodo falla."}>
                   <input
                     className={inputClass}
                     type="number"
@@ -2431,7 +2596,7 @@ function PollInspector({
                     }
                   />
                 </Field>
-                <Field label="Cada (ms)">
+                <Field label="Cada (ms)" info={"Espera antes de cada reenvío (0–60 000 ms)."}>
                   <input
                     className={inputClass}
                     type="number"
@@ -2511,9 +2676,9 @@ function CapturesEditor({
         <div
           className={cn(row, "mt-3 hidden text-[10px] font-medium tracking-wide text-slate-400 uppercase @3xl:grid")}
         >
-          <span>Variable</span>
-          <span>Origen</span>
-          <span>Ruta</span>
+          <span className="flex items-center">Variable<InfoTip label={"Qué es «Variable»"}>{"Nombre con el que los pasos siguientes usan el valor: userId se usa como {{userId}}."}</InfoTip></span>
+          <span className="flex items-center">Origen<InfoTip label={"Qué es «Origen»"}>{"• body: el JSON, con una ruta (data.id).\n• header: una cabecera, por nombre.\n• cookie: una cookie de la respuesta, por nombre.\n• regex: expresión regular sobre el texto; se toma su grupo si lo lleva."}</InfoTip></span>
+          <span className="flex items-center">Ruta<InfoTip label={"Qué es «Ruta»"}>{"Depende del origen: ruta con puntos en el body (data.items.0.id), nombre de la cabecera o la cookie, o la expresión regular."}</InfoTip></span>
         </div>
       )}
       <div className="mt-2 space-y-2">
@@ -2601,6 +2766,7 @@ function RequestFieldsRows({
   label,
   kind,
   hint,
+  info,
   namePlaceholder,
   valuePlaceholder,
   enabled,
@@ -2612,6 +2778,7 @@ function RequestFieldsRows({
   label: string;
   kind: "parameter" | "header";
   hint: string;
+  info?: ReactNode;
   namePlaceholder: string;
   valuePlaceholder: string;
   enabled: Record<string, string>;
@@ -2625,6 +2792,7 @@ function RequestFieldsRows({
     <RequestFieldsEditor
       label={label}
       hint={hint}
+      info={info}
       rows={rows}
       problems={fieldProblems(rows, kind)}
       namePlaceholder={namePlaceholder}
@@ -2670,10 +2838,10 @@ function ChecksEditor({
         <div
           className={cn(row, "mt-3 hidden text-[10px] font-medium tracking-wide text-slate-400 uppercase @3xl:grid")}
         >
-          <span>Origen</span>
-          <span>Ruta o cabecera</span>
-          <span>Operador</span>
-          <span>Valor esperado</span>
+          <span className="flex items-center">Origen<InfoTip label={"Qué es «Origen»"}>{"Qué parte de la respuesta se lee:\n• status: el código HTTP (200, 404…).\n• body: el JSON de la respuesta, con una ruta.\n• header: una cabecera, por su nombre.\n• durationMs: lo que tardó, en milisegundos."}</InfoTip></span>
+          <span className="flex items-center">Ruta o cabecera<InfoTip label={"Qué es «Ruta o cabecera»"}>{"Solo para body y header.\n• body: ruta con puntos, p. ej. data.id o data.items.0.name (los índices de lista son números). Vacía lee el body entero.\n• header: el nombre de la cabecera, p. ej. X-Total-Count.\nCon status y durationMs no se usa."}</InfoTip></span>
+          <span className="flex items-center">Operador<InfoTip label={"Qué es «Operador»"}>{"• equals / not_equals: igual o distinto. Compara como texto (200 y «200» son lo mismo); objetos y listas, completos.\n• contains / not_contains: en una lista, que tenga ese elemento; en un texto, que lo incluya.\n• greater_than / less_than: comparación numérica.\n• exists / not_exists: que el valor esté (ni ausente ni null).\n• matches: expresión regular sobre el texto.\n• is_array: que sea una lista.\n• is_not_empty: lista, texto u objeto con al menos un elemento.\n• has_length: tamaño exacto (elementos, caracteres o claves)."}</InfoTip></span>
+          <span className="flex items-center">Valor esperado<InfoTip label={"Qué es «Valor esperado»"}>{"Lo que se espera, como texto o número (con matches, una expresión regular). No aparece con los operadores que no comparan: exists, not_exists, is_array, is_not_empty."}</InfoTip></span>
         </div>
       )}
       <div className="mt-2 space-y-2">
@@ -2734,6 +2902,7 @@ function ChecksEditor({
                   onChange={(event) => patch(index, { severity: event.target.checked ? "warning" : undefined })}
                 />
                 Solo aviso
+                <InfoTip label={"Qué es «Solo aviso»"}>{"Si esta comprobación falla, queda escrita como aviso y no pone el caso en rojo."}</InfoTip>
               </label>
               {canEdit && (
                 <button
@@ -2792,7 +2961,7 @@ function FailureEditor({
   return (
     <div className="grid gap-x-6 gap-y-4 @3xl:grid-cols-2">
       <div>
-        <Field label="Si este paso falla">
+        <Field label="Si este paso falla" info={"• Saltar lo que dependa (por defecto): los pasos conectados después quedan saltados.\n• Continuar igual: el paso queda en rojo, pero los siguientes se ejecutan.\n• Detener el flujo: no se ejecuta nada más."}>
           <select
             className={inputClass}
             value={step.onError ?? "skip-dependents"}
@@ -2826,11 +2995,12 @@ function FailureEditor({
               }
             />
             Reintentar
+            <InfoTip label={"Qué es «Reintentar»"}>{"Repite ESTE paso cuando falla, con espera creciente: es la opción para «si falla, reinténtalo». Para fallos pasajeros (arranque en frío, 502/503, datos que tardan en propagarse). Acota con «Solo estos estados» para no tapar errores reales."}</InfoTip>
           </label>
           {retry && (
             <>
               <div className="mt-2 grid grid-cols-3 gap-2">
-                <Field label="Intentos">
+                <Field label="Intentos" info={"Intentos extra tras el primero (0–5): 2 significa hasta 3 peticiones. Se reintenta cuando el paso falla (estado, esquema o comprobaciones). Si al final pasa, queda un aviso en el informe."}>
                   <input
                     className={inputClass}
                     type="number"
@@ -2843,7 +3013,7 @@ function FailureEditor({
                     }
                   />
                 </Field>
-                <Field label="Espera (ms)">
+                <Field label="Espera (ms)" info={"Espera antes del primer reintento (0–30 000 ms)."}>
                   <input
                     className={inputClass}
                     type="number"
@@ -2856,7 +3026,7 @@ function FailureEditor({
                     }
                   />
                 </Field>
-                <Field label="Factor">
+                <Field label="Factor" info={"Multiplica la espera tras cada intento: con 500 ms y factor 2 espera 500, 1000, 2000… Con 1 la espera es constante."}>
                   <input
                     className={inputClass}
                     type="number"
@@ -2871,7 +3041,7 @@ function FailureEditor({
                   />
                 </Field>
               </div>
-              <Field label="Solo estos estados" hint="Vacío reintenta cualquier fallo.">
+              <Field label="Solo estos estados" info={"Códigos HTTP que justifican reintentar, separados por comas: 502, 503, 504. Si llega otro código, no se reintenta. Vacío reintenta cualquier fallo. Un paso que escribe (POST…) sin acotar escribe una vez por intento."} hint="Vacío reintenta cualquier fallo.">
                 <input
                   className={`${inputClass} font-mono text-xs`}
                   value={(retry.onStatus ?? []).join(", ")}
@@ -2925,7 +3095,7 @@ function ScheduleEditor({
         {/* Solo con varias dependencias: con una, «todas» y «cualquiera» son la misma frase, y un
           desplegable que no decide nada es una pregunta que alguien tiene que leer igual. */}
         {sources.length > 1 && (
-          <Field label="Empieza cuando" hint="«Cualquiera» arranca con el primero que llegue, sin esperar al resto.">
+          <Field label="Empieza cuando" info={"Con varios pasos conectados a la entrada:\n• han terminado todos: espera a todos.\n• ha terminado cualquiera: arranca con el primero que llegue."} hint="«Cualquiera» arranca con el primero que llegue, sin esperar al resto.">
             <select
               className={inputClass}
               value={step.waits ?? "all"}
@@ -2939,7 +3109,7 @@ function ScheduleEditor({
         )}
 
         <Field
-          label="Esperar antes (ms)"
+          label="Esperar antes (ms)" info={"Pausa antes de enviar este paso (0–60 000 ms), para la API que acepta una escritura y tarda en poder leerla. No reintenta nada."}
           hint="Para el destino que acepta la escritura y tarda un momento en poder leerla."
         >
           <input
@@ -2978,11 +3148,12 @@ function ScheduleEditor({
                 }
               />
               Solo si…
+              <InfoTip label={"Qué es «Solo si…»"}>{"Ejecuta este paso solo si la respuesta de un paso anterior cumple la condición: paso, origen, ruta, operador y valor. Si no se cumple, queda saltado, no en rojo."}</InfoTip>
             </label>
             {condition && (
               <div className="mt-2 rounded-lg border border-slate-200 p-2">
                 <div className="grid grid-cols-2 gap-2">
-                  <Field label="Del paso">
+                  <Field label="Del paso" info={"Paso cuya respuesta decide si este se ejecuta. Solo aparecen los conectados a la entrada."}>
                     <select
                       className={inputClass}
                       value={condition.from}
@@ -2996,7 +3167,7 @@ function ScheduleEditor({
                       ))}
                     </select>
                   </Field>
-                  <Field label="Origen">
+                  <Field label="Origen" info={"Qué parte de la respuesta se lee:\n• status: el código HTTP (200, 404…).\n• body: el JSON de la respuesta, con una ruta.\n• header: una cabecera, por su nombre.\n• durationMs: lo que tardó, en milisegundos."}>
                     <select
                       className={inputClass}
                       value={condition.check.source}
@@ -3090,11 +3261,12 @@ function ScheduleEditor({
                 }
               />
               Una vez por elemento de…
+              <InfoTip label={"Qué es «Una vez por elemento de…»"}>{"Envía este paso una vez por cada elemento de una lista de otra respuesta. Para repetir varios pasos por elemento, usa el nodo Bucle."}</InfoTip>
             </label>
             {loop && (
               <div className="mt-2 rounded-lg border border-slate-200 p-2">
                 <div className="grid grid-cols-2 gap-2">
-                  <Field label="Lista del paso">
+                  <Field label="Lista del paso" info={"Paso cuya respuesta trae la lista. Este paso se envía una vez por elemento, cada uno como su propio caso."}>
                     <select
                       className={inputClass}
                       value={loop.from}
@@ -3108,7 +3280,7 @@ function ScheduleEditor({
                       ))}
                     </select>
                   </Field>
-                  <Field label="Ruta">
+                  <Field label="Ruta" info={"Ruta con puntos a la lista dentro del body del paso elegido: data o data.items. Tiene que ser un array."}>
                     <input
                       className={inputClass}
                       value={loop.path}
@@ -3119,7 +3291,7 @@ function ScheduleEditor({
                   </Field>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <Field label="Se llama" hint="Un objeto también se ata campo a campo: item.id.">
+                  <Field label="Se llama" info={"Nombre de la variable con el elemento actual: {{item}} entero o {{item.id}} campo a campo."} hint="Un objeto también se ata campo a campo: item.id.">
                     <input
                       className={`${inputClass} font-mono text-xs`}
                       value={loop.as}
@@ -3127,7 +3299,7 @@ function ScheduleEditor({
                       onChange={(event) => onChange({ ...step, forEach: { ...loop, as: event.target.value } })}
                     />
                   </Field>
-                  <Field label="Como mucho">
+                  <Field label="Como mucho" info={"Tope de elementos (1–200): la longitud de la lista la decide la API, así que el tope evita corridas sin fin."}>
                     <input
                       className={inputClass}
                       type="number"
@@ -3184,9 +3356,14 @@ function SessionEditor({
           }
         />
         Este paso inicia sesión
+        <InfoTip label={"Qué es «Este paso inicia sesión»"}>{"Convierte el paso en login: al pasar, toma el token de su respuesta y los pasos siguientes con Auth default lo presentan en lugar de la credencial del entorno."}</InfoTip>
       </label>
       {auth && (
         <div className="mt-2 rounded-lg border border-slate-200 p-2">
+          <p className="flex items-center text-xs font-medium text-slate-600">
+            Token
+            <InfoTip label={"Qué es «Token»"}>{"De dónde sale el token en la respuesta del login: body con una ruta (data.token), header o cookie por nombre, o una expresión regular sobre el texto."}</InfoTip>
+          </p>
           <div className="grid grid-cols-[90px_1fr] gap-2">
             <select
               aria-label="De dónde sale el token"
@@ -3213,7 +3390,7 @@ function SessionEditor({
             />
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <Field label="Cabecera">
+            <Field label="Cabecera" info={"Cabecera en la que los pasos siguientes envían el token, normalmente Authorization."}>
               <input
                 className={`${inputClass} font-mono text-xs`}
                 value={auth.header ?? ""}
@@ -3224,7 +3401,7 @@ function SessionEditor({
                 }
               />
             </Field>
-            <Field label="Prefijo" hint="Vacío envía el token tal cual.">
+            <Field label="Prefijo" info={"Texto delante del token: «Bearer » (con el espacio) por defecto. Vacío envía el token tal cual."} hint="Vacío envía el token tal cual.">
               <input
                 className={`${inputClass} font-mono text-xs`}
                 value={auth.scheme ?? "Bearer "}

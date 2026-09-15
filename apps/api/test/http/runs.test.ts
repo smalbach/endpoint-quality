@@ -636,6 +636,101 @@ describe("flujos reutilizables y variables de entorno", () => {
     await flow.target.stop();
   });
 
+  test("un nodo reintento repite desde donde apunta cuando el paso falla; si se agota, sigue por su otra salida", async () => {
+    const flow = await flowAgainst({ entityName: "reintentado" });
+    // Cada POST /things da un id nuevo (100, 101, 102…).
+    // crear → es-102 (valida data.id = 102) ⇢ reintento (desde crear, 3) → tras-102 ; agotado (no corre)
+    // tras-102 ⇢ sin-falta (pasó: no hace nada) → nunca (no corre)
+    // tras-102 → fantasma (GET /things/999: 404) ⇢ reintento-fantasma (2) → plan-b (corre) ; tras-fantasma (no corre)
+    const read = (id: string, dependsOn: string[]) => ({
+      id,
+      kind: "fetch",
+      dependsOn,
+      fetch: { method: "GET", url: "/things/{{thingId}}", expectedStatus: 200 },
+    });
+    const saved = await api()
+      .put(`${flow.projectBase}/workflows/${flow.workflowId}`)
+      .set(as(owner))
+      .send({
+        definition: {
+          steps: [
+            {
+              id: "crear",
+              requestTemplateId: flow.createTemplateId,
+              captures: [{ variable: "thingId", from: "body", path: "data.id" }],
+            },
+            {
+              id: "es-102",
+              kind: "validate",
+              dependsOn: ["crear"],
+              validate: { from: "crear" },
+              checks: [{ source: "body", path: "data.id", operator: "equals", value: "102" }],
+            },
+            { id: "reintento", kind: "retry", dependsOn: ["es-102"], rerun: { from: "es-102", target: "crear", attempts: 3, delayMs: 0 } },
+            read("tras-102", ["es-102"]),
+            read("agotado", ["reintento"]),
+            { id: "sin-falta", kind: "retry", dependsOn: ["tras-102"], rerun: { from: "tras-102", target: "tras-102", attempts: 2, delayMs: 0 } },
+            read("nunca", ["sin-falta"]),
+            {
+              id: "fantasma",
+              kind: "fetch",
+              dependsOn: ["tras-102"],
+              fetch: { method: "GET", url: "/things/999", expectedStatus: 200 },
+            },
+            {
+              id: "reintento-fantasma",
+              kind: "retry",
+              dependsOn: ["fantasma"],
+              rerun: { from: "fantasma", target: "fantasma", attempts: 2, delayMs: 0 },
+            },
+            read("tras-fantasma", ["fantasma"]),
+            read("plan-b", ["reintento-fantasma"]),
+          ],
+        },
+      });
+    assert.equal(saved.status, 204, JSON.stringify(saved.body));
+
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    const caseOf = (stepId: string) => run.cases.find((item: RunCaseRow) => item.scenarioId.endsWith(`:${stepId}`));
+    const detailOf = async (stepId: string) =>
+      (await api().get(`${flow.projectBase}/runs/${run.id}/cases/${caseOf(stepId)?.id}`).set(as(owner))).body;
+    const retryNote = (detail: { steps: { assertions: { label: string; detail: string }[] }[] }) =>
+      detail.steps[0].assertions.find((assertion) => assertion.label === "Reintento")?.detail ?? "";
+    const statuses = Object.fromEntries(
+      ["crear", "es-102", "reintento", "tras-102", "agotado", "sin-falta", "nunca", "fantasma", "reintento-fantasma", "tras-fantasma", "plan-b"].map(
+        (id) => [id, caseOf(id)?.status],
+      ),
+    );
+
+    assert.deepEqual(statuses, {
+      crear: "passed",
+      "es-102": "passed",
+      reintento: "passed",
+      "tras-102": "passed",
+      agotado: "skipped",
+      "sin-falta": "skipped",
+      nunca: "skipped",
+      fantasma: "failed",
+      "reintento-fantasma": "failed",
+      "tras-fantasma": "skipped",
+      "plan-b": "passed",
+    });
+    assert.equal(caseOf("reintento")?.method, "RETRY");
+    assert.match(retryNote(await detailOf("reintento")), /intento 3 de 4/);
+    assert.match(retryNote(await detailOf("reintento-fantasma")), /tras 2 reintentos/);
+    // Cada caso repetido guarda solo su última vuelta, no los pasos de todas.
+    const tras = await detailOf("tras-102");
+    assert.match(tras.steps[0].request.url, /\/things\/102$/);
+    const crear = await detailOf("crear");
+    assert.equal(crear.steps.length, 1);
+    assert.equal(crear.steps[0].actual.body.data.id, "102");
+    assert.equal(run.status, "failed");
+    await flow.target.stop();
+  });
+
   test("un bucle recorre su cuerpo una vez por elemento, y «fin» sigue con el último", async () => {
     const flow = await flowAgainst({ entityName: "en-bucle" });
     // crear(100) → listar(fetch /things: semilla 1 y 100) → bucle(cada cosa)

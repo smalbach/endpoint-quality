@@ -18,7 +18,7 @@ import { GRAPHQL_OPERATION_NAME, graphqlVariablesProblem } from "./graphql.ts";
 import { CHECK_OPERATORS, CHECK_SOURCES } from "./checks.ts";
 import { stepNotifySchema } from "./notify.ts";
 import { mockBodyProblem } from "./mock.ts";
-import { CAPTURE_SOURCES, FETCH_METHODS, STEP_ON_ERROR, STEP_WAITS, concurrentPairs, loopBody } from "./workflows.ts";
+import { CAPTURE_SOURCES, FETCH_METHODS, STEP_ON_ERROR, STEP_WAITS, concurrentPairs, loopBody, rerunPath } from "./workflows.ts";
 
 const jsonValue: z.ZodType<unknown> = z.lazy(() =>
   z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(jsonValue), z.record(z.string(), jsonValue)]),
@@ -177,6 +177,9 @@ function customSchemaProblem(json: string | undefined): string | null {
   return usesPattern(parsed) ? "un esquema propio no puede usar «pattern»" : null;
 }
 
+/** The kinds a retry node can watch: the ones that fail on their own. */
+const RETRY_WATCHES: string[] = ["request", "login", "fetch", "graphql", "validate", "schema", "script"];
+
 export const workflowStepSchema = z.object({
   // Capped because it travels inside `run_cases.scenarioId`, which is a `varchar(200)`.
   id: z.string().min(1).max(60),
@@ -184,7 +187,7 @@ export const workflowStepSchema = z.object({
   // `request` and a `login` node must (checked below).
   requestTemplateId: z.string().uuid().optional(),
   kind: z
-    .enum(["request", "login", "branch", "wait", "merge", "validate", "fetch", "set", "script", "poll", "loop", "schema", "notify", "subflow", "graphql", "mock"])
+    .enum(["request", "login", "branch", "wait", "merge", "validate", "fetch", "set", "script", "poll", "retry", "loop", "schema", "notify", "subflow", "graphql", "mock"])
     .optional(),
   // The `mock` node: the response it answers with, no network. Same ceilings as a fetch's call.
   mock: z
@@ -264,6 +267,16 @@ export const workflowStepSchema = z.object({
     .object({
       from: z.string().min(1).max(60),
       attempts: z.number().int().min(1).max(20),
+      delayMs: z.number().int().min(0).max(60_000),
+    })
+    .optional(),
+  // The `retry` node: the step it watches, where it walks the flow again from, how often. Capped for
+  // the same reason as a poll: every walk is requests the target sees and time the run pays.
+  rerun: z
+    .object({
+      from: z.string().min(1).max(60),
+      target: z.string().min(1).max(60),
+      attempts: z.number().int().min(1).max(10),
       delayMs: z.number().int().min(0).max(60_000),
     })
     .optional(),
@@ -387,6 +400,7 @@ export const workflowDocumentSchema = z
         ["validate", step.validate?.from],
         ["script", step.script?.from],
         ["poll", step.poll?.from],
+        ["rerun", step.rerun?.from],
         ["loop", step.loop?.from],
         ["schema", step.schema?.from],
       ] as const) {
@@ -608,6 +622,64 @@ export const workflowDocumentSchema = z
           });
         }
       }
+      if (step.rerun && kind !== "retry") {
+        context.addIssue({ code: "custom", message: "solo un nodo reintento lleva su bloque rerun", path: ["steps", index, "rerun"] });
+      }
+      if (kind === "retry") {
+        if (!step.rerun) {
+          context.addIssue({
+            code: "custom",
+            message: "un reintento necesita el paso que vigila y desde dónde repetir",
+            path: ["steps", index, "rerun"],
+          });
+          broken = true;
+        } else {
+          const { from, target } = step.rerun;
+          const source = document.steps.find((other) => other.id === from);
+          // What it watches has to be able to fail on its own: a wait or a merge never does, and a
+          // loop, a subflow or another retry already decide their own repetition.
+          if (source && !RETRY_WATCHES.includes(source.kind ?? "request")) {
+            context.addIssue({
+              code: "custom",
+              message: "un reintento solo vigila una petición, un login, un fetch, GraphQL, una validación, un esquema o un script",
+              path: ["steps", index, "rerun", "from"],
+            });
+          }
+          if (!ids.has(target)) {
+            context.addIssue({
+              code: "custom",
+              message: `rerun apunta a un paso inexistente: ${target}`,
+              path: ["steps", index, "rerun", "target"],
+            });
+            broken = true;
+          }
+          // Its input is the step it watches and nothing else: a second edge in would make it wait
+          // for something that has no say in whether it runs.
+          if ((step.dependsOn ?? []).some((id) => id !== from)) {
+            context.addIssue({
+              code: "custom",
+              message: "un reintento solo se conecta al paso que vigila",
+              path: ["steps", index, "dependsOn"],
+            });
+          }
+          if (document.steps.some((other) => other.id !== step.id && other.kind === "retry" && other.rerun?.from === from)) {
+            context.addIssue({
+              code: "custom",
+              message: `ya hay otro reintento vigilando «${from}»`,
+              path: ["steps", index, "rerun", "from"],
+            });
+          }
+        }
+        for (const field of ["retry", "forEach", "runIf", "authorizes"] as const) {
+          if (step[field]) {
+            context.addIssue({
+              code: "custom",
+              message: "un reintento no admite reintentos propios, forEach, condición ni login",
+              path: ["steps", index, field],
+            });
+          }
+        }
+      }
       if (kind === "wait" && !step.waitMs) {
         context.addIssue({
           code: "custom",
@@ -686,6 +758,41 @@ export const workflowDocumentSchema = z
      * refused on the way in and not gated on a number chosen later.
      */
     if (broken) return;
+
+    /**
+     * What a retry walks again has to be walkable again as it is: the stretch from `target` down to
+     * the watched step, with no loop, subflow, poll or other retry in it — those reserve case slots or
+     * repeat on their own — and no `forEach`. Nor may any of it, or the retry, sit inside a loop's
+     * body, which the loop walks by itself.
+     */
+    const loopMembers = new Set(
+      document.steps.filter((step) => step.kind === "loop").flatMap((loop) => loopBody(document.steps as WorkflowStep[], loop.id)),
+    );
+    for (const [index, node] of document.steps.entries()) {
+      if (node.kind !== "retry" || !node.rerun) continue;
+      if (loopMembers.has(node.id)) {
+        context.addIssue({ code: "custom", message: "un reintento no puede ir dentro de un bucle", path: ["steps", index, "kind"] });
+      }
+      const path = rerunPath(document.steps as WorkflowStep[], node.rerun.target, node.rerun.from);
+      if (!path) {
+        context.addIssue({
+          code: "custom",
+          message: "un reintento solo repite desde el paso que vigila o desde uno anterior a él",
+          path: ["steps", index, "rerun", "target"],
+        });
+        continue;
+      }
+      for (const id of path) {
+        const step = document.steps.find((other) => other.id === id)!;
+        if (["loop", "subflow", "poll", "retry"].includes(step.kind ?? "request") || step.forEach || loopMembers.has(id)) {
+          context.addIssue({
+            code: "custom",
+            message: `«${id}» no se puede repetir desde un reintento: bucles, sub-flujos, sondeos, forEach y lo que va dentro de un bucle no se vuelven a recorrer`,
+            path: ["steps", index, "rerun", "target"],
+          });
+        }
+      }
+    }
 
     /**
      * A loop walks its body in order, once per element, starting when the loop starts. So what a
