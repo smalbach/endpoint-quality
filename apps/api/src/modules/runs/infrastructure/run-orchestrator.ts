@@ -39,6 +39,7 @@ import {
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { ENV, type Env } from "@/shared/config/env";
+import { SCRIPT_SANDBOX, type ScriptSandboxPort } from "@/shared/scripts/script-sandbox";
 import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
 import { scenarioFor, type RequestTemplateRow, type WorkflowRow } from "@/modules/workflows/domain/model";
 import { caseStatusFor, failureFor, verdictFor, type Run, type RunCase, type RunStep } from "../domain/model";
@@ -63,6 +64,7 @@ export class RunOrchestrator {
     @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
     @Inject(ENV) private readonly env: Env,
+    @Inject(SCRIPT_SANDBOX) private readonly sandbox: ScriptSandboxPort,
     private readonly executor: CaseExecutor,
     private readonly contexts: ExecutionContextFactory,
     private readonly eventBus: EventBus,
@@ -389,20 +391,12 @@ export class RunOrchestrator {
         startedAt: null,
         finishedAt: null,
       };
-      // A branch node sends no request, so it has no template and no operation: it is a control
-      // row that records which way the flow went. `IF` and the step it reads name it in the report.
-      if ((step.kind ?? "request") === "branch") {
-        return {
-          step,
-          template: null,
-          operation: null,
-          runCase: {
-            ...base,
-            operationId: "",
-            method: "IF",
-            path: `si ${step.condition?.from ?? ""}`,
-          } satisfies RunCase,
-        };
+      // A control node (branch/wait/merge/validate) sends no request, so it has no template and no
+      // operation: it is a control row that records what the flow did. Its «method» and «path»
+      // name it in the report — `IF`, `WAIT`, `MERGE`, `CHECK` — the way a request names its verb.
+      const controlRow = controlCaseFields(step);
+      if (controlRow) {
+        return { step, template: null, operation: null, runCase: { ...base, ...controlRow } satisfies RunCase };
       }
       const template = templates.get(step.requestTemplateId!);
       if (!template)
@@ -571,6 +565,75 @@ export class RunOrchestrator {
       passed.set(item.step.id, true);
       await this.runs.saveCase(decided);
       await this.announce(run, decided);
+      return;
+    }
+
+    // A wait node sends no request: it pauses and lets the flow through. Not a retry —«it was not
+    // time yet», not «that failure was not real»— which is why it is its own shape on the canvas.
+    if ((item.step.kind ?? "request") === "wait") {
+      if (item.step.waitMs) await delay(item.step.waitMs);
+      const at = this.clock.now();
+      const done: RunCase = { ...item.runCase, status: "passed", startedAt, finishedAt: at, durationMs: item.step.waitMs ?? 0 };
+      passed.set(item.step.id, true);
+      await this.runs.saveCase(done);
+      await this.announce(run, done);
+      return;
+    }
+
+    // A merge node is a join: whether it may start is already decided by `waits` (all/any) in
+    // `readyToRun`, and whether its dependencies held by `dependenciesHeld` above. Reaching here
+    // means the join is satisfied, so it passes and the flow continues past it.
+    if ((item.step.kind ?? "request") === "merge") {
+      const at = this.clock.now();
+      const joined: RunCase = { ...item.runCase, status: "passed", startedAt, finishedAt: at, durationMs: 0 };
+      passed.set(item.step.id, true);
+      await this.runs.saveCase(joined);
+      await this.announce(run, joined);
+      return;
+    }
+
+    // A validate node sends no request either: it reads what a dependency answered and judges it
+    // with the author's checks and, optionally, a script in the isolated sandbox. It *can* fail —
+    // that is the point — and a failure skips what depends on it, the same as a red request would.
+    if ((item.step.kind ?? "request") === "validate") {
+      const from = item.step.validate?.from;
+      const source = from ? responses.get(from) : undefined;
+      const assertions = source && item.step.checks?.length
+        ? evaluateChecks(item.step.checks, { response: source.actual, durationMs: source.durationMs })
+        : [];
+      let verdict = source ? holds(assertions) : false;
+      const script = item.step.validate?.script?.trim();
+      if (verdict && script && source) {
+        const outcome = await this.sandbox.run({
+          phase: "post",
+          code: script,
+          environment: { name: null, values: { ...context.target.variables } },
+          variables: {},
+          request: { method: "", url: "", headers: {}, body: null },
+          response: {
+            status: source.actual.status,
+            headers: source.actual.headers,
+            body: source.actual.raw,
+            durationMs: source.durationMs,
+          },
+        });
+        // The script passes when it ran to the end and every `pm.test` it declared held. A script
+        // that threw, or that declared no test at all, does not vouch for the response.
+        verdict = !outcome.error && outcome.tests.length > 0 && outcome.tests.every((t) => t.passed);
+      }
+      const at = this.clock.now();
+      const judged: RunCase = {
+        ...item.runCase,
+        status: verdict ? "passed" : "failed",
+        failure: verdict ? null : "check",
+        startedAt,
+        finishedAt: at,
+        durationMs: 0,
+      };
+      passed.set(item.step.id, verdict);
+      await this.runs.saveCase(judged);
+      await this.announce(run, judged);
+      if (!verdict && item.step.onError === "stop") state.stopped = true;
       return;
     }
 
@@ -828,6 +891,29 @@ function toRunSteps(runCaseId: string, steps: ExecutedStep[]): RunStep[] {
     ok: step.ok,
     durationMs: step.durationMs,
   }));
+}
+
+/**
+ * The `operationId`/`method`/`path` a control node writes into its case, or `null` for a node that
+ * makes a request.
+ *
+ * A control node produces a row that records what the flow did rather than an HTTP call, so it
+ * carries no operation. The verb is a label the report reads like any other — `IF`, `WAIT`,
+ * `MERGE`, `CHECK` — and the path says, in words, what the node was about.
+ */
+function controlCaseFields(step: WorkflowStep): { operationId: string; method: string; path: string } | null {
+  switch (step.kind) {
+    case "branch":
+      return { operationId: "", method: "IF", path: `si ${step.condition?.from ?? ""}` };
+    case "wait":
+      return { operationId: "", method: "WAIT", path: `${step.waitMs ?? 0} ms` };
+    case "merge":
+      return { operationId: "", method: "MERGE", path: `une ${(step.dependsOn ?? []).length}` };
+    case "validate":
+      return { operationId: "", method: "CHECK", path: `valida ${step.validate?.from ?? ""}` };
+    default:
+      return null;
+  }
 }
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

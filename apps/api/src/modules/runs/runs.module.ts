@@ -22,6 +22,8 @@ import { CaseExecutor } from "./infrastructure/case-executor";
 import { ExecutionContextFactory } from "./infrastructure/execution-context";
 import { RequestPreviewer } from "./infrastructure/request-previewer";
 import { RunOrchestrator } from "./infrastructure/run-orchestrator";
+import { SCRIPT_SANDBOX } from "@/shared/scripts/script-sandbox";
+import { ProcessScriptSandbox } from "@/shared/scripts/process-script-sandbox";
 import {
   RunCaseProjector,
   RunCaseRetryingProjector,
@@ -100,6 +102,9 @@ export const PROGRESS_RELAY_PROVIDER = {
     CaseExecutor,
     ExecutionContextFactory,
     { provide: REQUEST_PREVIEWER, useClass: RequestPreviewer },
+    // A `validate` node runs its script in a process of its own, the same isolated sandbox the
+    // endpoint scripts use. Provided here so the orchestrator can reach it.
+    { provide: SCRIPT_SANDBOX, useClass: ProcessScriptSandbox },
     RunOrchestrator,
     RunProgressStream,
     RetentionScheduler,
