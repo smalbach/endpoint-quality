@@ -26,6 +26,7 @@ export function Drawer({
   title,
   side = "right",
   width = "24rem",
+  modal = true,
   onClose,
   children,
   footer,
@@ -33,6 +34,10 @@ export function Drawer({
   title: ReactNode;
   side?: "left" | "right";
   width?: string;
+  /** A modal drawer dims the page and catches the click outside to close. A non-modal one leaves
+   * the rest of the page live — used for the node panel, so the canvas and its toolbar stay usable
+   * while a node is open. */
+  modal?: boolean;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
@@ -47,15 +52,17 @@ export function Drawer({
   }, [onClose]);
 
   return createPortal(
-    <div className="fixed inset-0 z-40">
-      <div className="absolute inset-0 bg-slate-900/10" onMouseDown={onClose} />
+    // Non-modal: the wrapper lets clicks through (pointer-events-none) so only the panel is live,
+    // and the rest of the page — canvas, toolbar — keeps working while the panel is open.
+    <div className={cn("fixed inset-0 z-40", !modal && "pointer-events-none")}>
+      {modal && <div className="absolute inset-0 bg-slate-900/10" onMouseDown={onClose} />}
       <div
         role="dialog"
-        aria-modal="true"
+        aria-modal={modal}
         aria-labelledby={titleId}
         style={{ width }}
         className={cn(
-          "absolute inset-y-0 flex max-w-[92vw] flex-col bg-white shadow-2xl",
+          "pointer-events-auto absolute inset-y-0 flex max-w-[92vw] flex-col bg-white shadow-2xl",
           side === "left" ? "left-0 border-r border-slate-200" : "right-0 border-l border-slate-200",
         )}
       >

@@ -726,7 +726,12 @@ export function WorkflowsPage() {
 
             {/* Drawer: Ajustes del nodo / del flujo y controles de ejecución. */}
             {inspectorOpen && draft && (
-              <Drawer title={selectedStep ? "Nodo" : "Ajustes"} side="right" onClose={() => setInspectorOpen(false)}>
+              <Drawer
+                title={selectedStep ? "Nodo" : "Ajustes"}
+                side="right"
+                modal={false}
+                onClose={() => setInspectorOpen(false)}
+              >
                 <WorkflowInspector
                   base={base}
                   workflow={draft}
