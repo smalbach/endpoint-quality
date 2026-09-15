@@ -14,6 +14,7 @@ import {
   templateUsage,
   toEdges,
   toNodes,
+  uniqueName,
   uniqueTemplateName,
   variablesFor,
 } from "@/lib/workflow-draft";
@@ -350,5 +351,16 @@ describe("el nombre de una copia independiente", () => {
 
   test("no encadena «(copia) (copia)» al copiar una copia", () => {
     expect(uniqueTemplateName("Leer widget (copia)", ["Leer widget (copia)"])).toBe("Leer widget (copia) 2");
+  });
+});
+
+describe("el nombre de una operación añadida al vuelo", () => {
+  test("deja el nombre tal cual si está libre", () => {
+    expect(uniqueName("GET /widgets", [])).toBe("GET /widgets");
+  });
+
+  test("sufija « 2», « 3»… al chocar, sin marcar «(copia)»", () => {
+    expect(uniqueName("GET /widgets", ["GET /widgets"])).toBe("GET /widgets 2");
+    expect(uniqueName("GET /widgets", ["GET /widgets", "GET /widgets 2"])).toBe("GET /widgets 3");
   });
 });

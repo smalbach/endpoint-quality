@@ -23,6 +23,7 @@ import {
   flowProblems,
   replaceStep,
   templateUsage,
+  uniqueName,
   uniqueTemplateName,
   WORKFLOW_STATUS_META,
   type OperationSummary,
@@ -46,6 +47,10 @@ import type {
 } from "@/lib/types";
 
 const message = (error: unknown) => (error as Error | null)?.message ?? null;
+
+/** The status a fresh request expects, guessed from the verb. A starting point the inspector can
+ * change — most GETs answer 200, a POST 201, a DELETE 204. */
+const DEFAULT_STATUS: Record<string, number> = { GET: 200, POST: 201, PUT: 200, PATCH: 200, DELETE: 204 };
 
 export function WorkflowsPage() {
   const { projectId } = useParams();
@@ -316,6 +321,30 @@ export function WorkflowsPage() {
    * dropped so it never reaches the shared row on save.
    */
   const [forking, setForking] = useState(false);
+  const [addingOp, setAddingOp] = useState(false);
+
+  /** Add a node straight from an operation in the catalogue: mint a request for it (named after the
+   * operation, with the status its verb usually answers), then drop it into the open flow. One tap,
+   * where before it took the form and then a second click on the created row. */
+  async function addOperation(operation: OperationSummary) {
+    if (!draft) return;
+    const expectedStatus = DEFAULT_STATUS[operation.method.toUpperCase()] ?? 200;
+    const name = uniqueName(
+      operation.summary?.trim() || `${operation.method} ${operation.path}`,
+      (workflows.data?.requestTemplates ?? []).map((template) => template.name),
+    );
+    setAddingOp(true);
+    try {
+      const { requestTemplateId } = await api<{ requestTemplateId: string }>(`${base}/request-templates`, {
+        method: "POST",
+        body: { name, operationId: operation.id, expectedStatus, parameters: {}, body: { type: "none" } },
+      });
+      setSteps(addStep(steps, { id: requestTemplateId, name } as RequestTemplateView));
+      await invalidate();
+    } finally {
+      setAddingOp(false);
+    }
+  }
   async function makeIndependent(step: WorkflowStepView, overrides?: Partial<RequestTemplateView>) {
     const current = templates.find((template) => template.id === step.requestTemplateId);
     if (!current || !draft) return;
@@ -663,9 +692,11 @@ export function WorkflowsPage() {
                   canEdit={canEdit}
                   addDisabled={!draft}
                   error={message(createTemplate.error) ?? message(deleteTemplate.error)}
+                  adding={addingOp}
                   onCreate={(template) => createTemplate.mutate(template)}
                   onDelete={(template) => deleteTemplate.mutate(template.id)}
                   onAdd={(template) => setSteps(addStep(steps, template))}
+                  onAddOperation={addOperation}
                 />
                 {canEdit && (
                   <div className="mt-4 border-t border-slate-100 pt-3">

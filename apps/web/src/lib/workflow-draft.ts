@@ -71,6 +71,19 @@ export function uniqueTemplateName(base: string, taken: string[]): string {
   return candidate;
 }
 
+/** A name not already taken, suffixing « 2», « 3»… only on collision. Unlike
+ * {@link uniqueTemplateName} it does not brand the result a copy: it is what a request gets when it
+ * is first added from an operation, where the plain name is the right one. */
+export function uniqueName(base: string, taken: string[]): string {
+  const set = new Set(taken);
+  const trimmed = base.slice(0, 120);
+  if (!set.has(trimmed)) return trimmed;
+  let n = 2;
+  let candidate = `${trimmed} ${n}`.slice(0, 120);
+  while (set.has(candidate)) candidate = `${trimmed} ${++n}`.slice(0, 120);
+  return candidate;
+}
+
 export function addStep(steps: WorkflowStepView[], template: RequestTemplateView): WorkflowStepView[] {
   const id = nextStepId(
     template.name,
