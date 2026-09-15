@@ -139,6 +139,27 @@ export function WorkflowInspector({
             onChange={(next) => onSteps(replaceStep(steps, next))}
             onRemove={() => onSteps(removeStep(steps, step.id))}
           />
+        ) : step && step.kind === "wait" ? (
+          <WaitInspector
+            step={step}
+            canEdit={canEdit}
+            onChange={(next) => onSteps(replaceStep(steps, next))}
+            onRemove={() => onSteps(removeStep(steps, step.id))}
+          />
+        ) : step && step.kind === "merge" ? (
+          <MergeInspector
+            step={step}
+            canEdit={canEdit}
+            onChange={(next) => onSteps(replaceStep(steps, next))}
+            onRemove={() => onSteps(removeStep(steps, step.id))}
+          />
+        ) : step && step.kind === "validate" ? (
+          <ValidateInspector
+            step={step}
+            canEdit={canEdit}
+            onChange={(next) => onSteps(replaceStep(steps, next))}
+            onRemove={() => onSteps(removeStep(steps, step.id))}
+          />
         ) : step ? (
           <StepInspector
             base={base}
@@ -401,6 +422,159 @@ function BranchInspector({
           </div>
         </div>
       )}
+
+      {canEdit && (
+        <Button variant="ghost" className="mt-3 h-8 w-full text-xs text-rose-600" onClick={onRemove}>
+          Eliminar nodo
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** The espera node: a single number, and what it is for. */
+function WaitInspector({
+  step,
+  canEdit,
+  onChange,
+  onRemove,
+}: {
+  step: WorkflowStepView;
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div>
+      <p className="text-xs font-semibold text-slate-800">Espera</p>
+      <p className="mt-0.5 text-[11px] leading-5 text-slate-500">
+        Pausa antes de dejar pasar el flujo. No es un reintento —«no era el momento», no «el fallo no era real»— para el
+        destino que acepta una escritura y tarda un momento en hacerla legible.
+      </p>
+      <Field label="Milisegundos">
+        <input
+          className={inputClass}
+          type="number"
+          min={0}
+          max={60000}
+          value={step.waitMs ?? 0}
+          disabled={!canEdit}
+          onChange={(event) => onChange({ ...step, waitMs: Math.min(60000, Math.max(0, Number(event.target.value) || 0)) })}
+        />
+      </Field>
+      {canEdit && (
+        <Button variant="ghost" className="mt-3 h-8 w-full text-xs text-rose-600" onClick={onRemove}>
+          Eliminar nodo
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** The merge node: whether it needs every branch into it, or just the first to arrive. */
+function MergeInspector({
+  step,
+  canEdit,
+  onChange,
+  onRemove,
+}: {
+  step: WorkflowStepView;
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+  onRemove: () => void;
+}) {
+  const count = step.dependsOn?.length ?? 0;
+  return (
+    <div>
+      <p className="text-xs font-semibold text-slate-800">Merge (unión)</p>
+      <p className="mt-0.5 text-[11px] leading-5 text-slate-500">
+        Junta varias ramas en una. Conecta a su entrada las que quieres unir; el flujo sigue por su salida cuando se
+        cumple la condición de abajo.
+      </p>
+      <p className="mt-2 text-[11px] text-slate-500">
+        Ramas conectadas: <span className="font-medium text-slate-700">{count}</span>
+      </p>
+      <Field label="Cuándo continúa">
+        <select
+          className={inputClass}
+          value={step.waits ?? "all"}
+          disabled={!canEdit}
+          onChange={(event) => onChange({ ...step, waits: event.target.value === "any" ? "any" : "all" })}
+        >
+          <option value="all">Cuando llegan todas</option>
+          <option value="any">Basta con que llegue una</option>
+        </select>
+      </Field>
+      {canEdit && (
+        <Button variant="ghost" className="mt-3 h-8 w-full text-xs text-rose-600" onClick={onRemove}>
+          Eliminar nodo
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** The validate node: which step it reads, its checks, and an optional sandbox script. */
+function ValidateInspector({
+  step,
+  canEdit,
+  onChange,
+  onRemove,
+}: {
+  step: WorkflowStepView;
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+  onRemove: () => void;
+}) {
+  const sources = step.dependsOn ?? [];
+  const from = step.validate?.from ?? "";
+  const setValidate = (change: Partial<NonNullable<WorkflowStepView["validate"]>>) =>
+    onChange({ ...step, validate: { from, ...step.validate, ...change } });
+
+  return (
+    <div>
+      <p className="text-xs font-semibold text-slate-800">Validación</p>
+      <p className="mt-0.5 text-[11px] leading-5 text-slate-500">
+        Lee la respuesta de un paso anterior y la juzga. Si no pasa, lo que depende de esta validación se salta. Conéctalo
+        al paso que quieres validar arrastrando una arista hasta su entrada.
+      </p>
+
+      {sources.length === 0 ? (
+        <p className="mt-3 text-[11px] text-amber-700">Conéctalo a la petición cuya respuesta quieres validar.</p>
+      ) : (
+        <Field label="Lee el paso">
+          <select
+            className={inputClass}
+            value={from}
+            disabled={!canEdit}
+            onChange={(event) => setValidate({ from: event.target.value })}
+          >
+            {sources.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+
+      <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />
+
+      <div className="mt-4 border-t border-slate-100 pt-3">
+        <p className="text-xs font-semibold text-slate-800">Script</p>
+        <p className="mt-1 text-[11px] leading-5 text-slate-500">
+          Se ejecuta en un proceso aislado con la API <code className="font-mono">pm</code>: <code className="font-mono">pm.response</code>,{" "}
+          <code className="font-mono">pm.expect</code>, <code className="font-mono">pm.test(...)</code>. La validación pasa si todos sus{" "}
+          <code className="font-mono">pm.test</code> pasan.
+        </p>
+        <textarea
+          className={`${inputClass} mt-2 h-28 font-mono text-[11px]`}
+          placeholder={"pm.test('trae un id', function () {\n  pm.expect(pm.response.json().data.id).to.be.a('string');\n});"}
+          value={step.validate?.script ?? ""}
+          disabled={!canEdit}
+          onChange={(event) => setValidate({ script: event.target.value || undefined })}
+        />
+      </div>
 
       {canEdit && (
         <Button variant="ghost" className="mt-3 h-8 w-full text-xs text-rose-600" onClick={onRemove}>

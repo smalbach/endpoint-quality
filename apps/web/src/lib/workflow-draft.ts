@@ -133,11 +133,16 @@ export function removeStep(steps: WorkflowStepView[], stepId: string): WorkflowS
       );
       // A node that hung off the removed branch is no longer on any side of it: drop the membership
       // so it does not point at a node that is gone.
-      if (trimmed.branch?.of === stepId) {
-        const { branch: _branch, ...rest } = trimmed;
-        return rest;
+      let next = trimmed;
+      if (next.branch?.of === stepId) {
+        const { branch: _branch, ...rest } = next;
+        next = rest;
       }
-      return trimmed;
+      // A control node that read the removed step now reads nothing: clear its `from` so the
+      // document stays valid — the editor asks for it to be reconnected rather than the server 422.
+      if (next.condition?.from === stepId) next = { ...next, condition: { ...next.condition, from: "" } };
+      if (next.validate?.from === stepId) next = { ...next, validate: { ...next.validate, from: "" } };
+      return next;
     });
 }
 
@@ -153,45 +158,89 @@ export function connectStep(
   return steps.map((step) => {
     if (step.id !== target) return step;
     const linked = withDependencies(step, [...new Set([...(step.dependsOn ?? []), source])]);
-    // A wire from a branch handle also records which side of it the target sits on. From an
-    // ordinary node it is a plain dependency.
-    return branching && take ? { ...linked, branch: { of: source, take } } : linked;
+    // A wire from a branch handle also records which side of it the target sits on.
+    if (branching && take) return { ...linked, branch: { of: source, take } };
+    // A control node that reads a step —a branch or a validate— wires its `from` to whatever was
+    // just connected into it, unless it already reads one. This is what «suelta el nodo y conéctalo
+    // para configurarlo» means: the edge is the configuration, not a field typed by hand.
+    if ((linked.kind ?? "request") === "branch" && !linked.condition?.from) {
+      const check = linked.condition?.check ?? { source: "status", operator: "equals", value: "200" };
+      return { ...linked, condition: { from: source, check } };
+    }
+    if (linked.kind === "validate" && !linked.validate?.from) {
+      return { ...linked, validate: { ...linked.validate, from: source } };
+    }
+    return linked;
   });
 }
 
+/** The control kinds the palette offers as standalone nodes, and how each reads on the canvas. The
+ * two that make a request —request and login— are added from the operation catalogue, not here. */
+export const CONTROL_PALETTE: { kind: ControlKind; glyph: string; label: string; hint: string }[] = [
+  { kind: "branch", glyph: "◇", label: "If", hint: "Lee un paso y parte el flujo en «sí» y «no»" },
+  { kind: "wait", glyph: "⏱", label: "Espera", hint: "Pausa antes de dejar pasar el flujo" },
+  { kind: "merge", glyph: "⇉", label: "Merge", hint: "Junta varias ramas en una" },
+  { kind: "validate", glyph: "✓", label: "Validación", hint: "Juzga la respuesta de un paso con checks o un script" },
+];
+
+type ControlKind = "branch" | "wait" | "merge" | "validate";
+const CONTROL_BASE_ID: Record<ControlKind, string> = { branch: "rama", wait: "espera", merge: "union", validate: "valida" };
+
 /**
- * A standalone `If` reading `from`, dropped to its right.
+ * A standalone control node, dropped on the canvas and wired by hand.
  *
- * It carries a default condition —«the step answered 200»— so it is valid the moment it lands and
- * the inspector only has to change it, not build it. The «sí»/«no» handles are wired to the next
- * steps by dragging, which is what sets each of those steps' `branch`.
+ * This is the palette's half of «add como nodos aparte y conecta libre»: the node lands unconnected
+ * (or, when a node is selected, hanging off it as a convenience), and the steps it reads and feeds
+ * are set by dragging edges — {@link connectStep} fills a branch's or a validate's `from` from
+ * whatever is wired into it. Each kind lands with defaults so it is not empty on arrival.
  */
-export function addBranchStep(steps: WorkflowStepView[], from: string): { steps: WorkflowStepView[]; id: string } {
-  const id = nextStepId("rama", steps.map((step) => step.id));
-  const source = steps.find((step) => step.id === from);
-  const at = source?.position ?? positionFor(steps.length);
-  const node: WorkflowStepView = {
-    id,
-    kind: "branch",
-    dependsOn: [from],
-    condition: { from, check: { source: "status", operator: "equals", value: "200" } },
-    position: { x: at.x + 310, y: at.y },
-  };
+export function addControlStep(
+  steps: WorkflowStepView[],
+  kind: ControlKind,
+  from?: string,
+): { steps: WorkflowStepView[]; id: string } {
+  const id = nextStepId(CONTROL_BASE_ID[kind], steps.map((step) => step.id));
+  const source = from ? steps.find((step) => step.id === from) : undefined;
+  const at = source?.position ? { x: source.position.x + 310, y: source.position.y } : positionFor(steps.length);
+  const check = { source: "status" as const, operator: "equals", value: "200" };
+  const node: WorkflowStepView = { id, kind, position: at };
+  if (from) node.dependsOn = [from];
+  if (kind === "branch") node.condition = { from: from ?? "", check };
+  if (kind === "validate") {
+    node.validate = { from: from ?? "" };
+    node.checks = [check];
+  }
+  if (kind === "wait") node.waitMs = 1000;
+  if (kind === "merge") node.waits = "all";
   return { steps: [...steps, node], id };
+}
+
+/** The standalone `If`, kept as the name the canvas and its tests already use. Delegates to the
+ * palette's {@link addControlStep} — an If is a control node like the rest. */
+export function addBranchStep(steps: WorkflowStepView[], from: string): { steps: WorkflowStepView[]; id: string } {
+  return addControlStep(steps, "branch", from);
 }
 
 export function disconnectEdges(
   steps: WorkflowStepView[],
   removed: { source: string; target: string }[],
 ): WorkflowStepView[] {
-  return steps.map((step) =>
-    withDependencies(
+  return steps.map((step) => {
+    const cut = removed.filter((edge) => edge.target === step.id).map((edge) => edge.source);
+    if (!cut.length) return step;
+    let next = withDependencies(
       step,
-      (step.dependsOn ?? []).filter(
-        (source) => !removed.some((edge) => edge.source === source && edge.target === step.id),
-      ),
-    ),
-  );
+      (step.dependsOn ?? []).filter((source) => !cut.includes(source)),
+    );
+    // Cutting the edge into a control node also cuts what it read: the wire was the configuration.
+    if (next.condition && cut.includes(next.condition.from)) next = { ...next, condition: { ...next.condition, from: "" } };
+    if (next.validate && cut.includes(next.validate.from)) next = { ...next, validate: { ...next.validate, from: "" } };
+    if (next.branch && cut.includes(next.branch.of)) {
+      const { branch: _branch, ...rest } = next;
+      next = rest;
+    }
+    return next;
+  });
 }
 
 /** Folds what the canvas reports back into the document, so the layout is saved with the flow. */
@@ -263,19 +312,42 @@ export function toNodes(
   const operationById = new Map(operations.map((operation) => [operation.id, operation]));
   return steps.map((step, index) => {
     const position = step.position ?? positionFor(index);
-    // A branch node is its own shape: no request, and two outputs (sí/no) instead of one.
-    if ((step.kind ?? "request") === "branch") {
+    const runStatusFor = runStatus?.[step.id];
+    const kind = step.kind ?? "request";
+    // Each control kind is its own shape on the canvas — no request, and the handles its flow needs.
+    if (kind === "branch") {
+      return { id: step.id, type: "branch", position, data: { name: step.id, from: step.condition?.from ?? "", runStatus: runStatusFor } };
+    }
+    if (kind === "wait") {
+      return { id: step.id, type: "wait", position, data: { name: step.id, ms: step.waitMs ?? 0, runStatus: runStatusFor } };
+    }
+    if (kind === "merge") {
       return {
         id: step.id,
-        type: "branch",
+        type: "merge",
         position,
-        data: { name: step.id, from: step.condition?.from ?? "", runStatus: runStatus?.[step.id] },
+        data: { name: step.id, count: step.dependsOn?.length ?? 0, any: step.waits === "any", runStatus: runStatusFor },
       };
     }
+    if (kind === "validate") {
+      return {
+        id: step.id,
+        type: "validate",
+        position,
+        data: {
+          name: step.id,
+          from: step.validate?.from ?? "",
+          checks: step.checks?.length ?? 0,
+          script: Boolean(step.validate?.script?.trim()),
+          runStatus: runStatusFor,
+        },
+      };
+    }
+    // request and login: both make an HTTP call. Login wears a key and publishes the credential.
     const template = step.requestTemplateId ? templateById.get(step.requestTemplateId) : undefined;
     return {
       id: step.id,
-      type: "step",
+      type: kind === "login" ? "login" : "step",
       // A flow authored over the API carries no coordinates; it still has to render.
       position,
       data: {
@@ -285,14 +357,11 @@ export function toNodes(
         path: template ? (operationById.get(template.operationId)?.path ?? template.operationId) : "?",
         captures: step.captures?.length ?? 0,
         checks: step.checks?.length ?? 0,
-        loops: Boolean(step.forEach),
-        conditional: Boolean(step.runIf),
         authorizes: Boolean(step.authorizes),
-        waits: Boolean(step.waitMs),
         retries: Boolean(step.retry),
-        merges: step.waits === "any",
+        loops: Boolean(step.forEach),
         // Set only while a run is being watched; the node lights up by it.
-        runStatus: runStatus?.[step.id],
+        runStatus: runStatusFor,
       },
     };
   });
@@ -493,6 +562,19 @@ export function flowProblems(steps: WorkflowStepView[]): FlowProblem[] {
       else if (!ids.includes(dependency))
         problems.push({ message: `El paso «${step.id}» depende de «${dependency}», que no existe.`, stepId: step.id });
     }
+    // A control node reads a step, and until it is wired to one it cannot run: point at it here so
+    // the editor asks for the connection instead of the server answering 422 on save.
+    const kind = step.kind ?? "request";
+    if (kind === "branch" && !step.condition?.from)
+      problems.push({ message: `El nodo «${step.id}» (If) no está conectado a ningún paso que leer.`, stepId: step.id });
+    if (kind === "validate" && !step.validate?.from)
+      problems.push({ message: `La validación «${step.id}» no está conectada a ningún paso que leer.`, stepId: step.id });
+    if (kind === "validate" && !(step.checks?.length || step.validate?.script?.trim()))
+      problems.push({ message: `La validación «${step.id}» no comprueba nada: añade una comprobación o un script.`, stepId: step.id });
+    if (kind === "wait" && !step.waitMs)
+      problems.push({ message: `El nodo de espera «${step.id}» no tiene un tiempo.`, stepId: step.id });
+    if (kind === "login" && !step.authorizes)
+      problems.push({ message: `El login «${step.id}» no dice de dónde sale la credencial.`, stepId: step.id });
   }
 
   const pending = new Set(ids);

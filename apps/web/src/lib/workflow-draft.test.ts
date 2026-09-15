@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  addControlStep,
   addBranchStep,
   addStep,
   applyPositions,
@@ -452,5 +453,77 @@ describe("nodos de bifurcación en el lienzo", () => {
     const leer = removeStep(steps, "rama").find((step) => step.id === "leer")!;
     expect(leer.branch).toBeUndefined();
     expect(leer.dependsOn ?? []).not.toContain("rama");
+  });
+});
+
+describe("la paleta de nodos: soltar y conectar libre", () => {
+  const flow = (): WorkflowStepView[] => [{ id: "crear", requestTemplateId: "t1", position: { x: 40, y: 60 } }];
+
+  test("addControlStep suelta un nodo suelto con sus valores por defecto", () => {
+    const wait = addControlStep(flow(), "wait");
+    const waitNode = wait.steps.find((s) => s.id === wait.id)!;
+    expect(waitNode.kind).toBe("wait");
+    expect(waitNode.waitMs).toBe(1000);
+    expect(waitNode.dependsOn).toBeUndefined();
+
+    const merge = addControlStep(flow(), "merge");
+    expect(merge.steps.find((s) => s.id === merge.id)!.waits).toBe("all");
+
+    const validate = addControlStep(flow(), "validate");
+    const v = validate.steps.find((s) => s.id === validate.id)!;
+    expect(v.kind).toBe("validate");
+    expect(v.validate?.from).toBe("");
+    expect(v.checks?.length).toBe(1);
+  });
+
+  test("addControlStep con un nodo seleccionado lo cuelga de él", () => {
+    const { steps, id } = addControlStep(flow(), "validate", "crear");
+    const v = steps.find((s) => s.id === id)!;
+    expect(v.dependsOn).toEqual(["crear"]);
+    expect(v.validate?.from).toBe("crear");
+    expect(v.position).toEqual({ x: 350, y: 60 });
+  });
+
+  test("conectar un paso a la entrada de un If suelto fija lo que lee", () => {
+    const dropped = addControlStep(flow(), "branch").steps;
+    const branchId = dropped.find((s) => s.kind === "branch")!.id;
+    const wired = connectStep(dropped, "crear", branchId);
+    const branch = wired.find((s) => s.id === branchId)!;
+    expect(branch.dependsOn).toEqual(["crear"]);
+    expect(branch.condition?.from).toBe("crear");
+  });
+
+  test("conectar un paso a la entrada de una validación suelta fija lo que lee", () => {
+    const dropped = addControlStep(flow(), "validate").steps;
+    const vId = dropped.find((s) => s.kind === "validate")!.id;
+    const wired = connectStep(dropped, "crear", vId);
+    expect(wired.find((s) => s.id === vId)!.validate?.from).toBe("crear");
+  });
+
+  test("cortar la arista de entrada de una validación borra lo que leía", () => {
+    const dropped = addControlStep(flow(), "validate", "crear").steps;
+    const vId = dropped.find((s) => s.kind === "validate")!.id;
+    const cut = disconnectEdges(dropped, [{ source: "crear", target: vId }]);
+    const v = cut.find((s) => s.id === vId)!;
+    expect(v.validate?.from).toBe("");
+    expect(v.dependsOn ?? []).not.toContain("crear");
+  });
+
+  test("borrar el paso que una validación leía deja su from vacío, no colgando", () => {
+    const dropped = addControlStep(flow(), "validate", "crear").steps;
+    const vId = dropped.find((s) => s.kind === "validate")!.id;
+    const v = removeStep(dropped, "crear").find((s) => s.id === vId)!;
+    expect(v.validate?.from).toBe("");
+  });
+
+  test("toNodes da a cada tipo su forma en el lienzo", () => {
+    const steps: WorkflowStepView[] = [
+      { id: "login", kind: "login", requestTemplateId: "t1", authorizes: { from: "body", path: "token" } },
+      { id: "espera", kind: "wait", waitMs: 500 },
+      { id: "union", kind: "merge", waits: "any", dependsOn: ["login"] },
+      { id: "valida", kind: "validate", dependsOn: ["login"], validate: { from: "login" }, checks: [] },
+    ];
+    const byId = Object.fromEntries(toNodes(steps, [template("t1", "Entrar")], []).map((n) => [n.id, n.type]));
+    expect(byId).toEqual({ login: "login", espera: "wait", union: "merge", valida: "validate" });
   });
 });

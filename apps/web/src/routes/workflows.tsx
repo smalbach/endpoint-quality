@@ -322,6 +322,9 @@ export function WorkflowsPage() {
    */
   const [forking, setForking] = useState(false);
   const [addingOp, setAddingOp] = useState(false);
+  // Whether the operation catalogue is open to add a plain request or a login (a request that
+  // publishes the run's credential). The palette's two buttons set it before opening the drawer.
+  const [addKind, setAddKind] = useState<"request" | "login">("request");
 
   /** Add a node straight from an operation in the catalogue: mint a request for it (named after the
    * operation, with the status its verb usually answers), then drop it into the open flow. One tap,
@@ -339,7 +342,22 @@ export function WorkflowsPage() {
         method: "POST",
         body: { name, operationId: operation.id, expectedStatus, parameters: {}, body: { type: "none" } },
       });
-      setSteps(addStep(steps, { id: requestTemplateId, name } as RequestTemplateView));
+      const withNode = addStep(steps, { id: requestTemplateId, name } as RequestTemplateView);
+      // A login is a request that authorizes: mint it the same way, then mark the just-added node so
+      // its answer becomes the credential the rest of the run presents. The inspector tunes where
+      // the token is read from; this is a working default (a `token` in the JSON body).
+      if (addKind === "login") {
+        const added = withNode[withNode.length - 1];
+        setSteps(
+          withNode.map((item) =>
+            item.id === added.id
+              ? { ...item, kind: "login", authorizes: { from: "body", path: "token", header: "Authorization", scheme: "Bearer " } }
+              : item,
+          ),
+        );
+      } else {
+        setSteps(withNode);
+      }
       await invalidate();
     } finally {
       setAddingOp(false);
@@ -496,7 +514,8 @@ export function WorkflowsPage() {
                   setSelectedStep(stepId);
                   setInspectorOpen(true);
                 }}
-                onAddRequest={canEdit ? () => setDrawer("library") : undefined}
+                onAddRequest={canEdit ? () => (setAddKind("request"), setDrawer("library")) : undefined}
+                onAddLogin={canEdit ? () => (setAddKind("login"), setDrawer("library")) : undefined}
                 runStatus={stepStatus}
               />
             )}
@@ -687,7 +706,11 @@ export function WorkflowsPage() {
 
             {/* Drawer: Biblioteca de peticiones reutilizables + importación. */}
             {drawer === "library" && draft && (
-              <Drawer title="Biblioteca" side="left" onClose={() => setDrawer(null)}>
+              <Drawer
+                title={addKind === "login" ? "Biblioteca · elige la petición de login" : "Biblioteca"}
+                side="left"
+                onClose={() => setDrawer(null)}
+              >
                 <TemplateLibrary
                   templates={templates}
                   operations={operations.data?.operations ?? []}
