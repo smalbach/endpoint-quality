@@ -143,6 +143,72 @@ describe("nodos de bifurcación (If con sí/no)", () => {
   });
 });
 
+describe("nodos de la paleta (login, espera, merge, validación)", () => {
+  const req = (id: string, extra: object = {}) => ({ id, requestTemplateId: uuid(1), ...extra });
+  const check = { source: "status", operator: "equals", value: "200" };
+
+  test("un login válido lleva petición y de dónde sale la credencial", () => {
+    const doc = safeParseWorkflowDocument({
+      steps: [{ id: "login", kind: "login", requestTemplateId: uuid(1), authorizes: { from: "body", path: "token" } }],
+    });
+    assert.equal(doc.ok, true);
+  });
+
+  test("un login sin authorizes se rechaza", () => {
+    const doc = safeParseWorkflowDocument({ steps: [{ id: "login", kind: "login", requestTemplateId: uuid(1) }] });
+    assert.equal(doc.ok, false);
+    if (!doc.ok) assert.ok(doc.issues.some((i) => i.detail.includes("de dónde sale la credencial")));
+  });
+
+  test("un nodo de espera necesita un tiempo y no lleva petición", () => {
+    assert.equal(safeParseWorkflowDocument({ steps: [{ id: "w", kind: "wait", waitMs: 1000 }] }).ok, true);
+    const sinTiempo = safeParseWorkflowDocument({ steps: [{ id: "w", kind: "wait" }] });
+    assert.equal(sinTiempo.ok, false);
+    if (!sinTiempo.ok) assert.ok(sinTiempo.issues.some((i) => i.detail.includes("milisegundos")));
+    const conPeticion = safeParseWorkflowDocument({ steps: [{ id: "w", kind: "wait", waitMs: 10, requestTemplateId: uuid(1) }] });
+    assert.equal(conPeticion.ok, false);
+    if (!conPeticion.ok) assert.ok(conPeticion.issues.some((i) => i.detail.includes("no envía ninguna petición")));
+  });
+
+  test("un nodo merge une varias dependencias sin enviar petición", () => {
+    const doc = safeParseWorkflowDocument({
+      steps: [req("a"), req("b", { dependsOn: ["a"] }), { id: "m", kind: "merge", waits: "any", dependsOn: ["a", "b"] }],
+    });
+    assert.equal(doc.ok, true);
+  });
+
+  test("una validación lee un paso del que depende y asserta algo", () => {
+    const conCheck = safeParseWorkflowDocument({
+      steps: [req("crear"), { id: "v", kind: "validate", dependsOn: ["crear"], validate: { from: "crear" }, checks: [check] }],
+    });
+    assert.equal(conCheck.ok, true);
+
+    const conScript = safeParseWorkflowDocument({
+      steps: [
+        req("crear"),
+        { id: "v", kind: "validate", dependsOn: ["crear"], validate: { from: "crear", script: "pm.test('ok', () => {})" } },
+      ],
+    });
+    assert.equal(conScript.ok, true);
+  });
+
+  test("una validación vacía (ni checks ni script) se rechaza", () => {
+    const doc = safeParseWorkflowDocument({
+      steps: [req("crear"), { id: "v", kind: "validate", dependsOn: ["crear"], validate: { from: "crear" } }],
+    });
+    assert.equal(doc.ok, false);
+    if (!doc.ok) assert.ok(doc.issues.some((i) => i.detail.includes("al menos una comprobación o un script")));
+  });
+
+  test("una validación solo puede leer un paso del que depende", () => {
+    const doc = safeParseWorkflowDocument({
+      steps: [req("crear"), req("otro"), { id: "v", kind: "validate", dependsOn: ["otro"], validate: { from: "crear" }, checks: [check] }],
+    });
+    assert.equal(doc.ok, false);
+    if (!doc.ok) assert.ok(doc.issues.some((i) => i.detail.includes("solo puede leer un paso")));
+  });
+});
+
 test("canvas coordinates survive validation and a bad one is refused", () => {
   assert.equal(
     safeParseWorkflowDocument({ steps: [{ id: "a", requestTemplateId: uuid(1), position: { x: 40, y: 60 } }] }).ok,

@@ -150,11 +150,16 @@ export const stepConditionSchema = z.object({ from: z.string().min(1).max(60), c
 export const workflowStepSchema = z.object({
   // Capped because it travels inside `run_cases.scenarioId`, which is a `varchar(200)`.
   id: z.string().min(1).max(60),
-  // A `branch` node sends nothing, so it carries no template; a `request` node must (checked below).
+  // A control node (branch/wait/merge/validate) sends nothing, so it carries no template; a
+  // `request` and a `login` node must (checked below).
   requestTemplateId: z.string().uuid().optional(),
-  kind: z.enum(["request", "branch"]).optional(),
+  kind: z.enum(["request", "login", "branch", "wait", "merge", "validate"]).optional(),
   // The `If`: the step it reads and the check that decides «sí» from «no».
   condition: stepConditionSchema.optional(),
+  // The `validate` node: the step whose response it judges, and an optional sandbox script.
+  validate: z
+    .object({ from: z.string().min(1).max(60), script: z.string().max(20_000).optional() })
+    .optional(),
   // Which side of an `If` this node hangs off.
   branch: z.object({ of: z.string().min(1).max(60), take: z.enum(["then", "else"]) }).optional(),
   dependsOn: z.array(z.string()).optional(),
@@ -238,6 +243,7 @@ export const workflowDocumentSchema = z
         ["runIf", step.runIf?.from],
         ["forEach", step.forEach?.from],
         ["condition", step.condition?.from],
+        ["validate", step.validate?.from],
       ] as const) {
         if (!reference) continue;
         if (!ids.has(reference)) {
@@ -255,43 +261,81 @@ export const workflowDocumentSchema = z
         }
       }
 
-      // A node is a `request` unless it says otherwise. The two kinds carry different fields, and
-      // mixing them is a document that means two things at once: a request with no call, or a
-      // branch that also fires one.
+      // A node is a `request` unless it says otherwise. Each kind carries its own fields, and
+      // mixing them is a document that means two things at once — a request with no call, or a
+      // branch that also fires one. `request` and `login` make an HTTP call; the four control
+      // kinds (branch/wait/merge/validate) send nothing and must not carry a template.
       const kind = step.kind ?? "request";
-      if (kind === "request") {
-        if (!step.requestTemplateId) {
+      const sendsRequest = kind === "request" || kind === "login";
+      if (sendsRequest && !step.requestTemplateId) {
+        context.addIssue({
+          code: "custom",
+          message: kind === "login" ? "un nodo de login necesita una petición" : "un paso de petición necesita una petición",
+          path: ["steps", index, "requestTemplateId"],
+        });
+        broken = true;
+      }
+      if (!sendsRequest && step.requestTemplateId) {
+        context.addIssue({
+          code: "custom",
+          message: "un nodo de control no envía ninguna petición",
+          path: ["steps", index, "requestTemplateId"],
+        });
+      }
+      // Only the `If` carries a condition; only a `validate` carries its `validate` block.
+      if (step.condition && kind !== "branch") {
+        context.addIssue({
+          code: "custom",
+          message: "solo un nodo de bifurcación lleva condición",
+          path: ["steps", index, "condition"],
+        });
+      }
+      if (step.validate && kind !== "validate") {
+        context.addIssue({
+          code: "custom",
+          message: "solo un nodo de validación lleva su bloque de validación",
+          path: ["steps", index, "validate"],
+        });
+      }
+      if (kind === "login" && !step.authorizes) {
+        context.addIssue({
+          code: "custom",
+          message: "un nodo de login necesita decir de dónde sale la credencial",
+          path: ["steps", index, "authorizes"],
+        });
+        broken = true;
+      }
+      if (kind === "branch" && !step.condition) {
+        context.addIssue({
+          code: "custom",
+          message: "un nodo de bifurcación necesita una condición",
+          path: ["steps", index, "condition"],
+        });
+        broken = true;
+      }
+      if (kind === "wait" && !step.waitMs) {
+        context.addIssue({
+          code: "custom",
+          message: "un nodo de espera necesita un tiempo en milisegundos",
+          path: ["steps", index, "waitMs"],
+        });
+      }
+      if (kind === "validate") {
+        if (!step.validate) {
           context.addIssue({
             code: "custom",
-            message: "un paso de petición necesita una petición",
-            path: ["steps", index, "requestTemplateId"],
+            message: "un nodo de validación necesita el paso que lee",
+            path: ["steps", index, "validate"],
           });
           broken = true;
-        }
-        if (step.condition) {
+        } else if (!step.checks?.length && !step.validate.script?.trim()) {
+          // A validate that neither checks nor runs a script asserts nothing: it would report a
+          // green case that proves the response existed and no more.
           context.addIssue({
             code: "custom",
-            message: "solo un nodo de bifurcación lleva condición",
-            path: ["steps", index, "condition"],
+            message: "una validación necesita al menos una comprobación o un script",
+            path: ["steps", index, "checks"],
           });
-        }
-      } else {
-        // A branch (`If`) sends nothing and decides everything: it needs its condition and must not
-        // carry a request, or the report would owe a case to a node that never called.
-        if (step.requestTemplateId) {
-          context.addIssue({
-            code: "custom",
-            message: "un nodo de bifurcación no envía ninguna petición",
-            path: ["steps", index, "requestTemplateId"],
-          });
-        }
-        if (!step.condition) {
-          context.addIssue({
-            code: "custom",
-            message: "un nodo de bifurcación necesita una condición",
-            path: ["steps", index, "condition"],
-          });
-          broken = true;
         }
       }
 

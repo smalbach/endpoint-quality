@@ -166,12 +166,36 @@ export type StepAuthorizes = {
 export const STEP_WAITS = ["all", "any"] as const;
 export type StepWaits = (typeof STEP_WAITS)[number];
 
-/** What a node is: a `request` sends an HTTP call (the default when absent), a `branch` sends none
- * and splits the flow into a «sí» and a «no» path. */
-export type StepKind = "request" | "branch";
+/**
+ * What a node is — the palette the editor draws, each shape added on its own and wired by hand.
+ *
+ * - `request` sends an HTTP call (the default when absent).
+ * - `login` sends one too, and publishes its answer as the run's credential (`authorizes`).
+ * - `branch` sends nothing and splits the flow into a «sí» and a «no» path.
+ * - `wait` pauses and lets the flow through.
+ * - `merge` is a join: it waits for the branches into it and continues.
+ * - `validate` reads a step's response and judges it with checks and/or a sandbox script.
+ *
+ * The four that send no request (`branch`, `wait`, `merge`, `validate`) are *control* nodes: they
+ * produce a case that records what the flow did, not one that made an HTTP call. */
+export type StepKind = "request" | "login" | "branch" | "wait" | "merge" | "validate";
+
+/** The control kinds — the nodes that record a decision instead of making a request. */
+export const CONTROL_KINDS: StepKind[] = ["branch", "wait", "merge", "validate"];
 
 /** Which side of a branch a node sits on. */
 export type StepBranch = { of: string; take: "then" | "else" };
+
+/**
+ * A `validate` node: what it reads and, optionally, the script that judges it.
+ *
+ * It sends no request. It reads the response a step it depends on already produced and asserts
+ * over it — the step's own `checks` are the declarative half, and `script` is the escape hatch,
+ * run in the isolated sandbox with the `pm` API, whose `pm.test(...)` results decide the verdict.
+ * `from` has to be a dependency, for the same reason a condition's is: without the edge there is
+ * no guarantee the step it names has answered.
+ */
+export type StepValidate = { from: string; script?: string };
 
 export type WorkflowStep = {
   id: string;
@@ -181,6 +205,8 @@ export type WorkflowStep = {
   kind?: StepKind;
   /** On a `branch` node: the step it reads and the check that decides «sí» from «no». */
   condition?: StepCondition;
+  /** On a `validate` node: the step whose response it judges, and an optional sandbox script. */
+  validate?: StepValidate;
   /** On a node downstream of a branch: which path it sits on. */
   branch?: StepBranch;
   waits?: StepWaits;

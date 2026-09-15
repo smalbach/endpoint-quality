@@ -234,14 +234,28 @@ export type StepConditionView = { from: string; check: StepCheckView };
  * own case: forty products answering is forty findings, not one. */
 export type StepForEachView = { from: string; path: string; as: string; max?: number };
 
-/** What a node is on the canvas. A `request` sends an HTTP call — the only kind there was, and the
- * default when the field is absent. A `branch` sends nothing: it reads a previous step and splits
- * the flow into a «sí» path and a «no» path, the standalone `If` the editor draws. */
-export type StepKind = "request" | "branch";
+/**
+ * What a node is on the canvas — the palette the editor draws, each shape added on its own and
+ * wired to the rest by hand.
+ *
+ * - `request` — sends an HTTP call. The default when the field is absent, so every flow written
+ *   before the palette existed keeps working.
+ * - `login` — a request whose answer becomes the credential the rest of the run presents. Same
+ *   HTTP as a `request`, plus `authorizes`.
+ * - `branch` — the `If`: sends nothing, reads a step and splits the flow into a «sí» and a «no».
+ * - `wait` — pauses, then lets the flow through. No request.
+ * - `merge` — a join: waits for the branches into it, then continues. No request.
+ * - `validate` — reads a step's response and judges it with checks and/or a script. No request.
+ */
+export type StepKind = "request" | "login" | "branch" | "wait" | "merge" | "validate";
 
 /** Which side of an `If` a node hangs off: the «sí» path (`then`) runs when the branch's condition
  * holds, the «no» path (`else`) when it does not. Absent means the node is not on either side. */
 export type StepBranchView = { of: string; take: "then" | "else" };
+
+/** A `validate` node: the step whose response it reads, and an optional script that judges it in
+ * an isolated sandbox (the `pm.test(...)` API). Its plain checks live in the step's `checks`. */
+export type StepValidateView = { from: string; script?: string };
 
 export type WorkflowStepView = {
   id: string;
@@ -251,6 +265,8 @@ export type WorkflowStepView = {
   kind?: StepKind;
   /** On a `branch` node: the step it reads and the check that decides «sí» from «no». */
   condition?: StepConditionView;
+  /** On a `validate` node: the step whose response it judges, and an optional sandbox script. */
+  validate?: StepValidateView;
   /** On any node downstream of an `If`: which of its two paths this node sits on. */
   branch?: StepBranchView;
   dependsOn?: string[];
