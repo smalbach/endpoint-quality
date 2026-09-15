@@ -266,7 +266,8 @@ export type StepKind =
   | "schema"
   | "notify"
   | "subflow"
-  | "graphql";
+  | "graphql"
+  | "mock";
 
 /** A `graphql` node: one operation sent as `POST` `{query, variables, operationName}` the way a fetch
  * sends its call (URL absolute or under the base URL, session only with `useSession`). `variables` is
@@ -300,6 +301,17 @@ export type StepNotifyView = {
  * back. Its steps get their own cases, `workflow:<flow>:<node>>child`, and the node passes when all do.
  * Not archived, no cycles, at most 3 levels, not inside a loop. */
 export type StepSubflowView = { workflowId: string; inputs?: { variable: string; value: string }[]; outputs?: string[] };
+
+/** A `mock` node: the response it answers with, no network. `headers` and `body` accept templates
+ * (an undefined variable fails the node); `body` is parsed when the content type says JSON.
+ * `delayMs` (≤ 60 000) simulates latency. `disabledHeaders` are editor rows switched off. */
+export type StepMockView = {
+  status: number;
+  headers?: Record<string, string>;
+  disabledHeaders?: Record<string, string>;
+  body?: string;
+  delayMs?: number;
+};
 
 /** A `schema` node: validates `from`'s response body against the contract's schema for that operation
  * and status (`contract`, only over a saved request or login) or against `json` (`custom`, no
@@ -375,6 +387,8 @@ export type WorkflowStepView = {
   subflow?: StepSubflowView;
   /** On a `graphql` node: the operation it sends. */
   graphql?: StepGraphqlView;
+  /** On a `mock` node: the simulated response. */
+  mock?: StepMockView;
   /** On any node downstream of an `If`: which of its two paths this node sits on. */
   branch?: StepBranchView;
   dependsOn?: string[];

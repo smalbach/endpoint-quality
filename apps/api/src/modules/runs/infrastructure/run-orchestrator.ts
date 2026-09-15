@@ -64,6 +64,7 @@ import { SAFE_FETCH, type SafeFetchPort } from "@/shared/http/safe-fetch";
 import { sendNotification } from "./notify-step";
 import { ExecutionContextFactory, type ExecutionContext } from "./execution-context";
 import { flattenPrepared, nestedScenarioId } from "./subflow-support";
+import { mockStep } from "./mock-node";
 import {
   RunCaseFinishedEvent,
   RunCaseRetryingEvent,
@@ -985,6 +986,32 @@ export class RunOrchestrator {
     // that accepts a write and takes a moment to make it readable.
     if (item.step.waitMs) await delay(item.step.waitMs);
 
+    // A mock node answers with the response written on it and sends nothing (see `mock-node.ts`).
+    // Here and not with the other control nodes: after the condition and the wait, so it is scheduled
+    // exactly like the request it stands in for. Its answer is stored like a real one.
+    if (item.step.kind === "mock" && item.step.mock) {
+      if (item.step.mock.delayMs) {
+        const started: RunCase = { ...item.runCase, status: "running", startedAt };
+        await this.runs.saveCase(started);
+        this.eventBus.publish(new RunCaseStartedEvent(run.projectId, run.id, started));
+        await delay(item.step.mock.delayMs);
+      }
+      const { executed, actual } = mockStep(item.step, item.step.mock, item.runCase, context.target.variables, {
+        seed: computedSeed(),
+        secrets: [...(context.target.secrets ?? []), ...(context.target.session ? [context.target.session.value] : [])],
+      });
+      if (actual) responses.set(item.step.id, { actual, durationMs: executed.durationMs });
+      await this.finishControl(run, item, state, startedAt, {
+        ok: executed.ok,
+        failure: executed.failure,
+        assertions: executed.assertions,
+        sent: executed.sent,
+        steps: [executed],
+        durationMs: executed.durationMs,
+      });
+      return;
+    }
+
     const walked = this.elementsFor(item.step, responses, budget);
     const elements = walked?.elements ?? null;
     if (elements && elements.length === 0) {
@@ -1778,6 +1805,8 @@ function controlCaseFields(step: WorkflowStep): { operationId: string; method: s
       return { operationId: "", method: "NOTIFY", path: `${step.notify?.channel ?? ""} → ${step.notify?.urlVariable ?? ""}` };
     case "subflow":
       return { operationId: "", method: "FLOW", path: `ejecuta ${step.subflow?.workflowId ?? ""}` };
+    case "mock":
+      return { operationId: "", method: "MOCK", path: String(step.mock?.status ?? "") };
     default:
       return null;
   }

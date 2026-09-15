@@ -17,6 +17,7 @@ import { VARIABLE_NAME } from "./variables.ts";
 import { GRAPHQL_OPERATION_NAME, graphqlVariablesProblem } from "./graphql.ts";
 import { CHECK_OPERATORS, CHECK_SOURCES } from "./checks.ts";
 import { stepNotifySchema } from "./notify.ts";
+import { mockBodyProblem } from "./mock.ts";
 import { CAPTURE_SOURCES, FETCH_METHODS, STEP_ON_ERROR, STEP_WAITS, concurrentPairs, loopBody } from "./workflows.ts";
 
 const jsonValue: z.ZodType<unknown> = z.lazy(() =>
@@ -183,7 +184,17 @@ export const workflowStepSchema = z.object({
   // `request` and a `login` node must (checked below).
   requestTemplateId: z.string().uuid().optional(),
   kind: z
-    .enum(["request", "login", "branch", "wait", "merge", "validate", "fetch", "set", "script", "poll", "loop", "schema", "notify", "subflow", "graphql"])
+    .enum(["request", "login", "branch", "wait", "merge", "validate", "fetch", "set", "script", "poll", "loop", "schema", "notify", "subflow", "graphql", "mock"])
+    .optional(),
+  // The `mock` node: the response it answers with, no network. Same ceilings as a fetch's call.
+  mock: z
+    .object({
+      status: z.number().int().min(100).max(599),
+      headers: z.record(headerName, headerValue).optional(),
+      disabledHeaders: z.record(headerName, headerValue).optional(),
+      body: z.string().max(1_000_000).optional(),
+      delayMs: z.number().int().min(0).max(60_000).optional(),
+    })
     .optional(),
   // The `notify` node: channel, the NAME of the variable holding the webhook URL, and the message.
   notify: stepNotifySchema.optional(),
@@ -545,6 +556,28 @@ export const workflowDocumentSchema = z
       }
       if (kind === "graphql" && !step.graphql) {
         context.addIssue({ code: "custom", message: "un nodo GraphQL necesita su URL y su query", path: ["steps", index, "graphql"] });
+      }
+      if (step.mock && kind !== "mock") {
+        context.addIssue({ code: "custom", message: "solo un nodo mock lleva una respuesta simulada", path: ["steps", index, "mock"] });
+      }
+      if (kind === "mock") {
+        if (!step.mock) {
+          context.addIssue({ code: "custom", message: "un nodo mock necesita la respuesta que da", path: ["steps", index, "mock"] });
+        } else {
+          const problem = mockBodyProblem(step.mock);
+          if (problem) context.addIssue({ code: "custom", message: problem, path: ["steps", index, "mock", "body"] });
+        }
+        // It answers the same every time and logs nobody in: a retry, a list walk or a session read
+        // from it would be a claim about a service that was never called.
+        for (const field of ["retry", "forEach", "authorizes"] as const) {
+          if (step[field]) {
+            context.addIssue({
+              code: "custom",
+              message: "un mock no admite reintentos, forEach ni login: su respuesta está escrita",
+              path: ["steps", index, field],
+            });
+          }
+        }
       }
       if (step.poll && kind !== "poll") {
         context.addIssue({ code: "custom", message: "solo un nodo reintento lleva su bloque poll", path: ["steps", index, "poll"] });

@@ -24,6 +24,7 @@ import {
   type EnvironmentVariableView,
 } from "@/lib/workflow-notify";
 import { subflowChoices, variablesWrittenBy } from "@/lib/workflow-subflow";
+import { mockBodyProblem, mockSampleBody, type MockView } from "@/lib/mock-draft";
 import type {
   CaptureSource,
   Environment,
@@ -206,6 +207,8 @@ export function WorkflowInspector({
           onChange={onChange}
           onRemove={onRemove}
         />
+      ) : kind === "mock" ? (
+        <MockInspector step={step} variables={variables} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
       ) : kind === "schema" ? (
         <SchemaInspector step={step} steps={steps} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
       ) : kind === "subflow" ? (
@@ -1877,6 +1880,136 @@ function NotifyInspector({
               </p>
             </>
           ),
+        },
+        {
+          id: "failure",
+          label: "Si falla",
+          marked: failureSet(step),
+          content: <FailureEditor step={step} canEdit={canEdit} retries={false} onChange={onChange} />,
+        },
+      ]}
+    />
+  );
+}
+
+/** A mock node: the response it answers with — status, headers, body, delay — then the same checks,
+ * captures and failure handling as a request. Its captures are suggested from its own body. */
+function MockInspector({
+  step,
+  variables,
+  canEdit,
+  onChange,
+  onRemove,
+}: {
+  step: WorkflowStepView;
+  variables: string[];
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+  onRemove: () => void;
+}) {
+  const mock: MockView = step.mock ?? { status: 200 };
+  const setMock = (change: Partial<MockView>) => onChange({ ...step, mock: { ...mock, ...change } });
+  const bodyProblem = mockBodyProblem(mock);
+  const listId = `mock-vars-${step.id}`;
+
+  return (
+    <NodePanel
+      title="Mock (respuesta simulada)"
+      subtitle={`${mock.status} · ${step.id}`}
+      description={
+        <>
+          No hace ninguna petición: responde lo que escribas aquí, y los nodos siguientes lo leen como una respuesta
+          real. Sirve para montar el flujo antes de que exista el servicio o para fijar una respuesta. Cabeceras y body
+          aceptan <span className="font-mono">{"{{variables}}"}</span>; una que no exista hace fallar el nodo. El
+          informe lo marca como simulado.
+        </>
+      }
+      canEdit={canEdit}
+      onRemove={onRemove}
+      tabs={[
+        {
+          id: "response",
+          label: "Respuesta",
+          count: Object.keys(mock.headers ?? {}).length,
+          content: (
+            <>
+              <div className="grid grid-cols-2 gap-3 @3xl:grid-cols-[8rem_10rem]">
+                <Field label="Estado">
+                  <input
+                    className={inputClass}
+                    type="number"
+                    min={100}
+                    max={599}
+                    value={Number.isFinite(mock.status) ? mock.status : ""}
+                    disabled={!canEdit}
+                    onChange={(event) => setMock({ status: Number(event.target.value) })}
+                  />
+                </Field>
+                <Field label="Retardo (ms)">
+                  <input
+                    className={inputClass}
+                    type="number"
+                    min={0}
+                    max={60000}
+                    placeholder="0"
+                    value={mock.delayMs ?? ""}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      setMock({ delayMs: event.target.value ? Number(event.target.value) : undefined })
+                    }
+                  />
+                </Field>
+              </div>
+              <datalist id={listId}>
+                {variables.map((name) => (
+                  <option key={name} value={`{{${name}}}`} />
+                ))}
+              </datalist>
+              <div className="mt-3 border-t border-slate-100 pt-1">
+                <RequestFieldsRows
+                  label="Cabeceras"
+                  kind="header"
+                  hint="Sin Content-Type se deduce del body: application/json si es JSON, text/plain si no."
+                  namePlaceholder="Content-Type"
+                  valuePlaceholder="application/json"
+                  enabled={mock.headers ?? {}}
+                  disabledMap={mock.disabledHeaders ?? {}}
+                  variables={variables}
+                  canEdit={canEdit}
+                  onChange={(maps) =>
+                    setMock({
+                      headers: Object.keys(maps.enabled).length ? maps.enabled : undefined,
+                      disabledHeaders: Object.keys(maps.disabled).length ? maps.disabled : undefined,
+                    })
+                  }
+                />
+              </div>
+              <Field label="Body">
+                <textarea
+                  aria-label="Body simulado"
+                  className={`${inputClass} h-[18rem] font-mono text-[11px]`}
+                  placeholder={'{"id": "{{thingId}}", "estado": "pendiente"}'}
+                  value={mock.body ?? ""}
+                  disabled={!canEdit}
+                  spellCheck={false}
+                  onChange={(event) => setMock({ body: event.target.value || undefined })}
+                />
+              </Field>
+              {bodyProblem && <p className="mt-1 text-[11px] leading-5 text-amber-700">El {bodyProblem}</p>}
+            </>
+          ),
+        },
+        {
+          id: "checks",
+          label: "Comprobaciones",
+          count: step.checks?.length,
+          content: <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />,
+        },
+        {
+          id: "captures",
+          label: "Capturas",
+          count: step.captures?.length,
+          content: <CapturesTab step={step} canEdit={canEdit} sampleBody={mockSampleBody(mock)} onChange={onChange} />,
         },
         {
           id: "failure",

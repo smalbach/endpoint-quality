@@ -193,8 +193,10 @@ export type StepWaits = (typeof STEP_WAITS)[number];
  *   {@link StepSubflow}.
  * - `graphql` sends one GraphQL operation — a `POST` of `{query, variables, operationName}` — and
  *   fails on a non-empty `errors` array, which a GraphQL server answers with a 200. See {@link StepGraphql}.
+ * - `mock` answers with a response written on the node, without any network: the flow can be built
+ *   before the service exists, or pin one answer. See {@link StepMock}.
  *
- * The ones that send no request (`branch`, `wait`, `merge`, `validate`, `set`, `script`, `schema`) are
+ * The ones that send no request (`branch`, `wait`, `merge`, `validate`, `set`, `script`, `schema`, `mock`) are
  * *control* nodes: they produce a case that records what the flow did, not one that made an HTTP
  * call. */
 export type StepKind =
@@ -214,10 +216,28 @@ export type StepKind =
   // does send a request, but not to the API under test, so it records a control row (`NOTIFY`).
   | "notify"
   | "subflow"
-  | "graphql";
+  | "graphql"
+  | "mock";
 
 /** The control kinds — the nodes that record a decision instead of making a request. */
-export const CONTROL_KINDS: StepKind[] = ["branch", "wait", "merge", "validate", "set", "script", "schema", "subflow"];
+export const CONTROL_KINDS: StepKind[] = ["branch", "wait", "merge", "validate", "set", "script", "schema", "subflow", "mock"];
+
+/**
+ * A `mock` node: the response it gives instead of making a call.
+ *
+ * Nothing leaves the process. When it runs, `headers` and `body` are resolved as templates and the
+ * result is stored as the node's response — so the nodes after it read it like a real answer — and
+ * its own `checks` and `captures` apply to it. `body` is parsed when the content type says JSON (one
+ * is inferred when absent). `delayMs` stands in for the latency, and is what a `durationMs` check
+ * reads. `disabledHeaders` are the editor's rows switched off; the engine ignores them.
+ */
+export type StepMock = {
+  status: number;
+  headers?: Record<string, string>;
+  disabledHeaders?: Record<string, string>;
+  body?: string;
+  delayMs?: number;
+};
 
 /**
  * A `schema` node: the step whose body it validates, and against what.
@@ -395,6 +415,8 @@ export type WorkflowStep = {
   subflow?: StepSubflow;
   /** On a `graphql` node: the operation it sends. */
   graphql?: StepGraphql;
+  /** On a `mock` node: the simulated response it answers with. */
+  mock?: StepMock;
   /** On a node downstream of a branch: which path it sits on. */
   branch?: StepBranch;
   waits?: StepWaits;

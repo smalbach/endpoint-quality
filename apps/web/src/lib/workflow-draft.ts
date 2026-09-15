@@ -16,6 +16,7 @@ import type {
 } from "@/lib/types";
 import { slugId } from "@/lib/config-draft";
 import { defaultNotify, notifyProblems } from "@/lib/workflow-notify";
+import { defaultMock, mockProblems } from "@/lib/mock-draft";
 
 export type OperationSummary = { id: string; method: string; path: string; summary: string };
 
@@ -229,6 +230,7 @@ export const CONTROL_PALETTE: { kind: ControlKind; glyph: string; label: string;
   { kind: "notify", glyph: "✉", label: "Notificar", hint: "Envía un mensaje a Slack, Teams o un webhook; la URL sale de una variable del entorno" },
   { kind: "subflow", glyph: "⧉", label: "Sub-flujo", hint: "Ejecuta otro flujo del proyecto como un paso de este: le pasa variables y recoge las que devuelve" },
   { kind: "graphql", glyph: "◈", label: "GraphQL", hint: "Una operación GraphQL (query, variables, operationName): falla si la respuesta trae errors" },
+  { kind: "mock", glyph: "◌", label: "Mock", hint: "Respuesta simulada sin red: estado, cabeceras y body escritos a mano, para lo que aún no existe" },
 ];
 
 /** Why the JSON Schema written on a schema node cannot be used, or null. The server refuses the same
@@ -256,7 +258,21 @@ export function schemaJsonProblem(json: string | undefined): string | null {
 /** The kinds the palette drops straight onto the canvas. `fetch` sends a call, but one written on the
  * node itself, so it needs no operation from the catalogue and lands like the control kinds; `poll`
  * re-sends the request of the node wired into it. */
-type ControlKind = "branch" | "wait" | "merge" | "validate" | "fetch" | "set" | "script" | "poll" | "loop" | "schema" | "notify" | "subflow" | "graphql";
+type ControlKind =
+  | "branch"
+  | "wait"
+  | "merge"
+  | "validate"
+  | "fetch"
+  | "set"
+  | "script"
+  | "poll"
+  | "loop"
+  | "schema"
+  | "notify"
+  | "subflow"
+  | "graphql"
+  | "mock";
 const CONTROL_BASE_ID: Record<ControlKind, string> = {
   branch: "rama",
   wait: "espera",
@@ -271,6 +287,7 @@ const CONTROL_BASE_ID: Record<ControlKind, string> = {
   notify: "notificar",
   subflow: "subflujo",
   graphql: "graphql",
+  mock: "mock",
 };
 
 /**
@@ -329,6 +346,7 @@ export function addControlStep(
   if (kind === "notify") node.notify = defaultNotify();
   // No flow yet: the inspector's selector picks it, and flowProblems asks for it until then.
   if (kind === "subflow") node.subflow = { workflowId: "", inputs: [], outputs: [] };
+  if (kind === "mock") node.mock = defaultMock();
   if (kind === "poll") {
     node.poll = { from: from ?? "", attempts: 5, delayMs: 2000 };
     node.checks = [check];
@@ -577,6 +595,21 @@ export function toNodes(
           from: step.schema?.from ?? "",
           source: step.schema?.source ?? "custom",
           strict: Boolean(step.schema?.strict),
+          runStatus: runStatusFor,
+        },
+      };
+    }
+    if (kind === "mock") {
+      return {
+        id: step.id,
+        type: "mock",
+        position,
+        data: {
+          name: step.id,
+          status: step.mock?.status ?? 0,
+          delayMs: step.mock?.delayMs ?? 0,
+          captures: step.captures?.length ?? 0,
+          checks: step.checks?.length ?? 0,
           runStatus: runStatusFor,
         },
       };
@@ -919,6 +952,7 @@ export function flowProblems(steps: WorkflowStepView[]): FlowProblem[] {
       if (steps.some((loop) => loop.kind === "loop" && loopBodyIds(steps, loop.id).includes(step.id)))
         problems.push({ message: `El sub-flujo «${step.id}» está dentro de un bucle: no puede ir ahí.`, stepId: step.id });
     }
+    if (kind === "mock") problems.push(...mockProblems(step).map((message) => ({ message, stepId: step.id })));
     if (kind === "fetch" && !step.fetch?.url?.trim())
       problems.push({ message: `El fetch «${step.id}» no tiene URL.`, stepId: step.id });
     if (kind === "graphql") {

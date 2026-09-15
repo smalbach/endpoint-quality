@@ -575,10 +575,46 @@ function GraphqlNode({ data, selected }: NodeProps<Node<GraphqlNodeData>>) {
   );
 }
 
+type MockNodeData = { name: string; status: number; delayMs: number; captures: number; checks: number; runStatus?: CaseStatus };
+
+/** A mock: a response written on the node, no network. Dashed, so it never reads as a real call. */
+function MockNode({ data, selected }: NodeProps<Node<MockNodeData>>) {
+  const status = data.runStatus;
+  return (
+    <div
+      className={cn(
+        "w-52 rounded-xl border border-dashed bg-white px-3 py-2 shadow-sm transition-colors",
+        status ? RUN_NODE_CLASS[status] : "border-fuchsia-300",
+        selected && "border-slate-900 ring-2 ring-slate-200",
+      )}
+    >
+      <Handle type="target" position={Position.Left} />
+      <div className="flex items-center gap-2">
+        <span className="grid h-6 w-6 place-items-center rounded-md bg-fuchsia-100 text-fuchsia-700" title="Mock">
+          ◌
+        </span>
+        <span className="truncate text-xs font-semibold text-slate-800">Mock · {data.name}</span>
+        <RunDot status={status} />
+      </div>
+      <p className="mt-1 truncate font-mono text-[10px] text-slate-500">
+        responde {data.status || "?"}
+        {data.delayMs > 0 && ` tras ${data.delayMs} ms`}
+      </p>
+      <p className="mt-0.5 text-[10px] text-fuchsia-700">
+        simulado · sin red
+        {data.captures > 0 && ` · ${data.captures} capturas`}
+        {data.checks > 0 && ` · ${data.checks} comprob.`}
+      </p>
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+}
+
 const nodeTypes = {
   graphql: GraphqlNode,
   notify: NotifyNode,
   subflow: SubflowNode,
+  mock: MockNode,
   schema: SchemaNode,
   loop: LoopNode,
   poll: PollNode,
