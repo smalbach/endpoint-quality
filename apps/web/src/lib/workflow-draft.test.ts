@@ -8,6 +8,7 @@ import {
   connectStep,
   disconnectEdges,
   duplicateStep,
+  flowNodeRetries,
   flowNodeStartedAt,
   flowNodeStatuses,
   freeSpot,
@@ -766,5 +767,59 @@ describe("freeSpot — un nodo nuevo no cae encima de otro", () => {
 
   test("un sitio libre se queda como está", () => {
     expect(freeSpot([{ id: "a", requestTemplateId: "t1", position: { x: 0, y: 0 } }], { x: 400, y: 0 })).toEqual({ x: 400, y: 0 });
+  });
+});
+
+describe("los reintentos de cada nodo durante una corrida", () => {
+  const note = (attempt: number, at: string, done = false) => ({ attempt, attempts: 4, waitMs: 1000, at, done });
+
+  test("cada reintento se pinta en su nodo, y el que sigue reintentando gana al que ya terminó", () => {
+    const cases = [
+      { id: "c1", scenarioId: "workflow:wf:leer" },
+      { id: "c2", scenarioId: "workflow:wf:bucle#0" },
+      { id: "c3", scenarioId: "workflow:wf:bucle#1" },
+      { id: "c4", scenarioId: "workflow:wf:crear" },
+    ];
+    const retries = flowNodeRetries(
+      cases,
+      new Map([
+        ["c1", note(3, "2026-09-15T10:00:02.000Z")],
+        ["c2", note(2, "2026-09-15T10:00:05.000Z", true)],
+        ["c3", note(2, "2026-09-15T10:00:01.000Z")],
+        ["de-otra-corrida", note(2, "2026-09-15T10:00:09.000Z")],
+      ]),
+    );
+    expect(retries).toEqual({ leer: note(3, "2026-09-15T10:00:02.000Z"), bucle: note(2, "2026-09-15T10:00:01.000Z") });
+  });
+
+  test("entre dos casos terminados del mismo nodo, cuenta el último anunciado", () => {
+    const retries = flowNodeRetries(
+      [
+        { id: "c1", scenarioId: "workflow:wf:bucle#0" },
+        { id: "c2", scenarioId: "workflow:wf:bucle#1" },
+      ],
+      new Map([
+        ["c1", note(4, "2026-09-15T10:00:03.000Z", true)],
+        ["c2", note(2, "2026-09-15T10:00:01.000Z", true)],
+      ]),
+    );
+    expect(retries.bucle).toEqual(note(4, "2026-09-15T10:00:03.000Z", true));
+  });
+
+  test("el nodo recibe su reintento en los datos, y los demás no", () => {
+    const retry = note(2, "2026-09-15T10:00:00.000Z");
+    const [leer, espera] = toNodes(
+      [
+        { id: "leer", requestTemplateId: "t1" },
+        { id: "espera", kind: "wait", waitMs: 500 },
+      ],
+      [template("t1", "Leer")],
+      [],
+      { leer: "running" },
+      {},
+      { leer: retry },
+    );
+    expect(leer.data).toMatchObject({ runStatus: "running", retry });
+    expect(espera.data).not.toHaveProperty("retry");
   });
 });

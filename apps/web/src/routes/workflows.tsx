@@ -19,6 +19,7 @@ import { cn } from "@/lib/format";
 import { unchanged } from "@/lib/config-draft";
 import {
   addStep,
+  flowNodeRetries,
   flowNodeStartedAt,
   flowNodeStatuses,
   flowProblems,
@@ -108,6 +109,12 @@ export function WorkflowsPage() {
   const stepStartedAt = useMemo(
     () => (activeRunId ? flowNodeStartedAt(runProgress.cases) : {}),
     [activeRunId, runProgress.cases],
+  );
+  // The retry each node is on — and, once its case ends, how many attempts it took — so a retrying
+  // node shows its count instead of looking stuck.
+  const stepRetries = useMemo(
+    () => (activeRunId ? flowNodeRetries(runProgress.cases, runProgress.retrying) : {}),
+    [activeRunId, runProgress.cases, runProgress.retrying],
   );
   // How the next run walks the flow — mode, pause, parallelism, stop on failure. Per flow and in this
   // browser: it changes the rhythm and where it stops, never what is tested (see lib/run-settings).
@@ -610,6 +617,7 @@ export function WorkflowsPage() {
                 onAddLogin={canEdit ? (at) => (setAddKind("login"), setAddAt(at), setDrawer("library")) : undefined}
                 runStatus={stepStatus}
                 runStartedAt={stepStartedAt}
+                runRetries={stepRetries}
                 pausedStepId={activeRunId ? pausedNodeId(runProgress.paused, runProgress.cases, draft.id) : null}
                 breakpoints={activeBreakpoints(launchSettings)}
                 onToggleBreakpoint={(stepId) => setRunSettings(toggleBreakpoint(launchSettings, stepId))}

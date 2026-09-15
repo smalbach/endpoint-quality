@@ -486,10 +486,12 @@ export function toNodes(
   runStatus?: Record<string, CaseStatus>,
   /** When each running node started (see `flowNodeStartedAt`); a wait node counts down from it. */
   runStartedAt?: Record<string, string>,
+  /** The retry each node is on, or ended with, in a live run (see `flowNodeRetries`). */
+  runRetries?: Record<string, RetryNote>,
 ) {
   const templateById = new Map(templates.map((template) => [template.id, template]));
   const operationById = new Map(operations.map((operation) => [operation.id, operation]));
-  return steps.map((step, index) => {
+  const nodes = steps.map((step, index) => {
     const position = step.position ?? positionFor(index);
     const runStatusFor = runStatus?.[step.id];
     const kind = step.kind ?? "request";
@@ -694,6 +696,13 @@ export function toNodes(
       },
     };
   });
+  // Added after the fact rather than in every branch: any node that sends a request can retry, and
+  // only a watched run that announced a retry has one to show.
+  if (!runRetries) return nodes;
+  return nodes.map((node) => {
+    const retry = runRetries[node.id];
+    return retry ? { ...node, data: { ...node.data, retry } } : node;
+  });
 }
 
 /**
@@ -739,6 +748,43 @@ export function flowNodeStartedAt(
     if (!stepId) continue;
     const current = byStep[stepId];
     if (!current || Date.parse(runCase.startedAt) > Date.parse(current)) byStep[stepId] = runCase.startedAt;
+  }
+  return byStep;
+}
+
+/** A node's retry in a live run, as the stream announced it (see `flowNodeRetries`). */
+export type RetryNote = {
+  /** The attempt about to go out, counting the first request as attempt one. */
+  attempt: number;
+  /** Every attempt it may take, the first one included. */
+  attempts: number;
+  /** The pause before this attempt. */
+  waitMs: number;
+  /** When the browser heard of it: the pause counts down from here, on the browser's own clock. */
+  at: string;
+  /** The case has its verdict, and `attempt` is how many it took. */
+  done: boolean;
+};
+
+/**
+ * Each node's retry, from a live run's cases and the retries the stream announced per case. With
+ * several cases on one node — a loop — the one still retrying wins, then the latest announced.
+ */
+export function flowNodeRetries(
+  cases: { id: string; scenarioId: string }[],
+  retrying: ReadonlyMap<string, RetryNote>,
+): Record<string, RetryNote> {
+  const byStep: Record<string, RetryNote> = {};
+  for (const runCase of cases) {
+    const note = retrying.get(runCase.id);
+    const stepId = note ? caseStepId(runCase.scenarioId) : null;
+    if (!note || !stepId) continue;
+    const current = byStep[stepId];
+    const wins =
+      !current ||
+      (current.done && !note.done) ||
+      (current.done === note.done && Date.parse(note.at) > Date.parse(current.at));
+    if (wins) byStep[stepId] = note;
   }
   return byStep;
 }

@@ -33,7 +33,7 @@ import {
   toNodes,
   waitRemainingMs,
 } from "@/lib/workflow-draft";
-import type { OperationSummary } from "@/lib/workflow-draft";
+import type { OperationSummary, RetryNote } from "@/lib/workflow-draft";
 import { NOTIFY_CHANNELS, type NotifyNodeData } from "@/lib/workflow-notify";
 import type { CaseStatus, RequestTemplateView, WorkflowStepView } from "@/lib/types";
 
@@ -70,6 +70,65 @@ function RunDot({ status }: { status?: CaseStatus }) {
   return <span className={cn("ml-auto h-2 w-2 shrink-0 rounded-full", RUN_DOT[status])} title={CASE_STATUS_LABEL[status]} />;
 }
 
+/** A node's live skin; amber instead of sky while it is between attempts, the colour of «otra vez». */
+function runNodeClass(status: CaseStatus, retry?: RetryNote): string {
+  return status === "running" && retry && !retry.done ? "border-amber-400 bg-amber-50 ring-2 ring-amber-200" : RUN_NODE_CLASS[status];
+}
+
+/**
+ * The retries of a node in a watched run: the attempt it is on, the ones already spent, the pause
+ * before the next — and once its case ends, how many it took. Without it a retrying node looks
+ * exactly like one that hung.
+ */
+function RetryMeter({ retry, status }: { retry?: RetryNote; status?: CaseStatus }) {
+  const live = Boolean(retry && !retry.done && status === "running");
+  const remaining = useWaitCountdown(retry?.waitMs ?? 0, retry?.at, live);
+  if (!retry) return null;
+  const { attempt, attempts, waitMs } = retry;
+  if (!live) {
+    const passed = status === "passed";
+    return (
+      <p className={cn("mt-1.5 flex items-center gap-1 text-[10px] font-medium", passed ? "text-emerald-700" : "text-rose-700")}>
+        <span aria-hidden>↻</span>
+        {passed ? `Pasó en el intento ${attempt} de ${attempts}` : `Falló tras ${attempt} de ${attempts} intentos`}
+      </p>
+    );
+  }
+  return (
+    <div className="mt-2 rounded-lg border border-amber-200 bg-white/80 px-2 py-1.5" role="status" aria-live="polite">
+      <div className="flex items-center gap-1.5 text-[10px]">
+        <span aria-hidden className="inline-grid h-3.5 w-3.5 place-items-center text-sm leading-none text-amber-600 motion-safe:animate-spin">
+          ↻
+        </span>
+        <span className="font-semibold text-amber-800 tabular-nums">
+          Intento {attempt} de {attempts}
+        </span>
+        <span className="ml-auto font-mono text-amber-600 tabular-nums">
+          {remaining ? `en ${(remaining / 1000).toFixed(1)} s` : "enviando…"}
+        </span>
+      </div>
+      {attempts <= 12 && (
+        <div className="mt-1.5 flex gap-0.5" aria-hidden>
+          {Array.from({ length: attempts }, (_, index) => (
+            <span
+              key={index}
+              className={cn(
+                "h-1.5 flex-1 rounded-full transition-colors",
+                index < attempt - 1 ? "bg-rose-400" : index === attempt - 1 ? "bg-amber-500 motion-safe:animate-pulse" : "bg-amber-100",
+              )}
+            />
+          ))}
+        </div>
+      )}
+      {remaining !== null && waitMs > 0 && (
+        <div className="mt-1 h-0.5 overflow-hidden rounded-full bg-amber-100" aria-hidden>
+          <div className="h-full rounded-full bg-amber-500" style={{ width: `${100 - (remaining / waitMs) * 100}%` }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 type StepNodeData = {
   name: string;
   method: string;
@@ -81,6 +140,7 @@ type StepNodeData = {
   retries: boolean;
   loops: boolean;
   runStatus?: CaseStatus;
+  retry?: RetryNote;
 };
 
 /** A request node: one HTTP call, one input, one output. */
@@ -90,7 +150,7 @@ function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
     <div
       className={cn(
         "w-64 rounded-xl border bg-white p-3 shadow-sm transition-colors",
-        status ? RUN_NODE_CLASS[status] : "border-slate-200",
+        status ? runNodeClass(status, data.retry) : "border-slate-200",
         selected && "border-slate-900 ring-2 ring-slate-200",
       )}
     >
@@ -110,6 +170,7 @@ function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
           {data.captures} capturas{data.checks > 0 && ` · ${data.checks} comprob.`}
         </span>
       </div>
+      <RetryMeter retry={data.retry} status={status} />
       <Handle type="source" position={Position.Right} />
     </div>
   );
@@ -123,7 +184,7 @@ function LoginNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
     <div
       className={cn(
         "w-64 rounded-xl border bg-white p-3 shadow-sm transition-colors",
-        status ? RUN_NODE_CLASS[status] : "border-amber-300",
+        status ? runNodeClass(status, data.retry) : "border-amber-300",
         selected && "border-slate-900 ring-2 ring-slate-200",
       )}
     >
@@ -140,6 +201,7 @@ function LoginNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
       <p className="mt-1 text-[10px] text-amber-700">
         {data.authorizes ? "Reescribe la credencial de los siguientes" : "Falta de dónde sale la credencial"}
       </p>
+      <RetryMeter retry={data.retry} status={status} />
       <Handle type="source" position={Position.Right} />
     </div>
   );
@@ -297,6 +359,7 @@ type FetchNodeData = {
   checks: number;
   useSession: boolean;
   runStatus?: CaseStatus;
+  retry?: RetryNote;
 };
 
 /** A fetch: an HTTP call written on the node — any URL — rather than one of the saved requests. */
@@ -306,7 +369,7 @@ function FetchNode({ data, selected }: NodeProps<Node<FetchNodeData>>) {
     <div
       className={cn(
         "w-64 rounded-xl border bg-white p-3 shadow-sm transition-colors",
-        status ? RUN_NODE_CLASS[status] : "border-teal-300",
+        status ? runNodeClass(status, data.retry) : "border-teal-300",
         selected && "border-slate-900 ring-2 ring-slate-200",
       )}
     >
@@ -324,6 +387,7 @@ function FetchNode({ data, selected }: NodeProps<Node<FetchNodeData>>) {
       <p className="mt-1 text-[10px] text-slate-400">
         {data.captures} capturas{data.checks > 0 && ` · ${data.checks} comprob.`}
       </p>
+      <RetryMeter retry={data.retry} status={status} />
       <Handle type="source" position={Position.Right} />
     </div>
   );
@@ -386,7 +450,15 @@ function ScriptNode({ data, selected }: NodeProps<Node<ScriptNodeData>>) {
   );
 }
 
-type PollNodeData = { name: string; from: string; attempts: number; delayMs: number; checks: number; runStatus?: CaseStatus };
+type PollNodeData = {
+  name: string;
+  from: string;
+  attempts: number;
+  delayMs: number;
+  checks: number;
+  runStatus?: CaseStatus;
+  retry?: RetryNote;
+};
 
 /** A poll: repeats a step's request until its checks pass — the job that is pending until it is done. */
 function PollNode({ data, selected }: NodeProps<Node<PollNodeData>>) {
@@ -395,7 +467,7 @@ function PollNode({ data, selected }: NodeProps<Node<PollNodeData>>) {
     <div
       className={cn(
         "w-52 rounded-xl border bg-white px-3 py-2 shadow-sm transition-colors",
-        status ? RUN_NODE_CLASS[status] : "border-orange-300",
+        status ? runNodeClass(status, data.retry) : "border-orange-300",
         selected && "border-slate-900 ring-2 ring-slate-200",
       )}
     >
@@ -413,6 +485,7 @@ function PollNode({ data, selected }: NodeProps<Node<PollNodeData>>) {
       <p className="mt-0.5 text-[10px] text-orange-700">
         hasta {data.attempts} × cada {data.delayMs} ms · {data.checks ? `${data.checks} comprob.` : "sin comprobaciones"}
       </p>
+      <RetryMeter retry={data.retry} status={status} />
       <Handle type="source" position={Position.Right} />
     </div>
   );
@@ -566,6 +639,7 @@ type GraphqlNodeData = {
   useSession: boolean;
   allowErrors: boolean;
   runStatus?: CaseStatus;
+  retry?: RetryNote;
 };
 
 /** A GraphQL operation: a POST of query and variables, red when the answer carries `errors`. */
@@ -575,7 +649,7 @@ function GraphqlNode({ data, selected }: NodeProps<Node<GraphqlNodeData>>) {
     <div
       className={cn(
         "w-64 rounded-xl border bg-white p-3 shadow-sm transition-colors",
-        status ? RUN_NODE_CLASS[status] : "border-fuchsia-300",
+        status ? runNodeClass(status, data.retry) : "border-fuchsia-300",
         selected && "border-slate-900 ring-2 ring-slate-200",
       )}
     >
@@ -597,6 +671,7 @@ function GraphqlNode({ data, selected }: NodeProps<Node<GraphqlNodeData>>) {
         {data.captures} capturas{data.checks > 0 && ` · ${data.checks} comprob.`}
         {data.allowErrors && " · admite errors"}
       </p>
+      <RetryMeter retry={data.retry} status={status} />
       <Handle type="source" position={Position.Right} />
     </div>
   );
@@ -682,6 +757,7 @@ export function WorkflowCanvas({
   onAddLogin,
   runStatus,
   runStartedAt,
+  runRetries,
   pausedStepId,
   breakpoints,
   onToggleBreakpoint,
@@ -703,6 +779,8 @@ export function WorkflowCanvas({
   runStatus?: Record<string, CaseStatus>;
   /** When each running node started, while a run is being watched; a wait node counts down from it. */
   runStartedAt?: Record<string, string>;
+  /** The retry each node is on, or ended with, while a run is being watched. */
+  runRetries?: Record<string, RetryNote>;
   /** The node a watched run is paused before, drawn apart until it resumes or ends. */
   pausedStepId?: string | null;
   /** The nodes the next run stops before, marked on the canvas. */
@@ -711,8 +789,8 @@ export function WorkflowCanvas({
   onToggleBreakpoint?: (stepId: string) => void;
 }) {
   const fromDocument = useMemo(
-    () => toNodes(steps, templates, operations, runStatus, runStartedAt) as Node[],
-    [steps, templates, operations, runStatus, runStartedAt],
+    () => toNodes(steps, templates, operations, runStatus, runStartedAt, runRetries) as Node[],
+    [steps, templates, operations, runStatus, runStartedAt, runRetries],
   );
   const [nodes, setNodes] = useState<Node[]>(fromDocument);
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);

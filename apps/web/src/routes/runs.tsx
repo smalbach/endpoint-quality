@@ -7,6 +7,7 @@ import { AssertionRow, Badge, Button, Card, Empty, Json } from "@/components/ui"
 import { cn, formatDate, formatDuration, methodStyle, statusClass } from "@/lib/format";
 import { RunsTabs } from "@/components/runs-tabs";
 import type { FailureKind, Run, RunCase, RunCaseView, RunSource, RunTotals, RunView } from "@/lib/types";
+import type { RetryNote } from "@/lib/workflow-draft";
 
 /** Where a run launched to wait for a person is waiting. */
 type RunPause = NonNullable<RunView["paused"]>;
@@ -185,10 +186,11 @@ export function useRunProgress(base: string, runId: string) {
    *
    * Es lo único que una corrida hace que tarda y no produce nada que mirar: con una espera de
    * cuatro segundos, la fila se queda en `running` y no hay forma de distinguirla de una petición
-   * colgada. Vive fuera de `live` porque no es un caso ni unos totales: es una nota sobre una fila,
-   * y la borra el propio caso cuando termina.
+   * colgada. Vive fuera de `live` porque no es un caso ni unos totales: es una nota sobre una fila.
+   * Cuando el caso termina la nota queda marcada como hecha, para seguir diciendo cuántos intentos
+   * llevó.
    */
-  const [retrying, setRetrying] = useState<Map<string, { attempt: number; attempts: number }>>(new Map());
+  const [retrying, setRetrying] = useState<Map<string, RetryNote>>(new Map());
   const [streaming, setStreaming] = useState<"connecting" | "live" | "polling">("connecting");
   const [openCase, setOpenCase] = useState<string | null>(null);
   /**
@@ -216,6 +218,7 @@ export function useRunProgress(base: string, runId: string) {
     const controller = new AbortController();
     finished.current = false;
     setPausedLive(undefined);
+    setRetrying(new Map());
 
     void streamRun(`${base}/runs/${runId}/stream`, {
       signal: controller.signal,
@@ -242,20 +245,22 @@ export function useRunProgress(base: string, runId: string) {
           caseId?: string;
           attempt?: number;
           attempts?: number;
+          waitMs?: number;
         };
         if (payload.caseId && payload.attempt) {
-          const { caseId, attempt, attempts = 0 } = payload;
-          setRetrying((current) => new Map(current).set(caseId, { attempt, attempts }));
+          const { caseId, attempt, attempts = 0, waitMs = 0 } = payload;
+          const at = new Date().toISOString();
+          setRetrying((current) => new Map(current).set(caseId, { attempt, attempts, waitMs, at, done: false }));
           return;
         }
-        // El caso que llega ya trae su veredicto, así que la nota de reintento dejó de ser cierta.
-        if (payload.case) {
+        // El caso que llega con veredicto cierra su reintento: deja de estar en marcha, pero se recuerda
+        // cuántos intentos llevó. Un caso que solo anuncia que empieza no cierra nada.
+        if (payload.case && payload.case.status !== "running") {
           const finished = payload.case.id;
           setRetrying((current) => {
-            if (!current.has(finished)) return current;
-            const next = new Map(current);
-            next.delete(finished);
-            return next;
+            const note = current.get(finished);
+            if (!note || note.done) return current;
+            return new Map(current).set(finished, { ...note, done: true });
           });
         }
         setLive((current) => {
@@ -497,9 +502,15 @@ export function RunProgress({ base, runId }: { base: string; runId: string }) {
                 <span className="block truncate font-mono text-[11px] text-slate-700">{runCase.path}</span>
                 <span className="block truncate text-[10px] text-slate-400">{runCase.scenarioId}</span>
               </span>
-              {retrying.has(runCase.id) && (
-                <span className="shrink-0 animate-pulse rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">
-                  reintento {retrying.get(runCase.id)?.attempt}/{retrying.get(runCase.id)?.attempts}
+              {retrying.get(runCase.id)?.done === false && (
+                <span className="inline-flex shrink-0 items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">
+                  <span aria-hidden className="inline-block motion-safe:animate-spin">↻</span>
+                  intento {retrying.get(runCase.id)?.attempt}/{retrying.get(runCase.id)?.attempts}
+                </span>
+              )}
+              {retrying.get(runCase.id)?.done && (
+                <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-600" title="Intentos que llevó este caso">
+                  ↻ {retrying.get(runCase.id)?.attempt} intentos
                 </span>
               )}
               {runCase.failure && <FailureTag failure={runCase.failure} />}
