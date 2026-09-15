@@ -226,6 +226,9 @@ export function toNodes(
         loops: Boolean(step.forEach),
         conditional: Boolean(step.runIf),
         authorizes: Boolean(step.authorizes),
+        waits: Boolean(step.waitMs),
+        retries: Boolean(step.retry),
+        merges: step.waits === "any",
         // Set only while a run is being watched; the node lights up by it.
         runStatus: runStatus?.[step.id],
       },

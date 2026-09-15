@@ -70,6 +70,9 @@ type StepNodeData = {
   loops: boolean;
   conditional: boolean;
   authorizes: boolean;
+  waits: boolean;
+  retries: boolean;
+  merges: boolean;
   runStatus?: CaseStatus;
 };
 
@@ -109,7 +112,11 @@ function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
             resto, y el lienzo es donde se mira el flujo antes de abrir ningún panel. */}
         {data.conditional && <span title="Condicional">◇</span>}
         {data.loops && <span title="Una vez por elemento">↻</span>}
+        {data.merges && <span title="Basta con que llegue una dependencia (merge)">⇉</span>}
         {data.authorizes && <span title="Inicia sesión para los pasos siguientes">🔑</span>}
+        {data.waits && <span title="Espera antes de enviar">⏱</span>}
+        {data.checks > 0 && <span title={`${data.checks} comprobaciones`}>✓</span>}
+        {data.retries && <span title="Reintenta al fallar">↺</span>}
         {status && (
           <span className="ml-auto flex items-center gap-1 text-[9px] text-slate-500" title={CASE_STATUS_LABEL[status]}>
             <span className={cn("h-2 w-2 rounded-full", RUN_DOT[status])} />
@@ -270,11 +277,63 @@ export function WorkflowCanvas({
             <MenuItem onClick={() => put(menuStep.waitMs ? drop(menuStep, "waitMs") : { ...menuStep, waitMs: 1000 })}>
               {menuStep.waitMs ? "⏱ Quitar espera" : "⏱ Añadir espera"}
             </MenuItem>
+            {/* Condición y bucle leen la respuesta de un paso anterior: sin dependencia no hay de
+                dónde leer, así que solo se ofrecen cuando el nodo ya cuelga de otro. */}
+            {(menuStep.dependsOn?.length ?? 0) >= 1 && (
+              <>
+                <MenuItem
+                  onClick={() =>
+                    put(
+                      menuStep.runIf
+                        ? drop(menuStep, "runIf")
+                        : {
+                            ...menuStep,
+                            runIf: {
+                              from: menuStep.dependsOn![0],
+                              check: { source: "status", operator: "equals", value: "200" },
+                            },
+                          },
+                    )
+                  }
+                >
+                  {menuStep.runIf ? "◇ Quitar condición" : "◇ Añadir condición"}
+                </MenuItem>
+                <MenuItem
+                  onClick={() =>
+                    put(
+                      menuStep.forEach
+                        ? drop(menuStep, "forEach")
+                        : { ...menuStep, forEach: { from: menuStep.dependsOn![0], path: "data", as: "item", max: 50 } },
+                    )
+                  }
+                >
+                  {menuStep.forEach ? "↻ Quitar bucle" : "↻ Recorrer una lista"}
+                </MenuItem>
+              </>
+            )}
             {(menuStep.dependsOn?.length ?? 0) >= 2 && (
               <MenuItem onClick={() => put({ ...menuStep, waits: menuStep.waits === "any" ? "all" : "any" })}>
                 {menuStep.waits === "any" ? "⇉ Esperar a todas" : "⇉ Basta con una (merge)"}
               </MenuItem>
             )}
+            <div className="my-1 border-t border-slate-100" />
+            <MenuItem
+              onClick={() =>
+                put({
+                  ...menuStep,
+                  checks: [...(menuStep.checks ?? []), { source: "status", operator: "equals", value: "200" }],
+                })
+              }
+            >
+              ✓ Añadir comprobación
+            </MenuItem>
+            <MenuItem
+              onClick={() =>
+                put(menuStep.retry ? drop(menuStep, "retry") : { ...menuStep, retry: { attempts: 2, delayMs: 500, backoff: 2 } })
+              }
+            >
+              {menuStep.retry ? "↺ Quitar reintentos" : "↺ Reintentar al fallar"}
+            </MenuItem>
             <div className="my-1 border-t border-slate-100" />
             <MenuItem
               danger
