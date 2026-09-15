@@ -1,5 +1,7 @@
 import {
+  ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   Matches,
@@ -13,6 +15,7 @@ import {
   MinLength,
 } from "class-validator";
 import type { OrderMode, RequestBody, ScenarioCredential } from "@eq/runner-core";
+import type { PauseMode, ResumeMode } from "../../domain/model";
 
 export class StartRunDto {
   @IsUUID() environmentId: string;
@@ -42,6 +45,20 @@ export class StartRunDto {
   @IsOptional() @IsUUID() datasetId?: string;
   /** Walks every flow of the suite, in order, as one run. Exclusive with `workflowId`. */
   @IsOptional() @IsUUID() suiteId?: string;
+  /** Waits for a person before every step (`step`) or before the listed ones (`breakpoints`). */
+  @IsOptional() @IsIn(["none", "step", "breakpoints"]) pauseMode?: PauseMode;
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  @IsString({ each: true })
+  @MaxLength(120, { each: true })
+  breakpoints?: string[];
+  @IsOptional() @IsBoolean() stopOnFailure?: boolean;
+}
+
+/** Releases a waiting run: one step, or the rest of it. */
+export class ResumeRunDto {
+  @IsIn(["step", "continue"]) mode: ResumeMode;
 }
 
 /** The four fixed selectors, or `role:<nombre>`. The shape is checked here and the rule about

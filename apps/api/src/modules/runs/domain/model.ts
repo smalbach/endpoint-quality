@@ -37,7 +37,30 @@ export type RunPlan = {
   /** When set, the run walks every flow of the suite in order. Exclusive with `workflowId`: a run
    * executes the matrix, one flow, or a list of them, and «both» has no meaning. */
   suiteId?: string;
+  /**
+   * Whether the worker stops and waits for a person before a step. `none` — the default, and every
+   * run written before this existed — never waits. `step` waits before every step; `breakpoints`
+   * only before the steps listed in `breakpoints`. A wait is released one step at a time or all
+   * the way (see {@link ResumeMode}), and a run left waiting long enough is cancelled.
+   *
+   * At a step boundary and never inside one, for the same reason cancelling is: a pause between
+   * the POST and the DELETE of a case is a created row nobody cleans up if the person walks away.
+   */
+  pauseMode?: PauseMode;
+  /** The step ids `breakpoints` waits before. Ignored by the other modes. */
+  breakpoints?: string[];
+  /** The first step that fails ends the flow, and what had not run yet is marked skipped. Same as
+   * setting `onError: stop` on every step — except the ones that say `continue`, which keep their
+   * author's word. */
+  stopOnFailure?: boolean;
 };
+
+export type PauseMode = "none" | "step" | "breakpoints";
+/** `step` lets one step through and waits again before the next; `continue` stops waiting for the
+ * rest of the run. */
+export type ResumeMode = "step" | "continue";
+/** Where a waiting run stopped: the case about to execute and, on a flow, its node. */
+export type RunPause = { caseId: string; stepId: string | null };
 
 export type Run = {
   id: string;

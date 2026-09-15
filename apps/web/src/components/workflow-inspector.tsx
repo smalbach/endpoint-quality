@@ -68,12 +68,10 @@ export function WorkflowInspector({
   operations,
   environments,
   environmentId,
-  concurrency,
-  delayMs,
   canEdit,
   onEnvironment,
-  onConcurrency,
-  onDelay,
+  onRunSettings,
+  runSummary,
   onWorkflow,
   onSteps,
   onTemplate,
@@ -95,11 +93,11 @@ export function WorkflowInspector({
   environments: Environment[];
   environmentId: string;
   canEdit: boolean;
-  concurrency: number;
-  delayMs: number;
   onEnvironment: (id: string) => void;
-  onConcurrency: (value: number) => void;
-  onDelay: (value: number) => void;
+  /** Opens «Configurar ejecución»: mode, pause between nodes, parallelism, stop on failure. */
+  onRunSettings: () => void;
+  /** The settings in a few words, or null when all are at their default. */
+  runSummary: string | null;
   onWorkflow: (change: Partial<Pick<WorkflowView, "name" | "description">>) => void;
   onSteps: (steps: WorkflowStepView[]) => void;
   onTemplate: (template: RequestTemplateView) => void;
@@ -126,10 +124,8 @@ export function WorkflowInspector({
       environmentId={environmentId}
       canEdit={canEdit}
       onEnvironment={onEnvironment}
-      concurrency={concurrency}
-      delayMs={delayMs}
-      onConcurrency={onConcurrency}
-      onDelay={onDelay}
+      onRunSettings={onRunSettings}
+      runSummary={runSummary}
       onWorkflow={onWorkflow}
       onRun={onRun}
       onDelete={onDelete}
@@ -217,10 +213,8 @@ function FlowSettings({
   environmentId,
   canEdit,
   onEnvironment,
-  concurrency,
-  delayMs,
-  onConcurrency,
-  onDelay,
+  onRunSettings,
+  runSummary,
   onWorkflow,
   onRun,
   onDelete,
@@ -232,10 +226,8 @@ function FlowSettings({
   environmentId: string;
   canEdit: boolean;
   onEnvironment: (id: string) => void;
-  concurrency: number;
-  delayMs: number;
-  onConcurrency: (value: number) => void;
-  onDelay: (value: number) => void;
+  onRunSettings: () => void;
+  runSummary: string | null;
   onWorkflow: (change: Partial<Pick<WorkflowView, "name" | "description">>) => void;
   onRun: () => void;
   onDelete: () => void;
@@ -275,30 +267,17 @@ function FlowSettings({
             ))}
           </select>
         </Field>
-        <Field
-          label="Pasos a la vez"
-          hint="Solo corren juntos los que no dependen unos de otros. Lo que hace que sea seguro se comprueba al guardar."
+        <button
+          type="button"
+          onClick={onRunSettings}
+          className="mt-3 flex w-full items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
         >
-          <input
-            className={inputClass}
-            type="number"
-            min={1}
-            max={10}
-            value={concurrency}
-            onChange={(event) => onConcurrency(Math.min(10, Math.max(1, Number(event.target.value) || 1)))}
-          />
-        </Field>
-        <Field
-          label="Velocidad"
-          hint="Una pausa entre pasos, para poder mirar el timeline mientras corre. No es una espera del paso: no cambia lo que se prueba, solo el ritmo."
-        >
-          <select className={inputClass} value={delayMs} onChange={(event) => onDelay(Number(event.target.value))}>
-            <option value={0}>Rápido</option>
-            <option value={300}>Normal</option>
-            <option value={1000}>Lento</option>
-            <option value={2500}>Paso a paso</option>
-          </select>
-        </Field>
+          <span>
+            <span className="block font-medium">Configurar ejecución</span>
+            <span className="block text-[11px] text-slate-500">{runSummary ?? "Continuo, sin pausa"}</span>
+          </span>
+          <span aria-hidden>⚙</span>
+        </button>
         <Button className="mt-2 w-full" disabled={!environmentId || !steps.length || running} onClick={onRun}>
           Ejecutar flujo
         </Button>
@@ -373,11 +352,7 @@ function NodePanel({
             </Button>
           )}
         </div>
-        <div
-          role="tablist"
-          aria-label="Secciones del nodo"
-          className="mt-3 flex gap-1 overflow-x-auto overflow-y-hidden"
-        >
+        <div role="tablist" aria-label="Secciones del nodo" className="mt-3 flex gap-1 overflow-x-auto overflow-y-hidden">
           {all.map((item) => {
             const selected = item.id === current.id;
             return (
@@ -1484,9 +1459,7 @@ function LoopInspector({
             <>
               <div className="grid gap-3 @3xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_9rem_9rem]">
                 {sources.length === 0 ? (
-                  <p className="text-[11px] text-amber-700 @3xl:self-center">
-                    Conéctalo al paso cuya respuesta trae la lista.
-                  </p>
+                  <p className="text-[11px] text-amber-700 @3xl:self-center">Conéctalo al paso cuya respuesta trae la lista.</p>
                 ) : (
                   <Field label="Lee la lista de">
                     <select
@@ -1538,9 +1511,7 @@ function LoopInspector({
                 <code className="font-mono">{`{{${name}}}`}</code> para el elemento entero en JSON.
               </p>
               <p className={`mt-2 text-[11px] leading-5 ${body.length ? "text-slate-600" : "text-amber-700"}`}>
-                {body.length
-                  ? `Por vuelta: ${body.join(" → ")}`
-                  : "Nada conectado a «cada»: el bucle no ejecutará nada."}
+                {body.length ? `Por vuelta: ${body.join(" → ")}` : "Nada conectado a «cada»: el bucle no ejecutará nada."}
               </p>
             </>
           ),

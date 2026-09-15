@@ -8,6 +8,9 @@ import { cn, formatDate, formatDuration, methodStyle, statusClass } from "@/lib/
 import { RunsTabs } from "@/components/runs-tabs";
 import type { FailureKind, Run, RunCase, RunCaseView, RunSource, RunTotals, RunView } from "@/lib/types";
 
+/** Where a run launched to wait for a person is waiting. */
+type RunPause = NonNullable<RunView["paused"]>;
+
 export function RunsPage() {
   const { projectId } = useParams();
   const organization = useOrganization();
@@ -188,6 +191,12 @@ export function useRunProgress(base: string, runId: string) {
   const [retrying, setRetrying] = useState<Map<string, { attempt: number; attempts: number }>>(new Map());
   const [streaming, setStreaming] = useState<"connecting" | "live" | "polling">("connecting");
   const [openCase, setOpenCase] = useState<string | null>(null);
+  /**
+   * Where a run launched to wait is waiting, as the stream last said. `undefined` is «the stream has
+   * said nothing about it», and then the fetched run's `paused` is the answer — a page opened
+   * mid-pause has not seen the event that announced it.
+   */
+  const [pausedLive, setPausedLive] = useState<RunPause | null | undefined>(undefined);
   const finished = useRef(false);
 
   const run = useQuery({
@@ -206,11 +215,20 @@ export function useRunProgress(base: string, runId: string) {
     if (!runId) return;
     const controller = new AbortController();
     finished.current = false;
+    setPausedLive(undefined);
 
     void streamRun(`${base}/runs/${runId}/stream`, {
       signal: controller.signal,
       onEvent: (event) => {
         setStreaming("live");
+        if (event.type === "paused") {
+          setPausedLive((event.data as { pausedAt: RunPause }).pausedAt);
+          return;
+        }
+        if (event.type === "resumed") {
+          setPausedLive(null);
+          return;
+        }
         const payload = event.data as {
           case?: RunCase;
           totals?: RunTotals;
@@ -247,6 +265,7 @@ export function useRunProgress(base: string, runId: string) {
         });
         if (payload.status) {
           finished.current = true;
+          setPausedLive(null);
           // The stored run is the source of truth once it is over; the stream was only the
           // running commentary.
           void queryClient.invalidateQueries({ queryKey: ["run", runId] });
@@ -266,6 +285,16 @@ export function useRunProgress(base: string, runId: string) {
   const cancel = useMutation({
     mutationFn: () => api<void>(`${base}/runs/${runId}/cancel`, { method: "POST" }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["run", runId] }),
+  });
+
+  // «Siguiente paso» / «Continuar». The pause is cleared on success rather than on the stream's
+  // `resumed`, so the buttons do not stay clickable for the moment in between; a 409 means the run
+  // was no longer waiting, and the refetch shows where it actually is.
+  const resume = useMutation({
+    mutationFn: (how: "step" | "continue") =>
+      api<void>(`${base}/runs/${runId}/resume`, { method: "POST", body: { mode: how } }),
+    onSuccess: () => setPausedLive(null),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["run", runId] }),
   });
 
   const detail = useQuery({
@@ -289,8 +318,23 @@ export function useRunProgress(base: string, runId: string) {
   }, [run.data, live]);
   const totals = live?.totals ?? run.data?.totals ?? null;
   const running = run.data?.status === "queued" || run.data?.status === "running";
+  const paused = running ? (pausedLive === undefined ? (run.data?.paused ?? null) : pausedLive) : null;
 
-  return { run, cases, totals, running, streaming, retrying, openCase, setOpenCase, detail, cancel, canCancel };
+  return {
+    run,
+    cases,
+    totals,
+    running,
+    streaming,
+    retrying,
+    paused,
+    openCase,
+    setOpenCase,
+    detail,
+    cancel,
+    resume,
+    canCancel,
+  };
 }
 
 /**
@@ -310,6 +354,8 @@ export function RunProgress({ base, runId }: { base: string; runId: string }) {
     setOpenCase,
     detail,
     cancel,
+    resume,
+    paused,
     canCancel,
   } = useRunProgress(base, runId);
 
@@ -381,14 +427,44 @@ export function RunProgress({ base, runId }: { base: string; runId: string }) {
             </div>
           </div>
           {running && canCancel && (
-            <Button
-              variant="ghost"
-              className="border-white/20 text-white hover:bg-white/10"
-              disabled={cancel.isPending}
-              onClick={() => cancel.mutate()}
-            >
-              Cancelar
-            </Button>
+            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+              {paused && (
+                <>
+                  <span className="w-full text-[11px] text-amber-300 lg:text-right">
+                    En pausa antes de{" "}
+                    <span className="font-mono">
+                      {(() => {
+                        const waiting = cases.find((runCase) => runCase.id === paused.caseId);
+                        return waiting ? `${waiting.method} ${waiting.path}` : "el siguiente paso";
+                      })()}
+                    </span>
+                  </span>
+                  <Button
+                    className="bg-amber-400 text-slate-950 hover:bg-amber-300"
+                    disabled={resume.isPending}
+                    onClick={() => resume.mutate("step")}
+                  >
+                    Siguiente paso
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="border-white/20 text-white hover:bg-white/10"
+                    disabled={resume.isPending}
+                    onClick={() => resume.mutate("continue")}
+                  >
+                    Continuar
+                  </Button>
+                </>
+              )}
+              <Button
+                variant="ghost"
+                className="border-white/20 text-white hover:bg-white/10"
+                disabled={cancel.isPending}
+                onClick={() => cancel.mutate()}
+              >
+                Cancelar
+              </Button>
+            </div>
           )}
         </div>
       </Card>
@@ -404,6 +480,8 @@ export function RunProgress({ base, runId }: { base: string; runId: string }) {
                 openCase === runCase.id && "bg-slate-50",
                 // The one running now, lit so the eye lands on it: a soft sky wash and a live left edge.
                 runCase.status === "running" && "bg-sky-50/70 shadow-[inset_3px_0_0_0_var(--color-sky-400)]",
+                // The one a paused run is waiting to execute: amber, the colour of «waiting for you».
+                paused?.caseId === runCase.id && "bg-amber-50/70 shadow-[inset_3px_0_0_0_var(--color-amber-400)]",
               )}
             >
               <Badge className={cn("w-14 shrink-0 justify-center", methodStyle(runCase.method))}>

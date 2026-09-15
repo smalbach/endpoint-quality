@@ -666,7 +666,14 @@ export type RequestPreviewView = {
 
 /** A run with its case list and **without the steps**: the progress screen polls this, and the
  * steps hold whole response bodies. */
-export type RunViewOf<T> = RunOf<T> & { cases: RunCaseOf<T>[] };
+export type RunViewOf<T> = RunOf<T> & {
+  cases: RunCaseOf<T>[];
+  /** Where a run launched to wait for a person is waiting now: the case about to execute and its
+   * node. Null or absent while it is not waiting. */
+  paused?: RunPauseView | null;
+};
+/** A waiting run's position. `stepId` is null outside a flow. */
+export type RunPauseView = { caseId: string; stepId: string | null };
 export type RunCaseViewOf<T> = RunCaseOf<T> & { steps: RunStepOf<T>[] };
 
 /** The whole run as a report: every case, every assertion, no bodies. What a pipeline reads. */

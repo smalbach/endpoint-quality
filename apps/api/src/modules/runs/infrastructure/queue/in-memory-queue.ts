@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import type { ResumeMode, RunPause } from "../../domain/model";
 import type { RunQueuePort } from "../../domain/ports";
 
 /**
@@ -17,6 +18,8 @@ export class InMemoryRunQueue implements RunQueuePort {
   private readonly logger = new Logger(InMemoryRunQueue.name);
   private readonly pending: string[] = [];
   private readonly cancelled = new Set<string>();
+  private readonly paused = new Map<string, RunPause>();
+  private readonly resumes = new Map<string, ResumeMode>();
   private handler: ((runId: string) => Promise<void>) | null = null;
   private draining = false;
 
@@ -40,6 +43,25 @@ export class InMemoryRunQueue implements RunQueuePort {
     return this.cancelled.has(runId);
   }
 
+  async pause(runId: string, at: RunPause | null): Promise<void> {
+    if (at) this.paused.set(runId, at);
+    else this.paused.delete(runId);
+  }
+
+  async pausedAt(runId: string): Promise<RunPause | null> {
+    return this.paused.get(runId) ?? null;
+  }
+
+  async resume(runId: string, how: ResumeMode): Promise<void> {
+    this.resumes.set(runId, how);
+  }
+
+  async takeResume(runId: string): Promise<ResumeMode | null> {
+    const how = this.resumes.get(runId) ?? null;
+    this.resumes.delete(runId);
+    return how;
+  }
+
   private async drain(): Promise<void> {
     if (this.draining || !this.handler) return;
     this.draining = true;
@@ -57,6 +79,8 @@ export class InMemoryRunQueue implements RunQueuePort {
           );
         } finally {
           this.cancelled.delete(runId);
+          this.paused.delete(runId);
+          this.resumes.delete(runId);
         }
       }
     } finally {

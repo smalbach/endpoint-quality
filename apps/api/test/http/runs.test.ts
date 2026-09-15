@@ -3292,3 +3292,173 @@ describe("enviar una petición sin lanzar una corrida", () => {
     await other.target.stop();
   });
 });
+
+describe("configuración de ejecución: paso a paso, puntos de parada y detener al primer fallo", () => {
+  /** Listar y luego crear, en ese orden: dos nodos para ver la corrida detenerse entre ambos. */
+  async function twoStepFlow(steps?: (templates: { create: string; list: string }) => Record<string, unknown>[]) {
+    const fixture = await projectAgainst({});
+    const create = await api()
+      .post(`${fixture.projectBase}/request-templates`)
+      .set(as(owner))
+      .send({
+        name: "Crear",
+        operationId: "createThing",
+        expectedStatus: 201,
+        body: { type: "json", json: { name: "x", size: 7 } },
+      });
+    assert.equal(create.status, 201, JSON.stringify(create.body));
+    const list = await api()
+      .post(`${fixture.projectBase}/request-templates`)
+      .set(as(owner))
+      .send({ name: "Listar", operationId: "listThings", expectedStatus: 200 });
+    assert.equal(list.status, 201, JSON.stringify(list.body));
+    const templates = { create: create.body.requestTemplateId, list: list.body.requestTemplateId };
+    const workflow = await api()
+      .post(`${fixture.projectBase}/workflows`)
+      .set(as(owner))
+      .send({
+        name: "Dos pasos",
+        definition: {
+          steps: steps
+            ? steps(templates)
+            : [
+                { id: "listar", requestTemplateId: templates.list },
+                { id: "crear", requestTemplateId: templates.create, dependsOn: ["listar"] },
+              ],
+        },
+      });
+    assert.equal(workflow.status, 201, JSON.stringify(workflow.body));
+    return { ...fixture, workflowId: workflow.body.workflowId as string };
+  }
+
+  /** The run as `GET` shows it, once `until` holds. Polled: a pause is a state the run sits in, and
+   * there is no event to await from a test that is not following the stream. */
+  async function runUntil(
+    projectBase: string,
+    runId: string,
+    until: (run: { status: string; paused?: { stepId: string | null } | null; cases: RunCaseRow[] }) => boolean,
+  ) {
+    const deadline = Date.now() + 5000;
+    for (;;) {
+      const run = await api().get(`${projectBase}/runs/${runId}`).set(as(owner));
+      if (until(run.body)) return run.body as { status: string; paused?: { stepId: string | null } | null; cases: RunCaseRow[] };
+      if (Date.now() > deadline) throw new Error(`La corrida no llegó al estado esperado: ${JSON.stringify(run.body)}`);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
+  const stepCase = (run: { cases: RunCaseRow[] }, stepId: string) =>
+    run.cases.find((item) => item.scenarioId.endsWith(`:${stepId}`))!;
+
+  test("paso a paso: espera antes de cada nodo y avanza con «siguiente»", async () => {
+    const flow = await twoStepFlow();
+    const started = await api()
+      .post(`${flow.projectBase}/runs`)
+      .set(as(owner))
+      .send({ environmentId: flow.environmentId, workflowId: flow.workflowId, pauseMode: "step" });
+    assert.equal(started.status, 202, JSON.stringify(started.body));
+    const runId = started.body.runId as string;
+
+    let run = await runUntil(flow.projectBase, runId, (current) => current.paused?.stepId === "listar");
+    // Nada salió todavía: la pausa va antes del nodo, no después.
+    assert.equal(stepCase(run, "listar").status, "queued");
+
+    const next = await api().post(`${flow.projectBase}/runs/${runId}/resume`).set(as(owner)).send({ mode: "step" });
+    assert.equal(next.status, 204, JSON.stringify(next.body));
+    run = await runUntil(flow.projectBase, runId, (current) => current.paused?.stepId === "crear");
+    assert.equal(stepCase(run, "listar").status, "passed");
+    assert.equal(stepCase(run, "crear").status, "queued");
+
+    const rest = await api().post(`${flow.projectBase}/runs/${runId}/resume`).set(as(owner)).send({ mode: "continue" });
+    assert.equal(rest.status, 204);
+    await context.queue.idle();
+    run = await runUntil(flow.projectBase, runId, (current) => current.status !== "running");
+    assert.equal(run.status, "passed");
+    assert.equal(run.paused ?? null, null);
+
+    // Reanudar lo que ya terminó no es una operación.
+    const late = await api().post(`${flow.projectBase}/runs/${runId}/resume`).set(as(owner)).send({ mode: "step" });
+    assert.equal(late.status, 409);
+    await flow.target.stop();
+  });
+
+  test("puntos de parada: solo se detiene en los nodos marcados", async () => {
+    const flow = await twoStepFlow();
+    const started = await api()
+      .post(`${flow.projectBase}/runs`)
+      .set(as(owner))
+      .send({
+        environmentId: flow.environmentId,
+        workflowId: flow.workflowId,
+        pauseMode: "breakpoints",
+        breakpoints: ["crear"],
+      });
+    assert.equal(started.status, 202, JSON.stringify(started.body));
+    const runId = started.body.runId as string;
+
+    const run = await runUntil(flow.projectBase, runId, (current) => current.paused?.stepId === "crear");
+    assert.equal(stepCase(run, "listar").status, "passed", "listar no estaba marcado: no se detuvo ahí");
+
+    await api().post(`${flow.projectBase}/runs/${runId}/resume`).set(as(owner)).send({ mode: "step" });
+    await context.queue.idle();
+    const done = await api().get(`${flow.projectBase}/runs/${runId}`).set(as(owner));
+    assert.equal(done.body.status, "passed");
+    await flow.target.stop();
+  });
+
+  test("puntos de parada sin ningún nodo marcado se rechaza al lanzar", async () => {
+    const flow = await twoStepFlow();
+    const started = await api()
+      .post(`${flow.projectBase}/runs`)
+      .set(as(owner))
+      .send({ environmentId: flow.environmentId, workflowId: flow.workflowId, pauseMode: "breakpoints" });
+    assert.equal(started.status, 422, JSON.stringify(started.body));
+    await flow.target.stop();
+  });
+
+  test("cancelar una corrida en pausa la termina sin ejecutar el nodo que esperaba", async () => {
+    const flow = await twoStepFlow();
+    const started = await api()
+      .post(`${flow.projectBase}/runs`)
+      .set(as(owner))
+      .send({ environmentId: flow.environmentId, workflowId: flow.workflowId, pauseMode: "step" });
+    const runId = started.body.runId as string;
+    await runUntil(flow.projectBase, runId, (current) => current.paused?.stepId === "listar");
+
+    const cancelled = await api().post(`${flow.projectBase}/runs/${runId}/cancel`).set(as(owner));
+    assert.equal(cancelled.status, 204);
+    await context.queue.idle();
+    const run = await api().get(`${flow.projectBase}/runs/${runId}`).set(as(owner));
+    assert.equal(run.body.status, "cancelled");
+    assert.equal(stepCase(run.body, "listar").status, "queued");
+    await flow.target.stop();
+  });
+
+  test("detener al primer fallo: lo que no había corrido queda sin ejecutar", async () => {
+    // Dos nodos que no dependen entre sí: sin la opción, el segundo correría igual.
+    const steps = ({ create, list }: { create: string; list: string }) => [
+      {
+        id: "listar",
+        requestTemplateId: list,
+        checks: [{ label: "imposible", source: "body", path: "data", operator: "has_length", value: 99 }],
+      },
+      { id: "crear", requestTemplateId: create },
+    ];
+    const flow = await twoStepFlow(steps);
+
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+      stopOnFailure: true,
+    });
+    assert.equal(stepCase(run, "listar").status, "failed");
+    assert.equal(stepCase(run, "crear").status, "skipped");
+
+    const { run: free } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    assert.equal(stepCase(free, "crear").status, "passed", "sin la opción, el nodo independiente corre");
+    await flow.target.stop();
+  });
+});

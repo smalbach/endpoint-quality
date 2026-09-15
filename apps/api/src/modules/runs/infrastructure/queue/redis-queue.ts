@@ -1,5 +1,6 @@
 import { Injectable, Logger, type OnModuleDestroy } from "@nestjs/common";
 import type { RunQueuePort } from "../../domain/ports";
+import type { ResumeMode, RunPause } from "../../domain/model";
 
 /**
  * The queue for a hosted deployment.
@@ -85,6 +86,31 @@ export class RedisRunQueue implements RunQueuePort, OnModuleDestroy {
     const queue = await this.ensureQueue();
     const client = await queue.client;
     return (await client.get(`run:cancelled:${runId}`)) === "1";
+  }
+
+  // Same keyspace and expiry as the cancel flag: a pause outlives no run by more than the hour.
+  async pause(runId: string, at: RunPause | null): Promise<void> {
+    const client = await (await this.ensureQueue()).client;
+    if (at) await client.set(`run:paused:${runId}`, JSON.stringify(at), "EX", 3600);
+    else await client.del(`run:paused:${runId}`);
+  }
+
+  async pausedAt(runId: string): Promise<RunPause | null> {
+    const client = await (await this.ensureQueue()).client;
+    const raw = await client.get(`run:paused:${runId}`);
+    return raw ? (JSON.parse(raw) as RunPause) : null;
+  }
+
+  async resume(runId: string, how: ResumeMode): Promise<void> {
+    const client = await (await this.ensureQueue()).client;
+    await client.set(`run:resume:${runId}`, how, "EX", 3600);
+  }
+
+  async takeResume(runId: string): Promise<ResumeMode | null> {
+    const client = await (await this.ensureQueue()).client;
+    const how = await client.get(`run:resume:${runId}`);
+    if (how) await client.del(`run:resume:${runId}`);
+    return how === "step" || how === "continue" ? how : null;
   }
 
   async onModuleDestroy(): Promise<void> {

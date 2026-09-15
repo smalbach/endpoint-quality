@@ -126,6 +126,16 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
     const delayMs = clamp(command.input.delayMs ?? 0, 0, 30_000);
     if (!Number.isFinite(samples) || !Number.isFinite(delayMs))
       throw new InvalidInputError("Plan de ejecución inválido");
+    const pauseMode = command.input.pauseMode ?? "none";
+    // A breakpoint run with nothing to stop at is a normal run the person did not mean to start: they
+    // asked to stop somewhere and did not say where.
+    if (pauseMode === "breakpoints" && !command.input.breakpoints?.length) {
+      throw new InvalidInputError(
+        "Marca al menos un nodo donde detenerse",
+        [{ field: "breakpoints", detail: "El modo «puntos de parada» necesita al menos un nodo" }],
+        "breakpoints-empty",
+      );
+    }
 
     const plan: RunPlan = {
       // Reads first, deletes last, by default. Alphabetical order runs a DELETE before the GET
@@ -142,6 +152,9 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
       ...(command.input.workflowId ? { workflowId: command.input.workflowId } : {}),
       ...(command.input.datasetId ? { datasetId: command.input.datasetId } : {}),
       ...(command.input.suiteId ? { suiteId: command.input.suiteId } : {}),
+      ...(pauseMode !== "none" ? { pauseMode } : {}),
+      ...(pauseMode === "breakpoints" ? { breakpoints: [...new Set(command.input.breakpoints ?? [])] } : {}),
+      ...(command.input.stopOnFailure ? { stopOnFailure: true } : {}),
     };
 
     const run: Run = {

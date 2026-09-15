@@ -8,6 +8,8 @@ import {
   RunCaseRetryingEvent,
   RunCaseStartedEvent,
   RunFinishedEvent,
+  RunPausedEvent,
+  RunResumedEvent,
   RunStartedEvent,
 } from "../application/events/run.events";
 
@@ -86,6 +88,22 @@ export class RunCaseRetryingProjector implements IEventHandler<RunCaseRetryingEv
       type: "retrying",
       payload: { caseId: event.runCaseId, attempt: event.attempt, attempts: event.attempts, waitMs: event.waitMs },
     });
+  }
+}
+
+@EventsHandler(RunPausedEvent)
+export class RunPausedProjector implements IEventHandler<RunPausedEvent> {
+  constructor(private readonly stream: RunProgressStream) {}
+  handle(event: RunPausedEvent): void {
+    this.stream.publish({ runId: event.runId, type: "paused", payload: { pausedAt: event.at } });
+  }
+}
+
+@EventsHandler(RunResumedEvent)
+export class RunResumedProjector implements IEventHandler<RunResumedEvent> {
+  constructor(private readonly stream: RunProgressStream) {}
+  handle(event: RunResumedEvent): void {
+    this.stream.publish({ runId: event.runId, type: "resumed", payload: { resumed: event.how } });
   }
 }
 

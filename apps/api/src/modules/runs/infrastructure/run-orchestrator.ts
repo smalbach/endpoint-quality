@@ -59,6 +59,8 @@ import {
   RunCaseRetryingEvent,
   RunCaseStartedEvent,
   RunFinishedEvent,
+  RunPausedEvent,
+  RunResumedEvent,
   RunStartedEvent,
 } from "../application/events/run.events";
 
@@ -150,6 +152,7 @@ export class RunOrchestrator {
     this.eventBus.publish(new RunStartedEvent(run.projectId, run.id, cases.length));
 
     let cancelled = false;
+    const pause: PauseState = { released: false };
     for (const [index, item] of queue.entries()) {
       const runCase = cases[index];
       if (await this.queue.isCancelled(run.id)) {
@@ -160,6 +163,10 @@ export class RunOrchestrator {
       // Between cases, never inside one: a pause in the middle of a create-read would leave the
       // created row without its cleanup step.
       if (index > 0 && run.plan.delayMs > 0) await delay(run.plan.delayMs);
+      if (await this.hold(run, runCase, null, pause)) {
+        cancelled = true;
+        break;
+      }
 
       const startedAt = this.clock.now();
       const started: RunCase = { ...runCase, status: "running", startedAt };
@@ -355,6 +362,8 @@ export class RunOrchestrator {
     const base = { ...context.target.variables };
     let cancelled = false;
     let walkedRow = -1;
+    // One for the whole run: «continuar» means the rest of it, not the rest of this row.
+    const pause: PauseState = { released: false };
     for (const pass of passes) {
       if (cancelled) break;
       if (pass.rowIndex !== walkedRow) {
@@ -366,7 +375,7 @@ export class RunOrchestrator {
         // row that would fail on its own, which is the failure a data-driven suite exists to find.
         context.target.session = null;
       }
-      cancelled = await this.walkPrepared(run, context, pass.items, budget);
+      cancelled = await this.walkPrepared(run, context, pass.items, budget, pause);
     }
 
     await this.finish(run, cancelled);
@@ -470,6 +479,7 @@ export class RunOrchestrator {
     context: ExecutionContext,
     prepared: ReturnType<RunOrchestrator["prepareWorkflow"]>["items"],
     budget: { extra: number },
+    pause: PauseState,
   ): Promise<boolean> {
     const state: WalkState = {
       passed: new Map(),
@@ -513,6 +523,13 @@ export class RunOrchestrator {
         // The pause is between dispatches rather than between finishes: what it is for is the
         // target's rate limit, and that counts requests leaving, not answers arriving.
         if (dispatched > 0 && run.plan.delayMs > 0) await delay(run.plan.delayMs);
+        // Only before a step that is going to do something: stopping to announce a node that will
+        // be skipped — its dependency failed, or its branch went the other way — is a click spent
+        // on nothing.
+        if (willExecute(item.step, state) && (await this.hold(run, item.runCase, item.step.id, pause))) {
+          cancelled = true;
+          break;
+        }
         dispatched += 1;
         running.set(
           item.step.id,
@@ -521,6 +538,7 @@ export class RunOrchestrator {
             .then(() => item.step.id),
         );
       }
+      if (cancelled) break;
 
       // Nothing ready and nothing in flight. On an acyclic graph every step eventually resolves,
       // so this is a guard against a state that should not exist rather than an expected exit —
@@ -670,7 +688,7 @@ export class RunOrchestrator {
       passed.set(item.step.id, verdict);
       await this.runs.saveCase(judged);
       await this.announce(run, judged);
-      if (!verdict && item.step.onError === "stop") state.stopped = true;
+      if (!verdict && stopsOnFailure(run, item.step)) state.stopped = true;
       return;
     }
 
@@ -919,7 +937,45 @@ export class RunOrchestrator {
     // `stop` is for the step whose failure makes everything after it report something other than
     // what it is testing: with no session, every later 401 is the same fact restated. The rest are
     // marked skipped rather than left queued — a case with no verdict is not a result.
-    if (!allPassed && item.step.onError === "stop") state.stopped = true;
+    if (!allPassed && stopsOnFailure(run, item.step)) state.stopped = true;
+  }
+
+  /**
+   * Waits for a person before a case, when the run was launched to.
+   *
+   * Returns whether the run was cancelled while it waited. The wait is a poll of the queue rather
+   * than a promise somebody resolves, because the «siguiente» may land on another instance than the
+   * one walking the run — the same reason cancelling is a flag. A wait nobody comes back to ends in a
+   * cancellation: with the in-memory queue a paused run is also every run queued behind it.
+   */
+  private async hold(run: Run, runCase: RunCase, stepId: string | null, pause: PauseState): Promise<boolean> {
+    const mode = run.plan.pauseMode ?? "none";
+    if (mode === "none" || pause.released) return false;
+    if (mode === "breakpoints" && (!stepId || !run.plan.breakpoints?.includes(stepId))) return false;
+
+    const at = { caseId: runCase.id, stepId };
+    // A release left over from an earlier wait — a double click on «siguiente» — must not let this
+    // one through before anybody saw it.
+    await this.queue.takeResume(run.id);
+    await this.queue.pause(run.id, at);
+    this.eventBus.publish(new RunPausedEvent(run.projectId, run.id, at));
+    const deadline = Date.now() + PAUSE_LIMIT_MS;
+    try {
+      while (Date.now() < deadline) {
+        if (await this.queue.isCancelled(run.id)) return true;
+        const how = await this.queue.takeResume(run.id);
+        if (how) {
+          if (how === "continue") pause.released = true;
+          this.eventBus.publish(new RunResumedEvent(run.projectId, run.id, how));
+          return false;
+        }
+        await delay(PAUSE_POLL_MS);
+      }
+      this.logger.warn(`Corrida ${run.id}: nadie la reanudó en ${PAUSE_LIMIT_MS / 60_000} min; se cancela`);
+      return true;
+    } finally {
+      await this.queue.pause(run.id, null);
+    }
   }
 
   /**
@@ -1264,6 +1320,27 @@ export class RunOrchestrator {
     await this.runs.updateStatus(run.id, status, this.clock.now());
     this.eventBus.publish(new RunFinishedEvent(run.projectId, run.id, status, totals));
   }
+}
+
+/** Whether a person already said «continuar» on this run, so it stops waiting. */
+type PauseState = { released: boolean };
+
+/** How long a run may wait for a person, and how often it looks. */
+const PAUSE_LIMIT_MS = 30 * 60_000;
+const PAUSE_POLL_MS = 150;
+
+/** `stop` on the step, or the run's «detener al primer fallo» — except on a step whose author said
+ * `continue`, which is a statement that its failure does not matter. */
+function stopsOnFailure(run: Run, step: WorkflowStep): boolean {
+  return step.onError === "stop" || (run.plan.stopOnFailure === true && step.onError !== "continue");
+}
+
+/** Whether a ready step is going to execute rather than be skipped — the same two tests `runStep`
+ * applies first: its dependencies held, and it is on the side its branch took. */
+function willExecute(step: WorkflowStep, state: WalkState): boolean {
+  if (!dependenciesHeld(step, state.passed, state.permissive)) return false;
+  if (step.branch && state.branches.get(step.branch.of) !== (step.branch.take === "then")) return false;
+  return true;
 }
 
 /** One step of a walk, as `prepareWorkflow` builds it: a control node or a fetch has neither

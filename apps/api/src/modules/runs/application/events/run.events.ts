@@ -1,4 +1,4 @@
-import type { RunCase, RunStatus, RunTotals } from "../../domain/model";
+import type { ResumeMode, RunCase, RunPause, RunStatus, RunTotals } from "../../domain/model";
 
 /** Published as the run walks. They feed the SSE stream and, later, whatever wants to react to a
  * red matrix — a webhook, a CI exit code, a notification. */
@@ -53,6 +53,24 @@ export class RunCaseRetryingEvent {
     readonly attempt: number,
     readonly attempts: number,
     readonly waitMs: number,
+  ) {}
+}
+
+/** A run waiting for a person before the case in `at`. Nothing is in flight that it started. */
+export class RunPausedEvent {
+  constructor(
+    readonly projectId: string,
+    readonly runId: string,
+    readonly at: RunPause,
+  ) {}
+}
+
+/** The wait is over; the case it was holding starts next. */
+export class RunResumedEvent {
+  constructor(
+    readonly projectId: string,
+    readonly runId: string,
+    readonly how: ResumeMode,
   ) {}
 }
 

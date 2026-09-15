@@ -23,6 +23,7 @@ import {
 } from "@/modules/auth/infrastructure/guards/auth.guard";
 import { StartRunCommand } from "../application/commands/start-run";
 import { CancelRunCommand } from "../application/commands/cancel-run";
+import { ResumeRunCommand } from "../application/commands/resume-run";
 import {
   GetRunCaseQuery,
   GetRunQuery,
@@ -32,7 +33,7 @@ import {
   type RunView,
 } from "../application/queries/get-run";
 import { RunProgressStream } from "../infrastructure/run-progress.stream";
-import { StartRunDto } from "./dto/runs.dto";
+import { ResumeRunDto, StartRunDto } from "./dto/runs.dto";
 import { REPORT_CONTENT_TYPE, REPORT_FORMATS, toHtmlReport, toJUnitXml, type ReportFormat } from "./report-formats";
 
 /**
@@ -152,6 +153,19 @@ export class RunsController {
     @Param("runId") runId: string,
   ): Promise<void> {
     await this.commandBus.execute(new CancelRunCommand(organizationId, projectId, runId));
+  }
+
+  /** Lets a run waiting at a step boundary go on: one step, or the rest of the way. */
+  @Post(":runId/resume")
+  @HttpCode(204)
+  @RequireRole("editor")
+  async resume(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("runId") runId: string,
+    @Body() body: ResumeRunDto,
+  ): Promise<void> {
+    await this.commandBus.execute(new ResumeRunCommand(organizationId, projectId, runId, body.mode));
   }
 
   /**

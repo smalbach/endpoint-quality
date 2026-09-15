@@ -12,7 +12,7 @@
  */
 export type ProgressEvent = {
   runId: string;
-  type: "started" | "case" | "retrying" | "finished";
+  type: "started" | "case" | "retrying" | "paused" | "resumed" | "finished";
   payload: unknown;
   /**
    * Which instance published it.

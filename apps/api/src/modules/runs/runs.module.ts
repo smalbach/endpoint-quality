@@ -29,25 +29,36 @@ import {
   RunCaseRetryingProjector,
   RunCaseStartedProjector,
   RunFinishedProjector,
+  RunPausedProjector,
   RunProgressStream,
+  RunResumedProjector,
   RunStartedProjector,
 } from "./infrastructure/run-progress.stream";
 import { RetentionScheduler } from "./infrastructure/retention.scheduler";
 import { StartRunHandler } from "./application/commands/start-run";
 import { PreviewRequestHandler } from "./application/commands/preview-request";
 import { CancelRunHandler } from "./application/commands/cancel-run";
+import { ResumeRunHandler } from "./application/commands/resume-run";
 import { PruneRunsHandler } from "./application/commands/prune-runs";
 import { GetRunCaseHandler, GetRunHandler, GetRunReportHandler, ListRunsHandler } from "./application/queries/get-run";
 import { RunsController } from "./presentation/runs.controller";
 import { RequestPreviewController } from "./presentation/request-preview.controller";
 
-export const RUN_COMMAND_HANDLERS = [StartRunHandler, CancelRunHandler, PruneRunsHandler, PreviewRequestHandler];
+export const RUN_COMMAND_HANDLERS = [
+  StartRunHandler,
+  CancelRunHandler,
+  ResumeRunHandler,
+  PruneRunsHandler,
+  PreviewRequestHandler,
+];
 export const RUN_QUERY_HANDLERS = [ListRunsHandler, GetRunHandler, GetRunCaseHandler, GetRunReportHandler];
 export const RUN_PROJECTORS = [
   RunStartedProjector,
   RunCaseStartedProjector,
   RunCaseProjector,
   RunCaseRetryingProjector,
+  RunPausedProjector,
+  RunResumedProjector,
   RunFinishedProjector,
 ];
 

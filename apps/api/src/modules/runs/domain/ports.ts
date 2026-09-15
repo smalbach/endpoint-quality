@@ -1,6 +1,6 @@
 import type { RequestBody } from "@eq/runner-core";
 
-import type { RequestPreview, Run, RunCase, RunStatus, RunStep, RunTotals } from "./model";
+import type { RequestPreview, ResumeMode, Run, RunCase, RunPause, RunStatus, RunStep, RunTotals } from "./model";
 
 export const RUN_REPOSITORY = Symbol("RUN_REPOSITORY");
 export const RUN_QUEUE = Symbol("RUN_QUEUE");
@@ -59,6 +59,14 @@ export interface RunQueuePort {
    * would leave a created resource with no cleanup step. */
   cancel(runId: string): Promise<void>;
   isCancelled(runId: string): Promise<boolean>;
+  /** Records where a waiting run stopped, or clears it with `null`. Kept by the queue and not in the
+   * worker's memory, so whichever instance answers `GET /runs/:id` can say the run is waiting. */
+  pause(runId: string, at: RunPause | null): Promise<void>;
+  pausedAt(runId: string): Promise<RunPause | null>;
+  /** A person's release of a waiting run, left for the worker to take. */
+  resume(runId: string, how: ResumeMode): Promise<void>;
+  /** Consumes a pending release, if there is one. */
+  takeResume(runId: string): Promise<ResumeMode | null>;
 }
 
 /**

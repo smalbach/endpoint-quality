@@ -63,7 +63,7 @@ import {
   SpecSourceDto,
   UpdateProjectDto,
 } from "@/modules/projects/presentation/dto/projects.dto";
-import { PreviewRequestDto, StartRunDto } from "@/modules/runs/presentation/dto/runs.dto";
+import { PreviewRequestDto, ResumeRunDto, StartRunDto } from "@/modules/runs/presentation/dto/runs.dto";
 import {
   CreateRoleDto,
   EndpointRoleAccessItemDto,
@@ -148,6 +148,7 @@ const DTOS = [
   CreateSuiteDto,
   UpdateSuiteDto,
   StartRunDto,
+  ResumeRunDto,
   PreviewRequestDto,
   CreateEndpointDto,
   UpdateEndpointDto,

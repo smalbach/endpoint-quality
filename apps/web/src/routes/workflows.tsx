@@ -34,6 +34,17 @@ import { TemplateLibrary, type NewTemplate } from "@/components/template-library
 import { ImportRequests } from "@/components/import-requests";
 import { DatasetsPanel } from "@/components/datasets-panel";
 import { SuitesPanel } from "@/components/suites-panel";
+import { RunSettingsDialog } from "@/components/run-settings-dialog";
+import {
+  DEFAULT_RUN_SETTINGS,
+  loadRunSettings,
+  normalizeRunSettings,
+  runSettingsBody,
+  runSettingsProblem,
+  runSettingsSummary,
+  saveRunSettings,
+  type RunSettings,
+} from "@/lib/run-settings";
 import type {
   DatasetRowsView,
   Environment,
@@ -89,10 +100,10 @@ export function WorkflowsPage() {
     () => (activeRunId ? flowNodeStatuses(runProgress.cases) : {}),
     [activeRunId, runProgress.cases],
   );
-  const [concurrency, setConcurrency] = useState(1);
-  // A pause between steps, so the live timeline can be watched. It is the run's `delayMs`, which the
-  // orchestrator already honours; it changes the rhythm, never what is tested.
-  const [delayMs, setDelayMs] = useState(0);
+  // How the next run walks the flow — mode, pause, parallelism, stop on failure. Per flow and in this
+  // browser: it changes the rhythm and where it stops, never what is tested (see lib/run-settings).
+  const [runSettings, setRunSettingsState] = useState<RunSettings>(DEFAULT_RUN_SETTINGS);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const enabled = Boolean(organization && projectId);
   const workflows = useQuery({
@@ -131,6 +142,25 @@ export function WorkflowsPage() {
   const steps = draft?.steps ?? [];
   const problems = flowProblems(steps);
 
+  const setRunSettings = (next: RunSettings) => {
+    setRunSettingsState(next);
+    if (draft) saveRunSettings(draft.id, next);
+  };
+  // What a launch sends: the settings, cleaned against the nodes the flow has right now, so a
+  // breakpoint on a node deleted a minute ago does not travel.
+  const launchSettings = normalizeRunSettings(
+    runSettings,
+    steps.map((step) => step.id),
+  );
+  const runProblem = runSettingsProblem(launchSettings);
+  const runSummary = runSettingsSummary(launchSettings);
+  const nodeLabel = (stepId: string) => {
+    const step = steps.find((item) => item.id === stepId);
+    if (!step) return stepId;
+    const template = step.requestTemplateId && templates.find((item) => item.id === step.requestTemplateId);
+    return template ? template.name : `${NODE_KIND_LABEL[step.kind ?? "request"] ?? step.kind} · ${step.id}`;
+  };
+
   // The draft follows the selection, and a refetch replaces it: the server's copy is the one that
   // went through validation, so keeping a local version on top of it would hide what it changed.
   useEffect(() => {
@@ -144,6 +174,16 @@ export function WorkflowsPage() {
     setSelectedStep("");
     setTemplateEdits({});
   }, [saved?.id, saved?.updatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Each flow remembers its own run settings; read again only when a different flow opens.
+  useEffect(() => {
+    if (!saved) return;
+    setRunSettingsState(
+      loadRunSettings(
+        saved.id,
+        saved.steps.map((step) => step.id),
+      ),
+    );
+  }, [saved?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["workflows", projectId] });
 
@@ -230,7 +270,12 @@ export function WorkflowsPage() {
     mutationFn: () =>
       api<{ runId: string }>(`${base}/runs`, {
         method: "POST",
-        body: { environmentId, workflowId: draft?.id, concurrency, delayMs, ...(datasetId ? { datasetId } : {}) },
+        body: {
+          environmentId,
+          workflowId: draft?.id,
+          ...runSettingsBody(launchSettings),
+          ...(datasetId ? { datasetId } : {}),
+        },
       }),
     onSuccess: ({ runId }) => setActiveRunId(runId),
   });
@@ -239,7 +284,16 @@ export function WorkflowsPage() {
     mutationFn: (suiteId: string) =>
       api<{ runId: string }>(`${base}/runs`, {
         method: "POST",
-        body: { environmentId, suiteId, concurrency, delayMs },
+        // A suite walks other flows too, whose nodes this flow's breakpoints do not name: only what
+        // means the same in every flow travels.
+        body: {
+          environmentId,
+          suiteId,
+          ...runSettingsBody({
+            ...launchSettings,
+            pauseMode: launchSettings.pauseMode === "breakpoints" ? "none" : launchSettings.pauseMode,
+          }),
+        },
       }),
     onSuccess: ({ runId }) => setActiveRunId(runId),
   });
@@ -546,24 +600,46 @@ export function WorkflowsPage() {
               </div>
             </div>
 
-            {/* Play: la acción principal, separada y grande, abajo a la derecha. */}
+            {/* Play: la acción principal, separada y grande, abajo a la derecha — con su configuración
+                pegada a ella, y un resumen cuando algo no está por defecto. */}
             {draft && (
-              <button
-                onClick={() => run.mutate()}
-                disabled={!environmentId || !steps.length || run.isPending}
-                title={!environmentId ? "Elige un entorno arriba" : "Ejecutar flujo"}
-                className={cn(
-                  "absolute right-5 bottom-5 z-30 flex items-center gap-2 rounded-full px-5 py-3 text-sm font-semibold text-white shadow-xl transition",
-                  !environmentId || !steps.length || run.isPending
-                    ? "cursor-not-allowed bg-slate-300"
-                    : "bg-emerald-600 hover:bg-emerald-500",
+              <div className="absolute right-5 bottom-5 z-30 flex items-center gap-2">
+                {runSummary && (
+                  <button
+                    onClick={() => setSettingsOpen(true)}
+                    className="rounded-full border border-slate-200 bg-white/95 px-3 py-1.5 text-[11px] text-slate-600 shadow-md backdrop-blur hover:bg-white"
+                    title="Configurar ejecución"
+                  >
+                    {runSummary}
+                  </button>
                 )}
-              >
-                <span aria-hidden className="text-base">
-                  ▶
-                </span>
-                {run.isPending ? "Lanzando…" : "Ejecutar"}
-              </button>
+                <div
+                  className={cn(
+                    "flex overflow-hidden rounded-full text-white shadow-xl",
+                    !environmentId || !steps.length || run.isPending || runProblem ? "bg-slate-300" : "bg-emerald-600",
+                  )}
+                >
+                  <button
+                    onClick={() => run.mutate()}
+                    disabled={!environmentId || !steps.length || run.isPending || Boolean(runProblem)}
+                    title={!environmentId ? "Elige un entorno arriba" : (runProblem ?? "Ejecutar flujo")}
+                    className="flex items-center gap-2 py-3 pr-4 pl-5 text-sm font-semibold transition enabled:hover:bg-emerald-500 disabled:cursor-not-allowed"
+                  >
+                    <span aria-hidden className="text-base">
+                      ▶
+                    </span>
+                    {run.isPending ? "Lanzando…" : "Ejecutar"}
+                  </button>
+                  <button
+                    onClick={() => setSettingsOpen(true)}
+                    title="Configurar ejecución"
+                    aria-label="Configurar ejecución"
+                    className="border-l border-white/25 px-3 text-base transition hover:bg-black/10"
+                  >
+                    ⚙
+                  </button>
+                </div>
+              </div>
             )}
 
             {/* Problemas del flujo: banner flotante compacto, no una columna. */}
@@ -605,6 +681,16 @@ export function WorkflowsPage() {
             {activeRunId && (
               <RunStrip
                 run={runProgress.run.data}
+                paused={
+                  runProgress.paused
+                    ? runProgress.paused.stepId
+                      ? nodeLabel(runProgress.paused.stepId)
+                      : "el siguiente caso"
+                    : null
+                }
+                canResume={runProgress.canCancel}
+                resuming={runProgress.resume.isPending}
+                onResume={(how) => runProgress.resume.mutate(how)}
                 onOpen={() => setTab("run")}
                 onClose={() => setActiveRunId(null)}
               />
@@ -780,19 +866,30 @@ export function WorkflowsPage() {
                   templateUsage={usageOf}
                   onFork={makeIndependent}
                   forking={forking}
-                  concurrency={concurrency}
-                  onConcurrency={setConcurrency}
-                  delayMs={delayMs}
-                  onDelay={setDelayMs}
+                  onRunSettings={() => setSettingsOpen(true)}
+                  runSummary={runSummary}
                   onRun={() => run.mutate()}
                   onDelete={() => deleteWorkflow.mutate(draft.id)}
-                  running={run.isPending}
+                  running={run.isPending || Boolean(runProblem)}
                 />
               </Drawer>
             )}
           </>
         )}
       </div>
+
+      {settingsOpen && draft && (
+        <RunSettingsDialog
+          settings={launchSettings}
+          nodes={steps.map((step) => ({
+            id: step.id,
+            kind: NODE_KIND_LABEL[step.kind ?? "request"] ?? String(step.kind),
+            label: nodeLabel(step.id),
+          }))}
+          onChange={setRunSettings}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
 
       {/* Los diálogos de nombrar/renombrar viven fuera del lienzo: valen en cualquier pestaña. */}
       {naming && (
@@ -887,12 +984,63 @@ function DockButton({
  * A slim bar that floats over the canvas while a run is watched: the verdict so far and the bar,
  * without taking the flow off screen — the point is to watch the nodes, not a modal.
  */
-function RunStrip({ run, onOpen, onClose }: { run: RunView | undefined; onOpen: () => void; onClose: () => void }) {
+/** What the node kinds are called where a node has no saved request to name it. */
+const NODE_KIND_LABEL: Record<string, string> = {
+  request: "Petición",
+  login: "Login",
+  branch: "If",
+  wait: "Espera",
+  merge: "Merge",
+  validate: "Validación",
+  fetch: "Fetch",
+};
+
+function RunStrip({
+  run,
+  paused,
+  canResume,
+  resuming,
+  onResume,
+  onOpen,
+  onClose,
+}: {
+  run: RunView | undefined;
+  /** What the waiting run is about to execute, or null while it is not waiting. */
+  paused: string | null;
+  canResume: boolean;
+  resuming: boolean;
+  onResume: (how: "step" | "continue") => void;
+  onOpen: () => void;
+  onClose: () => void;
+}) {
   const totals = run?.totals;
   const running = run?.status === "queued" || run?.status === "running";
   const progress = totals && totals.cases ? Math.round((totals.completed / totals.cases) * 100) : 0;
   return (
     <div className="fixed inset-x-0 bottom-4 z-40 mx-auto w-[min(680px,92vw)] rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-xl backdrop-blur">
+      {running && paused && (
+        <div className="mb-2 flex flex-wrap items-center gap-2 rounded-xl bg-amber-50 px-3 py-2">
+          <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" />
+          <span className="min-w-0 flex-1 truncate text-xs text-amber-900">
+            En pausa antes de <span className="font-semibold">{paused}</span>
+          </span>
+          {canResume && (
+            <>
+              <Button className="h-7 px-2.5 text-[11px]" disabled={resuming} onClick={() => onResume("step")}>
+                Siguiente paso
+              </Button>
+              <Button
+                variant="ghost"
+                className="h-7 bg-white px-2.5 text-[11px]"
+                disabled={resuming}
+                onClick={() => onResume("continue")}
+              >
+                Continuar hasta el final
+              </Button>
+            </>
+          )}
+        </div>
+      )}
       <div className="flex items-center gap-3">
         <span
           className={cn(
@@ -901,7 +1049,15 @@ function RunStrip({ run, onOpen, onClose }: { run: RunView | undefined; onOpen: 
           )}
         />
         <span className="shrink-0 text-xs font-semibold text-slate-800">
-          {running ? "Ejecutando el flujo…" : run?.status === "failed" ? "Terminó con fallos" : "Terminó"}
+          {running
+            ? paused
+              ? "En pausa"
+              : "Ejecutando el flujo…"
+            : run?.status === "failed"
+              ? "Terminó con fallos"
+              : run?.status === "cancelled"
+                ? "Cancelada"
+                : "Terminó"}
         </span>
         <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
           <div
