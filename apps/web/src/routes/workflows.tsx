@@ -19,6 +19,7 @@ import { cn } from "@/lib/format";
 import { unchanged } from "@/lib/config-draft";
 import {
   addStep,
+  flowNodeStartedAt,
   flowNodeStatuses,
   flowProblems,
   replaceStep,
@@ -102,6 +103,10 @@ export function WorkflowsPage() {
   const runProgress = useRunProgress(base, activeRunId ?? "");
   const stepStatus = useMemo(
     () => (activeRunId ? flowNodeStatuses(runProgress.cases) : {}),
+    [activeRunId, runProgress.cases],
+  );
+  const stepStartedAt = useMemo(
+    () => (activeRunId ? flowNodeStartedAt(runProgress.cases) : {}),
     [activeRunId, runProgress.cases],
   );
   // How the next run walks the flow — mode, pause, parallelism, stop on failure. Per flow and in this
@@ -405,6 +410,8 @@ export function WorkflowsPage() {
   // Whether the operation catalogue is open to add a plain request or a login (a request that
   // publishes the run's credential). The palette's two buttons set it before opening the drawer.
   const [addKind, setAddKind] = useState<"request" | "login">("request");
+  // Where a palette button was dropped on the canvas; the next node from the catalogue lands there.
+  const [addAt, setAddAt] = useState<{ x: number; y: number } | undefined>();
 
   /** Add a node straight from an operation in the catalogue: mint a request for it (named after the
    * operation, with the status its verb usually answers), then drop it into the open flow. One tap,
@@ -422,7 +429,8 @@ export function WorkflowsPage() {
         method: "POST",
         body: { name, operationId: operation.id, expectedStatus, parameters: {}, body: { type: "none" } },
       });
-      const withNode = addStep(steps, { id: requestTemplateId, name } as RequestTemplateView);
+      const withNode = addStep(steps, { id: requestTemplateId, name } as RequestTemplateView, addAt);
+      setAddAt(undefined);
       // A login is a request that authorizes: mint it the same way, then mark the just-added node so
       // its answer becomes the credential the rest of the run presents. The inspector tunes where
       // the token is read from; this is a working default (a `token` in the JSON body).
@@ -595,8 +603,8 @@ export function WorkflowsPage() {
                   setSelectedStep(stepId);
                   setInspectorOpen(true);
                 }}
-                onAddRequest={canEdit ? () => (setAddKind("request"), setDrawer("library")) : undefined}
-                onAddLogin={canEdit ? () => (setAddKind("login"), setDrawer("library")) : undefined}
+                onAddRequest={canEdit ? (at) => (setAddKind("request"), setAddAt(at), setDrawer("library")) : undefined}
+                onAddLogin={canEdit ? (at) => (setAddKind("login"), setAddAt(at), setDrawer("library")) : undefined}
                 runStatus={stepStatus}
                 pausedStepId={activeRunId ? pausedNodeId(runProgress.paused, runProgress.cases, draft.id) : null}
                 breakpoints={activeBreakpoints(launchSettings)}

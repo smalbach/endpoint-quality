@@ -657,6 +657,13 @@ describe("la paleta de nodos: soltar y conectar libre", () => {
     expect(v.position).toEqual({ x: 350, y: 60 });
   });
 
+  test("un nodo arrastrado desde la paleta cae donde se suelta, aunque haya otro", () => {
+    const { steps, id } = addControlStep(flow(), "branch", undefined, { x: 50, y: 70 });
+    expect(steps.find((s) => s.id === id)!.position).toEqual({ x: 50, y: 70 });
+    const withRequest = addStep(flow(), template("t2", "Listar"), { x: 400, y: 20 });
+    expect(withRequest[withRequest.length - 1].position).toEqual({ x: 400, y: 20 });
+  });
+
   test("conectar un paso a la entrada de un If suelto fija lo que lee", () => {
     const dropped = addControlStep(flow(), "branch").steps;
     const branchId = dropped.find((s) => s.kind === "branch")!.id;

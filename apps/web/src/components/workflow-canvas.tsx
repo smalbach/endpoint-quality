@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import {
   Background,
   Controls,
@@ -31,6 +31,7 @@ import {
   removeStep,
   toEdges,
   toNodes,
+  waitRemainingMs,
 } from "@/lib/workflow-draft";
 import type { OperationSummary } from "@/lib/workflow-draft";
 import { NOTIFY_CHANNELS, type NotifyNodeData } from "@/lib/workflow-notify";
@@ -177,11 +178,25 @@ function BranchNode({ data, selected }: NodeProps<Node<BranchNodeData>>) {
   );
 }
 
-type WaitNodeData = { name: string; ms: number; runStatus?: CaseStatus };
+type WaitNodeData = { name: string; ms: number; runStatus?: CaseStatus; startedAt?: string };
 
-/** A delay: pause, then let the flow through. */
+/** Milliseconds left of a running wait, ticking; null while the node is not counting down. */
+function useWaitCountdown(ms: number, startedAt: string | undefined, running: boolean): number | null {
+  const counting = running && Boolean(startedAt) && ms > 0;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!counting) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 100);
+    return () => clearInterval(timer);
+  }, [counting, startedAt]);
+  return counting && startedAt ? waitRemainingMs(ms, startedAt, now) : null;
+}
+
+/** A delay: pause, then let the flow through. While a run waits on it, it counts down what is left. */
 function WaitNode({ data, selected }: NodeProps<Node<WaitNodeData>>) {
   const status = data.runStatus;
+  const remaining = useWaitCountdown(data.ms, data.startedAt, status === "running");
   return (
     <div
       className={cn(
@@ -198,7 +213,19 @@ function WaitNode({ data, selected }: NodeProps<Node<WaitNodeData>>) {
         <span className="truncate text-xs font-semibold text-slate-800">Espera · {data.name}</span>
         <RunDot status={status} />
       </div>
-      <p className="mt-1 font-mono text-[10px] text-slate-500">{data.ms} ms</p>
+      {remaining === null ? (
+        <p className="mt-1 font-mono text-[10px] text-slate-500">{data.ms} ms</p>
+      ) : (
+        <div className="mt-1" role="timer" aria-live="off" title={`Faltan ${(remaining / 1000).toFixed(1)} s de ${data.ms} ms`}>
+          <div className="flex items-baseline justify-between font-mono text-[10px]">
+            <span className="font-semibold text-sky-700 tabular-nums">{(remaining / 1000).toFixed(1)} s</span>
+            <span className="text-slate-400">de {data.ms} ms</span>
+          </div>
+          <div className="mt-1 h-1 overflow-hidden rounded-full bg-sky-100">
+            <div className="h-full rounded-full bg-sky-500" style={{ width: `${(remaining / data.ms) * 100}%` }} />
+          </div>
+        </div>
+      )}
       <Handle type="source" position={Position.Right} />
     </div>
   );
@@ -634,7 +661,8 @@ const nodeTypes = {
  * where those rules are tested — this component only wires the canvas to them.
  *
  * The toolbar is a **palette**: every kind of node is added from it and dropped free, then wired to
- * the rest by dragging edges. A request and a login are minted from the operation catalogue (they
+ * the rest by dragging edges. Each button can also be dragged onto the canvas, and the node lands
+ * where it is dropped (loose, not hung off the selection). A request and a login are minted from the operation catalogue (they
  * need an operation); the control kinds —If, Espera, Merge, Validación— land straight away with
  * sensible defaults and read whatever is connected into them. This is the shape the reference tool
  * draws, and the point of the restructure: control flow is nodes, not behaviours hidden on a
@@ -653,6 +681,7 @@ export function WorkflowCanvas({
   onAddRequest,
   onAddLogin,
   runStatus,
+  runStartedAt,
   pausedStepId,
   breakpoints,
   onToggleBreakpoint,
@@ -665,12 +694,15 @@ export function WorkflowCanvas({
   operations: OperationSummary[];
   onChange: (steps: WorkflowStepView[]) => void;
   onSelect: (stepId: string) => void;
-  /** Open the operation catalogue to add a request node. The palette's «Petición» calls it. */
-  onAddRequest?: () => void;
+  /** Open the operation catalogue to add a request node. The palette's «Petición» calls it; a drop
+   * passes where on the canvas the node should land. */
+  onAddRequest?: (at?: { x: number; y: number }) => void;
   /** Open the operation catalogue to add a login node (a request that authorizes). */
-  onAddLogin?: () => void;
+  onAddLogin?: (at?: { x: number; y: number }) => void;
   /** Per-step live status while a run is being watched; nodes light up by it. */
   runStatus?: Record<string, CaseStatus>;
+  /** When each running node started, while a run is being watched; a wait node counts down from it. */
+  runStartedAt?: Record<string, string>;
   /** The node a watched run is paused before, drawn apart until it resumes or ends. */
   pausedStepId?: string | null;
   /** The nodes the next run stops before, marked on the canvas. */
@@ -679,8 +711,8 @@ export function WorkflowCanvas({
   onToggleBreakpoint?: (stepId: string) => void;
 }) {
   const fromDocument = useMemo(
-    () => toNodes(steps, templates, operations, runStatus) as Node[],
-    [steps, templates, operations, runStatus],
+    () => toNodes(steps, templates, operations, runStatus, runStartedAt) as Node[],
+    [steps, templates, operations, runStatus, runStartedAt],
   );
   const [nodes, setNodes] = useState<Node[]>(fromDocument);
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -751,23 +783,68 @@ export function WorkflowCanvas({
     onSelect(added.id);
   };
 
+  /** A palette button dropped on the canvas: the node's top centre lands under the pointer. */
+  const dropPalette = (event: DragEvent<HTMLDivElement>) => {
+    const kind = event.dataTransfer.getData(PALETTE_MIME);
+    if (!kind || !flow) return;
+    event.preventDefault();
+    const point = flow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+    const at = { x: Math.round(point.x - NODE_WIDTH / 2), y: Math.round(point.y - 20) };
+    if (kind === "request") return onAddRequest?.(at);
+    if (kind === "login") return onAddLogin?.(at);
+    const item = CONTROL_PALETTE.find((entry) => entry.kind === kind);
+    if (!item) return;
+    const added = addControlStep(steps, item.kind, undefined, at);
+    onChange(added.steps);
+    onSelect(added.id);
+  };
+
   return (
     <div className="flex h-full flex-col">
       {editable && (
         <div className="flex flex-wrap items-center gap-1 border-b border-slate-100 px-3 py-2">
           <span className="mr-1 text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Añadir</span>
-          <PaletteButton glyph="＋" label="Petición" title="Añadir una petición al flujo" onClick={onAddRequest} />
-          <PaletteButton glyph="🔑" label="Login" title="Añadir un login (una petición que da la credencial)" onClick={onAddLogin} />
+          <PaletteButton
+            glyph="＋"
+            label="Petición"
+            title="Añadir una petición al flujo (o arrástrala al lienzo)"
+            drag="request"
+            onClick={onAddRequest && (() => onAddRequest())}
+          />
+          <PaletteButton
+            glyph="🔑"
+            label="Login"
+            title="Añadir un login (una petición que da la credencial)"
+            drag="login"
+            onClick={onAddLogin && (() => onAddLogin())}
+          />
           <span className="mx-1 h-4 w-px bg-slate-200" aria-hidden />
           {CONTROL_PALETTE.map((item) => (
-            <PaletteButton key={item.kind} glyph={item.glyph} label={item.label} title={item.hint} onClick={() => addControl(item.kind)} />
+            <PaletteButton
+              key={item.kind}
+              glyph={item.glyph}
+              label={item.label}
+              title={item.hint}
+              drag={item.kind}
+              onClick={() => addControl(item.kind)}
+            />
           ))}
           <span className="ml-auto text-[10px] text-slate-400">
-            Suéltalos y conéctalos arrastrando · clic derecho para el menú de un nodo
+            Clic o arrástralos al lienzo, conéctalos arrastrando · clic derecho para el menú de un nodo
           </span>
         </div>
       )}
-      <div ref={paneRef} className="relative flex-1" onClick={() => setMenu(null)}>
+      <div
+        ref={paneRef}
+        className="relative flex-1"
+        onClick={() => setMenu(null)}
+        onDragOver={(event) => {
+          if (!editable || !event.dataTransfer.types.includes(PALETTE_MIME)) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+        }}
+        onDrop={editable ? dropPalette : undefined}
+      >
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -874,13 +951,37 @@ export function WorkflowCanvas({
   );
 }
 
-function PaletteButton({ glyph, label, title, onClick }: { glyph: string; label: string; title: string; onClick?: () => void }) {
+/** What a dragged palette button carries: the kind of node to add. */
+const PALETTE_MIME = "application/x-eq-node-kind";
+/** The nodes' `w-64`, to centre a dropped one under the pointer. */
+const NODE_WIDTH = 256;
+
+function PaletteButton({
+  glyph,
+  label,
+  title,
+  onClick,
+  drag,
+}: {
+  glyph: string;
+  label: string;
+  title: string;
+  onClick?: () => void;
+  /** The node kind a drag onto the canvas adds. */
+  drag?: string;
+}) {
   return (
     <button
       onClick={onClick}
       disabled={!onClick}
       title={title}
-      className="flex items-center gap-1 rounded px-1.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+      draggable={Boolean(onClick && drag)}
+      onDragStart={(event) => {
+        if (!drag) return;
+        event.dataTransfer.setData(PALETTE_MIME, drag);
+        event.dataTransfer.effectAllowed = "copy";
+      }}
+      className="flex cursor-grab items-center gap-1 rounded px-1.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-40"
     >
       <span aria-hidden>{glyph}</span> {label}
     </button>

@@ -100,12 +100,17 @@ export function uniqueName(base: string, taken: string[]): string {
   return candidate;
 }
 
-export function addStep(steps: WorkflowStepView[], template: RequestTemplateView): WorkflowStepView[] {
+export function addStep(
+  steps: WorkflowStepView[],
+  template: RequestTemplateView,
+  /** Where it was dropped on the canvas; kept as is, since the user chose the spot. */
+  at?: { x: number; y: number },
+): WorkflowStepView[] {
   const id = nextStepId(
     template.name,
     steps.map((step) => step.id),
   );
-  return [...steps, { id, requestTemplateId: template.id, position: freeSpot(steps, positionFor(steps.length)) }];
+  return [...steps, { id, requestTemplateId: template.id, position: at ?? freeSpot(steps, positionFor(steps.length)) }];
 }
 
 /**
@@ -323,10 +328,12 @@ export function addControlStep(
   steps: WorkflowStepView[],
   kind: ControlKind,
   from?: string,
+  /** Where it was dropped on the canvas; kept as is, since the user chose the spot. */
+  dropped?: { x: number; y: number },
 ): { steps: WorkflowStepView[]; id: string } {
   const id = nextStepId(CONTROL_BASE_ID[kind], steps.map((step) => step.id));
   const source = from ? steps.find((step) => step.id === from) : undefined;
-  const at = freeSpot(steps, source?.position ? { x: source.position.x + 310, y: source.position.y } : positionFor(steps.length));
+  const at = dropped ?? freeSpot(steps, source?.position ? { x: source.position.x + 310, y: source.position.y } : positionFor(steps.length));
   const check = { source: "status" as const, operator: "equals", value: "200" };
   const node: WorkflowStepView = { id, kind, position: at };
   if (from) node.dependsOn = [from];
@@ -477,6 +484,8 @@ export function toNodes(
   templates: RequestTemplateView[],
   operations: OperationSummary[],
   runStatus?: Record<string, CaseStatus>,
+  /** When each running node started (see `flowNodeStartedAt`); a wait node counts down from it. */
+  runStartedAt?: Record<string, string>,
 ) {
   const templateById = new Map(templates.map((template) => [template.id, template]));
   const operationById = new Map(operations.map((operation) => [operation.id, operation]));
@@ -489,7 +498,8 @@ export function toNodes(
       return { id: step.id, type: "branch", position, data: { name: step.id, from: step.condition?.from ?? "", runStatus: runStatusFor } };
     }
     if (kind === "wait") {
-      return { id: step.id, type: "wait", position, data: { name: step.id, ms: step.waitMs ?? 0, runStatus: runStatusFor } };
+      return { id: step.id, type: "wait", position, data: { name: step.id, ms: step.waitMs ?? 0, runStatus: runStatusFor, startedAt: runStartedAt?.[step.id] },
+      };
     }
     if (kind === "merge") {
       return {
@@ -696,17 +706,51 @@ export function toNodes(
  */
 const STATUS_RANK: Record<CaseStatus, number> = { running: 4, failed: 3, queued: 2, passed: 1, skipped: 0 };
 
+/** The node a case belongs to, or null when the case is not a flow's. */
+function caseStepId(scenarioId: string): string | null {
+  const parts = scenarioId.split(":");
+  if (parts[0] !== "workflow" || parts.length < 3) return null;
+  // A subflow's child cases are `<node>>childStep`: they light the node that runs them.
+  return parts[2].split("#")[0].split(">")[0];
+}
+
 export function flowNodeStatuses(cases: { scenarioId: string; status: CaseStatus }[]): Record<string, CaseStatus> {
   const byStep: Record<string, CaseStatus> = {};
   for (const runCase of cases) {
-    const parts = runCase.scenarioId.split(":");
-    if (parts[0] !== "workflow" || parts.length < 3) continue;
-    // A subflow's child cases are `<node>>childStep`: they light the node that runs them.
-    const stepId = parts[2].split("#")[0].split(">")[0];
+    const stepId = caseStepId(runCase.scenarioId);
+    if (!stepId) continue;
     const current = byStep[stepId];
     if (!current || STATUS_RANK[runCase.status] > STATUS_RANK[current]) byStep[stepId] = runCase.status;
   }
   return byStep;
+}
+
+/**
+ * When each node's running case started, from a live run's cases: what a wait node counts down
+ * from. Nodes with nothing running are absent; with several running cases, the latest start wins.
+ */
+export function flowNodeStartedAt(
+  cases: { scenarioId: string; status: CaseStatus; startedAt?: string | null }[],
+): Record<string, string> {
+  const byStep: Record<string, string> = {};
+  for (const runCase of cases) {
+    if (runCase.status !== "running" || !runCase.startedAt) continue;
+    const stepId = caseStepId(runCase.scenarioId);
+    if (!stepId) continue;
+    const current = byStep[stepId];
+    if (!current || Date.parse(runCase.startedAt) > Date.parse(current)) byStep[stepId] = runCase.startedAt;
+  }
+  return byStep;
+}
+
+/**
+ * Milliseconds a wait of `ms` started at `startedAt` has left at `now`, kept within [0, ms]: a
+ * browser clock off from the server's never shows more than the whole pause, nor less than nothing.
+ */
+export function waitRemainingMs(ms: number, startedAt: string, now: number): number {
+  const elapsed = now - Date.parse(startedAt);
+  if (Number.isNaN(elapsed)) return ms;
+  return Math.min(ms, Math.max(0, ms - elapsed));
 }
 
 /**
