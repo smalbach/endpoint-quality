@@ -127,6 +127,7 @@ export function duplicateStep(steps: WorkflowStepView[], stepId: string): Workfl
   delete clone.dependsOn;
   // A copy has no edges, so it is on no branch either — its side is decided when it is rewired.
   delete clone.branch;
+  delete clone.inLoop;
   return [...steps, clone];
 }
 
@@ -157,6 +158,11 @@ export function removeStep(steps: WorkflowStepView[], stepId: string): WorkflowS
       if (next.validate?.from === stepId) next = { ...next, validate: { ...next.validate, from: "" } };
       if (next.script?.from === stepId) next = { ...next, script: { code: next.script.code } };
       if (next.poll?.from === stepId) next = { ...next, poll: { ...next.poll, from: "" } };
+      if (next.loop?.from === stepId) next = { ...next, loop: { ...next.loop, from: "" } };
+      if (next.inLoop === stepId) {
+        const { inLoop: _inLoop, ...rest } = next;
+        next = rest;
+      }
       return next;
     });
 }
@@ -170,9 +176,15 @@ export function connectStep(
   if (!source || !target || source === target) return steps;
   const branching = (steps.find((step) => step.id === source)?.kind ?? "request") === "branch";
   const take = handle === "then" || handle === "else" ? handle : undefined;
+  const looping = steps.find((step) => step.id === source)?.kind === "loop";
   return steps.map((step) => {
     if (step.id !== target) return step;
     const linked = withDependencies(step, [...new Set([...(step.dependsOn ?? []), source])]);
+    // A wire from a loop's «cada» output puts the target inside it; «fin» is an ordinary edge.
+    if (looping && handle === "each") return { ...linked, inLoop: source };
+    if (linked.kind === "loop" && !linked.loop?.from) {
+      return { ...linked, loop: { path: "data", as: "item", max: 50, ...linked.loop, from: source } };
+    }
     // A wire from a branch handle also records which side of it the target sits on.
     if (branching && take) return { ...linked, branch: { of: source, take } };
     // A control node that reads a step —a branch or a validate— wires its `from` to whatever was
@@ -206,12 +218,13 @@ export const CONTROL_PALETTE: { kind: ControlKind; glyph: string; label: string;
   { kind: "set", glyph: "𝑥", label: "Set", hint: "Asigna variables desde plantillas ({{otra}}, {{$uuid}}) sin hacer peticiones" },
   { kind: "script", glyph: "{ }", label: "Script", hint: "JavaScript en un proceso aislado: lee una respuesta, escribe variables, pm.test" },
   { kind: "poll", glyph: "↻", label: "Reintento", hint: "Repite la petición de un paso hasta que su respuesta cumpla las comprobaciones (polling)" },
+  { kind: "loop", glyph: "∀", label: "Bucle", hint: "Recorre una lista: lo que cuelga de «cada» se ejecuta una vez por elemento, y «fin» sigue después" },
 ];
 
 /** The kinds the palette drops straight onto the canvas. `fetch` sends a call, but one written on the
  * node itself, so it needs no operation from the catalogue and lands like the control kinds; `poll`
  * re-sends the request of the node wired into it. */
-type ControlKind = "branch" | "wait" | "merge" | "validate" | "fetch" | "set" | "script" | "poll";
+type ControlKind = "branch" | "wait" | "merge" | "validate" | "fetch" | "set" | "script" | "poll" | "loop";
 const CONTROL_BASE_ID: Record<ControlKind, string> = {
   branch: "rama",
   wait: "espera",
@@ -221,7 +234,29 @@ const CONTROL_BASE_ID: Record<ControlKind, string> = {
   set: "variables",
   script: "script",
   poll: "reintento",
+  loop: "bucle",
 };
+
+/**
+ * The nodes a loop runs once per element: the ones wired to its «cada» output, and everything
+ * downstream of those. The same rule as the engine's `loopBody`, so the canvas says what will run.
+ */
+export function loopBodyIds(steps: WorkflowStepView[], loopId: string): string[] {
+  const body = new Set(
+    steps.filter((step) => step.inLoop === loopId && (step.dependsOn ?? []).includes(loopId)).map((step) => step.id),
+  );
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const step of steps) {
+      if (body.has(step.id) || step.id === loopId) continue;
+      if ((step.dependsOn ?? []).some((id) => body.has(id))) {
+        body.add(step.id);
+        grew = true;
+      }
+    }
+  }
+  return steps.filter((step) => body.has(step.id)).map((step) => step.id);
+}
 
 /**
  * A standalone control node, dropped on the canvas and wired by hand.
@@ -252,6 +287,7 @@ export function addControlStep(
   if (kind === "fetch") node.fetch = { method: "GET", url: "" };
   if (kind === "set") node.set = { assignments: [{ variable: "", value: "" }] };
   if (kind === "script") node.script = from ? { code: "", from } : { code: "" };
+  if (kind === "loop") node.loop = { from: from ?? "", path: "data", as: "item", max: 50 };
   if (kind === "poll") {
     node.poll = { from: from ?? "", attempts: 5, delayMs: 2000 };
     node.checks = [check];
@@ -281,6 +317,11 @@ export function disconnectEdges(
     if (next.validate && cut.includes(next.validate.from)) next = { ...next, validate: { ...next.validate, from: "" } };
     if (next.script?.from && cut.includes(next.script.from)) next = { ...next, script: { code: next.script.code } };
     if (next.poll && cut.includes(next.poll.from)) next = { ...next, poll: { ...next.poll, from: "" } };
+    if (next.loop && cut.includes(next.loop.from)) next = { ...next, loop: { ...next.loop, from: "" } };
+    if (next.inLoop && cut.includes(next.inLoop)) {
+      const { inLoop: _inLoop, ...rest } = next;
+      next = rest;
+    }
     if (next.branch && cut.includes(next.branch.of)) {
       const { branch: _branch, ...rest } = next;
       next = rest;
@@ -303,17 +344,24 @@ export function replaceStep(steps: WorkflowStepView[], next: WorkflowStepView): 
 }
 
 export function toEdges(steps: WorkflowStepView[]) {
+  const loops = new Set(steps.filter((step) => step.kind === "loop").map((step) => step.id));
   return steps.flatMap((step) =>
     (step.dependsOn ?? []).map((source) => {
       // An edge that leaves a branch leaves one of its two handles: the «sí» (then) or the «no»
       // (else). Labelled so the path a node sits on is readable without opening it.
       const take = step.branch?.of === source ? step.branch.take : undefined;
+      // A loop has two as well: «cada» into its body, «fin» to what runs after it.
+      const side = loops.has(source) ? (step.inLoop === source ? "each" : "done") : undefined;
       return {
         id: `${source}-${step.id}`,
         source,
         target: step.id,
         animated: true,
-        ...(take ? { sourceHandle: take, label: take === "then" ? "sí" : "no" } : {}),
+        ...(take
+          ? { sourceHandle: take, label: take === "then" ? "sí" : "no" }
+          : side
+            ? { sourceHandle: side, label: side === "each" ? "cada" : "fin" }
+            : {}),
       };
     }),
   );
@@ -426,6 +474,22 @@ export function toNodes(
           name: step.id,
           from: step.script?.from ?? "",
           lines: step.script?.code.trim() ? step.script.code.trim().split("\n").length : 0,
+          runStatus: runStatusFor,
+        },
+      };
+    }
+    if (kind === "loop") {
+      return {
+        id: step.id,
+        type: "loop",
+        position,
+        data: {
+          name: step.id,
+          from: step.loop?.from ?? "",
+          path: step.loop?.path ?? "",
+          as: step.loop?.as ?? "",
+          max: step.loop?.max ?? 50,
+          body: loopBodyIds(steps, step.id).length,
           runStatus: runStatusFor,
         },
       };
@@ -654,6 +718,7 @@ export function variablesFor(steps: WorkflowStepView[], stepId: string, environm
     if (!step) continue;
     upstream.push(...(step.captures ?? []).map((capture) => capture.variable).filter(Boolean));
     upstream.push(...(step.set?.assignments ?? []).map((assignment) => assignment.variable).filter(Boolean));
+    if (step.kind === "loop" && step.loop?.as) upstream.push(step.loop.as);
     pending.push(...(step.dependsOn ?? []));
   }
   return [...new Set([...environment, ...upstream, ...COMPUTED_VALUES])];
@@ -701,6 +766,17 @@ export function flowProblems(steps: WorkflowStepView[]): FlowProblem[] {
     }
     if (kind === "script" && !step.script?.code.trim())
       problems.push({ message: `El script «${step.id}» no tiene código.`, stepId: step.id });
+    if (kind === "loop") {
+      if (!step.loop?.from)
+        problems.push({ message: `El bucle «${step.id}» no está conectado a ningún paso con una lista.`, stepId: step.id });
+      for (const id of loopBodyIds(steps, step.id)) {
+        const inner = steps.find((other) => other.id === id);
+        if (inner?.kind === "loop")
+          problems.push({ message: `El bucle «${id}» está dentro de «${step.id}»: no se pueden anidar.`, stepId: id });
+        else if (inner?.forEach)
+          problems.push({ message: `«${id}» está dentro del bucle «${step.id}» y tiene su propio forEach.`, stepId: id });
+      }
+    }
     if (kind === "poll") {
       const source = steps.find((other) => other.id === step.poll?.from);
       if (!step.poll?.from)

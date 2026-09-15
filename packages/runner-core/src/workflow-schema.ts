@@ -15,7 +15,7 @@ import { scenarioCredentialSchema } from "./schema.ts";
 import type { WorkflowStep } from "./workflows.ts";
 import { VARIABLE_NAME } from "./variables.ts";
 import { CHECK_OPERATORS, CHECK_SOURCES } from "./checks.ts";
-import { CAPTURE_SOURCES, FETCH_METHODS, STEP_ON_ERROR, STEP_WAITS, concurrentPairs } from "./workflows.ts";
+import { CAPTURE_SOURCES, FETCH_METHODS, STEP_ON_ERROR, STEP_WAITS, concurrentPairs, loopBody } from "./workflows.ts";
 
 const jsonValue: z.ZodType<unknown> = z.lazy(() =>
   z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(jsonValue), z.record(z.string(), jsonValue)]),
@@ -153,7 +153,18 @@ export const workflowStepSchema = z.object({
   // A control node (branch/wait/merge/validate) sends nothing, so it carries no template; a
   // `request` and a `login` node must (checked below).
   requestTemplateId: z.string().uuid().optional(),
-  kind: z.enum(["request", "login", "branch", "wait", "merge", "validate", "fetch", "set", "script", "poll"]).optional(),
+  kind: z.enum(["request", "login", "branch", "wait", "merge", "validate", "fetch", "set", "script", "poll", "loop"]).optional(),
+  // The `loop` node: the list it walks. Same ceilings as a `forEach`, for the same reason.
+  loop: z
+    .object({
+      from: z.string().min(1).max(60),
+      path: z.string().min(1).max(500),
+      as: z.string().regex(VARIABLE_NAME, "nombre de variable inválido"),
+      max: z.number().int().min(1).max(200).optional(),
+    })
+    .optional(),
+  // A node on a loop's «cada» output.
+  inLoop: z.string().min(1).max(60).optional(),
   // The `poll` node: the step whose request it repeats. Capped low for the same reason a retry is:
   // attempts times the delay is wall clock every run containing it pays.
   poll: z
@@ -283,6 +294,7 @@ export const workflowDocumentSchema = z
         ["validate", step.validate?.from],
         ["script", step.script?.from],
         ["poll", step.poll?.from],
+        ["loop", step.loop?.from],
       ] as const) {
         if (!reference) continue;
         if (!ids.has(reference)) {
@@ -379,6 +391,24 @@ export const workflowDocumentSchema = z
       if (kind === "script" && !step.script?.code.trim()) {
         // An empty script asserts nothing and writes nothing: a green case that proves nothing ran.
         context.addIssue({ code: "custom", message: "un nodo script necesita código", path: ["steps", index, "script", "code"] });
+      }
+      if (step.loop && kind !== "loop") {
+        context.addIssue({ code: "custom", message: "solo un nodo bucle lleva su lista", path: ["steps", index, "loop"] });
+      }
+      if (kind === "loop" && !step.loop) {
+        context.addIssue({ code: "custom", message: "un bucle necesita la lista que recorre", path: ["steps", index, "loop"] });
+        broken = true;
+      }
+      if (step.inLoop) {
+        const owner = document.steps.find((other) => other.id === step.inLoop);
+        if (owner?.kind !== "loop" || !(step.dependsOn ?? []).includes(step.inLoop)) {
+          context.addIssue({
+            code: "custom",
+            message: "un nodo dentro de un bucle tiene que depender de ese bucle",
+            path: ["steps", index, "inLoop"],
+          });
+          broken = true;
+        }
       }
       if (step.poll && kind !== "poll") {
         context.addIssue({ code: "custom", message: "solo un nodo reintento lleva su bloque poll", path: ["steps", index, "poll"] });
@@ -487,6 +517,50 @@ export const workflowDocumentSchema = z
      * refused on the way in and not gated on a number chosen later.
      */
     if (broken) return;
+
+    /**
+     * A loop walks its body in order, once per element, starting when the loop starts. So what a
+     * body step waits for has to be the loop, another body step, or something that finished before
+     * the loop began — anything else has no answer yet on the first iteration. A loop inside a loop,
+     * or a body step with a `forEach` of its own, would multiply case slots nobody reserved.
+     */
+    for (const loop of document.steps.filter((step) => step.kind === "loop")) {
+      const body = new Set(loopBody(document.steps as WorkflowStep[], loop.id));
+      const before = new Set<string>();
+      const walk = [...(loop.dependsOn ?? [])];
+      while (walk.length) {
+        const id = walk.pop()!;
+        if (before.has(id)) continue;
+        before.add(id);
+        walk.push(...(document.steps.find((step) => step.id === id)?.dependsOn ?? []));
+      }
+      for (const [index, step] of document.steps.entries()) {
+        if (!body.has(step.id)) continue;
+        if (step.kind === "loop") {
+          context.addIssue({
+            code: "custom",
+            message: `«${step.id}» está dentro del bucle «${loop.id}»: no se pueden anidar bucles`,
+            path: ["steps", index, "kind"],
+          });
+        }
+        if (step.forEach) {
+          context.addIssue({
+            code: "custom",
+            message: `«${step.id}» está dentro del bucle «${loop.id}» y no puede recorrer su propia lista`,
+            path: ["steps", index, "forEach"],
+          });
+        }
+        for (const dependency of step.dependsOn ?? []) {
+          if (dependency === loop.id || body.has(dependency) || before.has(dependency)) continue;
+          context.addIssue({
+            code: "custom",
+            message: `«${step.id}» está dentro del bucle «${loop.id}» y depende de «${dependency}», que no ha terminado cuando el bucle empieza`,
+            path: ["steps", index, "dependsOn"],
+          });
+        }
+      }
+    }
+
     const concurrent = concurrentPairs(document.steps as WorkflowStep[]);
     for (const [left, right] of concurrent) {
       // A set node writes into the same map a capture does, so its names race the same way.

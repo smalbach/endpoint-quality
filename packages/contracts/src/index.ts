@@ -261,7 +261,13 @@ export type StepKind =
   | "fetch"
   | "set"
   | "script"
-  | "poll";
+  | "poll"
+  | "loop";
+
+/** A `loop` node: the list at `path` in `from`'s response, each element bound as `as` (and `as.field`),
+ * at most `max` (50) times. Its body is the nodes wired to its «cada» output (`inLoop`) and everything
+ * downstream of them; they run once per element, before the «fin» side. */
+export type StepLoopView = { from: string; path: string; as: string; max?: number };
 
 /** A `poll` node: re-sends `from`'s request, up to `attempts` times `delayMs` apart, until the node's
  * `checks` pass on the answer. `from` must be a request or fetch node this one depends on. */
@@ -315,6 +321,10 @@ export type WorkflowStepView = {
   script?: StepScriptView;
   /** On a `poll` node: the step it repeats until its checks pass. */
   poll?: StepPollView;
+  /** On a `loop` node: the list it walks. */
+  loop?: StepLoopView;
+  /** On a node wired to a loop's «cada» output: that loop's id. */
+  inLoop?: string;
   /** On any node downstream of an `If`: which of its two paths this node sits on. */
   branch?: StepBranchView;
   dependsOn?: string[];

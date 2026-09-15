@@ -4,7 +4,7 @@ import { RequestBodyEditor } from "@/components/request-body-editor";
 import { RequestFieldsEditor } from "@/components/request-fields-editor";
 import { RequestPreviewPanel } from "@/components/request-preview";
 import { fieldMapsFrom, fieldProblems, fieldRowsFrom, type FieldRow } from "@/lib/request-fields";
-import { removeStep, replaceStep, suggestCaptures, variablesFor } from "@/lib/workflow-draft";
+import { loopBodyIds, removeStep, replaceStep, suggestCaptures, variablesFor } from "@/lib/workflow-draft";
 import type { OperationSummary } from "@/lib/workflow-draft";
 import type {
   CaptureSource,
@@ -177,6 +177,14 @@ export function WorkflowInspector({
         ) : step && step.kind === "script" ? (
           <ScriptInspector
             step={step}
+            canEdit={canEdit}
+            onChange={(next) => onSteps(replaceStep(steps, next))}
+            onRemove={() => onSteps(removeStep(steps, step.id))}
+          />
+        ) : step && step.kind === "loop" ? (
+          <LoopInspector
+            step={step}
+            body={loopBodyIds(steps, step.id)}
             canEdit={canEdit}
             onChange={(next) => onSteps(replaceStep(steps, next))}
             onRemove={() => onSteps(removeStep(steps, step.id))}
@@ -1073,6 +1081,94 @@ function ScriptInspector({
         onChange={(event) => onChange({ ...step, script: { ...script, code: event.target.value } })}
       />
       <FailureEditor step={step} canEdit={canEdit} onChange={onChange} />
+      {canEdit && (
+        <Button variant="ghost" className="mt-3 h-8 w-full text-xs text-rose-600" onClick={onRemove}>
+          Eliminar nodo
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** A loop node: where the list is, what each element is called, and what runs per element. */
+function LoopInspector({
+  step,
+  body,
+  canEdit,
+  onChange,
+  onRemove,
+}: {
+  step: WorkflowStepView;
+  body: string[];
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+  onRemove: () => void;
+}) {
+  const sources = step.dependsOn ?? [];
+  const loop = step.loop ?? { from: "", path: "data", as: "item", max: 50 };
+  const setLoop = (change: Partial<typeof loop>) => onChange({ ...step, loop: { ...loop, ...change } });
+  const name = loop.as || "item";
+
+  return (
+    <div>
+      <p className="text-xs font-semibold text-slate-800">Bucle</p>
+      <p className="mt-0.5 text-[11px] leading-5 text-slate-500">
+        Recorre una lista que devolvió un paso anterior. Lo que conectes a la salida «cada» —y todo lo que cuelgue de ello— se
+        ejecuta una vez por elemento, en orden, y cada vuelta deja su propio caso por nodo. La salida «fin» sigue cuando
+        terminan todas las vueltas.
+      </p>
+      {sources.length === 0 ? (
+        <p className="mt-3 text-[11px] text-amber-700">Conéctalo al paso cuya respuesta trae la lista.</p>
+      ) : (
+        <Field label="Lee la lista de">
+          <select className={inputClass} value={loop.from} disabled={!canEdit} onChange={(event) => setLoop({ from: event.target.value })}>
+            {!sources.includes(loop.from) && <option value="">Elige un paso</option>}
+            {sources.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+      <Field label="Ruta a la lista en el body">
+        <input
+          className={`${inputClass} font-mono text-xs`}
+          value={loop.path}
+          placeholder="data.items"
+          disabled={!canEdit}
+          onChange={(event) => setLoop({ path: event.target.value })}
+        />
+      </Field>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Cada elemento">
+          <input
+            className={`${inputClass} font-mono text-xs`}
+            value={loop.as}
+            disabled={!canEdit}
+            onChange={(event) => setLoop({ as: event.target.value })}
+          />
+        </Field>
+        <Field label="Máx. vueltas">
+          <input
+            className={inputClass}
+            type="number"
+            min={1}
+            max={200}
+            value={loop.max ?? 50}
+            disabled={!canEdit}
+            onChange={(event) => setLoop({ max: Math.min(200, Math.max(1, Number(event.target.value) || 1)) })}
+          />
+        </Field>
+      </div>
+      <p className="text-[11px] leading-5 text-slate-500">
+        Úsalo como <code className="font-mono">{`{{${name}.id}}`}</code> campo a campo, o{" "}
+        <code className="font-mono">{`{{${name}}}`}</code> para el elemento entero en JSON.
+      </p>
+      <p className={`mt-2 text-[11px] leading-5 ${body.length ? "text-slate-600" : "text-amber-700"}`}>
+        {body.length ? `Por vuelta: ${body.join(" → ")}` : "Nada conectado a «cada»: el bucle no ejecutará nada."}
+      </p>
+      <FailureEditor step={step} canEdit={canEdit} retries={false} onChange={onChange} />
       {canEdit && (
         <Button variant="ghost" className="mt-3 h-8 w-full text-xs text-rose-600" onClick={onRemove}>
           Eliminar nodo

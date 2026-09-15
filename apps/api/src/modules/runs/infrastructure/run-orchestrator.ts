@@ -30,6 +30,7 @@ import {
   holds,
   interpolateValue,
   listAt,
+  loopBody,
   orderWorkflowSteps,
   readAuthorization,
   unresolvedVariables,
@@ -38,6 +39,7 @@ import {
   type Assertion,
   type FailureKind,
   type ResolvedOperation,
+  type StepLoop,
   type StepPoll,
   type StepRequest,
   type WorkflowStep,
@@ -379,13 +381,20 @@ export class RunOrchestrator {
     offset: number,
   ) {
     const ordered = orderWorkflowSteps(workflow.definition, `El flujo "${workflow.name}"`);
+    // A step inside a loop runs once per element, so it takes a slot per iteration the loop may walk
+    // — for the same reason a `forEach` step does.
+    const repeats = new Map<string, number>();
+    for (const step of ordered) {
+      if (step.kind !== "loop" || !step.loop) continue;
+      for (const id of loopBody(ordered, step.id)) repeats.set(id, step.loop.max ?? 50);
+    }
     let cursor = offset;
     const items = ordered.map((step) => {
       const position = cursor;
       // A looping step reserves a slot per element it may walk. They cannot be handed out while
       // walking — the ceiling is what the author wrote, the length is what the target answers, and
       // `position` has to be unique across the whole run either way.
-      cursor += step.forEach ? (step.forEach.max ?? 50) : 1;
+      cursor += step.forEach ? (step.forEach.max ?? 50) : (repeats.get(step.id) ?? 1);
       const base = {
         id: randomUUID(),
         runId: run.id,
@@ -476,12 +485,15 @@ export class RunOrchestrator {
       permissive: new Set(prepared.filter((item) => item.step.onError === "continue").map((item) => item.step.id)),
       // Every step of this walk by id, for the node that sends another step's request again.
       items: new Map(prepared.map((item) => [item.step.id, item])),
+      bodies: loopBodies(prepared),
       budget,
       stopped: false,
     };
 
     const concurrency = Math.max(1, run.plan.concurrency ?? 1);
-    const remaining = new Map(prepared.map((item) => [item.step.id, item]));
+    // A loop's body is walked by its loop, once per element — never on its own.
+    const inBody = new Set([...state.bodies.values()].flat().map((item) => item.step.id));
+    const remaining = new Map(prepared.filter((item) => !inBody.has(item.step.id)).map((item) => [item.step.id, item]));
     const running = new Map<string, Promise<string>>();
     let cancelled = false;
     let dispatched = 0;
@@ -504,7 +516,9 @@ export class RunOrchestrator {
         dispatched += 1;
         running.set(
           item.step.id,
-          this.runStep(run, context, item, state).then(() => item.step.id),
+          this.runStep(run, context, item, state)
+            .then(() => this.closeLoopBody(run, item, state))
+            .then(() => item.step.id),
         );
       }
 
@@ -537,7 +551,7 @@ export class RunOrchestrator {
   private async runStep(
     run: Run,
     context: ExecutionContext,
-    item: ReturnType<RunOrchestrator["prepareWorkflow"]>["items"][number],
+    item: PreparedItem,
     state: WalkState,
   ): Promise<void> {
     const { passed, responses, permissive, budget, branches } = state;
@@ -747,6 +761,12 @@ export class RunOrchestrator {
     // checks — the job that answers `pending` until it is `done`.
     if (item.step.kind === "poll" && item.step.poll) {
       await this.poll(run, context, item, state, startedAt, item.step.poll);
+      return;
+    }
+
+    // A loop node walks its body once per element of a list a previous step returned.
+    if (item.step.kind === "loop" && item.step.loop) {
+      await this.loop(run, context, item, state, startedAt, item.step.loop);
       return;
     }
 
@@ -1019,6 +1039,143 @@ export class RunOrchestrator {
     });
   }
 
+  /**
+   * A loop node: its body, once per element of the list at `path` in `from`'s response.
+   *
+   * Each iteration walks the body in order with its own view of the walk — which step passed, which
+   * way a branch went, what answered — seeded from the outer one, so a body step can still read a
+   * step that ran before the loop. The variables are the run's: what an iteration captures is there
+   * for the rest of it and, after the loop, the last iteration's is what the «fin» side sees. Every
+   * body step gets a case per iteration, in the slots `prepareWorkflow` reserved.
+   *
+   * Iterations run one after the other, and a pause set on a body node does not stop inside it.
+   */
+  private async loop(
+    run: Run,
+    context: ExecutionContext,
+    item: PreparedItem,
+    state: WalkState,
+    startedAt: Date,
+    loop: StepLoop,
+  ): Promise<void> {
+    const body = state.bodies.get(item.step.id) ?? [];
+    const sent = { method: "LOOP", url: `recorre ${loop.from}.${loop.path}`, headers: {}, body: null };
+    const source = state.responses.get(loop.from);
+    const list = source ? listAt(source.actual.body, loop.path) : null;
+    if (!list) {
+      // Unlike a `forEach` over nothing, which is an empty walk: this node's whole claim is «here
+      // is a list», and an answer without one is the finding.
+      await this.finishControl(run, item, state, startedAt, {
+        ok: false,
+        failure: "flow",
+        assertions: [{ label: "Bucle", pass: false, detail: `No hay una lista en ${loop.from} → ${loop.path}` }],
+        sent,
+      });
+      return;
+    }
+
+    const wanted = list.slice(0, loop.max ?? 50);
+    // The run's ceiling holds whole iterations: half a body walked is a report about nothing.
+    const allowed =
+      wanted.length <= 1 || body.length === 0
+        ? wanted.length
+        : Math.min(wanted.length, 1 + Math.floor(Math.max(0, state.budget.extra) / body.length));
+    if (allowed > 1) state.budget.extra -= (allowed - 1) * body.length;
+
+    const started: RunCase = { ...item.runCase, status: "running", startedAt };
+    await this.runs.saveCase(started);
+    this.eventBus.publish(new RunCaseStartedEvent(run.projectId, run.id, started));
+
+    const failed: number[] = [];
+    const outcome = new Map(body.map((entry) => [entry.step.id, true]));
+    let walked = 0;
+    for (const [index, element] of wanted.slice(0, allowed).entries()) {
+      if (await this.queue.isCancelled(run.id)) break;
+      walked += 1;
+      Object.assign(context.target.variables, bindElement(loop.as, element));
+      const iteration: WalkState = {
+        ...state,
+        passed: new Map([...state.passed, [item.step.id, true]]),
+        responses: new Map(state.responses),
+        branches: new Map(state.branches),
+        stopped: false,
+      };
+      for (const entry of body) {
+        // The first iteration reuses the row queued for the step, the rest take its reserved slots.
+        const runCase: RunCase = {
+          ...entry.runCase,
+          ...(index === 0 ? {} : { id: randomUUID(), position: entry.runCase.position + index }),
+          scenarioId: `${entry.runCase.scenarioId}#${index}`,
+        };
+        if (iteration.stopped) {
+          const at = this.clock.now();
+          const skipped: RunCase = { ...runCase, status: "skipped", startedAt: at, finishedAt: at, durationMs: 0 };
+          await this.runs.saveCase(skipped);
+          await this.announce(run, skipped);
+          continue;
+        }
+        await this.runStep(run, context, { ...entry, runCase }, iteration);
+      }
+      let held = true;
+      for (const entry of body) {
+        if (iteration.passed.get(entry.step.id) === true) continue;
+        outcome.set(entry.step.id, false);
+        held = false;
+      }
+      if (!held) failed.push(index + 1);
+      if (iteration.stopped) {
+        state.stopped = true;
+        break;
+      }
+    }
+
+    if (walked > 0) for (const [id, held] of outcome) state.passed.set(id, held);
+    const ok = failed.length === 0;
+    const assertions: Assertion[] = [
+      {
+        label: "Bucle",
+        pass: ok,
+        detail:
+          list.length === 0
+            ? "La lista está vacía: el cuerpo no se ejecutó"
+            : ok
+              ? `Recorrió ${walked} de ${list.length} elementos`
+              : `Fallaron ${failed.length} de ${walked} vueltas (${failed.join(", ")})`,
+      },
+      ...(allowed < wanted.length
+        ? [
+            {
+              label: "Bucle recortado",
+              pass: false,
+              severity: "warning" as const,
+              detail: `Se recorrieron ${allowed} de ${wanted.length} elementos: la corrida llegó al tope de ${this.env.MAX_RUN_CASES} casos`,
+            },
+          ]
+        : []),
+    ];
+    await this.finishControl(run, item, state, startedAt, {
+      ok,
+      failure: ok ? null : "flow",
+      assertions,
+      sent,
+      durationMs: this.clock.now().getTime() - startedAt.getTime(),
+    });
+  }
+
+  /** A loop's body steps it never walked — the loop was skipped, found no list or an empty one —
+   * still get a verdict: a case left `queued` is not a result. */
+  private async closeLoopBody(run: Run, item: PreparedItem, state: WalkState): Promise<void> {
+    if (item.step.kind !== "loop") return;
+    for (const entry of state.bodies.get(item.step.id) ?? []) {
+      if (state.passed.has(entry.step.id)) continue;
+      const at = this.clock.now();
+      const skipped: RunCase = { ...entry.runCase, status: "skipped", startedAt: at, finishedAt: at, durationMs: 0 };
+      state.passed.set(entry.step.id, true);
+      await this.runs.saveCase(skipped);
+      await this.announce(run, skipped);
+    }
+  }
+
   /** A node's captures over one answer, as the assertion a request leaves for them. */
   private captureInto(step: WorkflowStep, actual: ActualResponse, context: ExecutionContext): Assertion | null {
     if (!step.captures?.length) return null;
@@ -1118,6 +1275,19 @@ type PreparedItem = {
   runCase: RunCase;
 };
 
+/** Each loop node's body, as the prepared items in walking order. */
+function loopBodies(prepared: PreparedItem[]): Map<string, PreparedItem[]> {
+  const steps = prepared.map((item) => item.step);
+  return new Map(
+    prepared
+      .filter((item) => item.step.kind === "loop")
+      .map((item) => {
+        const body = new Set(loopBody(steps, item.step.id));
+        return [item.step.id, prepared.filter((entry) => body.has(entry.step.id))] as const;
+      }),
+  );
+}
+
 /** What a walk carries between its steps. One object rather than five arguments, because with
  * several in flight they are one shared thing and passing them apart invites copying one. */
 type WalkState = {
@@ -1127,6 +1297,8 @@ type WalkState = {
   branches: Map<string, boolean>;
   permissive: Set<string>;
   items: Map<string, PreparedItem>;
+  /** Each loop node's body, as prepared items in walking order. */
+  bodies: Map<string, PreparedItem[]>;
   budget: { extra: number };
   stopped: boolean;
 };
@@ -1225,6 +1397,8 @@ function controlCaseFields(step: WorkflowStep): { operationId: string; method: s
       return { operationId: "", method: "SCRIPT", path: step.script?.from ? `lee ${step.script.from}` : "script" };
     case "poll":
       return { operationId: "", method: "RETRY", path: `repite ${step.poll?.from ?? ""}` };
+    case "loop":
+      return { operationId: "", method: "LOOP", path: `recorre ${step.loop?.from ?? ""}.${step.loop?.path ?? ""}` };
     default:
       return null;
   }

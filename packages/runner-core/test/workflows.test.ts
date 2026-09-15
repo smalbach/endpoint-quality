@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { describe } from "node:test";
-import { applyCaptures, orderWorkflowSteps, withinBudget } from "../src/workflows.ts";
+import { applyCaptures, loopBody, orderWorkflowSteps, withinBudget, type WorkflowStep } from "../src/workflows.ts";
 import { safeParseWorkflowDocument } from "../src/workflow-schema.ts";
 
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -283,6 +283,34 @@ describe("nodos de la paleta (login, espera, merge, validación)", () => {
     assert.equal(parse([req("crear"), poll("crear", { poll: { from: "crear", attempts: 21, delayMs: 0 } })]), false);
     assert.equal(parse([req("crear"), { id: "p", kind: "poll", dependsOn: ["crear"], checks: [check] }]), false);
     assert.equal(parse([{ ...req("crear"), poll: { from: "crear", attempts: 1, delayMs: 0 } }]), false);
+  });
+
+  test("un bucle recorre lo que cuelga de «cada»; dentro solo se depende de lo que ya terminó", () => {
+    const parse = (steps: unknown[]) => safeParseWorkflowDocument({ steps }).ok;
+    const loop = { id: "b", kind: "loop", dependsOn: ["listar"], loop: { from: "listar", path: "data", as: "item" } };
+    const inside = req("leer", { dependsOn: ["b"], inLoop: "b" });
+    const downstream = req("anota", { dependsOn: ["leer"] });
+    const after = req("fin", { dependsOn: ["b"] });
+    const steps = [req("listar"), loop, inside, downstream, after];
+    // Lo que cuelga de un nodo del cuerpo también es cuerpo; «fin» depende del bucle y queda fuera.
+    assert.deepEqual(loopBody(steps as WorkflowStep[], "b"), ["leer", "anota"]);
+    assert.equal(parse(steps), true);
+    // Un antecesor del bucle ya terminó; un paso que corre a su lado todavía no.
+    assert.equal(parse([req("listar"), loop, req("leer", { dependsOn: ["b", "listar"], inLoop: "b" })]), true);
+    assert.equal(
+      parse([req("listar"), loop, req("otro", { dependsOn: ["listar"] }), req("leer", { dependsOn: ["b", "otro"], inLoop: "b" })]),
+      false,
+    );
+    // Sin anidar, sin forEach propio, y `inLoop` solo hacia un bucle del que depende.
+    assert.equal(
+      parse([req("listar"), loop, { id: "b2", kind: "loop", dependsOn: ["b"], inLoop: "b", loop: { from: "b", path: "x", as: "y" } }]),
+      false,
+    );
+    assert.equal(parse([req("listar"), loop, req("leer", { dependsOn: ["b"], inLoop: "b", forEach: { from: "b", path: "x", as: "z" } })]), false);
+    assert.equal(parse([req("listar"), loop, req("leer", { inLoop: "b" })]), false);
+    assert.equal(parse([req("listar"), req("leer", { dependsOn: ["listar"], inLoop: "listar" })]), false);
+    assert.equal(parse([req("listar"), { id: "b", kind: "loop", dependsOn: ["listar"] }]), false);
+    assert.equal(parse([req("listar"), { ...loop, loop: { from: "listar", path: "data", as: "item", max: 201 } }]), false);
   });
 
   test("dos set que pueden correr a la vez no escriben la misma variable", () => {

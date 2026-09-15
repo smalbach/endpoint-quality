@@ -636,6 +636,99 @@ describe("flujos reutilizables y variables de entorno", () => {
     await flow.target.stop();
   });
 
+  test("un bucle recorre su cuerpo una vez por elemento, y «fin» sigue con el último", async () => {
+    const flow = await flowAgainst({ entityName: "en-bucle" });
+    // crear(100) → listar(fetch /things: semilla 1 y 100) → bucle(cada cosa)
+    //   cada → leer-cosa(fetch /things/{{cosa.id}}) → anota(set visto={{cosa.name}})
+    //   fin  → despues(fetch /things/{{cosa.id}}: el último elemento)
+    // listar → bucle-roto(ruta sin lista, falla) → cuerpo-roto(se salta)
+    const saved = await api()
+      .put(`${flow.projectBase}/workflows/${flow.workflowId}`)
+      .set(as(owner))
+      .send({
+        definition: {
+          steps: [
+            {
+              id: "crear",
+              requestTemplateId: flow.createTemplateId,
+              captures: [{ variable: "thingId", from: "body", path: "data.id" }],
+            },
+            { id: "listar", kind: "fetch", dependsOn: ["crear"], fetch: { method: "GET", url: "/things", expectedStatus: 200 } },
+            {
+              id: "bucle",
+              kind: "loop",
+              dependsOn: ["listar"],
+              loop: { from: "listar", path: "data", as: "cosa", max: 10 },
+            },
+            {
+              id: "leer-cosa",
+              kind: "fetch",
+              dependsOn: ["bucle"],
+              inLoop: "bucle",
+              fetch: { method: "GET", url: "/things/{{cosa.id}}", expectedStatus: 200 },
+            },
+            {
+              id: "anota",
+              kind: "set",
+              dependsOn: ["leer-cosa"],
+              set: { assignments: [{ variable: "visto", value: "{{cosa.name}}" }] },
+            },
+            {
+              id: "despues",
+              kind: "fetch",
+              dependsOn: ["bucle"],
+              fetch: { method: "GET", url: "/things/{{cosa.id}}", expectedStatus: 200 },
+            },
+            { id: "bucle-roto", kind: "loop", dependsOn: ["listar"], loop: { from: "listar", path: "nada", as: "otra" } },
+            {
+              id: "cuerpo-roto",
+              kind: "fetch",
+              dependsOn: ["bucle-roto"],
+              inLoop: "bucle-roto",
+              fetch: { method: "GET", url: "/things/1" },
+            },
+          ],
+        },
+      });
+    assert.equal(saved.status, 204, JSON.stringify(saved.body));
+
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    const casesOf = (stepId: string) =>
+      run.cases.filter((item: RunCaseRow) => item.scenarioId.split(":")[2]?.split("#")[0] === stepId);
+    const caseOf = (stepId: string) => casesOf(stepId)[0];
+    const detailOf = async (id: string) =>
+      (await api().get(`${flow.projectBase}/runs/${run.id}/cases/${id}`).set(as(owner))).body;
+
+    assert.equal(caseOf("bucle")?.status, "passed");
+    assert.equal(caseOf("bucle")?.method, "LOOP");
+    const lecturas = casesOf("leer-cosa").sort((a: RunCaseRow, b: RunCaseRow) => a.scenarioId.localeCompare(b.scenarioId));
+    assert.deepEqual(
+      lecturas.map((item: RunCaseRow) => [item.scenarioId.split("#")[1], item.status]),
+      [
+        ["0", "passed"],
+        ["1", "passed"],
+      ],
+    );
+    assert.equal(casesOf("anota").length, 2);
+    assert.ok(casesOf("anota").every((item: RunCaseRow) => item.status === "passed"));
+    assert.equal(caseOf("despues")?.status, "passed");
+    assert.equal(caseOf("bucle-roto")?.status, "failed");
+    assert.deepEqual(
+      casesOf("cuerpo-roto").map((item: RunCaseRow) => item.status),
+      ["skipped"],
+    );
+
+    const loop = await detailOf(caseOf("bucle").id);
+    assert.match(loop.steps[0].assertions[0].detail, /Recorrió 2 de 2/);
+    assert.match((await detailOf(lecturas[0].id)).steps[0].request.url, /\/things\/1$/);
+    assert.match((await detailOf(lecturas[1].id)).steps[0].request.url, /\/things\/100$/);
+    assert.match((await detailOf(caseOf("despues").id)).steps[0].request.url, /\/things\/100$/);
+    await flow.target.stop();
+  });
+
   test("las posiciones del lienzo sobreviven a la ida y vuelta", async () => {
     const flow = await flowAgainst();
     const listed = await api().get(`${flow.projectBase}/workflows`).set(as(owner));

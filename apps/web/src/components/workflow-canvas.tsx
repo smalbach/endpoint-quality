@@ -389,7 +389,53 @@ function PollNode({ data, selected }: NodeProps<Node<PollNodeData>>) {
   );
 }
 
+type LoopNodeData = {
+  name: string;
+  from: string;
+  path: string;
+  as: string;
+  max: number;
+  body: number;
+  runStatus?: CaseStatus;
+};
+
+/** A loop: walks a list a step returned. «cada» is its body, run once per element; «fin» runs after. */
+function LoopNode({ data, selected }: NodeProps<Node<LoopNodeData>>) {
+  const status = data.runStatus;
+  return (
+    <div
+      className={cn(
+        "w-52 rounded-xl border bg-white px-3 py-2 shadow-sm transition-colors",
+        status ? RUN_NODE_CLASS[status] : "border-fuchsia-300",
+        selected && "border-slate-900 ring-2 ring-slate-200",
+      )}
+    >
+      <Handle type="target" position={Position.Left} />
+      <div className="flex items-center gap-2">
+        <span className="grid h-6 w-6 place-items-center rounded-md bg-fuchsia-100 text-fuchsia-700" title="Bucle">
+          ∀
+        </span>
+        <span className="truncate text-xs font-semibold text-slate-800">Bucle · {data.name}</span>
+        <RunDot status={status} />
+      </div>
+      <p className="mt-1 truncate font-mono text-[10px] text-slate-500">
+        {data.from ? `${data.as} ∈ ${data.from}.${data.path}` : "conéctalo a un paso con una lista"}
+      </p>
+      <p className="mt-0.5 text-[10px] text-fuchsia-700">
+        {data.body ? `${data.body} ${data.body === 1 ? "nodo" : "nodos"} por vuelta` : "nada en «cada»"} · máx. {data.max}
+      </p>
+      <div className="mt-2 flex flex-col gap-1 text-[10px] font-semibold">
+        <span className="self-end text-fuchsia-600">cada ▸</span>
+        <span className="self-end text-slate-500">fin ▸</span>
+      </div>
+      <Handle id="each" type="source" position={Position.Right} style={{ top: "64%" }} />
+      <Handle id="done" type="source" position={Position.Right} style={{ top: "85%" }} />
+    </div>
+  );
+}
+
 const nodeTypes = {
+  loop: LoopNode,
   poll: PollNode,
   set: SetNode,
   script: ScriptNode,

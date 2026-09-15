@@ -183,6 +183,8 @@ export type StepWaits = (typeof STEP_WAITS)[number];
  *   variables.
  * - `poll` re-sends the request of the step it reads until the answer passes its checks — the job
  *   that is `pending` until it is `done`. It records one case, with the last attempt in it.
+ * - `loop` walks a list a step returned and runs its body — what hangs off its «cada» output, see
+ *   {@link loopBody} — once per element, before the steps on its «fin» side.
  *
  * The ones that send no request (`branch`, `wait`, `merge`, `validate`, `set`, `script`) are
  * *control* nodes: they produce a case that records what the flow did, not one that made an HTTP
@@ -197,7 +199,8 @@ export type StepKind =
   | "fetch"
   | "set"
   | "script"
-  | "poll";
+  | "poll"
+  | "loop";
 
 /** The control kinds — the nodes that record a decision instead of making a request. */
 export const CONTROL_KINDS: StepKind[] = ["branch", "wait", "merge", "validate", "set", "script"];
@@ -239,6 +242,47 @@ export type StepPoll = {
   /** Wait before each re-send. */
   delayMs: number;
 };
+
+/**
+ * A `loop` node: where the list is and what each element is called.
+ *
+ * Not `forEach`, which repeats **one** step. A loop repeats a piece of the graph — read the product,
+ * then check its stock, then update it — and each iteration walks that piece in order, so what one
+ * body step captures is there for the next one in the same iteration.
+ */
+export type StepLoop = {
+  /** The step whose response carries the list. Must be in `dependsOn`. */
+  from: string;
+  /** Dot path to the array inside that response's body. */
+  path: string;
+  /** What each element is bound to, as `bindElement` binds it: `item`, `item.id`… */
+  as: string;
+  /** Hard ceiling on iterations. 50 when absent. */
+  max?: number;
+};
+
+/**
+ * The steps a loop runs once per element, in document order: the ones marked `inLoop` that hang off
+ * it, and everything downstream of those. Downstream is the whole rule — a step after a body step
+ * cannot run once when the body runs forty times — and it is why the «fin» side has to depend on the
+ * loop and not on something inside it.
+ */
+export function loopBody(steps: WorkflowStep[], loopId: string): string[] {
+  const body = new Set(
+    steps.filter((step) => step.inLoop === loopId && (step.dependsOn ?? []).includes(loopId)).map((step) => step.id),
+  );
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const step of steps) {
+      if (body.has(step.id) || step.id === loopId) continue;
+      if ((step.dependsOn ?? []).some((id) => body.has(id))) {
+        body.add(step.id);
+        grew = true;
+      }
+    }
+  }
+  return steps.filter((step) => body.has(step.id)).map((step) => step.id);
+}
 
 /** Which side of a branch a node sits on. */
 export type StepBranch = { of: string; take: "then" | "else" };
@@ -294,6 +338,10 @@ export type WorkflowStep = {
   script?: StepScript;
   /** On a `poll` node: the step it repeats until its checks pass. */
   poll?: StepPoll;
+  /** On a `loop` node: the list it walks. */
+  loop?: StepLoop;
+  /** On a node wired to a loop's «cada» output: the loop whose body it starts. */
+  inLoop?: string;
   /** On a node downstream of a branch: which path it sits on. */
   branch?: StepBranch;
   waits?: StepWaits;

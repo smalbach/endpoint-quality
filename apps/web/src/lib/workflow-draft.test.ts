@@ -10,6 +10,7 @@ import {
   duplicateStep,
   flowNodeStatuses,
   freeSpot,
+  loopBodyIds,
   mergeNodes,
   positionFor,
   predecessorFor,
@@ -558,6 +559,38 @@ describe("el nodo reintento", () => {
 
     expect(disconnectEdges(wired, [{ source: "crear", target: id }]).find((step) => step.id === id)!.poll?.from).toBe("");
     expect(removeStep(wired, "crear").find((step) => step.id === id)!.poll?.from).toBe("");
+  });
+});
+
+describe("el nodo bucle", () => {
+  test("«cada» mete nodos en su cuerpo, «fin» sigue después, y cortar la arista los saca", () => {
+    const start: WorkflowStepView[] = [{ id: "listar", requestTemplateId: "t1", position: { x: 40, y: 60 } }];
+    const added = addControlStep(start, "loop", "listar");
+    const loopId = added.id;
+    expect(added.steps.find((step) => step.id === loopId)!.loop).toEqual({ from: "listar", path: "data", as: "item", max: 50 });
+
+    let steps: WorkflowStepView[] = [
+      ...added.steps,
+      { id: "leer", requestTemplateId: "t1" },
+      { id: "anota", kind: "set", set: { assignments: [{ variable: "x", value: "{{item.id}}" }] } },
+      { id: "cierre", requestTemplateId: "t1" },
+    ];
+    steps = connectStep(steps, loopId, "leer", "each");
+    steps = connectStep(steps, "leer", "anota");
+    steps = connectStep(steps, loopId, "cierre", "done");
+    expect(steps.find((step) => step.id === "leer")!.inLoop).toBe(loopId);
+    expect(steps.find((step) => step.id === "cierre")!.inLoop).toBeUndefined();
+    expect(loopBodyIds(steps, loopId)).toEqual(["leer", "anota"]);
+    expect(variablesFor(steps, "anota", [])).toContain("item");
+    expect(problemsWith(steps)).toEqual([]);
+    expect(toEdges(steps).find((edge) => edge.target === "leer")).toMatchObject({ sourceHandle: "each", label: "cada" });
+    expect(toEdges(steps).find((edge) => edge.target === "cierre")).toMatchObject({ sourceHandle: "done", label: "fin" });
+    expect(toNodes(steps, [], []).find((node) => node.id === loopId)).toMatchObject({ type: "loop", data: { body: 2 } });
+
+    const cut = disconnectEdges(steps, [{ source: loopId, target: "leer" }]);
+    expect(cut.find((step) => step.id === "leer")!.inLoop).toBeUndefined();
+    expect(loopBodyIds(cut, loopId)).toEqual([]);
+    expect(removeStep(steps, loopId).find((step) => step.id === "leer")!.inLoop).toBeUndefined();
   });
 });
 
