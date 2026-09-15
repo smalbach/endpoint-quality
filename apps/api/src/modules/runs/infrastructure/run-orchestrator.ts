@@ -705,7 +705,14 @@ export class RunOrchestrator {
     // A wait node sends no request: it pauses and lets the flow through. Not a retry —«it was not
     // time yet», not «that failure was not real»— which is why it is its own shape on the canvas.
     if ((item.step.kind ?? "request") === "wait") {
-      if (item.step.waitMs) await delay(item.step.waitMs);
+      if (item.step.waitMs) {
+        // Announced as running before the pause, so the canvas can count down from `startedAt`
+        // instead of showing a node that looks stuck for the whole wait.
+        const started: RunCase = { ...item.runCase, status: "running", startedAt };
+        await this.runs.saveCase(started);
+        this.eventBus.publish(new RunCaseStartedEvent(run.projectId, run.id, started));
+        await delay(item.step.waitMs);
+      }
       const at = this.clock.now();
       const done: RunCase = { ...item.runCase, status: "passed", startedAt, finishedAt: at, durationMs: item.step.waitMs ?? 0 };
       passed.set(item.step.id, true);

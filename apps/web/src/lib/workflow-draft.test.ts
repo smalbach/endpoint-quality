@@ -8,6 +8,7 @@ import {
   connectStep,
   disconnectEdges,
   duplicateStep,
+  flowNodeStartedAt,
   flowNodeStatuses,
   freeSpot,
   loopBodyIds,
@@ -23,6 +24,7 @@ import {
   uniqueName,
   uniqueTemplateName,
   variablesFor,
+  waitRemainingMs,
 } from "@/lib/workflow-draft";
 import type { RequestTemplateView, WorkflowStepView } from "@/lib/types";
 
@@ -328,6 +330,27 @@ describe("el estado de cada nodo durante una corrida", () => {
       { scenarioId: "workflow:wf:bucle#2", status: "queued" },
     ]);
     expect(failed.bucle).toBe("failed");
+  });
+
+  test("un nodo en marcha guarda cuándo empezó, para que la Espera cuente hacia atrás", () => {
+    const started = flowNodeStartedAt([
+      { scenarioId: "workflow:wf:pausa", status: "running", startedAt: "2026-09-15T10:00:00.000Z" },
+      { scenarioId: "workflow:wf:crear", status: "passed", startedAt: "2026-09-15T09:59:59.000Z" },
+      { scenarioId: "workflow:wf:listar", status: "running", startedAt: null },
+    ]);
+    expect(started).toEqual({ pausa: "2026-09-15T10:00:00.000Z" });
+
+    const [node] = toNodes([{ id: "pausa", kind: "wait", waitMs: 3000 }], [], [], { pausa: "running" }, started);
+    expect(node).toMatchObject({ type: "wait", data: { ms: 3000, runStatus: "running", startedAt: "2026-09-15T10:00:00.000Z" } });
+  });
+
+  test("lo que le falta a una espera no pasa de la pausa entera ni baja de cero", () => {
+    const startedAt = "2026-09-15T10:00:00.000Z";
+    const at = Date.parse(startedAt);
+    expect(waitRemainingMs(3000, startedAt, at + 1200)).toBe(1800);
+    expect(waitRemainingMs(3000, startedAt, at - 500)).toBe(3000);
+    expect(waitRemainingMs(3000, startedAt, at + 9000)).toBe(0);
+    expect(waitRemainingMs(3000, "no-es-fecha", at)).toBe(3000);
   });
 });
 

@@ -606,6 +606,7 @@ export function WorkflowsPage() {
                 onAddRequest={canEdit ? (at) => (setAddKind("request"), setAddAt(at), setDrawer("library")) : undefined}
                 onAddLogin={canEdit ? (at) => (setAddKind("login"), setAddAt(at), setDrawer("library")) : undefined}
                 runStatus={stepStatus}
+                runStartedAt={stepStartedAt}
                 pausedStepId={activeRunId ? pausedNodeId(runProgress.paused, runProgress.cases, draft.id) : null}
                 breakpoints={activeBreakpoints(launchSettings)}
                 onToggleBreakpoint={(stepId) => setRunSettings(toggleBreakpoint(launchSettings, stepId))}
