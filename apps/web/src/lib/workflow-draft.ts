@@ -14,6 +14,7 @@ import type {
   WorkflowStepView,
 } from "@/lib/types";
 import { slugId } from "@/lib/config-draft";
+import { defaultNotify, notifyProblems } from "@/lib/workflow-notify";
 
 export type OperationSummary = { id: string; method: string; path: string; summary: string };
 
@@ -224,6 +225,7 @@ export const CONTROL_PALETTE: { kind: ControlKind; glyph: string; label: string;
   { kind: "poll", glyph: "↻", label: "Reintento", hint: "Repite la petición de un paso hasta que su respuesta cumpla las comprobaciones (polling)" },
   { kind: "loop", glyph: "∀", label: "Bucle", hint: "Recorre una lista: lo que cuelga de «cada» se ejecuta una vez por elemento, y «fin» sigue después" },
   { kind: "schema", glyph: "⊨", label: "Esquema", hint: "Valida el body de una respuesta contra el JSON Schema del contrato o uno escrito a mano" },
+  { kind: "notify", glyph: "✉", label: "Notificar", hint: "Envía un mensaje a Slack, Teams o un webhook; la URL sale de una variable del entorno" },
 ];
 
 /** Why the JSON Schema written on a schema node cannot be used, or null. The server refuses the same
@@ -251,7 +253,7 @@ export function schemaJsonProblem(json: string | undefined): string | null {
 /** The kinds the palette drops straight onto the canvas. `fetch` sends a call, but one written on the
  * node itself, so it needs no operation from the catalogue and lands like the control kinds; `poll`
  * re-sends the request of the node wired into it. */
-type ControlKind = "branch" | "wait" | "merge" | "validate" | "fetch" | "set" | "script" | "poll" | "loop" | "schema";
+type ControlKind = "branch" | "wait" | "merge" | "validate" | "fetch" | "set" | "script" | "poll" | "loop" | "schema" | "notify";
 const CONTROL_BASE_ID: Record<ControlKind, string> = {
   branch: "rama",
   wait: "espera",
@@ -263,6 +265,7 @@ const CONTROL_BASE_ID: Record<ControlKind, string> = {
   poll: "reintento",
   loop: "bucle",
   schema: "esquema",
+  notify: "notificar",
 };
 
 /**
@@ -317,6 +320,7 @@ export function addControlStep(
   if (kind === "script") node.script = from ? { code: "", from } : { code: "" };
   if (kind === "loop") node.loop = { from: from ?? "", path: "data", as: "item", max: 50 };
   if (kind === "schema") node.schema = { from: from ?? "", source: "custom", json: '{\n  "type": "object"\n}' };
+  if (kind === "notify") node.notify = defaultNotify();
   if (kind === "poll") {
     node.poll = { from: from ?? "", attempts: 5, delayMs: 2000 };
     node.checks = [check];
@@ -520,6 +524,23 @@ export function toNodes(
           as: step.loop?.as ?? "",
           max: step.loop?.max ?? 50,
           body: loopBodyIds(steps, step.id).length,
+          runStatus: runStatusFor,
+        },
+      };
+    }
+    if (kind === "notify") {
+      // Written out rather than built by a helper: the node data is a union of these literals, and a
+      // named type in it would hide the optional fields the other kinds are read through.
+      return {
+        id: step.id,
+        type: "notify",
+        position,
+        data: {
+          name: step.id,
+          channel: step.notify?.channel ?? "slack",
+          urlVariable: step.notify?.urlVariable ?? "",
+          message: step.notify?.message ?? "",
+          failsFlow: step.notify?.onError === "fail",
           runStatus: runStatusFor,
         },
       };
@@ -848,6 +869,7 @@ export function flowProblems(steps: WorkflowStepView[]): FlowProblem[] {
         if (problem) problems.push({ message: `El esquema «${step.id}»: ${problem}`, stepId: step.id });
       }
     }
+    if (kind === "notify") problems.push(...notifyProblems(step));
     if (kind === "fetch" && !step.fetch?.url?.trim())
       problems.push({ message: `El fetch «${step.id}» no tiene URL.`, stepId: step.id });
     if (kind === "login" && !step.authorizes)

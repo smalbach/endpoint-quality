@@ -14,6 +14,14 @@ import {
   variablesFor,
 } from "@/lib/workflow-draft";
 import type { OperationSummary } from "@/lib/workflow-draft";
+import { VariableSuggest } from "@/components/variable-suggest";
+import {
+  NOTIFY_CHANNELS,
+  defaultNotify,
+  notifyVariableHint,
+  webhookVariables,
+  type EnvironmentVariableView,
+} from "@/lib/workflow-notify";
 import type {
   CaptureSource,
   Environment,
@@ -179,6 +187,15 @@ export function WorkflowInspector({
         <LoopInspector
           step={step}
           body={loopBodyIds(steps, step.id)}
+          canEdit={canEdit}
+          onChange={onChange}
+          onRemove={onRemove}
+        />
+      ) : kind === "notify" ? (
+        <NotifyInspector
+          step={step}
+          variables={variables}
+          environmentVariables={environments.find((item) => item.id === environmentId)?.variables}
           canEdit={canEdit}
           onChange={onChange}
           onRemove={onRemove}
@@ -1521,6 +1538,138 @@ function LoopInspector({
               </p>
               <p className={`mt-2 text-[11px] leading-5 ${body.length ? "text-slate-600" : "text-amber-700"}`}>
                 {body.length ? `Por vuelta: ${body.join(" → ")}` : "Nada conectado a «cada»: el bucle no ejecutará nada."}
+              </p>
+            </>
+          ),
+        },
+        {
+          id: "failure",
+          label: "Si falla",
+          marked: failureSet(step),
+          content: <FailureEditor step={step} canEdit={canEdit} retries={false} onChange={onChange} />,
+        },
+      ]}
+    />
+  );
+}
+
+/** A notify node: the channel, the environment variable that holds the webhook URL, and the message. */
+function NotifyInspector({
+  step,
+  variables,
+  environmentVariables,
+  canEdit,
+  onChange,
+  onRemove,
+}: {
+  step: WorkflowStepView;
+  /** What `{{` offers in the message: environment, earlier captures, computed values. */
+  variables: string[];
+  /** The chosen environment's variables, for the URL picker. Undefined with no environment chosen. */
+  environmentVariables: Record<string, EnvironmentVariableView> | undefined;
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+  onRemove: () => void;
+}) {
+  const notify = step.notify ?? defaultNotify();
+  const setNotify = (change: Partial<NonNullable<WorkflowStepView["notify"]>>) =>
+    onChange({ ...step, notify: { ...notify, ...change } });
+  const channel = NOTIFY_CHANNELS.find((item) => item.value === notify.channel);
+  const candidates = webhookVariables(environmentVariables ?? {});
+  const hint = notifyVariableHint(notify.urlVariable, environmentVariables);
+  const listId = `notify-url-${step.id}`;
+
+  return (
+    <NodePanel
+      title="Notificar"
+      subtitle={step.id}
+      description={
+        <>
+          Envía un mensaje a Slack, Teams o un webhook en mitad del flujo:{" "}
+          <span className="font-mono">{"pedido creado: {{orderId}}"}</span>, o en la rama «no» de un If. La URL del
+          webhook es un secreto: vive en una variable del entorno (mejor sensible) y aquí solo se escribe su nombre; en
+          el informe aparece enmascarada.
+        </>
+      }
+      canEdit={canEdit}
+      onRemove={onRemove}
+      tabs={[
+        {
+          id: "main",
+          label: "Mensaje",
+          content: (
+            <>
+              <div className="grid gap-3 @3xl:grid-cols-2">
+                <Field label="Canal" hint={channel?.hint}>
+                  <select
+                    className={inputClass}
+                    value={notify.channel}
+                    disabled={!canEdit}
+                    onChange={(event) => setNotify({ channel: event.target.value as typeof notify.channel })}
+                  >
+                    {NOTIFY_CHANNELS.map((item) => (
+                      <option key={item.value} value={item.value}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <div>
+                  <Field label="Variable del entorno con la URL">
+                    <input
+                      aria-label="Variable del entorno con la URL"
+                      className={cn(inputClass, "font-mono text-[11px]")}
+                      value={notify.urlVariable}
+                      list={listId}
+                      placeholder="SLACK_WEBHOOK_URL"
+                      disabled={!canEdit}
+                      spellCheck={false}
+                      onChange={(event) => setNotify({ urlVariable: event.target.value.trim() })}
+                    />
+                  </Field>
+                  <datalist id={listId}>
+                    {candidates.map((item) => (
+                      <option key={item.name} value={item.name}>
+                        {item.sensitive ? "sensible" : ""}
+                      </option>
+                    ))}
+                  </datalist>
+                  {hint && (
+                    <p className={`mt-1 text-[11px] leading-5 ${hint.tone === "warn" ? "text-amber-700" : "text-slate-500"}`}>
+                      {hint.text}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <Field label="Mensaje">
+                <VariableSuggest variables={variables} value={notify.message} onChange={(message) => setNotify({ message })}>
+                  {(suggest) => (
+                    <textarea
+                      {...suggest}
+                      aria-label="Mensaje"
+                      className={`${inputClass} mt-1 h-32 font-mono text-[11px]`}
+                      placeholder={"Pedido creado: {{orderId}}"}
+                      disabled={!canEdit}
+                      spellCheck={false}
+                    />
+                  )}
+                </VariableSuggest>
+              </Field>
+              <p className="mt-1 text-[11px] leading-5 text-slate-500">
+                Escribe <span className="font-mono">{"{{"}</span> para usar una variable. Si alguna no está definida al
+                ejecutar, el nodo falla sin enviar nada.
+              </p>
+              <label className="mt-3 flex items-center gap-2 text-xs text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={notify.onError === "fail"}
+                  disabled={!canEdit}
+                  onChange={(event) => setNotify({ onError: event.target.checked ? "fail" : "continue" })}
+                />
+                Fallar el nodo si el mensaje no llega (respuesta no 2xx o sin conexión)
+              </label>
+              <p className="mt-1 text-[11px] leading-5 text-slate-500">
+                Desmarcado, un envío fallido deja el nodo en verde con un aviso: una caída del chat no es un fallo de la API.
               </p>
             </>
           ),

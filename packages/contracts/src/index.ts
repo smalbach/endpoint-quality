@@ -263,7 +263,19 @@ export type StepKind =
   | "script"
   | "poll"
   | "loop"
-  | "schema";
+  | "schema"
+  | "notify";
+
+/** A `notify` node: posts `message` (a template) to the webhook URL held in the environment variable
+ * named `urlVariable` — the URL itself is a secret and never lives in the flow. `slack` sends
+ * `{text}`, `teams` a MessageCard with `text`, `webhook` `{text, runId, workflowId, stepId}`.
+ * `onError` absent is `continue`: a failed delivery only warns unless it is `fail`. */
+export type StepNotifyView = {
+  channel: "slack" | "teams" | "webhook";
+  urlVariable: string;
+  message: string;
+  onError?: "fail" | "continue";
+};
 
 /** A `schema` node: validates `from`'s response body against the contract's schema for that operation
  * and status (`contract`, only over a saved request or login) or against `json` (`custom`, no
@@ -333,6 +345,8 @@ export type WorkflowStepView = {
   inLoop?: string;
   /** On a `schema` node: the step whose body it validates and against what. */
   schema?: StepSchemaView;
+  /** On a `notify` node: channel, the environment variable with the webhook URL, and the message. */
+  notify?: StepNotifyView;
   /** On any node downstream of an `If`: which of its two paths this node sits on. */
   branch?: StepBranchView;
   dependsOn?: string[];

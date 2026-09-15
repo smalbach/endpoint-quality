@@ -33,6 +33,7 @@ import {
   toNodes,
 } from "@/lib/workflow-draft";
 import type { OperationSummary } from "@/lib/workflow-draft";
+import { NOTIFY_CHANNELS, type NotifyNodeData } from "@/lib/workflow-notify";
 import type { CaseStatus, RequestTemplateView, WorkflowStepView } from "@/lib/types";
 
 const CASE_STATUS_LABEL: Record<CaseStatus, string> = {
@@ -466,7 +467,39 @@ function LoopNode({ data, selected }: NodeProps<Node<LoopNodeData>>) {
   );
 }
 
+/** A notification: a message to Slack, Teams or a webhook whose URL an environment variable holds. */
+function NotifyNode({ data, selected }: NodeProps<Node<NotifyNodeData>>) {
+  const status = data.runStatus;
+  const channel = NOTIFY_CHANNELS.find((item) => item.value === data.channel)?.label ?? data.channel;
+  return (
+    <div
+      className={cn(
+        "w-52 rounded-xl border bg-white px-3 py-2 shadow-sm transition-colors",
+        status ? RUN_NODE_CLASS[status] : "border-sky-300",
+        selected && "border-slate-900 ring-2 ring-slate-200",
+      )}
+    >
+      <Handle type="target" position={Position.Left} />
+      <div className="flex items-center gap-2">
+        <span className="grid h-6 w-6 place-items-center rounded-md bg-sky-100 text-sky-700" title="Notificar">
+          ✉
+        </span>
+        <span className="truncate text-xs font-semibold text-slate-800">Notificar · {data.name}</span>
+        <RunDot status={status} />
+      </div>
+      <p className="mt-1 truncate text-[10px] text-slate-500">{data.message || "sin mensaje"}</p>
+      <p className="mt-0.5 truncate text-[10px] text-sky-700">
+        {channel}
+        {data.urlVariable ? ` · ${data.urlVariable}` : " · sin variable"}
+        {data.failsFlow ? " · falla si no llega" : ""}
+      </p>
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+}
+
 const nodeTypes = {
+  notify: NotifyNode,
   schema: SchemaNode,
   loop: LoopNode,
   poll: PollNode,

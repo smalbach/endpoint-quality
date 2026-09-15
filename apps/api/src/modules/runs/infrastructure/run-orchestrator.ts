@@ -57,6 +57,8 @@ import { scenarioFor, type RequestTemplateRow, type WorkflowRow } from "@/module
 import { caseStatusFor, failureFor, verdictFor, type Run, type RunCase, type RunStep } from "../domain/model";
 import { RUN_QUEUE, RUN_REPOSITORY, type RunQueuePort, type RunRepositoryPort } from "../domain/ports";
 import { CaseExecutor, computedSeed, type ExecutedCase, type ExecutedStep } from "./case-executor";
+import { SAFE_FETCH, type SafeFetchPort } from "@/shared/http/safe-fetch";
+import { sendNotification } from "./notify-step";
 import { ExecutionContextFactory, type ExecutionContext } from "./execution-context";
 import {
   RunCaseFinishedEvent,
@@ -79,6 +81,8 @@ export class RunOrchestrator {
     @Inject(CLOCK) private readonly clock: ClockPort,
     @Inject(ENV) private readonly env: Env,
     @Inject(SCRIPT_SANDBOX) private readonly sandbox: ScriptSandboxPort,
+    // Only the notify node calls out from here; every other request goes through the executor.
+    @Inject(SAFE_FETCH) private readonly http: SafeFetchPort,
     private readonly executor: CaseExecutor,
     private readonly contexts: ExecutionContextFactory,
     private readonly eventBus: EventBus,
@@ -848,6 +852,19 @@ export class RunOrchestrator {
       return;
     }
 
+    // A notify node posts a message to the chat/webhook URL an environment variable holds. The URL is
+    // a secret: see `notify-step.ts` for what is stored instead and when a failed delivery fails.
+    if (item.step.kind === "notify" && item.step.notify) {
+      const outcome = await sendNotification(this.http, {
+        notify: item.step.notify,
+        target: context.target,
+        // `workflow:<id>:<step>…` — the id is a uuid, so it has no colon of its own.
+        origin: { runId: run.id, workflowId: item.runCase.scenarioId.split(":")[1] ?? "", stepId: item.step.id },
+      });
+      await this.finishControl(run, item, state, startedAt, outcome);
+      return;
+    }
+
     // A poll node repeats the request of the step it reads until the answer passes the node's own
     // checks — the job that answers `pending` until it is `done`.
     if (item.step.kind === "poll" && item.step.poll) {
@@ -1551,6 +1568,9 @@ function controlCaseFields(step: WorkflowStep): { operationId: string; method: s
       return { operationId: "", method: "LOOP", path: `recorre ${step.loop?.from ?? ""}.${step.loop?.path ?? ""}` };
     case "schema":
       return { operationId: "", method: "SCHEMA", path: `valida ${step.schema?.from ?? ""}` };
+    case "notify":
+      // The variable's name, never the URL it holds.
+      return { operationId: "", method: "NOTIFY", path: `${step.notify?.channel ?? ""} → ${step.notify?.urlVariable ?? ""}` };
     default:
       return null;
   }

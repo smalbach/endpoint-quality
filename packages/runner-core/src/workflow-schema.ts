@@ -15,6 +15,7 @@ import { scenarioCredentialSchema } from "./schema.ts";
 import type { WorkflowStep } from "./workflows.ts";
 import { VARIABLE_NAME } from "./variables.ts";
 import { CHECK_OPERATORS, CHECK_SOURCES } from "./checks.ts";
+import { stepNotifySchema } from "./notify.ts";
 import { CAPTURE_SOURCES, FETCH_METHODS, STEP_ON_ERROR, STEP_WAITS, concurrentPairs, loopBody } from "./workflows.ts";
 
 const jsonValue: z.ZodType<unknown> = z.lazy(() =>
@@ -181,8 +182,10 @@ export const workflowStepSchema = z.object({
   // `request` and a `login` node must (checked below).
   requestTemplateId: z.string().uuid().optional(),
   kind: z
-    .enum(["request", "login", "branch", "wait", "merge", "validate", "fetch", "set", "script", "poll", "loop", "schema"])
+    .enum(["request", "login", "branch", "wait", "merge", "validate", "fetch", "set", "script", "poll", "loop", "schema", "notify"])
     .optional(),
+  // The `notify` node: channel, the NAME of the variable holding the webhook URL, and the message.
+  notify: stepNotifySchema.optional(),
   // The `schema` node: the step whose body it validates, against the contract or a schema of its own.
   schema: z
     .object({
@@ -423,6 +426,16 @@ export const workflowDocumentSchema = z
       }
       if (kind === "set" && !step.set) {
         context.addIssue({ code: "custom", message: "un nodo set necesita al menos una variable", path: ["steps", index, "set"] });
+      }
+      if (step.notify && kind !== "notify") {
+        context.addIssue({ code: "custom", message: "solo un nodo notificar lleva su bloque notify", path: ["steps", index, "notify"] });
+      }
+      if (kind === "notify" && !step.notify) {
+        context.addIssue({
+          code: "custom",
+          message: "un nodo notificar necesita canal, variable con la URL y mensaje",
+          path: ["steps", index, "notify"],
+        });
       }
       if (step.script && kind !== "script") {
         context.addIssue({ code: "custom", message: "solo un nodo script lleva código", path: ["steps", index, "script"] });

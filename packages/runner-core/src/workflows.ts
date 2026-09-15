@@ -9,6 +9,7 @@
 import { valueAtPath, type RuntimeVariables } from "./variables.ts";
 import type { StepCheck } from "./checks.ts";
 import type { ScenarioAuth } from "./types.ts";
+import type { StepNotify } from "./notify.ts";
 
 /**
  * A reusable request. Flows reference it by id, so changing a payload or an expectation updates
@@ -203,7 +204,10 @@ export type StepKind =
   | "script"
   | "poll"
   | "loop"
-  | "schema";
+  | "schema"
+  // Posts a message to a chat/webhook URL held in an environment variable (see `notify.ts`). It
+  // does send a request, but not to the API under test, so it records a control row (`NOTIFY`).
+  | "notify";
 
 /** The control kinds — the nodes that record a decision instead of making a request. */
 export const CONTROL_KINDS: StepKind[] = ["branch", "wait", "merge", "validate", "set", "script", "schema"];
@@ -357,6 +361,8 @@ export type WorkflowStep = {
   inLoop?: string;
   /** On a `schema` node: the step whose body it validates and the schema it uses. */
   schema?: StepSchema;
+  /** On a `notify` node: the channel, the variable holding the webhook URL, and the message. */
+  notify?: StepNotify;
   /** On a node downstream of a branch: which path it sits on. */
   branch?: StepBranch;
   waits?: StepWaits;
