@@ -188,6 +188,8 @@ export type StepWaits = (typeof STEP_WAITS)[number];
  *   {@link loopBody} — once per element, before the steps on its «fin» side.
  * - `schema` judges a step's response body against a JSON Schema: the one the contract declares for
  *   that operation and status, or one written on the node.
+ * - `subflow` runs another flow of the same project inline, as one step of this one — see
+ *   {@link StepSubflow}.
  *
  * The ones that send no request (`branch`, `wait`, `merge`, `validate`, `set`, `script`, `schema`) are
  * *control* nodes: they produce a case that records what the flow did, not one that made an HTTP
@@ -207,10 +209,11 @@ export type StepKind =
   | "schema"
   // Posts a message to a chat/webhook URL held in an environment variable (see `notify.ts`). It
   // does send a request, but not to the API under test, so it records a control row (`NOTIFY`).
-  | "notify";
+  | "notify"
+  | "subflow";
 
 /** The control kinds — the nodes that record a decision instead of making a request. */
-export const CONTROL_KINDS: StepKind[] = ["branch", "wait", "merge", "validate", "set", "script", "schema"];
+export const CONTROL_KINDS: StepKind[] = ["branch", "wait", "merge", "validate", "set", "script", "schema", "subflow"];
 
 /**
  * A `schema` node: the step whose body it validates, and against what.
@@ -221,6 +224,27 @@ export const CONTROL_KINDS: StepKind[] = ["branch", "wait", "merge", "validate",
  * fields the schema does not declare — the drift a plain validation lets through.
  */
 export type StepSchema = { from: string; source: "contract" | "custom"; json?: string; strict?: boolean };
+
+/**
+ * A `subflow` node: another flow of the same project, run inline as one step of this one.
+ *
+ * The child walks with a **copy** of the run's variables plus `inputs` (templates resolved over the
+ * parent's when the node starts), and only the names in `outputs` come back — run-scoped, like a
+ * capture. A copy and not the map itself, because a child is reusable by construction: the flow
+ * that logs in or creates a customer is spent by ten others, and letting every name it touches leak
+ * into each of them is the coupling a subflow exists to cut. The session a child obtains does come
+ * back: a shared login is the most ordinary subflow there is.
+ *
+ * Its steps get their own cases, namespaced under the node (`workflow:<flow>:<node>>child`), and the
+ * node's own case passes when every one of them did. What the child may be — same project, not
+ * archived, no cycle, at most {@link MAX_SUBFLOW_DEPTH} levels — spans rows, so it is checked where
+ * the other flows can be read: on save and again when a run is prepared. See {@link subflowProblems}.
+ */
+export type StepSubflow = {
+  workflowId: string;
+  inputs?: { variable: string; value: string }[];
+  outputs?: string[];
+};
 
 /**
  * A `set` node: variables written without a request.
@@ -363,6 +387,8 @@ export type WorkflowStep = {
   schema?: StepSchema;
   /** On a `notify` node: the channel, the variable holding the webhook URL, and the message. */
   notify?: StepNotify;
+  /** On a `subflow` node: the flow it runs, what goes in and what comes back. */
+  subflow?: StepSubflow;
   /** On a node downstream of a branch: which path it sits on. */
   branch?: StepBranch;
   waits?: StepWaits;

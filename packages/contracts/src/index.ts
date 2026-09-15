@@ -264,7 +264,8 @@ export type StepKind =
   | "poll"
   | "loop"
   | "schema"
-  | "notify";
+  | "notify"
+  | "subflow";
 
 /** A `notify` node: posts `message` (a template) to the webhook URL held in the environment variable
  * named `urlVariable` — the URL itself is a secret and never lives in the flow. `slack` sends
@@ -276,6 +277,12 @@ export type StepNotifyView = {
   message: string;
   onError?: "fail" | "continue";
 };
+
+/** A `subflow` node: runs flow `workflowId` of the same project inline. The child starts with a copy of
+ * the run's variables plus `inputs` (templates over the parent's); only the names in `outputs` come
+ * back. Its steps get their own cases, `workflow:<flow>:<node>>child`, and the node passes when all do.
+ * Not archived, no cycles, at most 3 levels, not inside a loop. */
+export type StepSubflowView = { workflowId: string; inputs?: { variable: string; value: string }[]; outputs?: string[] };
 
 /** A `schema` node: validates `from`'s response body against the contract's schema for that operation
  * and status (`contract`, only over a saved request or login) or against `json` (`custom`, no
@@ -347,6 +354,8 @@ export type WorkflowStepView = {
   schema?: StepSchemaView;
   /** On a `notify` node: channel, the environment variable with the webhook URL, and the message. */
   notify?: StepNotifyView;
+  /** On a `subflow` node: the flow it runs, its inputs and the variables it hands back. */
+  subflow?: StepSubflowView;
   /** On any node downstream of an `If`: which of its two paths this node sits on. */
   branch?: StepBranchView;
   dependsOn?: string[];

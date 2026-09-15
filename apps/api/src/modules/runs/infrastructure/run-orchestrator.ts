@@ -35,6 +35,8 @@ import {
   orderWorkflowSteps,
   readAuthorization,
   responseSchema,
+  subflowProblems,
+  subflowSteps,
   undeclaredPaths,
   unresolvedVariables,
   validateJson,
@@ -46,6 +48,7 @@ import {
   type StepLoop,
   type StepPoll,
   type StepRequest,
+  type StepSubflow,
   type WorkflowStep,
 } from "@eq/runner-core";
 
@@ -60,6 +63,7 @@ import { CaseExecutor, computedSeed, type ExecutedCase, type ExecutedStep } from
 import { SAFE_FETCH, type SafeFetchPort } from "@/shared/http/safe-fetch";
 import { sendNotification } from "./notify-step";
 import { ExecutionContextFactory, type ExecutionContext } from "./execution-context";
+import { flattenPrepared, nestedScenarioId } from "./subflow-support";
 import {
   RunCaseFinishedEvent,
   RunCaseRetryingEvent,
@@ -129,7 +133,8 @@ export class RunOrchestrator {
       const templates = new Map(
         (await this.workflows.listTemplates(run.projectId)).map((template) => [template.id, template]),
       );
-      await this.walkFlows(run, context, flows, templates, await this.datasetRows(run));
+      const library = await this.subflowLibrary(run, flows);
+      await this.walkFlows(run, context, flows, templates, await this.datasetRows(run), library);
       return;
     }
     const queue = buildQueue(context.resolved, context.config, {
@@ -307,6 +312,22 @@ export class RunOrchestrator {
     return suite.workflowIds;
   }
 
+  /**
+   * The project's flows by id, when a flow of the run has a subflow node — and the second time what
+   * those nodes point at is checked. The first was the save; since then a child may have been
+   * archived, deleted, or edited into a cycle, and walking one of those is a run that never ends or a
+   * report about a flow nobody meant to keep. Refused here, the run is `error` and says which node.
+   */
+  private async subflowLibrary(run: Run, flows: WorkflowRow[]): Promise<Map<string, WorkflowRow>> {
+    if (!flows.some((flow) => subflowSteps(flow.definition).length)) return new Map();
+    const library = new Map((await this.workflows.listWorkflows(run.projectId)).map((flow) => [flow.id, flow]));
+    for (const flow of flows) {
+      const [problem] = subflowProblems(flow, (id) => library.get(id));
+      if (problem) throw new Error(`El flujo "${flow.name}", nodo "${problem.stepId}": ${problem.detail}`);
+    }
+    return library;
+  }
+
   /** The rows the flow is walked once per. `[null]` is «once, with no dataset», which keeps the
    * ordinary run and the data-driven one the same loop rather than two that can drift. */
   private async datasetRows(run: Run): Promise<(Record<string, string> | null)[]> {
@@ -331,6 +352,8 @@ export class RunOrchestrator {
     flows: WorkflowRow[],
     templates: Map<string, RequestTemplateRow>,
     rows: (Record<string, string> | null)[],
+    /** The flows a subflow node may run, by id. Empty when no flow of the run has one. */
+    library: Map<string, WorkflowRow> = new Map(),
   ): Promise<void> {
     // Two counters, because they measure different things. `cursor` hands out `position`, which is
     // unique per run in the database — and a step that loops needs one slot per element, reserved
@@ -350,14 +373,15 @@ export class RunOrchestrator {
           context.resolved,
           rows.length > 1 ? `@${rowIndex}` : "",
           cursor,
+          library,
         );
         cursor = prepared.next;
-        cases += prepared.items.length;
+        cases += flattenPrepared(prepared.items).length;
         return { row, rowIndex, items: prepared.items };
       }),
     );
 
-    await this.runs.saveCases(passes.flatMap((pass) => pass.items.map((item) => item.runCase)));
+    await this.runs.saveCases(passes.flatMap((pass) => flattenPrepared(pass.items).map((item) => item.runCase)));
     await this.runs.updateStatus(run.id, "running", this.clock.now());
     // A lower bound rather than a count: a step that loops adds cases while the run is walking,
     // and the totals a follower shows are recomputed from the rows on every event anyway.
@@ -396,7 +420,8 @@ export class RunOrchestrator {
     resolved: ResolvedOperation[],
     suffix: string,
     offset: number,
-  ) {
+    library: Map<string, WorkflowRow> = new Map(),
+  ): { items: PreparedItem[]; next: number } {
     const ordered = orderWorkflowSteps(workflow.definition, `El flujo "${workflow.name}"`);
     // A step inside a loop runs once per element, so it takes a slot per iteration the loop may walk
     // — for the same reason a `forEach` step does.
@@ -406,7 +431,7 @@ export class RunOrchestrator {
       for (const id of loopBody(ordered, step.id)) repeats.set(id, step.loop.max ?? 50);
     }
     let cursor = offset;
-    const items = ordered.map((step) => {
+    const items = ordered.map((step): PreparedItem => {
       const position = cursor;
       // A looping step reserves a slot per element it may walk. They cannot be handed out while
       // walking — the ceiling is what the author wrote, the length is what the target answers, and
@@ -423,6 +448,31 @@ export class RunOrchestrator {
         startedAt: null,
         finishedAt: null,
       };
+      // A subflow node takes its own slot and, right after it, every slot its child flow reserves —
+      // prepared by this same function, so the child's loops and its own subflows reserve theirs. The
+      // child's cases are renamed under this node; `subflowLibrary` already refused cycles, so the
+      // recursion ends.
+      if (step.kind === "subflow" && step.subflow) {
+        const child = library.get(step.subflow.workflowId);
+        if (!child) throw new Error(`El sub-flujo "${step.id}" ejecuta un flujo que ya no existe`);
+        const nested = this.prepareWorkflow(run, child, templates, resolved, suffix, cursor, library);
+        cursor = nested.next;
+        const rename = (entry: PreparedItem): PreparedItem => ({
+          ...entry,
+          runCase: {
+            ...entry.runCase,
+            scenarioId: nestedScenarioId(workflow.id, step.id, child.id, entry.runCase.scenarioId),
+          },
+          ...(entry.children ? { children: entry.children.map(rename) } : {}),
+        });
+        return {
+          step,
+          template: null,
+          operation: null,
+          runCase: { ...base, operationId: "", method: "FLOW", path: `ejecuta «${child.name}»` },
+          children: nested.items.map(rename),
+        };
+      }
       // A control node (branch/wait/merge/validate) sends no request, so it has no template and no
       // operation: it is a control row that records what the flow did. Its «method» and «path»
       // name it in the report — `IF`, `WAIT`, `MERGE`, `CHECK` — the way a request names its verb.
@@ -488,9 +538,11 @@ export class RunOrchestrator {
     prepared: ReturnType<RunOrchestrator["prepareWorkflow"]>["items"],
     budget: { extra: number },
     pause: PauseState,
+    /** Where each step's verdict is written. Given by a subflow node, which judges its child by it. */
+    verdicts: Map<string, boolean> = new Map(),
   ): Promise<boolean> {
     const state: WalkState = {
-      passed: new Map(),
+      passed: verdicts,
       // The last answer of each step, which is what a condition judges and a loop walks. Kept for
       // the duration of one run and never beyond it: two runs of the same flow must not be able to
       // read each other's responses, for the same reason their variables are a copy.
@@ -506,6 +558,8 @@ export class RunOrchestrator {
       bodies: loopBodies(prepared),
       budget,
       stopped: false,
+      pause,
+      walkedSubflows: new Set(),
     };
 
     const concurrency = Math.max(1, run.plan.concurrency ?? 1);
@@ -543,6 +597,7 @@ export class RunOrchestrator {
           item.step.id,
           this.runStep(run, context, item, state)
             .then(() => this.closeLoopBody(run, item, state))
+            .then(() => this.closeSubflow(run, item, state))
             .then(() => item.step.id),
         );
       }
@@ -567,6 +622,7 @@ export class RunOrchestrator {
         const skipped: RunCase = { ...item.runCase, status: "skipped", startedAt: at, finishedAt: at, durationMs: 0 };
         await this.runs.saveCase(skipped);
         await this.announce(run, skipped);
+        await this.closeSubflow(run, item, state);
       }
     }
 
@@ -875,6 +931,12 @@ export class RunOrchestrator {
     // A loop node walks its body once per element of a list a previous step returned.
     if (item.step.kind === "loop" && item.step.loop) {
       await this.loop(run, context, item, state, startedAt, item.step.loop);
+      return;
+    }
+
+    // A subflow node walks another flow of the project, inline, as one step of this one.
+    if (item.step.kind === "subflow" && item.step.subflow) {
+      await this.subflow(run, context, item, state, startedAt, item.step.subflow);
       return;
     }
 
@@ -1322,6 +1384,126 @@ export class RunOrchestrator {
     }
   }
 
+  /**
+   * A subflow node: the child flow's steps, walked as a graph of their own, then what they hand back.
+   *
+   * The child gets a **copy** of the run's variables with its `inputs` on top, resolved over the
+   * parent's when the node starts — a template naming a variable nobody defined fails the node, the
+   * way a set node does, and nothing is walked. It walks with its own view of which step passed and
+   * what answered, so its ids cannot collide with the parent's, but with the run's budget, pause and
+   * cancellation. Afterwards only the names in `outputs` are written back, also as
+   * `<node>.<name>`, and a session the child obtained replaces the parent's: a shared login is the
+   * most ordinary subflow there is.
+   *
+   * The node passes when every child step did and every output was there. A child step that stops
+   * its flow stops the child; whether the parent stops too is this node's own «si falla».
+   *
+   * Limits: the child walks inside the parent's concurrency slot with the run's concurrency of its
+   * own, so a parallel run can have more steps in flight than the number says; the child's steps are
+   * not counted by the size check made when the run is launched, only by the walk's budget.
+   */
+  private async subflow(
+    run: Run,
+    context: ExecutionContext,
+    item: PreparedItem,
+    state: WalkState,
+    startedAt: Date,
+    config: StepSubflow,
+  ): Promise<void> {
+    const children = item.children ?? [];
+    const declared = config.inputs ?? [];
+    // Templates and not values: an input may carry a secret the template pulled from the environment.
+    const sent = {
+      method: "FLOW",
+      url: item.runCase.path,
+      headers: {},
+      body: Object.fromEntries(declared.map((input) => [input.variable, input.value])),
+    };
+    const seed = computedSeed();
+    const inputs = declared.map((input) => ({
+      variable: input.variable,
+      value: interpolateValue(input.value, context.target.variables, seed),
+    }));
+    const missing = unresolvedVariables(inputs.map((entry) => entry.value));
+    if (missing.length) {
+      await this.finishControl(run, item, state, startedAt, {
+        ok: false,
+        failure: "config",
+        assertions: [{ label: "Entradas del sub-flujo", pass: false, detail: `Faltan variables: ${missing.join(", ")}` }],
+        sent,
+      });
+      return;
+    }
+
+    state.walkedSubflows.add(item.step.id);
+    const started: RunCase = { ...item.runCase, status: "running", startedAt };
+    await this.runs.saveCase(started);
+    this.eventBus.publish(new RunCaseStartedEvent(run.projectId, run.id, started));
+
+    const variables = { ...context.target.variables, ...Object.fromEntries(inputs.map((entry) => [entry.variable, entry.value])) };
+    const target = { ...context.target, variables };
+    const verdicts = new Map<string, boolean>();
+    const cancelled = await this.walkPrepared(run, { ...context, target }, children, state.budget, state.pause, verdicts);
+
+    const session = target.session !== context.target.session ? target.session : null;
+    if (session) context.target.session = session;
+    const outputs = config.outputs ?? [];
+    const returned = outputs.filter((name) => variables[name] !== undefined);
+    const lacking = outputs.filter((name) => variables[name] === undefined);
+    for (const name of returned) {
+      context.target.variables[name] = variables[name];
+      context.target.variables[`${item.step.id}.${name}`] = variables[name];
+    }
+
+    const failed = children.filter((entry) => verdicts.get(entry.step.id) !== true).map((entry) => entry.step.id);
+    const walked = !cancelled && failed.length === 0;
+    const ok = walked && lacking.length === 0;
+    const assertions: Assertion[] = [
+      {
+        label: "Sub-flujo",
+        pass: walked,
+        detail: cancelled
+          ? "La corrida se canceló dentro del sub-flujo"
+          : failed.length
+            ? `No pasaron ${failed.length} de ${children.length} pasos: ${failed.join(", ")}`
+            : `Pasaron sus ${children.length} ${children.length === 1 ? "paso" : "pasos"}`,
+      },
+      // Names only, for the same reason as `sent`.
+      ...(inputs.length ? [{ label: "Entradas", pass: true, detail: inputs.map((entry) => entry.variable).join(", ") }] : []),
+      ...(outputs.length
+        ? [
+            {
+              label: "Variables devueltas",
+              pass: lacking.length === 0,
+              detail: lacking.length ? `No se encontraron: ${lacking.join(", ")}` : returned.join(", "),
+            },
+          ]
+        : []),
+      ...(session
+        ? [{ label: "Sesión obtenida", pass: true, detail: `Los pasos siguientes presentarán ${session.header}` }]
+        : []),
+    ];
+    await this.finishControl(run, item, state, startedAt, {
+      ok,
+      failure: ok ? null : "flow",
+      assertions,
+      sent,
+      durationMs: this.clock.now().getTime() - startedAt.getTime(),
+    });
+  }
+
+  /** A subflow node whose child never walked — the node was skipped, stopped before it, or its
+   * inputs did not resolve — still leaves a verdict on every child case: `queued` is not a result. */
+  private async closeSubflow(run: Run, item: PreparedItem, state: WalkState): Promise<void> {
+    if (item.step.kind !== "subflow" || state.walkedSubflows.has(item.step.id)) return;
+    for (const entry of flattenPrepared(item.children ?? [])) {
+      const at = this.clock.now();
+      const skipped: RunCase = { ...entry.runCase, status: "skipped", startedAt: at, finishedAt: at, durationMs: 0 };
+      await this.runs.saveCase(skipped);
+      await this.announce(run, skipped);
+    }
+  }
+
   /** A node's captures over one answer, as the assertion a request leaves for them. */
   private captureInto(step: WorkflowStep, actual: ActualResponse, context: ExecutionContext): Assertion | null {
     if (!step.captures?.length) return null;
@@ -1440,6 +1622,8 @@ type PreparedItem = {
   template: RequestTemplateRow | null;
   operation: ResolvedOperation | null;
   runCase: RunCase;
+  /** On a subflow node: its child flow's prepared steps, already renamed under the node. */
+  children?: PreparedItem[];
 };
 
 /** Each loop node's body, as the prepared items in walking order. */
@@ -1468,6 +1652,10 @@ type WalkState = {
   bodies: Map<string, PreparedItem[]>;
   budget: { extra: number };
   stopped: boolean;
+  /** The run's pause, so a subflow's child walk stops where the parent's would. */
+  pause: PauseState;
+  /** The subflow nodes of this walk whose child actually walked; the rest get their children skipped. */
+  walkedSubflows: Set<string>;
 };
 
 /**
@@ -1571,6 +1759,8 @@ function controlCaseFields(step: WorkflowStep): { operationId: string; method: s
     case "notify":
       // The variable's name, never the URL it holds.
       return { operationId: "", method: "NOTIFY", path: `${step.notify?.channel ?? ""} → ${step.notify?.urlVariable ?? ""}` };
+    case "subflow":
+      return { operationId: "", method: "FLOW", path: `ejecuta ${step.subflow?.workflowId ?? ""}` };
     default:
       return null;
   }

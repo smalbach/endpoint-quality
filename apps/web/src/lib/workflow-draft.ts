@@ -226,6 +226,7 @@ export const CONTROL_PALETTE: { kind: ControlKind; glyph: string; label: string;
   { kind: "loop", glyph: "∀", label: "Bucle", hint: "Recorre una lista: lo que cuelga de «cada» se ejecuta una vez por elemento, y «fin» sigue después" },
   { kind: "schema", glyph: "⊨", label: "Esquema", hint: "Valida el body de una respuesta contra el JSON Schema del contrato o uno escrito a mano" },
   { kind: "notify", glyph: "✉", label: "Notificar", hint: "Envía un mensaje a Slack, Teams o un webhook; la URL sale de una variable del entorno" },
+  { kind: "subflow", glyph: "⧉", label: "Sub-flujo", hint: "Ejecuta otro flujo del proyecto como un paso de este: le pasa variables y recoge las que devuelve" },
 ];
 
 /** Why the JSON Schema written on a schema node cannot be used, or null. The server refuses the same
@@ -253,7 +254,7 @@ export function schemaJsonProblem(json: string | undefined): string | null {
 /** The kinds the palette drops straight onto the canvas. `fetch` sends a call, but one written on the
  * node itself, so it needs no operation from the catalogue and lands like the control kinds; `poll`
  * re-sends the request of the node wired into it. */
-type ControlKind = "branch" | "wait" | "merge" | "validate" | "fetch" | "set" | "script" | "poll" | "loop" | "schema" | "notify";
+type ControlKind = "branch" | "wait" | "merge" | "validate" | "fetch" | "set" | "script" | "poll" | "loop" | "schema" | "notify" | "subflow";
 const CONTROL_BASE_ID: Record<ControlKind, string> = {
   branch: "rama",
   wait: "espera",
@@ -266,6 +267,7 @@ const CONTROL_BASE_ID: Record<ControlKind, string> = {
   loop: "bucle",
   schema: "esquema",
   notify: "notificar",
+  subflow: "subflujo",
 };
 
 /**
@@ -321,6 +323,8 @@ export function addControlStep(
   if (kind === "loop") node.loop = { from: from ?? "", path: "data", as: "item", max: 50 };
   if (kind === "schema") node.schema = { from: from ?? "", source: "custom", json: '{\n  "type": "object"\n}' };
   if (kind === "notify") node.notify = defaultNotify();
+  // No flow yet: the inspector's selector picks it, and flowProblems asks for it until then.
+  if (kind === "subflow") node.subflow = { workflowId: "", inputs: [], outputs: [] };
   if (kind === "poll") {
     node.poll = { from: from ?? "", attempts: 5, delayMs: 2000 };
     node.checks = [check];
@@ -545,6 +549,20 @@ export function toNodes(
         },
       };
     }
+    if (kind === "subflow") {
+      return {
+        id: step.id,
+        type: "subflow",
+        position,
+        data: {
+          name: step.id,
+          chosen: Boolean(step.subflow?.workflowId),
+          inputs: step.subflow?.inputs?.length ?? 0,
+          outputs: step.subflow?.outputs?.length ?? 0,
+          runStatus: runStatusFor,
+        },
+      };
+    }
     if (kind === "schema") {
       return {
         id: step.id,
@@ -629,7 +647,8 @@ export function flowNodeStatuses(cases: { scenarioId: string; status: CaseStatus
   for (const runCase of cases) {
     const parts = runCase.scenarioId.split(":");
     if (parts[0] !== "workflow" || parts.length < 3) continue;
-    const stepId = parts[2].split("#")[0];
+    // A subflow's child cases are `<node>>childStep`: they light the node that runs them.
+    const stepId = parts[2].split("#")[0].split(">")[0];
     const current = byStep[stepId];
     if (!current || STATUS_RANK[runCase.status] > STATUS_RANK[current]) byStep[stepId] = runCase.status;
   }
@@ -870,6 +889,15 @@ export function flowProblems(steps: WorkflowStepView[]): FlowProblem[] {
       }
     }
     if (kind === "notify") problems.push(...notifyProblems(step));
+    if (kind === "subflow") {
+      if (!step.subflow?.workflowId)
+        problems.push({ message: `El sub-flujo «${step.id}» no tiene elegido el flujo que ejecuta.`, stepId: step.id });
+      const names = [...(step.subflow?.inputs ?? []).map((input) => input.variable), ...(step.subflow?.outputs ?? [])];
+      if (names.some((name) => !/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(name)))
+        problems.push({ message: `El sub-flujo «${step.id}» tiene un nombre de variable vacío o inválido.`, stepId: step.id });
+      if (steps.some((loop) => loop.kind === "loop" && loopBodyIds(steps, loop.id).includes(step.id)))
+        problems.push({ message: `El sub-flujo «${step.id}» está dentro de un bucle: no puede ir ahí.`, stepId: step.id });
+    }
     if (kind === "fetch" && !step.fetch?.url?.trim())
       problems.push({ message: `El fetch «${step.id}» no tiene URL.`, stepId: step.id });
     if (kind === "login" && !step.authorizes)

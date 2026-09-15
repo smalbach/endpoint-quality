@@ -22,6 +22,7 @@ import {
   webhookVariables,
   type EnvironmentVariableView,
 } from "@/lib/workflow-notify";
+import { subflowChoices, variablesWrittenBy } from "@/lib/workflow-subflow";
 import type {
   CaptureSource,
   Environment,
@@ -96,7 +97,10 @@ export function WorkflowInspector({
   onRun,
   onDelete,
   running,
+  flows = [],
 }: {
+  /** Every flow of the project, for the subflow node's selector. */
+  flows?: WorkflowView[];
   /** `/orgs/x/projects/y`. Passed down rather than rebuilt here: the panel below sends a real
    * request, and a second place that assembles this path is a second place to get it wrong. */
   base: string;
@@ -202,6 +206,16 @@ export function WorkflowInspector({
         />
       ) : kind === "schema" ? (
         <SchemaInspector step={step} steps={steps} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
+      ) : kind === "subflow" ? (
+        <SubflowInspector
+          step={step}
+          flows={flows}
+          currentFlowId={workflow.id}
+          variables={variables}
+          canEdit={canEdit}
+          onChange={onChange}
+          onRemove={onRemove}
+        />
       ) : kind === "poll" ? (
         <PollInspector step={step} steps={steps} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
       ) : kind === "fetch" ? (
@@ -1786,6 +1800,229 @@ function SchemaInspector({
                       "type, required, properties, items, enum, allOf/anyOf/oneOf, mínimos y máximos. $ref locales (#/definitions/…). Sin «pattern»."}
                   </p>
                 </>
+              )}
+            </>
+          ),
+        },
+        {
+          id: "failure",
+          label: "Si falla",
+          marked: failureSet(step),
+          content: <FailureEditor step={step} canEdit={canEdit} retries={false} onChange={onChange} />,
+        },
+      ]}
+    />
+  );
+}
+
+/** A subflow node: the flow it runs, the variables it passes in, and the ones it takes back. */
+function SubflowInspector({
+  step,
+  flows,
+  currentFlowId,
+  variables,
+  canEdit,
+  onChange,
+  onRemove,
+}: {
+  step: WorkflowStepView;
+  flows: WorkflowView[];
+  currentFlowId: string;
+  variables: string[];
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+  onRemove: () => void;
+}) {
+  const config = step.subflow ?? { workflowId: "" };
+  const inputs = config.inputs ?? [];
+  const outputs = config.outputs ?? [];
+  const setConfig = (change: Partial<NonNullable<WorkflowStepView["subflow"]>>) =>
+    onChange({ ...step, subflow: { ...config, ...change } });
+  const choices = subflowChoices(flows, currentFlowId);
+  const chosen = flows.find((flow) => flow.id === config.workflowId);
+  const choice = choices.find((item) => item.id === config.workflowId);
+  const offered = chosen ? variablesWrittenBy(chosen.steps).filter((name) => !outputs.includes(name)) : [];
+  const listId = `subflow-vars-${step.id}`;
+
+  return (
+    <NodePanel
+      title="Sub-flujo"
+      subtitle={step.id}
+      description="Ejecuta otro flujo del proyecto como un paso de este. El hijo empieza con una copia de las variables de la corrida más sus entradas; al terminar solo vuelven las variables de «Salidas» (y la sesión, si inicia una). Sus pasos salen en el informe bajo este nodo, y el nodo pasa si pasan todos."
+      canEdit={canEdit}
+      onRemove={onRemove}
+      tabs={[
+        {
+          id: "subflow",
+          label: "Flujo",
+          content: (
+            <>
+              <Field label="Ejecuta el flujo">
+                <select
+                  className={inputClass}
+                  value={config.workflowId}
+                  disabled={!canEdit}
+                  onChange={(event) => setConfig({ workflowId: event.target.value })}
+                >
+                  {!choice && <option value="">{config.workflowId ? "Un flujo que ya no existe" : "Elige un flujo"}</option>}
+                  {choices.map((item) => (
+                    <option
+                      key={item.id}
+                      value={item.id}
+                      disabled={(item.archived || item.callsBack) && item.id !== config.workflowId}
+                    >
+                      {item.name}
+                      {item.archived ? " (archivado)" : item.callsBack ? " (ya ejecuta este flujo)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <p
+                className={cn(
+                  "mt-2 text-[11px] leading-5",
+                  choice && (choice.archived || choice.callsBack) ? "text-amber-700" : "text-slate-500",
+                )}
+              >
+                {!config.workflowId
+                  ? "Elige el flujo que se ejecutará en este punto."
+                  : !choice
+                    ? "Ese flujo ya no está en el proyecto: elige otro."
+                    : choice.archived
+                      ? "Ese flujo está archivado: no se puede ejecutar como sub-flujo."
+                      : choice.callsBack
+                        ? "Ese flujo ya ejecuta este: juntos formarían un ciclo."
+                        : `${choice.steps} ${choice.steps === 1 ? "paso" : "pasos"}. Como mucho 3 niveles de sub-flujos, y no dentro de un bucle.`}
+              </p>
+            </>
+          ),
+        },
+        {
+          id: "inputs",
+          label: "Entradas",
+          count: inputs.length,
+          content: (
+            <>
+              <p className="mb-2 text-[11px] leading-5 text-slate-500">
+                Variables que el hijo recibe, además de las de la corrida. El valor es una plantilla sobre las de este flujo:{" "}
+                <span className="font-mono">{"{{thingId}}"}</span>.
+              </p>
+              <datalist id={listId}>
+                {variables.map((name) => (
+                  <option key={name} value={`{{${name}}}`} />
+                ))}
+              </datalist>
+              <div className="space-y-2">
+                {inputs.map((input, index) => (
+                  <div key={index} className="grid grid-cols-[minmax(0,1fr)_1rem_minmax(0,1.6fr)_1.5rem] items-center gap-1.5">
+                    <input
+                      aria-label="Variable del hijo"
+                      className={cn(inputClass, "mt-0 font-mono text-[11px]")}
+                      value={input.variable}
+                      placeholder="entityName"
+                      disabled={!canEdit}
+                      onChange={(event) =>
+                        setConfig({
+                          inputs: inputs.map((item, position) =>
+                            position === index ? { ...item, variable: event.target.value } : item,
+                          ),
+                        })
+                      }
+                    />
+                    <span className="text-center text-xs text-slate-400">=</span>
+                    <input
+                      aria-label="Valor"
+                      className={cn(inputClass, "mt-0 font-mono text-[11px]")}
+                      value={input.value}
+                      placeholder="{{nombre}}"
+                      list={listId}
+                      disabled={!canEdit}
+                      onChange={(event) =>
+                        setConfig({
+                          inputs: inputs.map((item, position) =>
+                            position === index ? { ...item, value: event.target.value } : item,
+                          ),
+                        })
+                      }
+                    />
+                    {canEdit && (
+                      <button
+                        className="text-[11px] text-rose-600"
+                        aria-label="Quitar entrada"
+                        onClick={() => setConfig({ inputs: inputs.filter((_item, position) => position !== index) })}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {canEdit && (
+                <Button
+                  variant="ghost"
+                  className="mt-2 h-8 text-xs"
+                  onClick={() => setConfig({ inputs: [...inputs, { variable: "", value: "" }] })}
+                >
+                  + Entrada
+                </Button>
+              )}
+            </>
+          ),
+        },
+        {
+          id: "outputs",
+          label: "Salidas",
+          count: outputs.length,
+          content: (
+            <>
+              <p className="mb-2 text-[11px] leading-5 text-slate-500">
+                Variables del hijo que vuelven a este flujo al terminar, también como{" "}
+                <span className="font-mono">{`${step.id}.nombre`}</span>. Las demás se quedan en el hijo. Si una no aparece, el nodo falla.
+              </p>
+              <div className="space-y-2">
+                {outputs.map((name, index) => (
+                  <div key={index} className="grid grid-cols-[minmax(0,1fr)_1.5rem] items-center gap-1.5">
+                    <input
+                      aria-label="Variable devuelta"
+                      className={cn(inputClass, "mt-0 font-mono text-[11px]")}
+                      value={name}
+                      placeholder="thingId"
+                      disabled={!canEdit}
+                      onChange={(event) =>
+                        setConfig({
+                          outputs: outputs.map((item, position) => (position === index ? event.target.value : item)),
+                        })
+                      }
+                    />
+                    {canEdit && (
+                      <button
+                        className="text-[11px] text-rose-600"
+                        aria-label="Quitar salida"
+                        onClick={() => setConfig({ outputs: outputs.filter((_item, position) => position !== index) })}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {canEdit && (
+                <Button variant="ghost" className="mt-2 h-8 text-xs" onClick={() => setConfig({ outputs: [...outputs, ""] })}>
+                  + Salida
+                </Button>
+              )}
+              {canEdit && offered.length > 0 && (
+                <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] text-slate-500">El hijo escribe:</span>
+                  {offered.map((name) => (
+                    <button
+                      key={name}
+                      className="rounded-full bg-indigo-50 px-2 py-0.5 font-mono text-[10px] text-indigo-700 ring-1 ring-indigo-200"
+                      onClick={() => setConfig({ outputs: [...outputs, name] })}
+                    >
+                      + {name}
+                    </button>
+                  ))}
+                </div>
               )}
             </>
           ),

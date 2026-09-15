@@ -422,6 +422,38 @@ function SchemaNode({ data, selected }: NodeProps<Node<SchemaNodeData>>) {
   );
 }
 
+type SubflowNodeData = { name: string; chosen: boolean; inputs: number; outputs: number; runStatus?: CaseStatus };
+
+/** A subflow: another flow of the project, run as one step of this one. */
+function SubflowNode({ data, selected }: NodeProps<Node<SubflowNodeData>>) {
+  const status = data.runStatus;
+  return (
+    <div
+      className={cn(
+        "w-52 rounded-xl border bg-white px-3 py-2 shadow-sm transition-colors",
+        status ? RUN_NODE_CLASS[status] : "border-indigo-300",
+        selected && "border-slate-900 ring-2 ring-slate-200",
+      )}
+    >
+      <Handle type="target" position={Position.Left} />
+      <div className="flex items-center gap-2">
+        <span className="grid h-6 w-6 place-items-center rounded-md bg-indigo-100 text-indigo-700" title="Sub-flujo">
+          ⧉
+        </span>
+        <span className="truncate text-xs font-semibold text-slate-800">Sub-flujo · {data.name}</span>
+        <RunDot status={status} />
+      </div>
+      <p className={cn("mt-1 truncate text-[10px]", data.chosen ? "text-slate-500" : "text-amber-700")}>
+        {data.chosen ? "ejecuta otro flujo" : "elige el flujo que ejecuta"}
+      </p>
+      <p className="mt-0.5 text-[10px] text-indigo-700">
+        {data.inputs} {data.inputs === 1 ? "entrada" : "entradas"} · {data.outputs} {data.outputs === 1 ? "salida" : "salidas"}
+      </p>
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+}
+
 type LoopNodeData = {
   name: string;
   from: string;
@@ -500,6 +532,7 @@ function NotifyNode({ data, selected }: NodeProps<Node<NotifyNodeData>>) {
 
 const nodeTypes = {
   notify: NotifyNode,
+  subflow: SubflowNode,
   schema: SchemaNode,
   loop: LoopNode,
   poll: PollNode,

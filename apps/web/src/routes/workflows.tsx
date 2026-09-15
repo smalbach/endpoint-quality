@@ -851,6 +851,7 @@ export function WorkflowsPage() {
                 onClose={() => setInspectorOpen(false)}
               >
                 <WorkflowInspector
+                  flows={workflows.data?.workflows ?? []}
                   base={base}
                   workflow={draft}
                   steps={steps}

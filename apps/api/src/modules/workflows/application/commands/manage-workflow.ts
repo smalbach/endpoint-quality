@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Inject } from "@nestjs/common";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
-import { safeParseWorkflowDocument, type WorkflowDocument } from "@eq/runner-core";
+import { safeParseWorkflowDocument, subflowProblems, subflowSteps, type WorkflowDocument } from "@eq/runner-core";
 
 import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
@@ -87,6 +87,8 @@ async function validatedDefinition(
   workflows: WorkflowRepositoryPort,
   projectId: string,
   definition: WorkflowDocument,
+  /** The flow being saved: its id closes a subflow cycle, its name says where one goes. */
+  self: { id?: string; name?: string } = {},
 ): Promise<WorkflowDocument> {
   const parsed = safeParseWorkflowDocument(definition);
   if (!parsed.ok) throw new InvalidInputError("El flujo no es válido", parsed.issues, "workflow-invalid");
@@ -104,6 +106,23 @@ async function validatedDefinition(
       })),
       "workflow-invalid",
     );
+  }
+
+  // A subflow names another row, so what it may point at is a query too: this project's flows, and
+  // not an archived one, a cycle back to this flow, or a chain deeper than a report can be read at.
+  if (subflowSteps(definition).length) {
+    const flows = new Map((await workflows.listWorkflows(projectId)).map((flow) => [flow.id, flow]));
+    const problems = subflowProblems({ ...self, definition }, (id) => flows.get(id));
+    if (problems.length) {
+      throw new InvalidInputError(
+        "El flujo no es válido",
+        problems.map((problem) => ({
+          field: `definition.steps.${problem.stepIndex}.subflow.workflowId`,
+          detail: problem.detail,
+        })),
+        "workflow-invalid",
+      );
+    }
   }
   return definition;
 }
@@ -133,6 +152,7 @@ export class CreateWorkflowHandler implements ICommandHandler<CreateWorkflowComm
       this.workflows,
       command.projectId,
       command.input.definition ?? { steps: [] },
+      { name },
     );
     const now = this.clock.now();
     const workflowId = randomUUID();
@@ -177,7 +197,7 @@ export class UpdateWorkflowHandler implements ICommandHandler<UpdateWorkflowComm
     // The whole graph or nothing: a partial write of a document whose halves reference each other
     // is the state this shape exists to make impossible.
     const definition = command.input.definition
-      ? await validatedDefinition(this.workflows, command.projectId, command.input.definition)
+      ? await validatedDefinition(this.workflows, command.projectId, command.input.definition, { id: previous.id, name })
       : previous.definition;
     await this.workflows.saveWorkflow({
       ...previous,
@@ -210,6 +230,13 @@ export class DeleteWorkflowHandler implements ICommandHandler<DeleteWorkflowComm
     // somebody made, and removing it on their behalf changes what a suite runs without saying so.
     if (await this.workflows.isWorkflowReferenced(command.projectId, workflow.id))
       throw new ConflictError("Alguna suite usa este flujo", "workflow-in-use");
+    // A flow another one runs as a subflow is a reference too — deleting it would turn that flow's
+    // next run into an error naming an id nobody recognises.
+    const parents = (await this.workflows.listWorkflows(command.projectId)).filter((other) =>
+      subflowSteps(other.definition).some(({ step }) => step.subflow.workflowId === workflow.id),
+    );
+    if (parents.length)
+      throw new ConflictError(`«${parents[0].name}» usa este flujo como sub-flujo`, "workflow-in-use");
     // Its datasets go with it, by the cascade in the migration: a table of values for a flow that
     // no longer exists is rows nothing can ever spend.
     await this.workflows.deleteWorkflow(command.projectId, workflow.id);

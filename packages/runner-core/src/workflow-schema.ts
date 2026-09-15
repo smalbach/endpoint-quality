@@ -182,7 +182,7 @@ export const workflowStepSchema = z.object({
   // `request` and a `login` node must (checked below).
   requestTemplateId: z.string().uuid().optional(),
   kind: z
-    .enum(["request", "login", "branch", "wait", "merge", "validate", "fetch", "set", "script", "poll", "loop", "schema", "notify"])
+    .enum(["request", "login", "branch", "wait", "merge", "validate", "fetch", "set", "script", "poll", "loop", "schema", "notify", "subflow"])
     .optional(),
   // The `notify` node: channel, the NAME of the variable holding the webhook URL, and the message.
   notify: stepNotifySchema.optional(),
@@ -193,6 +193,23 @@ export const workflowStepSchema = z.object({
       source: z.enum(["contract", "custom"]),
       json: z.string().max(200_000).optional(),
       strict: z.boolean().optional(),
+    })
+    .optional(),
+  // The `subflow` node: another flow of this project, what goes into it and what comes back. Whether
+  // that flow exists, is not archived and closes no cycle spans rows — the command handler checks it.
+  subflow: z
+    .object({
+      workflowId: z.string().uuid("elige el flujo que ejecuta"),
+      inputs: z
+        .array(
+          z.object({
+            variable: z.string().regex(VARIABLE_NAME, "nombre de variable inválido"),
+            value: z.string().max(10_000),
+          }),
+        )
+        .max(50)
+        .optional(),
+      outputs: z.array(z.string().regex(VARIABLE_NAME, "nombre de variable inválido")).max(50).optional(),
     })
     .optional(),
   // The `loop` node: the list it walks. Same ceilings as a `forEach`, for the same reason.
@@ -485,6 +502,20 @@ export const workflowDocumentSchema = z
           if (problem) context.addIssue({ code: "custom", message: problem, path: ["steps", index, "schema", "json"] });
         }
       }
+      if (step.subflow && kind !== "subflow") {
+        context.addIssue({ code: "custom", message: "solo un nodo sub-flujo lleva su bloque subflow", path: ["steps", index, "subflow"] });
+      }
+      if (kind === "subflow") {
+        if (!step.subflow) {
+          context.addIssue({ code: "custom", message: "un sub-flujo necesita el flujo que ejecuta", path: ["steps", index, "subflow"] });
+          broken = true;
+        }
+        // Its child's cases are reserved once, when the run is prepared; a forEach would need them
+        // once per element of a list nobody knows yet.
+        if (step.forEach) {
+          context.addIssue({ code: "custom", message: "un sub-flujo no recorre una lista", path: ["steps", index, "forEach"] });
+        }
+      }
       if (step.poll && kind !== "poll") {
         context.addIssue({ code: "custom", message: "solo un nodo reintento lleva su bloque poll", path: ["steps", index, "poll"] });
       }
@@ -625,6 +656,13 @@ export const workflowDocumentSchema = z
             path: ["steps", index, "forEach"],
           });
         }
+        if (step.kind === "subflow") {
+          context.addIssue({
+            code: "custom",
+            message: `«${step.id}» está dentro del bucle «${loop.id}»: un sub-flujo no puede ir dentro de un bucle`,
+            path: ["steps", index, "kind"],
+          });
+        }
         for (const dependency of step.dependsOn ?? []) {
           if (dependency === loop.id || body.has(dependency) || before.has(dependency)) continue;
           context.addIssue({
@@ -642,6 +680,7 @@ export const workflowDocumentSchema = z
       const writtenBy = (step: (typeof document.steps)[number]) => [
         ...(step.captures ?? []).map((capture) => capture.variable),
         ...(step.set?.assignments ?? []).map((assignment) => assignment.variable),
+        ...(step.subflow?.outputs ?? []),
       ];
       const rightWrites = writtenBy(right);
       const shared = [...new Set(writtenBy(left).filter((name) => rightWrites.includes(name)))];
