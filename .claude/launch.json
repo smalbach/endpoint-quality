@@ -4,7 +4,15 @@
     {
       "name": "web",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "@eq/web", "exec", "vite", "--port", "5173", "--strictPort"],
+      "runtimeArgs": [
+        "--filter",
+        "@eq/web",
+        "exec",
+        "vite",
+        "--port",
+        "5173",
+        "--strictPort"
+      ],
       "port": 5173
     },
     {
@@ -23,6 +31,20 @@
         "cd /Users/smalbach/Documents/GiProjectos/endpoint-quality/apps/web && VITE_API_URL=http://localhost:3002 exec npx vite --port 5174 --strictPort"
       ],
       "port": 5174
+    },
+    {
+      "name": "web-5175",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@eq/web",
+        "exec",
+        "vite",
+        "--port",
+        "5175",
+        "--strictPort"
+      ],
+      "port": 5175
     }
   ]
 }
