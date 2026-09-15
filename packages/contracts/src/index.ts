@@ -1317,12 +1317,22 @@ export type ImportElementsResultView = {
 // ---------------------------------------------------------------------------------------------
 
 /** The pieces a project file can carry. Exporting picks some; importing picks among those present. */
-export type ProjectBundlePart = "settings" | "config" | "endpoints" | "roles" | "flows" | "environments" | "performance";
+export type ProjectBundlePart =
+  | "settings"
+  | "contract"
+  | "config"
+  | "endpoints"
+  | "roles"
+  | "flows"
+  | "environments"
+  | "performance";
 
 /** What an import wrote, and what it deliberately left out (secrets, duplicates, missing targets). */
 export type ProjectBundleImportResultView = {
   parts: ProjectBundlePart[];
   settings: boolean;
+  /** The OpenAPI document: imported as a new active version, already there (same bytes), or not in the import. */
+  contract: "imported" | "unchanged" | null;
   sections: string[];
   endpoints: number;
   roles: number;

@@ -223,20 +223,23 @@ export function WorkflowsPage() {
   /** One flow as a file: with the requests, datasets and sub-flows it needs to run elsewhere. */
   const exportWorkflow = useMutation({
     mutationFn: async (flow: { id: string; name: string }) => ({
-      bundle: await api<unknown>(`${base}/export?parts=flows&workflowIds=${flow.id}`),
+      bundle: await api<unknown>(`${base}/export?parts=flows,contract&workflowIds=${flow.id}`),
       name: flow.name,
     }),
     onSuccess: ({ bundle, name }) => downloadJson(bundleFileName(name), bundle),
   });
-  /** Only the flows of a file, even a whole-project one: this drawer is about flows. */
+  /** The flows of a file, even a whole-project one — and its contract only when this project has none
+   * yet: replacing the contract a project already runs against is a decision for the settings page. */
   const importFlows = useMutation({
     mutationFn: async (file: File) => {
       const read = readBundle(await file.text());
       if (!read.ok) throw new Error(read.error);
       if (!read.file.parts.includes("flows")) throw new Error("El fichero no trae flujos.");
+      const project = await api<{ contract: unknown }>(base);
+      const withContract = !project.contract && read.file.parts.includes("contract");
       return api<ProjectBundleImportResultView>(`${base}/import-bundle`, {
         method: "POST",
-        body: { bundle: read.file.bundle, parts: ["flows"] },
+        body: { bundle: read.file.bundle, parts: withContract ? ["flows", "contract"] : ["flows"] },
       });
     },
     onSuccess: () => void invalidate(),

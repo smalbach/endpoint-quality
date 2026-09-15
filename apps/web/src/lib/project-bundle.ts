@@ -12,6 +12,7 @@ export const BUNDLE_VERSION = 1;
 
 export const BUNDLE_PARTS: ProjectBundlePart[] = [
   "settings",
+  "contract",
   "config",
   "endpoints",
   "roles",
@@ -22,6 +23,7 @@ export const BUNDLE_PARTS: ProjectBundlePart[] = [
 
 export const BUNDLE_PART_META: Record<ProjectBundlePart, { label: string; hint: string }> = {
   settings: { label: "Ajustes", hint: "Descripción, URL base y etiquetas. El login no viaja." },
+  contract: { label: "Contrato", hint: "El OpenAPI activo: de él sacan las peticiones su método y ruta." },
   config: { label: "Configuración", hint: "Secciones del contrato: presupuestos, envelope, textos…" },
   endpoints: { label: "Endpoints", hint: "Rutas, parámetros, cuerpos y scripts." },
   roles: { label: "Roles y permisos", hint: "Roles, permisos por endpoint y reglas entre roles." },
@@ -37,6 +39,8 @@ export type BundleFile = {
   /** The parts the file carries, in the fixed order. */
   parts: ProjectBundlePart[];
   counts: Partial<Record<ProjectBundlePart, number>>;
+  /** The saved requests of its flows, to check their operations against this project's contract. */
+  templates: { name: string; operationId: string }[];
 };
 
 const length = (value: unknown) => (Array.isArray(value) ? value.length : 0);
@@ -61,6 +65,8 @@ export function readBundle(text: string): { ok: true; file: BundleFile } | { ok:
     if (count > 0) counts[part] = count;
   };
   if (bundle.settings && typeof bundle.settings === "object") counts.settings = 1;
+  const contract = bundle.contract as { raw?: unknown } | undefined;
+  if (typeof contract?.raw === "string" && contract.raw.trim()) counts.contract = 1;
   add("config", length(bundle.config));
   add("endpoints", length(bundle.endpoints));
   add("roles", length(bundle.roles) || length(bundle.roleRules));
@@ -79,8 +85,24 @@ export function readBundle(text: string): { ok: true; file: BundleFile } | { ok:
       exportedAt: typeof bundle.exportedAt === "string" ? bundle.exportedAt : null,
       parts,
       counts,
+      templates: (Array.isArray(flows.requestTemplates) ? (flows.requestTemplates as unknown[]) : []).flatMap((entry) => {
+        const template = entry as { name?: unknown; operationId?: unknown } | null;
+        return typeof template?.name === "string" && typeof template.operationId === "string"
+          ? [{ name: template.name, operationId: template.operationId }]
+          : [];
+      }),
     },
   };
+}
+
+/** The saved requests whose operation is not among `operationIds`: they import, and cannot run. */
+export function missingOperations(
+  templates: { name: string; operationId: string }[],
+  operationIds: Set<string>,
+): string[] {
+  return templates
+    .filter((template) => !operationIds.has(template.operationId))
+    .map((template) => `${template.name} (${template.operationId})`);
 }
 
 const slug = (value: string) =>
@@ -124,6 +146,7 @@ export function describeImport(result: ProjectBundleImportResultView): string {
   ];
   const pieces = [
     ...(result.settings ? ["ajustes"] : []),
+    ...(result.contract === "imported" ? ["contrato"] : result.contract === "unchanged" ? ["contrato (ya estaba)"] : []),
     ...(result.sections.length
       ? [`${result.sections.length} ${result.sections.length === 1 ? "sección" : "secciones"} de configuración`]
       : []),

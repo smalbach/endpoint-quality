@@ -2,11 +2,18 @@ import { useState, type ChangeEvent } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { Button, Card } from "@/components/ui";
 import { ImportOutcome, ImportProblems, PartPicker } from "@/components/project-transfer";
-import { BUNDLE_PARTS, bundleFileName, downloadJson, readBundle, type BundleFile } from "@/lib/project-bundle";
+import {
+  BUNDLE_PARTS,
+  bundleFileName,
+  downloadJson,
+  missingOperations,
+  readBundle,
+  type BundleFile,
+} from "@/lib/project-bundle";
 import { formatDate } from "@/lib/format";
 import type { ProjectBundleImportResultView, ProjectBundlePart, ProjectSummary } from "@/lib/types";
 
@@ -98,6 +105,23 @@ function ImportCard({ base, archived }: { base: string; archived: boolean }) {
     setParts(new Set(read.file.parts));
   }
 
+  // Only worth asking when the file's own contract is not coming along: that one is checked by the API.
+  const checksOperations = Boolean(file?.templates.length && parts.has("flows") && !parts.has("contract"));
+  const operations = useQuery({
+    queryKey: ["import-operation-ids", base],
+    enabled: checksOperations,
+    queryFn: async () => {
+      try {
+        const view = await api<{ operations: { id: string }[] }>(`${base}/operations`);
+        return new Set(view.operations.map((operation) => operation.id));
+      } catch (error) {
+        // 409: the project has no contract yet, so every operation is missing.
+        if (error instanceof ApiError && error.status === 409) return new Set<string>();
+        throw error;
+      }
+    },
+  });
+  const missing = checksOperations && file && operations.data ? missingOperations(file.templates, operations.data) : [];
   const replaces = parts.has("settings") || parts.has("config");
   return (
     <Card className="p-4">
@@ -131,6 +155,24 @@ function ImportCard({ base, archived }: { base: string; archived: boolean }) {
             {file.exportedAt ? ` el ${formatDate(file.exportedAt)}` : ""}.
           </p>
           <PartPicker parts={file.parts} selected={parts} onChange={setParts} counts={file.counts} />
+          {missing.length > 0 && (
+            <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+              {operations.data?.size
+                ? `El contrato de este proyecto no tiene la operación de ${missing.length === 1 ? "1 petición" : `${missing.length} peticiones`}`
+                : "Este proyecto no tiene contrato"}
+              : se importarán pero no se podrán ejecutar
+              {file.parts.includes("contract") ? ". Marca «Contrato» para traer el del fichero" : ""}.{" "}
+              <span className="font-mono">
+                {missing.slice(0, 5).join(", ")}
+                {missing.length > 5 ? "…" : ""}
+              </span>
+            </p>
+          )}
+          {parts.has("contract") && (
+            <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+              El contrato del fichero pasa a ser el activo de este proyecto. Las versiones anteriores se conservan.
+            </p>
+          )}
           {replaces && (
             <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
               Los ajustes y las secciones de configuración del fichero sustituyen a los de este proyecto.

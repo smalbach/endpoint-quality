@@ -31,7 +31,7 @@ export function PartPicker({
           <span>
             <span className="font-medium text-slate-700">
               {BUNDLE_PART_META[part].label}
-              {counts?.[part] !== undefined && part !== "settings" ? ` (${counts[part]})` : ""}
+              {counts?.[part] !== undefined && part !== "settings" && part !== "contract" ? ` (${counts[part]})` : ""}
             </span>
             <span className="block text-[11px] text-slate-400">{BUNDLE_PART_META[part].hint}</span>
           </span>

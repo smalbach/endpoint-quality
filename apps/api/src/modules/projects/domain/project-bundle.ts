@@ -7,6 +7,7 @@ import {
   safeParseSection,
   safeParseWorkflowDocument,
 } from "@eq/runner-core";
+import { importSpec } from "@eq/spec-import";
 import type { ProjectBundlePart } from "@eq/contracts";
 
 import {
@@ -47,6 +48,7 @@ export const BUNDLE_VERSION = 1;
 
 export const BUNDLE_PARTS = [
   "settings",
+  "contract",
   "config",
   "endpoints",
   "roles",
@@ -152,6 +154,10 @@ const bundleTemplate = z.object({
   id: ref,
   name,
   operationId: z.string().min(1).max(200),
+  /** Where the operation pointed when exported, to make the file readable. The import resolves by
+   * `operationId` against the target's contract, never by these. */
+  method: z.string().max(10).optional(),
+  path: z.string().max(2000).optional(),
   description: z.string().max(500).nullable().default(null),
   expectedStatus: z.number().int().min(100).max(599),
   parameters: stringMap.default({}),
@@ -209,6 +215,15 @@ export const projectBundleSchema = z.object({
       tags: z.array(z.string().max(40)).max(30).optional(),
     })
     .optional(),
+  /** The active OpenAPI document. Flows' requests take their method and path from it by operation id,
+   * so a flow without the contract it was written against imports and cannot run. */
+  contract: z
+    .object({
+      raw: z.string().min(1).max(8_000_000),
+      title: z.string().max(500).optional(),
+      version: z.string().max(200).optional(),
+    })
+    .optional(),
   config: z
     .array(z.object({ section: z.string().max(40), data: z.unknown() }))
     .max(20)
@@ -253,6 +268,7 @@ export function partsIn(bundle: ProjectBundle): ProjectBundlePart[] {
     if (part === "roles") return Boolean(bundle.roles?.length || bundle.roleRules?.length);
     if (part === "flows") return Boolean(bundle.flows?.workflows.length || bundle.flows?.requestTemplates.length);
     if (part === "settings") return bundle.settings !== undefined;
+    if (part === "contract") return Boolean(bundle.contract?.raw.trim());
     const value = bundle[part];
     return Array.isArray(value) && value.length > 0;
   });
@@ -310,6 +326,16 @@ export function withSubflows<T extends { id: string; definition: { steps: unknow
   return all.filter((flow) => keep.has(flow.id));
 }
 
+/** The saved requests whose operation is not among `operationIds`: they import, and cannot run. */
+export function missingOperations(
+  templates: { name: string; operationId: string }[],
+  operationIds: Set<string>,
+): string[] {
+  return templates
+    .filter((template) => !operationIds.has(template.operationId))
+    .map((template) => `${template.name} (${template.operationId})`);
+}
+
 const httpUrlProblem = (value: string): string | null => {
   try {
     const url = new URL(value);
@@ -336,6 +362,19 @@ export function bundleProblems(
 
   if (parts.has("settings") && bundle.settings?.baseUrl)
     push("settings", projectSettingsProblems({ baseUrl: bundle.settings.baseUrl }, NO_AUTH));
+
+  if (parts.has("contract") && bundle.contract) {
+    try {
+      importSpec(bundle.contract.raw)
+        .problems.filter((problem) => problem.severity === "error")
+        .forEach((problem) =>
+          problems.push({ field: problem.pointer ? `contract.${problem.pointer}` : "contract", detail: problem.message }),
+        );
+    } catch (error) {
+      // Text that is not YAML or JSON at all makes the parser throw rather than report.
+      problems.push({ field: "contract", detail: `no es un documento OpenAPI legible: ${(error as Error).message}` });
+    }
+  }
 
   if (parts.has("config")) {
     bundle.config?.forEach((entry, index) => {

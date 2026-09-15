@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import request from "supertest";
 
 import { createTestApp, type TestContext } from "../support/test-app";
+import { STUB_SPEC_YAML } from "../support/stub-target";
 
 let context: TestContext;
 const api = () => request(context.app.getHttpServer());
@@ -44,23 +45,28 @@ before(async () => {
   context = await createTestApp();
   owner = await signUp("bundle@example.com");
   source = await newProject("Origen");
+  await created(
+    await api().post(`${source}/spec-versions`).set(as(owner)).send({ source: { kind: "inline", raw: STUB_SPEC_YAML } }),
+  );
 
   await created(await api().post(`${source}/endpoints`).set(as(owner)).send({ method: "GET", path: "/orders" }));
-  const endpoints = (await api().get(`${source}/endpoints`).set(as(owner))).body.data as { id: string }[];
+  // The contract brings its own endpoints too, so pick the manual one by its path.
+  const endpoints = (await api().get(`${source}/endpoints`).set(as(owner))).body.data as { id: string; path: string }[];
+  const orders = endpoints.find((endpoint) => endpoint.path === "/orders")!;
   await created(await api().post(`${source}/roles`).set(as(owner)).send({ name: "vendedor" }));
   const [seller] = (await api().get(`${source}/roles`).set(as(owner))).body as { id: string }[];
   await created(
     await api()
       .put(`${source}/roles/${seller!.id}/permissions`)
       .set(as(owner))
-      .send({ permissions: [{ endpointId: endpoints[0]!.id, access: "allow", dataScope: "own" }] }),
+      .send({ permissions: [{ endpointId: orders.id, access: "allow", dataScope: "own" }] }),
   );
 
   const template = await created(
     await api()
       .post(`${source}/request-templates`)
       .set(as(owner))
-      .send({ name: "Listar", operationId: "listOrders", expectedStatus: 200 }),
+      .send({ name: "Listar", operationId: "listThings", expectedStatus: 200 }),
   );
   templateId = template.body.requestTemplateId;
   const child = await created(
@@ -123,11 +129,15 @@ describe("exportar e importar un proyecto como fichero", () => {
     const bundle = exported.body;
     assert.equal(bundle.format, "endpoint-quality/project");
     assert.equal(bundle.version, 1);
-    assert.equal(bundle.endpoints.length, 1);
+    assert.ok(bundle.endpoints.some((endpoint: { path: string }) => endpoint.path === "/orders"));
     assert.equal(bundle.roles[0].permissions[0].path, "/orders");
     assert.equal(bundle.flows.workflows.length, 2);
     assert.equal(bundle.flows.suites.length, 1);
     assert.equal(bundle.performance.length, 1);
+    // El contrato viaja, y cada petición dice a qué método y ruta apuntaba.
+    assert.ok(bundle.contract.raw.includes("listThings"));
+    assert.equal(bundle.flows.requestTemplates[0].method, "GET");
+    assert.equal(typeof bundle.flows.requestTemplates[0].path, "string");
     // Ningún secreto sale en el fichero: la variable sensible viaja con su nombre y vacía.
     assert.ok(!JSON.stringify(bundle).includes("muy-secreto-123"));
     assert.deepEqual(bundle.environments[0].variables.token, { initial: "", current: "", sensitive: true });
@@ -137,7 +147,7 @@ describe("exportar e importar un proyecto como fichero", () => {
     assert.equal(imported.status, 201, JSON.stringify(imported.body));
     const result = imported.body;
     assert.equal(result.settings, true);
-    assert.equal(result.endpoints, 1);
+    assert.ok(result.endpoints >= 1);
     assert.equal(result.roles, 1);
     assert.equal(result.permissions, 1);
     assert.equal(result.requestTemplates, 1);
@@ -146,6 +156,21 @@ describe("exportar e importar un proyecto como fichero", () => {
     assert.equal(result.suites, 1);
     assert.equal(result.environments, 1);
     assert.equal(result.performancePlans, 1);
+    assert.equal(result.contract, "imported");
+    assert.ok(
+      !result.skipped.some((entry: { what: string }) => entry.what === "operación" || entry.what === "contrato"),
+      JSON.stringify(result.skipped),
+    );
+    const operations = await api().get(`${target}/operations`).set(as(owner));
+    assert.equal(operations.status, 200);
+    // Contract endpoints and the file's endpoints meet in one list without duplicates.
+    const targetEndpoints = (await api().get(`${target}/endpoints`).set(as(owner))).body.data as {
+      method: string;
+      path: string;
+    }[];
+    const keys = targetEndpoints.map((endpoint) => `${endpoint.method} ${endpoint.path}`);
+    assert.equal(new Set(keys).size, keys.length, JSON.stringify(keys));
+    assert.equal(targetEndpoints.length, bundle.endpoints.length, JSON.stringify(keys));
     assert.ok(result.skipped.some((entry: { what: string; detail: string }) => entry.what === "secreto" && /token/.test(entry.detail)));
 
     const flows = (await api().get(`${target}/workflows`).set(as(owner))).body;
@@ -182,6 +207,9 @@ describe("exportar e importar un proyecto como fichero", () => {
     assert.equal(exported.body.flows.workflows.length, 2);
     assert.equal(exported.body.flows.requestTemplates.length, 1);
     assert.equal(exported.body.flows.suites.length, 0);
+    assert.equal(exported.body.contract, undefined);
+    const withContract = await api().get(`${source}/export?parts=flows,contract&workflowIds=${parentId}`).set(as(owner));
+    assert.ok(withContract.body.contract.raw.length > 0);
 
     const missing = await api().get(`${source}/export?parts=flows&workflowIds=${crypto.randomUUID()}`).set(as(owner));
     assert.equal(missing.status, 404);
@@ -214,5 +242,35 @@ describe("exportar e importar un proyecto como fichero", () => {
       .set(as(owner))
       .send({ bundle: { format: "endpoint-quality/project", version: 2 } });
     assert.equal(newer.status, 422);
+
+    const badContract = await api()
+      .post(`${target}/import-bundle`)
+      .set(as(owner))
+      .send({ bundle: { format: "endpoint-quality/project", version: 1, contract: { raw: "esto no es un contrato" } } });
+    assert.equal(badContract.status, 422, JSON.stringify(badContract.body));
+  });
+
+  test("un flujo sin su contrato se importa, y avisa de lo que no podrá ejecutarse", async () => {
+    const flowOnly = (await api().get(`${source}/export?parts=flows&workflowIds=${childId}`).set(as(owner))).body;
+
+    const bare = await newProject("Sin contrato");
+    const imported = await api().post(`${bare}/import-bundle`).set(as(owner)).send({ bundle: flowOnly });
+    assert.equal(imported.status, 201, JSON.stringify(imported.body));
+    assert.equal(imported.body.contract, null);
+    assert.ok(imported.body.skipped.some((entry: { what: string }) => entry.what === "contrato"));
+
+    const other = await newProject("Otro contrato");
+    const renamed = await api()
+      .post(`${other}/import-bundle`)
+      .set(as(owner))
+      .send({ bundle: { ...flowOnly, contract: { raw: STUB_SPEC_YAML.replace('"listThings"', '"listStuff"') } } });
+    assert.equal(renamed.status, 201, JSON.stringify(renamed.body));
+    assert.equal(renamed.body.contract, "imported");
+    assert.ok(
+      renamed.body.skipped.some(
+        (entry: { what: string; detail: string }) => entry.what === "operación" && /listThings/.test(entry.detail),
+      ),
+      JSON.stringify(renamed.body.skipped),
+    );
   });
 });

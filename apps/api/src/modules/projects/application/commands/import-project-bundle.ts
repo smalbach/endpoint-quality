@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Inject } from "@nestjs/common";
-import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
+import { CommandBus, CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 import type { ConfigSection, RequestBody, ScenarioCredential, WorkflowDocument } from "@eq/runner-core";
 import type { ProjectBundleImportResultView, ProjectBundlePart } from "@eq/contracts";
 
@@ -20,11 +20,17 @@ import {
   type PerformancePlanRepositoryPort,
 } from "@/modules/performance/domain/ports";
 import type { PerformancePlanDefinition } from "@/modules/performance/domain/model";
+import { SPEC_REPOSITORY, type SpecRepositoryPort } from "@/modules/specs/domain/ports";
+import {
+  ImportSpecVersionCommand,
+  type ImportSpecVersionResult,
+} from "@/modules/specs/application/commands/import-spec-version";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "../../domain/ports";
 import { normalizeTags, type Project } from "../../domain/model";
 import {
   bundleProblems,
   isBundlePart,
+  missingOperations,
   parseProjectBundle,
   partsIn,
   remapDefinition,
@@ -68,7 +74,9 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
     @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
     @Inject(ENVIRONMENT_REPOSITORY) private readonly environments: EnvironmentRepositoryPort,
     @Inject(PERFORMANCE_PLAN_REPOSITORY) private readonly plans: PerformancePlanRepositoryPort,
+    @Inject(SPEC_REPOSITORY) private readonly specs: SpecRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
+    private readonly commandBus: CommandBus,
   ) {}
 
   async execute(command: ImportProjectBundleCommand): Promise<Result> {
@@ -108,6 +116,7 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
     const result: Result = {
       parts: BUNDLE_ORDER.filter((part) => parts.has(part)),
       settings: false,
+      contract: null,
       sections: [],
       endpoints: 0,
       roles: 0,
@@ -134,6 +143,26 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
       context.project = project;
       result.settings = true;
     }
+    // Endpoints before the contract. Activating a contract creates its endpoints from an event that
+    // runs on its own; with the file's endpoints already stored it only links or adds what is
+    // missing, instead of racing this import to insert the same method and path twice.
+    if (parts.has("endpoints")) await this.importEndpoints(bundle, context);
+    // Through the contract import itself: the same parsing, the same «same bytes, same version», the
+    // same events that keep endpoints and drift in step. It saves the project, so read it again.
+    if (parts.has("contract") && bundle.contract) {
+      const imported = (await this.commandBus.execute(
+        new ImportSpecVersionCommand(
+          command.organizationId,
+          project.id,
+          { kind: "upload", filename: `${bundle.project?.name || "proyecto"}.eq.json`, raw: bundle.contract.raw },
+          command.actorId,
+          true,
+        ),
+      )) as ImportSpecVersionResult;
+      result.contract = imported.unchanged ? "unchanged" : "imported";
+      project = await ownedProject(this.projects, command.organizationId, command.projectId);
+      context.project = project;
+    }
     if (parts.has("config")) {
       for (const entry of bundle.config ?? []) {
         await this.config.saveSection({
@@ -146,11 +175,13 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
         result.sections.push(entry.section);
       }
     }
-    // Endpoints before roles: a permission lands on an endpoint by method and path, and the ones
-    // this same file brings have to exist by then.
-    if (parts.has("endpoints")) await this.importEndpoints(bundle, context);
+    // Roles after endpoints: a permission lands on an endpoint by method and path, and the ones this
+    // same file brings have to exist by then.
     if (parts.has("roles")) await this.importRoles(bundle, context);
-    if (parts.has("flows")) await this.importFlows(bundle, ids, context);
+    if (parts.has("flows")) {
+      await this.importFlows(bundle, ids, context);
+      await this.warnMissingOperations(bundle, context);
+    }
     if (parts.has("environments")) await this.importEnvironments(bundle, context);
     if (parts.has("performance")) await this.importPlans(bundle, context);
     return result;
@@ -351,6 +382,30 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
     }
   }
 
+  /**
+   * A saved request finds its method and path in the active contract only when a run starts. Saying
+   * now which ones will not find it is the difference between a warning and a red run tomorrow.
+   */
+  private async warnMissingOperations(bundle: ProjectBundle, { project, result }: Context): Promise<void> {
+    const templates = bundle.flows?.requestTemplates ?? [];
+    if (!templates.length) return;
+    const fresh = await this.projects.findById(project.id);
+    if (!fresh?.activeSpecVersionId) {
+      const which = templates.length === 1 ? "la petición importada" : `las ${templates.length} peticiones importadas`;
+      result.skipped.push({ what: "contrato", detail: `este proyecto no tiene contrato: ${which} no se podrán ejecutar hasta importar uno` });
+      return;
+    }
+    const ids = new Set((await this.specs.listOperations(fresh.activeSpecVersionId)).map((operation) => operation.id));
+    const missing = missingOperations(templates, ids);
+    if (missing.length) {
+      const more = missing.length > 5 ? ` y ${missing.length - 5} más` : "";
+      result.skipped.push({
+        what: "operación",
+        detail: `el contrato de este proyecto no tiene ${missing.slice(0, 5).join(", ")}${more}: no se podrán ejecutar`,
+      });
+    }
+  }
+
   private async importEnvironments(bundle: ProjectBundle, context: Context): Promise<void> {
     const { project, now, result } = context;
     const names = new Set((await this.environments.listForProject(project.id)).map((row) => row.name));
@@ -423,4 +478,4 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
 
 type Context = { project: Project; actorId: string; now: Date; result: Result };
 
-const BUNDLE_ORDER: ProjectBundlePart[] = ["settings", "config", "endpoints", "roles", "flows", "environments", "performance"];
+const BUNDLE_ORDER: ProjectBundlePart[] = ["settings", "contract", "config", "endpoints", "roles", "flows", "environments", "performance"];
