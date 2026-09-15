@@ -27,6 +27,7 @@ export function Drawer({
   side = "right",
   width = "24rem",
   modal = true,
+  flush = false,
   onClose,
   children,
   footer,
@@ -34,6 +35,9 @@ export function Drawer({
   title: ReactNode;
   side?: "left" | "right";
   width?: string;
+  /** The content lays itself out: no padding and no scroll of its own, so it can pin a header or a
+   * tab strip and scroll only what is under it. */
+  flush?: boolean;
   /** A modal drawer dims the page and catches the click outside to close. A non-modal one leaves
    * the rest of the page live — used for the node panel, so the canvas and its toolbar stay usable
    * while a node is open. */
@@ -78,7 +82,7 @@ export function Drawer({
             ×
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-4 py-3">{children}</div>
+        <div className={flush ? "flex min-h-0 flex-1 flex-col" : "flex-1 overflow-y-auto px-4 py-3"}>{children}</div>
         {footer && <div className="border-t border-slate-100 px-4 py-3">{footer}</div>}
       </div>
     </div>,

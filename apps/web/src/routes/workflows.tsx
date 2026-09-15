@@ -754,6 +754,10 @@ export function WorkflowsPage() {
                 title={selectedStep ? "Nodo" : "Ajustes"}
                 side="right"
                 modal={false}
+                flush
+                // A node has several sections; wide enough to lay them out beside each other and put
+                // one per tab, instead of a narrow column somebody has to scroll through.
+                width={selectedStep ? "60rem" : "24rem"}
                 onClose={() => setInspectorOpen(false)}
               >
                 <WorkflowInspector

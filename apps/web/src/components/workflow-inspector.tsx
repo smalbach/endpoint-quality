@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import { Button, Field, inputClass } from "@/components/ui";
 import { RequestBodyEditor } from "@/components/request-body-editor";
 import { RequestFieldsEditor } from "@/components/request-fields-editor";
 import { RequestPreviewPanel } from "@/components/request-preview";
+import { cn } from "@/lib/format";
 import { fieldMapsFrom, fieldProblems, fieldRowsFrom, type FieldRow } from "@/lib/request-fields";
 import { loopBodyIds, removeStep, replaceStep, suggestCaptures, variablesFor } from "@/lib/workflow-draft";
 import type { OperationSummary } from "@/lib/workflow-draft";
@@ -93,9 +94,9 @@ export function WorkflowInspector({
   operations: OperationSummary[];
   environments: Environment[];
   environmentId: string;
+  canEdit: boolean;
   concurrency: number;
   delayMs: number;
-  canEdit: boolean;
   onEnvironment: (id: string) => void;
   onConcurrency: (value: number) => void;
   onDelay: (value: number) => void;
@@ -113,132 +114,157 @@ export function WorkflowInspector({
 }) {
   const step = steps.find((item) => item.id === selectedStep);
   const template = step && templates.find((item) => item.id === step.requestTemplateId);
+  // Which section is on screen. Kept across nodes on purpose: somebody going through the checks of
+  // five requests stays on «Comprobaciones»; a node without that tab falls back to its first one.
+  const [tab, setTab] = useState("");
+
+  const settings = (
+    <FlowSettings
+      workflow={workflow}
+      steps={steps}
+      environments={environments}
+      environmentId={environmentId}
+      canEdit={canEdit}
+      onEnvironment={onEnvironment}
+      concurrency={concurrency}
+      delayMs={delayMs}
+      onConcurrency={onConcurrency}
+      onDelay={onDelay}
+      onWorkflow={onWorkflow}
+      onRun={onRun}
+      onDelete={onDelete}
+      running={running}
+    />
+  );
+
+  if (!step) {
+    return (
+      <div className="flex-1 overflow-y-auto px-4 py-3">
+        {settings}
+        <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-500">
+          Selecciona un nodo en el lienzo para configurarlo.
+        </p>
+      </div>
+    );
+  }
+
+  const variables = variablesFor(
+    steps,
+    step.id,
+    Object.keys(environments.find((item) => item.id === environmentId)?.variables ?? {}),
+  );
+  const onChange = (next: WorkflowStepView) => onSteps(replaceStep(steps, next));
+  const onRemove = () => onSteps(removeStep(steps, step.id));
+  const shell = { active: tab, setActive: setTab, flowTab: { id: "flow", label: "Flujo", content: settings } };
+  const kind = step.kind ?? "request";
 
   return (
-    <div>
-      <Field label="Nombre del flujo">
-        <input
-          className={inputClass}
-          value={workflow.name}
-          disabled={!canEdit}
-          onChange={(event) => onWorkflow({ name: event.target.value })}
+    <InspectorShell.Provider value={shell}>
+      {kind === "branch" ? (
+        <BranchInspector step={step} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
+      ) : kind === "wait" ? (
+        <WaitInspector step={step} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
+      ) : kind === "merge" ? (
+        <MergeInspector step={step} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
+      ) : kind === "validate" ? (
+        <ValidateInspector step={step} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
+      ) : kind === "set" ? (
+        <SetInspector step={step} variables={variables} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
+      ) : kind === "script" ? (
+        <ScriptInspector step={step} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
+      ) : kind === "loop" ? (
+        <LoopInspector
+          step={step}
+          body={loopBodyIds(steps, step.id)}
+          canEdit={canEdit}
+          onChange={onChange}
+          onRemove={onRemove}
         />
-      </Field>
-      <Field label="Descripción">
-        <textarea
-          className={`${inputClass} h-20`}
-          value={workflow.description ?? ""}
-          disabled={!canEdit}
-          onChange={(event) => onWorkflow({ description: event.target.value })}
+      ) : kind === "poll" ? (
+        <PollInspector step={step} steps={steps} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
+      ) : kind === "fetch" ? (
+        <FetchInspector step={step} variables={variables} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
+      ) : (
+        <StepInspector
+          base={base}
+          step={step}
+          template={template}
+          operations={operations}
+          environmentId={environmentId}
+          // What `{{` can name in this step's fields: the chosen environment's variables, plus
+          // what the steps it depends on capture. Computed here because this is the only place
+          // that holds both the environments and the graph — and the disabled ones are left out
+          // on purpose, because a run does not substitute them.
+          variables={variables}
+          canEdit={canEdit}
+          sharedBy={template ? templateUsage(template.id) : 0}
+          forking={forking}
+          onTemplate={onTemplate}
+          onFork={(overrides) => onFork(step, overrides)}
+          onChange={onChange}
+          onRemove={onRemove}
         />
-      </Field>
+      )}
+    </InspectorShell.Provider>
+  );
+}
 
-      <div className="mt-4 border-t border-slate-100 pt-3">
-        {step && (step.kind ?? "request") === "branch" ? (
-          <BranchInspector
-            step={step}
-            canEdit={canEdit}
-            onChange={(next) => onSteps(replaceStep(steps, next))}
-            onRemove={() => onSteps(removeStep(steps, step.id))}
+/** The flow itself: its name, where it runs, and the button that runs it. */
+function FlowSettings({
+  workflow,
+  steps,
+  environments,
+  environmentId,
+  canEdit,
+  onEnvironment,
+  concurrency,
+  delayMs,
+  onConcurrency,
+  onDelay,
+  onWorkflow,
+  onRun,
+  onDelete,
+  running,
+}: {
+  workflow: WorkflowView;
+  steps: WorkflowStepView[];
+  environments: Environment[];
+  environmentId: string;
+  canEdit: boolean;
+  onEnvironment: (id: string) => void;
+  concurrency: number;
+  delayMs: number;
+  onConcurrency: (value: number) => void;
+  onDelay: (value: number) => void;
+  onWorkflow: (change: Partial<Pick<WorkflowView, "name" | "description">>) => void;
+  onRun: () => void;
+  onDelete: () => void;
+  running: boolean;
+}) {
+  return (
+    <div className="grid gap-x-6 gap-y-4 @3xl:grid-cols-2">
+      <div>
+        <Field label="Nombre del flujo">
+          <input
+            className={inputClass}
+            value={workflow.name}
+            disabled={!canEdit}
+            onChange={(event) => onWorkflow({ name: event.target.value })}
           />
-        ) : step && step.kind === "wait" ? (
-          <WaitInspector
-            step={step}
-            canEdit={canEdit}
-            onChange={(next) => onSteps(replaceStep(steps, next))}
-            onRemove={() => onSteps(removeStep(steps, step.id))}
-          />
-        ) : step && step.kind === "merge" ? (
-          <MergeInspector
-            step={step}
-            canEdit={canEdit}
-            onChange={(next) => onSteps(replaceStep(steps, next))}
-            onRemove={() => onSteps(removeStep(steps, step.id))}
-          />
-        ) : step && step.kind === "validate" ? (
-          <ValidateInspector
-            step={step}
-            canEdit={canEdit}
-            onChange={(next) => onSteps(replaceStep(steps, next))}
-            onRemove={() => onSteps(removeStep(steps, step.id))}
-          />
-        ) : step && step.kind === "set" ? (
-          <SetInspector
-            step={step}
-            variables={variablesFor(
-              steps,
-              step.id,
-              Object.keys(environments.find((item) => item.id === environmentId)?.variables ?? {}),
-            )}
-            canEdit={canEdit}
-            onChange={(next) => onSteps(replaceStep(steps, next))}
-            onRemove={() => onSteps(removeStep(steps, step.id))}
-          />
-        ) : step && step.kind === "script" ? (
-          <ScriptInspector
-            step={step}
-            canEdit={canEdit}
-            onChange={(next) => onSteps(replaceStep(steps, next))}
-            onRemove={() => onSteps(removeStep(steps, step.id))}
-          />
-        ) : step && step.kind === "loop" ? (
-          <LoopInspector
-            step={step}
-            body={loopBodyIds(steps, step.id)}
-            canEdit={canEdit}
-            onChange={(next) => onSteps(replaceStep(steps, next))}
-            onRemove={() => onSteps(removeStep(steps, step.id))}
-          />
-        ) : step && step.kind === "poll" ? (
-          <PollInspector
-            step={step}
-            steps={steps}
-            canEdit={canEdit}
-            onChange={(next) => onSteps(replaceStep(steps, next))}
-            onRemove={() => onSteps(removeStep(steps, step.id))}
-          />
-        ) : step && step.kind === "fetch" ? (
-          <FetchInspector
-            step={step}
-            variables={variablesFor(
-              steps,
-              step.id,
-              Object.keys(environments.find((item) => item.id === environmentId)?.variables ?? {}),
-            )}
-            canEdit={canEdit}
-            onChange={(next) => onSteps(replaceStep(steps, next))}
-            onRemove={() => onSteps(removeStep(steps, step.id))}
-          />
-        ) : step ? (
-          <StepInspector
-            base={base}
-            step={step}
-            template={template}
-            operations={operations}
-            environmentId={environmentId}
-            // What `{{` can name in this step's fields: the chosen environment's variables, plus
-            // what the steps it depends on capture. Computed here because this is the only place
-            // that holds both the environments and the graph — and the disabled ones are left out
-            // on purpose, because a run does not substitute them.
-            variables={variablesFor(
-              steps,
-              step.id,
-              Object.keys(environments.find((item) => item.id === environmentId)?.variables ?? {}),
-            )}
-            canEdit={canEdit}
-            sharedBy={template ? templateUsage(template.id) : 0}
-            forking={forking}
-            onTemplate={onTemplate}
-            onFork={(overrides) => onFork(step, overrides)}
-            onChange={(next) => onSteps(replaceStep(steps, next))}
-            onRemove={() => onSteps(removeStep(steps, step.id))}
-          />
-        ) : (
-          <p className="text-xs text-slate-500">Selecciona un nodo para configurar sus capturas.</p>
-        )}
+        </Field>
+        <div className="mt-3">
+          <Field label="Descripción">
+            <textarea
+              className={`${inputClass} h-20`}
+              value={workflow.description ?? ""}
+              disabled={!canEdit}
+              onChange={(event) => onWorkflow({ description: event.target.value })}
+            />
+          </Field>
+        </div>
       </div>
 
-      <div className="mt-5 border-t border-slate-100 pt-3">
+      <div className="border-t border-slate-100 pt-3 @3xl:border-t-0 @3xl:pt-0">
         <Field label="Entorno">
           <select className={inputClass} value={environmentId} onChange={(event) => onEnvironment(event.target.value)}>
             <option value="">Selecciona…</option>
@@ -281,6 +307,118 @@ export function WorkflowInspector({
             Eliminar flujo
           </Button>
         )}
+      </div>
+    </div>
+  );
+}
+
+type InspectorTab = {
+  id: string;
+  label: string;
+  /** How many things the section holds — captures, checks — so the strip says where the content is. */
+  count?: number;
+  /** The section has something set that is not the default, without a number to show for it. */
+  marked?: boolean;
+  content: ReactNode;
+};
+
+/** What every node panel shares and none of them owns: the open tab, and the flow's own tab. */
+const InspectorShell = createContext<{
+  active: string;
+  setActive: (id: string) => void;
+  flowTab: InspectorTab;
+} | null>(null);
+
+/**
+ * The frame of a node's panel: what the node is, a tab per section, and the section on screen.
+ *
+ * Every tab stays mounted and only the open one is shown. A tab switch must not throw away what a
+ * section holds without saving it — the response the preview just got, a body pasted to suggest
+ * captures from.
+ */
+function NodePanel({
+  title,
+  subtitle,
+  description,
+  tabs,
+  canEdit,
+  removeLabel = "Eliminar nodo",
+  onRemove,
+}: {
+  title: ReactNode;
+  subtitle?: ReactNode;
+  description?: ReactNode;
+  tabs: InspectorTab[];
+  canEdit: boolean;
+  removeLabel?: string;
+  onRemove: () => void;
+}) {
+  const shell = useContext(InspectorShell);
+  if (!shell) throw new Error("NodePanel outside WorkflowInspector");
+  const all = [...tabs, shell.flowTab];
+  const current = all.find((item) => item.id === shell.active) ?? all[0];
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="shrink-0 border-b border-slate-200 px-5 pt-3">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-slate-900">{title}</p>
+            {subtitle && <p className="mt-0.5 truncate font-mono text-[11px] text-slate-500">{subtitle}</p>}
+            {description && <p className="mt-1 max-w-3xl text-[11px] leading-5 text-slate-500">{description}</p>}
+          </div>
+          {canEdit && (
+            <Button variant="ghost" className="h-7 shrink-0 px-2 text-xs text-rose-600" onClick={onRemove}>
+              {removeLabel}
+            </Button>
+          )}
+        </div>
+        <div
+          role="tablist"
+          aria-label="Secciones del nodo"
+          className="mt-3 flex gap-1 overflow-x-auto overflow-y-hidden"
+        >
+          {all.map((item) => {
+            const selected = item.id === current.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                onClick={() => shell.setActive(item.id)}
+                className={cn(
+                  "-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-xs font-medium whitespace-nowrap",
+                  item.id === "flow" && "ml-auto",
+                  selected
+                    ? "border-slate-900 text-slate-900"
+                    : "border-transparent text-slate-500 hover:text-slate-800",
+                )}
+              >
+                {item.label}
+                {item.count ? (
+                  <span
+                    className={cn(
+                      "rounded-full px-1.5 text-[10px] leading-4",
+                      selected ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600",
+                    )}
+                  >
+                    {item.count}
+                  </span>
+                ) : item.marked ? (
+                  <span aria-label="configurado" className="size-1.5 rounded-full bg-sky-500" />
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="@container min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        {all.map((item) => (
+          <div key={item.id} role="tabpanel" hidden={item.id !== current.id}>
+            {item.content}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -397,87 +535,98 @@ function BranchInspector({
     onChange({ ...step, condition: { ...condition, check: { ...condition.check, ...change } } });
 
   return (
-    <div>
-      <p className="text-xs font-semibold text-slate-800">Bifurcación (If)</p>
-      <p className="mt-0.5 text-[11px] leading-5 text-slate-500">
-        Lee la respuesta de un paso anterior y parte el flujo: la salida <span className="text-emerald-600">sí</span> se
-        toma cuando la condición se cumple, la <span className="text-rose-500">no</span> cuando no. Conecta cada salida
-        al siguiente paso arrastrando desde su punto.
-      </p>
-
-      {sources.length === 0 ? (
-        <p className="mt-3 text-[11px] text-amber-700">Conéctalo a la petición que quieres leer para poder decidir.</p>
-      ) : (
-        <div className="mt-3 rounded-lg border border-slate-200 p-2">
-          <Field label="Lee el paso">
-            <select
-              className={inputClass}
-              value={condition.from}
-              disabled={!canEdit}
-              onChange={(event) => onChange({ ...step, condition: { ...condition, from: event.target.value } })}
-            >
-              {sources.map((id) => (
-                <option key={id} value={id}>
-                  {id}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Origen">
-            <select
-              className={inputClass}
-              value={condition.check.source}
-              disabled={!canEdit}
-              onChange={(event) => setCheck({ source: event.target.value as StepCheckView["source"] })}
-            >
-              {CHECK_SOURCES.map((source) => (
-                <option key={source} value={source}>
-                  {source}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <div className="grid grid-cols-[1fr_8rem_1fr] gap-2">
-            <input
-              aria-label="Ruta de la condición"
-              className={inputClass}
-              value={condition.check.path ?? ""}
-              placeholder="data.0.id"
-              disabled={!canEdit || condition.check.source === "status" || condition.check.source === "durationMs"}
-              onChange={(event) => setCheck({ path: event.target.value })}
-            />
-            <select
-              aria-label="Operador de la condición"
-              className={inputClass}
-              value={condition.check.operator}
-              disabled={!canEdit}
-              onChange={(event) => setCheck({ operator: event.target.value })}
-            >
-              {CHECK_OPERATORS.map((operator) => (
-                <option key={operator} value={operator}>
-                  {operator}
-                </option>
-              ))}
-            </select>
-            {!WITHOUT_OPERAND.includes(condition.check.operator) && (
-              <input
-                aria-label="Valor de la condición"
-                className={inputClass}
-                value={condition.check.value === undefined ? "" : String(condition.check.value)}
-                disabled={!canEdit}
-                onChange={(event) => setCheck({ value: event.target.value })}
-              />
-            )}
-          </div>
-        </div>
-      )}
-
-      {canEdit && (
-        <Button variant="ghost" className="mt-3 h-8 w-full text-xs text-rose-600" onClick={onRemove}>
-          Eliminar nodo
-        </Button>
-      )}
-    </div>
+    <NodePanel
+      title="Bifurcación (If)"
+      subtitle={step.id}
+      description={
+        <>
+          Lee la respuesta de un paso anterior y parte el flujo: la salida <span className="text-emerald-600">sí</span>{" "}
+          se toma cuando la condición se cumple, la <span className="text-rose-500">no</span> cuando no. Conecta cada
+          salida al siguiente paso arrastrando desde su punto.
+        </>
+      }
+      canEdit={canEdit}
+      onRemove={onRemove}
+      tabs={[
+        {
+          id: "main",
+          label: "Condición",
+          content:
+            sources.length === 0 ? (
+              <p className="text-[11px] text-amber-700">Conéctalo a la petición que quieres leer para poder decidir.</p>
+            ) : (
+              <div className="grid gap-3 @3xl:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)_9rem_minmax(0,1fr)]">
+                <Field label="Lee el paso">
+                  <select
+                    className={inputClass}
+                    value={condition.from}
+                    disabled={!canEdit}
+                    onChange={(event) => onChange({ ...step, condition: { ...condition, from: event.target.value } })}
+                  >
+                    {sources.map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Origen">
+                  <select
+                    className={inputClass}
+                    value={condition.check.source}
+                    disabled={!canEdit}
+                    onChange={(event) => setCheck({ source: event.target.value as StepCheckView["source"] })}
+                  >
+                    {CHECK_SOURCES.map((source) => (
+                      <option key={source} value={source}>
+                        {source}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Ruta">
+                  <input
+                    aria-label="Ruta de la condición"
+                    className={inputClass}
+                    value={condition.check.path ?? ""}
+                    placeholder="data.0.id"
+                    disabled={
+                      !canEdit || condition.check.source === "status" || condition.check.source === "durationMs"
+                    }
+                    onChange={(event) => setCheck({ path: event.target.value })}
+                  />
+                </Field>
+                <Field label="Operador">
+                  <select
+                    aria-label="Operador de la condición"
+                    className={inputClass}
+                    value={condition.check.operator}
+                    disabled={!canEdit}
+                    onChange={(event) => setCheck({ operator: event.target.value })}
+                  >
+                    {CHECK_OPERATORS.map((operator) => (
+                      <option key={operator} value={operator}>
+                        {operator}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                {!WITHOUT_OPERAND.includes(condition.check.operator) && (
+                  <Field label="Valor">
+                    <input
+                      aria-label="Valor de la condición"
+                      className={inputClass}
+                      value={condition.check.value === undefined ? "" : String(condition.check.value)}
+                      disabled={!canEdit}
+                      onChange={(event) => setCheck({ value: event.target.value })}
+                    />
+                  </Field>
+                )}
+              </div>
+            ),
+        },
+      ]}
+    />
   );
 }
 
@@ -494,29 +643,36 @@ function WaitInspector({
   onRemove: () => void;
 }) {
   return (
-    <div>
-      <p className="text-xs font-semibold text-slate-800">Espera</p>
-      <p className="mt-0.5 text-[11px] leading-5 text-slate-500">
-        Pausa antes de dejar pasar el flujo. No es un reintento —«no era el momento», no «el fallo no era real»— para el
-        destino que acepta una escritura y tarda un momento en hacerla legible.
-      </p>
-      <Field label="Milisegundos">
-        <input
-          className={inputClass}
-          type="number"
-          min={0}
-          max={60000}
-          value={step.waitMs ?? 0}
-          disabled={!canEdit}
-          onChange={(event) => onChange({ ...step, waitMs: Math.min(60000, Math.max(0, Number(event.target.value) || 0)) })}
-        />
-      </Field>
-      {canEdit && (
-        <Button variant="ghost" className="mt-3 h-8 w-full text-xs text-rose-600" onClick={onRemove}>
-          Eliminar nodo
-        </Button>
-      )}
-    </div>
+    <NodePanel
+      title="Espera"
+      subtitle={step.id}
+      description="Pausa antes de dejar pasar el flujo. No es un reintento —«no era el momento», no «el fallo no era real»— para el destino que acepta una escritura y tarda un momento en hacerla legible."
+      canEdit={canEdit}
+      onRemove={onRemove}
+      tabs={[
+        {
+          id: "main",
+          label: "Espera",
+          content: (
+            <div className="max-w-xs">
+              <Field label="Milisegundos">
+                <input
+                  className={inputClass}
+                  type="number"
+                  min={0}
+                  max={60000}
+                  value={step.waitMs ?? 0}
+                  disabled={!canEdit}
+                  onChange={(event) =>
+                    onChange({ ...step, waitMs: Math.min(60000, Math.max(0, Number(event.target.value) || 0)) })
+                  }
+                />
+              </Field>
+            </div>
+          ),
+        },
+      ]}
+    />
   );
 }
 
@@ -534,32 +690,40 @@ function MergeInspector({
 }) {
   const count = step.dependsOn?.length ?? 0;
   return (
-    <div>
-      <p className="text-xs font-semibold text-slate-800">Merge (unión)</p>
-      <p className="mt-0.5 text-[11px] leading-5 text-slate-500">
-        Junta varias ramas en una. Conecta a su entrada las que quieres unir; el flujo sigue por su salida cuando se
-        cumple la condición de abajo.
-      </p>
-      <p className="mt-2 text-[11px] text-slate-500">
-        Ramas conectadas: <span className="font-medium text-slate-700">{count}</span>
-      </p>
-      <Field label="Cuándo continúa">
-        <select
-          className={inputClass}
-          value={step.waits ?? "all"}
-          disabled={!canEdit}
-          onChange={(event) => onChange({ ...step, waits: event.target.value === "any" ? "any" : "all" })}
-        >
-          <option value="all">Cuando llegan todas</option>
-          <option value="any">Basta con que llegue una</option>
-        </select>
-      </Field>
-      {canEdit && (
-        <Button variant="ghost" className="mt-3 h-8 w-full text-xs text-rose-600" onClick={onRemove}>
-          Eliminar nodo
-        </Button>
-      )}
-    </div>
+    <NodePanel
+      title="Merge (unión)"
+      subtitle={step.id}
+      description="Junta varias ramas en una. Conecta a su entrada las que quieres unir; el flujo sigue por su salida cuando se cumple la condición de abajo."
+      canEdit={canEdit}
+      onRemove={onRemove}
+      tabs={[
+        {
+          id: "main",
+          label: "Unión",
+          count,
+          content: (
+            <div className="max-w-sm">
+              <p className="text-[11px] text-slate-500">
+                Ramas conectadas: <span className="font-medium text-slate-700">{count}</span>
+              </p>
+              <div className="mt-2">
+                <Field label="Cuándo continúa">
+                  <select
+                    className={inputClass}
+                    value={step.waits ?? "all"}
+                    disabled={!canEdit}
+                    onChange={(event) => onChange({ ...step, waits: event.target.value === "any" ? "any" : "all" })}
+                  >
+                    <option value="all">Cuando llegan todas</option>
+                    <option value="any">Basta con que llegue una</option>
+                  </select>
+                </Field>
+              </div>
+            </div>
+          ),
+        },
+      ]}
+    />
   );
 }
 
@@ -581,58 +745,82 @@ function ValidateInspector({
     onChange({ ...step, validate: { from, ...step.validate, ...change } });
 
   return (
-    <div>
-      <p className="text-xs font-semibold text-slate-800">Validación</p>
-      <p className="mt-0.5 text-[11px] leading-5 text-slate-500">
-        Lee la respuesta de un paso anterior y la juzga. Si no pasa, lo que depende de esta validación se salta. Conéctalo
-        al paso que quieres validar arrastrando una arista hasta su entrada.
-      </p>
-
-      {sources.length === 0 ? (
-        <p className="mt-3 text-[11px] text-amber-700">Conéctalo a la petición cuya respuesta quieres validar.</p>
-      ) : (
-        <Field label="Lee el paso">
-          <select
-            className={inputClass}
-            value={from}
-            disabled={!canEdit}
-            onChange={(event) => setValidate({ from: event.target.value })}
-          >
-            {sources.map((id) => (
-              <option key={id} value={id}>
-                {id}
-              </option>
-            ))}
-          </select>
-        </Field>
-      )}
-
-      <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />
-
-      <div className="mt-4 border-t border-slate-100 pt-3">
-        <p className="text-xs font-semibold text-slate-800">Script</p>
-        <p className="mt-1 text-[11px] leading-5 text-slate-500">
-          Se ejecuta en un proceso aislado con la API <code className="font-mono">pm</code>: <code className="font-mono">pm.response</code>,{" "}
-          <code className="font-mono">pm.expect</code>, <code className="font-mono">pm.test(...)</code>. La validación pasa si todos sus{" "}
-          <code className="font-mono">pm.test</code> pasan.
-        </p>
-        <textarea
-          className={`${inputClass} mt-2 h-28 font-mono text-[11px]`}
-          placeholder={"pm.test('trae un id', function () {\n  pm.expect(pm.response.json().data.id).to.be.a('string');\n});"}
-          value={step.validate?.script ?? ""}
-          disabled={!canEdit}
-          onChange={(event) => setValidate({ script: event.target.value || undefined })}
-        />
-      </div>
-
-      {canEdit && (
-        <Button variant="ghost" className="mt-3 h-8 w-full text-xs text-rose-600" onClick={onRemove}>
-          Eliminar nodo
-        </Button>
-      )}
-    </div>
+    <NodePanel
+      title="Validación"
+      subtitle={step.id}
+      description="Lee la respuesta de un paso anterior y la juzga. Si no pasa, lo que depende de esta validación se salta. Conéctalo al paso que quieres validar arrastrando una arista hasta su entrada."
+      canEdit={canEdit}
+      onRemove={onRemove}
+      tabs={[
+        {
+          id: "checks",
+          label: "Comprobaciones",
+          count: step.checks?.length,
+          content: (
+            <>
+              {sources.length === 0 ? (
+                <p className="text-[11px] text-amber-700">Conéctalo a la petición cuya respuesta quieres validar.</p>
+              ) : (
+                <div className="max-w-sm">
+                  <Field label="Lee el paso">
+                    <select
+                      className={inputClass}
+                      value={from}
+                      disabled={!canEdit}
+                      onChange={(event) => setValidate({ from: event.target.value })}
+                    >
+                      {sources.map((id) => (
+                        <option key={id} value={id}>
+                          {id}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+              )}
+              <div className="mt-4 border-t border-slate-100 pt-3">
+                <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />
+              </div>
+            </>
+          ),
+        },
+        {
+          id: "script",
+          label: "Script",
+          marked: Boolean(step.validate?.script),
+          content: (
+            <>
+              <p className="text-[11px] leading-5 text-slate-500">
+                Se ejecuta en un proceso aislado con la API <code className="font-mono">pm</code>:{" "}
+                <code className="font-mono">pm.response</code>, <code className="font-mono">pm.expect</code>,{" "}
+                <code className="font-mono">pm.test(...)</code>. La validación pasa si todos sus{" "}
+                <code className="font-mono">pm.test</code> pasan.
+              </p>
+              <textarea
+                aria-label="Script de validación"
+                className={`${inputClass} mt-2 h-[26rem] font-mono text-[11px]`}
+                placeholder={
+                  "pm.test('trae un id', function () {\n  pm.expect(pm.response.json().data.id).to.be.a('string');\n});"
+                }
+                value={step.validate?.script ?? ""}
+                disabled={!canEdit}
+                spellCheck={false}
+                onChange={(event) => setValidate({ script: event.target.value || undefined })}
+              />
+            </>
+          ),
+        },
+      ]}
+    />
   );
 }
+
+/** Whether «Cuándo» holds anything beyond «right after the previous one, once». */
+const scheduled = (step: WorkflowStepView) =>
+  Boolean(step.runIf || step.forEach || step.waitMs || step.waits === "any");
+/** Whether «Si falla» differs from the default: skip dependents, no retry. */
+const failureSet = (step: WorkflowStepView) =>
+  Boolean(step.retry || (step.onError && step.onError !== "skip-dependents"));
 
 function StepInspector({
   base,
@@ -665,31 +853,37 @@ function StepInspector({
   onRemove: () => void;
 }) {
   const shared = sharedBy > 1;
-  // The last body the preview got back, so the captures below can be suggested from a real response
+  // The last body the preview got back, so the captures can be suggested from a real response
   // instead of typed by hand. Held here because the preview panel that fetches it and the captures
-  // that spend it are two sections of the same node.
+  // that spend it are two tabs of the same node.
   const [sampleBody, setSampleBody] = useState<unknown>(undefined);
+  const operation = template && operations.find((item) => item.id === template.operationId);
+  const countOf = (map: Record<string, string> | undefined) => Object.keys(map ?? {}).length;
 
-  return (
-    <div>
-      <p className="text-xs font-semibold text-slate-800">Prueba reutilizable</p>
-      {/* A reusable request edited here is one row: the change reaches every node that shares it. So
-          when more than one does, the panel says so and offers a private copy — and changing the
-          operation, which never means «make the others a different request too», forks on its own. */}
-      {template && shared && canEdit && (
-        <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] leading-5 text-amber-800">
-          Esta petición la usan <span className="font-semibold">{sharedBy} nodos</span>. Al editarla cambian todos.
-          <button
-            className="mt-1 block rounded-md bg-amber-100 px-2 py-1 font-medium text-amber-900 hover:bg-amber-200 disabled:opacity-50"
-            disabled={forking}
-            onClick={() => onFork()}
-          >
-            {forking ? "Creando copia…" : "Hacer independiente este nodo"}
-          </button>
-        </div>
-      )}
-      {template ? (
-        <div className="mt-2 rounded-lg border border-slate-200 p-2">
+  const requestTab: InspectorTab = {
+    id: "request",
+    label: "Petición",
+    count: template ? countOf(template.parameters) + countOf(template.headers) : undefined,
+    content: template ? (
+      <>
+        {/* A reusable request edited here is one row: the change reaches every node that shares it. So
+            when more than one does, the panel says so and offers a private copy — and changing the
+            operation, which never means «make the others a different request too», forks on its own. */}
+        {shared && canEdit && (
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-800">
+            <span>
+              Esta petición la usan <span className="font-semibold">{sharedBy} nodos</span>. Al editarla cambian todos.
+            </span>
+            <button
+              className="rounded-md bg-amber-100 px-2 py-1 font-medium text-amber-900 hover:bg-amber-200 disabled:opacity-50"
+              disabled={forking}
+              onClick={() => onFork()}
+            >
+              {forking ? "Creando copia…" : "Hacer independiente este nodo"}
+            </button>
+          </div>
+        )}
+        <div className="grid gap-3 @3xl:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)_6.5rem_8rem]">
           <Field label="Operación">
             <select
               className={inputClass}
@@ -703,9 +897,9 @@ function StepInspector({
                   : onTemplate({ ...template, operationId: event.target.value })
               }
             >
-              {operations.map((operation) => (
-                <option key={operation.id} value={operation.id}>
-                  {operation.method} {operation.path}
+              {operations.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.method} {item.path}
                 </option>
               ))}
             </select>
@@ -718,33 +912,33 @@ function StepInspector({
               onChange={(event) => onTemplate({ ...template, name: event.target.value })}
             />
           </Field>
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Estado">
-              <input
-                className={inputClass}
-                type="number"
-                min={100}
-                max={599}
-                value={template.expectedStatus}
-                disabled={!canEdit}
-                onChange={(event) => onTemplate({ ...template, expectedStatus: Number(event.target.value) })}
-              />
-            </Field>
-            <Field label="Auth">
-              <select
-                className={inputClass}
-                value={template.auth}
-                disabled={!canEdit}
-                onChange={(event) => onTemplate({ ...template, auth: event.target.value })}
-              >
-                {AUTH.map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
+          <Field label="Estado">
+            <input
+              className={inputClass}
+              type="number"
+              min={100}
+              max={599}
+              value={template.expectedStatus}
+              disabled={!canEdit}
+              onChange={(event) => onTemplate({ ...template, expectedStatus: Number(event.target.value) })}
+            />
+          </Field>
+          <Field label="Auth">
+            <select
+              className={inputClass}
+              value={template.auth}
+              disabled={!canEdit}
+              onChange={(event) => onTemplate({ ...template, auth: event.target.value })}
+            >
+              {AUTH.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <div className="mt-4 grid gap-x-6 gap-y-2 border-t border-slate-100 pt-1 @3xl:grid-cols-2">
           <RequestFieldsRows
             label="Parámetros"
             kind="parameter"
@@ -771,40 +965,109 @@ function StepInspector({
             canEdit={canEdit}
             onChange={(maps) => onTemplate({ ...template, headers: maps.enabled, disabledHeaders: maps.disabled })}
           />
-          <RequestBodyEditor
-            body={template.body}
-            variables={variables}
-            canEdit={canEdit}
-            onChange={(body) => onTemplate({ ...template, body })}
-          />
-          {/* Lo que hay en el formulario, enviado de verdad. No hace falta guardar antes: lo que
-              se manda es lo que se está mirando. */}
-          <RequestPreviewPanel
-            base={base}
-            template={template}
-            environmentId={environmentId}
-            canSend={canEdit}
-            onResponseBody={setSampleBody}
-          />
         </div>
-      ) : (
-        <p className="mt-2 text-[11px] text-rose-600">
-          Este paso apunta a una prueba que ya no existe. Bórralo o vuelve a crearla.
-        </p>
-      )}
+      </>
+    ) : (
+      <p className="text-[11px] text-rose-600">
+        Este paso apunta a una prueba que ya no existe. Bórralo o vuelve a crearla.
+      </p>
+    ),
+  };
 
+  return (
+    <NodePanel
+      title={template?.name || "Prueba reutilizable"}
+      subtitle={operation ? `${operation.method} ${operation.path} · ${step.id}` : step.id}
+      canEdit={canEdit}
+      removeLabel="Eliminar paso"
+      onRemove={onRemove}
+      tabs={[
+        requestTab,
+        ...(template
+          ? [
+              {
+                id: "body",
+                label: "Body",
+                marked: template.body.type !== "none",
+                content: (
+                  // Body and what it gets back side by side: the edit and its answer in one look.
+                  <div className="grid gap-x-6 gap-y-4 @3xl:grid-cols-2">
+                    <div className="-mt-2">
+                      <RequestBodyEditor
+                        body={template.body}
+                        variables={variables}
+                        canEdit={canEdit}
+                        onChange={(body) => onTemplate({ ...template, body })}
+                      />
+                    </div>
+                    {/* Lo que hay en el formulario, enviado de verdad. No hace falta guardar antes: lo
+                        que se manda es lo que se está mirando. */}
+                    <div className="-mt-3">
+                      <RequestPreviewPanel
+                        base={base}
+                        template={template}
+                        environmentId={environmentId}
+                        canSend={canEdit}
+                        onResponseBody={setSampleBody}
+                      />
+                    </div>
+                  </div>
+                ),
+              },
+            ]
+          : []),
+        {
+          id: "captures",
+          label: "Capturas",
+          count: step.captures?.length,
+          marked: Boolean(step.authorizes),
+          content: <CapturesTab step={step} canEdit={canEdit} sampleBody={sampleBody} session onChange={onChange} />,
+        },
+        {
+          id: "checks",
+          label: "Comprobaciones",
+          count: step.checks?.length,
+          content: <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />,
+        },
+        {
+          id: "schedule",
+          label: "Cuándo",
+          marked: scheduled(step),
+          content: <ScheduleEditor step={step} canEdit={canEdit} onChange={onChange} />,
+        },
+        {
+          id: "failure",
+          label: "Si falla",
+          marked: failureSet(step),
+          content: <FailureEditor step={step} canEdit={canEdit} onChange={onChange} />,
+        },
+      ]}
+    />
+  );
+}
+
+/** Captures, and — for the nodes that can log in — the session beside them: both are what a
+ * response hands on to the steps after it. */
+function CapturesTab({
+  step,
+  canEdit,
+  sampleBody,
+  session = false,
+  onChange,
+}: {
+  step: WorkflowStepView;
+  canEdit: boolean;
+  sampleBody?: unknown;
+  session?: boolean;
+  onChange: (step: WorkflowStepView) => void;
+}) {
+  if (!session) return <CapturesEditor step={step} canEdit={canEdit} sampleBody={sampleBody} onChange={onChange} />;
+  return (
+    <div className="grid gap-x-6 gap-y-4 @4xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
       <CapturesEditor step={step} canEdit={canEdit} sampleBody={sampleBody} onChange={onChange} />
-
-      <SessionEditor step={step} canEdit={canEdit} onChange={onChange} />
-      <ScheduleEditor step={step} canEdit={canEdit} onChange={onChange} />
-      <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />
-      <FailureEditor step={step} canEdit={canEdit} onChange={onChange} />
-
-      {canEdit && (
-        <Button variant="danger" className="mt-4 h-8 w-full text-xs" onClick={onRemove}>
-          Eliminar paso
-        </Button>
-      )}
+      <div className="border-t border-slate-100 pt-3 @4xl:border-t-0 @4xl:border-l @4xl:pt-0 @4xl:pl-6">
+        <SessionEditor step={step} canEdit={canEdit} onChange={onChange} />
+      </div>
     </div>
   );
 }
@@ -829,115 +1092,154 @@ function FetchInspector({
   const bodyAllowed = call.method !== "GET" && call.method !== "HEAD";
 
   return (
-    <div>
-      <p className="text-xs font-semibold text-slate-800">Fetch</p>
-      <p className="mt-0.5 text-[11px] leading-5 text-slate-500">
-        Una petición escrita a mano, fuera del catálogo: un webhook, otro servicio, un proveedor de identidad. Una ruta
-        como <span className="font-mono">/things</span> cuelga de la URL base del entorno. Todo acepta{" "}
-        <span className="font-mono">{"{{variables}}"}</span>.
-      </p>
-      <div className="mt-2 grid grid-cols-[6.5rem_1fr] gap-2">
-        <Field label="Método">
-          <select
-            className={inputClass}
-            value={call.method}
-            disabled={!canEdit}
-            onChange={(event) => setCall({ method: event.target.value as StepFetchView["method"] })}
-          >
-            {FETCH_METHODS.map((method) => (
-              <option key={method} value={method}>
-                {method}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="URL">
-          <input
-            className={`${inputClass} font-mono text-[11px]`}
-            value={call.url}
-            placeholder="https://api.ejemplo.com/recurso/{{id}}"
-            list={`fetch-vars-${step.id}`}
-            disabled={!canEdit}
-            onChange={(event) => setCall({ url: event.target.value })}
-          />
-        </Field>
-      </div>
-      <datalist id={`fetch-vars-${step.id}`}>
-        {variables.map((name) => (
-          <option key={name} value={`{{${name}}}`} />
-        ))}
-      </datalist>
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="Estado esperado">
-          <input
-            className={inputClass}
-            type="number"
-            min={100}
-            max={599}
-            placeholder="2xx"
-            value={call.expectedStatus ?? ""}
-            disabled={!canEdit}
-            onChange={(event) =>
-              setCall({ expectedStatus: event.target.value ? Number(event.target.value) : undefined })
-            }
-          />
-        </Field>
-        <label className="mt-6 flex items-center gap-1.5 text-[11px] text-slate-600">
-          <input
-            type="checkbox"
-            checked={Boolean(call.useSession)}
-            disabled={!canEdit}
-            onChange={(event) => setCall({ useSession: event.target.checked || undefined })}
-          />
-          Enviar sesión del login
-        </label>
-      </div>
-      {call.useSession && /^https?:\/\//i.test(call.url) && (
-        <p className="mt-1 text-[11px] text-amber-700">
-          La credencial obtenida en el login viajará a esta URL. Úsalo solo con hosts de confianza.
-        </p>
-      )}
-      <RequestFieldsRows
-        label="Cabeceras"
-        kind="header"
-        hint="Content-Type se deduce del body si no la pones."
-        namePlaceholder="Authorization"
-        valuePlaceholder="Bearer {{token}}"
-        enabled={call.headers ?? {}}
-        disabledMap={call.disabledHeaders ?? {}}
-        variables={variables}
-        canEdit={canEdit}
-        onChange={(maps) =>
-          setCall({
-            headers: Object.keys(maps.enabled).length ? maps.enabled : undefined,
-            disabledHeaders: Object.keys(maps.disabled).length ? maps.disabled : undefined,
-          })
-        }
-      />
-      {bodyAllowed && (
-        <Field label="Body">
-          <textarea
-            className={`${inputClass} h-24 font-mono text-[11px]`}
-            placeholder={'{"id": "{{thingId}}"}'}
-            value={call.body ?? ""}
-            disabled={!canEdit}
-            onChange={(event) => setCall({ body: event.target.value || undefined })}
-          />
-        </Field>
-      )}
-
-      <CapturesEditor step={step} canEdit={canEdit} onChange={onChange} />
-      <SessionEditor step={step} canEdit={canEdit} onChange={onChange} />
-      <ScheduleEditor step={step} canEdit={canEdit} onChange={onChange} />
-      <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />
-      <FailureEditor step={step} canEdit={canEdit} onChange={onChange} />
-
-      {canEdit && (
-        <Button variant="danger" className="mt-4 h-8 w-full text-xs" onClick={onRemove}>
-          Eliminar nodo
-        </Button>
-      )}
-    </div>
+    <NodePanel
+      title="Fetch"
+      subtitle={call.url ? `${call.method} ${call.url} · ${step.id}` : step.id}
+      description={
+        <>
+          Una petición escrita a mano, fuera del catálogo: un webhook, otro servicio, un proveedor de identidad. Una
+          ruta como <span className="font-mono">/things</span> cuelga de la URL base del entorno. Todo acepta{" "}
+          <span className="font-mono">{"{{variables}}"}</span>.
+        </>
+      }
+      canEdit={canEdit}
+      onRemove={onRemove}
+      tabs={[
+        {
+          id: "request",
+          label: "Petición",
+          count: Object.keys(call.headers ?? {}).length,
+          content: (
+            <>
+              <div className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-3 @3xl:grid-cols-[6.5rem_minmax(0,1fr)_8rem]">
+                <Field label="Método">
+                  <select
+                    className={inputClass}
+                    value={call.method}
+                    disabled={!canEdit}
+                    onChange={(event) => setCall({ method: event.target.value as StepFetchView["method"] })}
+                  >
+                    {FETCH_METHODS.map((method) => (
+                      <option key={method} value={method}>
+                        {method}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="URL">
+                  <input
+                    className={`${inputClass} font-mono text-[11px]`}
+                    value={call.url}
+                    placeholder="https://api.ejemplo.com/recurso/{{id}}"
+                    list={`fetch-vars-${step.id}`}
+                    disabled={!canEdit}
+                    onChange={(event) => setCall({ url: event.target.value })}
+                  />
+                </Field>
+                <Field label="Estado esperado">
+                  <input
+                    className={inputClass}
+                    type="number"
+                    min={100}
+                    max={599}
+                    placeholder="2xx"
+                    value={call.expectedStatus ?? ""}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      setCall({ expectedStatus: event.target.value ? Number(event.target.value) : undefined })
+                    }
+                  />
+                </Field>
+              </div>
+              <datalist id={`fetch-vars-${step.id}`}>
+                {variables.map((name) => (
+                  <option key={name} value={`{{${name}}}`} />
+                ))}
+              </datalist>
+              <label className="mt-3 flex items-center gap-1.5 text-[11px] text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={Boolean(call.useSession)}
+                  disabled={!canEdit}
+                  onChange={(event) => setCall({ useSession: event.target.checked || undefined })}
+                />
+                Enviar sesión del login
+              </label>
+              {call.useSession && /^https?:\/\//i.test(call.url) && (
+                <p className="mt-1 text-[11px] text-amber-700">
+                  La credencial obtenida en el login viajará a esta URL. Úsalo solo con hosts de confianza.
+                </p>
+              )}
+              <div className="mt-3 border-t border-slate-100 pt-1">
+                <RequestFieldsRows
+                  label="Cabeceras"
+                  kind="header"
+                  hint="Content-Type se deduce del body si no la pones."
+                  namePlaceholder="Authorization"
+                  valuePlaceholder="Bearer {{token}}"
+                  enabled={call.headers ?? {}}
+                  disabledMap={call.disabledHeaders ?? {}}
+                  variables={variables}
+                  canEdit={canEdit}
+                  onChange={(maps) =>
+                    setCall({
+                      headers: Object.keys(maps.enabled).length ? maps.enabled : undefined,
+                      disabledHeaders: Object.keys(maps.disabled).length ? maps.disabled : undefined,
+                    })
+                  }
+                />
+              </div>
+            </>
+          ),
+        },
+        ...(bodyAllowed
+          ? [
+              {
+                id: "body",
+                label: "Body",
+                marked: Boolean(call.body),
+                content: (
+                  <Field label="Body">
+                    <textarea
+                      className={`${inputClass} h-[24rem] font-mono text-[11px]`}
+                      placeholder={'{"id": "{{thingId}}"}'}
+                      value={call.body ?? ""}
+                      disabled={!canEdit}
+                      spellCheck={false}
+                      onChange={(event) => setCall({ body: event.target.value || undefined })}
+                    />
+                  </Field>
+                ),
+              },
+            ]
+          : []),
+        {
+          id: "captures",
+          label: "Capturas",
+          count: step.captures?.length,
+          marked: Boolean(step.authorizes),
+          content: <CapturesTab step={step} canEdit={canEdit} session onChange={onChange} />,
+        },
+        {
+          id: "checks",
+          label: "Comprobaciones",
+          count: step.checks?.length,
+          content: <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />,
+        },
+        {
+          id: "schedule",
+          label: "Cuándo",
+          marked: scheduled(step),
+          content: <ScheduleEditor step={step} canEdit={canEdit} onChange={onChange} />,
+        },
+        {
+          id: "failure",
+          label: "Si falla",
+          marked: failureSet(step),
+          content: <FailureEditor step={step} canEdit={canEdit} onChange={onChange} />,
+        },
+      ]}
+    />
   );
 }
 
@@ -960,71 +1262,105 @@ function SetInspector({
   const listId = `set-vars-${step.id}`;
 
   return (
-    <div>
-      <p className="text-xs font-semibold text-slate-800">Set (variables)</p>
-      <p className="mt-0.5 text-[11px] leading-5 text-slate-500">
-        Escribe variables para los pasos siguientes sin hacer ninguna petición. El valor es una plantilla:{" "}
-        <span className="font-mono">{"{{thingId}}"}</span>, <span className="font-mono">{"pedido-{{$uuid}}"}</span>. Solo
-        vale durante la corrida; el entorno guardado no cambia.
-      </p>
-      <datalist id={listId}>
-        {variables.map((name) => (
-          <option key={name} value={`{{${name}}}`} />
-        ))}
-      </datalist>
-      <div className="mt-2 space-y-2">
-        {assignments.map((assignment, index) => (
-          <div key={index} className="grid grid-cols-[1fr_auto_1.4fr_auto] items-center gap-1.5">
-            <input
-              aria-label="Variable"
-              className={`${inputClass} font-mono text-[11px]`}
-              value={assignment.variable}
-              placeholder="total"
-              disabled={!canEdit}
-              onChange={(event) =>
-                edit(assignments.map((item, position) => (position === index ? { ...item, variable: event.target.value } : item)))
-              }
-            />
-            <span className="text-xs text-slate-400">=</span>
-            <input
-              aria-label="Valor"
-              className={`${inputClass} font-mono text-[11px]`}
-              value={assignment.value}
-              placeholder="{{precio}}"
-              list={listId}
-              disabled={!canEdit}
-              onChange={(event) =>
-                edit(assignments.map((item, position) => (position === index ? { ...item, value: event.target.value } : item)))
-              }
-            />
-            {canEdit && (
-              <button
-                className="text-[11px] text-rose-600"
-                aria-label="Quitar variable"
-                onClick={() => edit(assignments.filter((_item, position) => position !== index))}
-              >
-                ✕
-              </button>
-            )}
-          </div>
-        ))}
-      </div>
-      {canEdit && (
-        <Button
-          variant="ghost"
-          className="mt-2 h-8 text-xs"
-          onClick={() => edit([...assignments, { variable: "", value: "" }])}
-        >
-          + Variable
-        </Button>
-      )}
-      <FailureEditor step={step} canEdit={canEdit} onChange={onChange} />
-      {canEdit && (
-        <Button variant="ghost" className="mt-3 h-8 w-full text-xs text-rose-600" onClick={onRemove}>
-          Eliminar nodo
-        </Button>
-      )}
-    </div>
+    <NodePanel
+      title="Set (variables)"
+      subtitle={step.id}
+      description={
+        <>
+          Escribe variables para los pasos siguientes sin hacer ninguna petición. El valor es una plantilla:{" "}
+          <span className="font-mono">{"{{thingId}}"}</span>, <span className="font-mono">{"pedido-{{$uuid}}"}</span>.
+          Solo vale durante la corrida; el entorno guardado no cambia.
+        </>
+      }
+      canEdit={canEdit}
+      onRemove={onRemove}
+      tabs={[
+        {
+          id: "variables",
+          label: "Variables",
+          count: assignments.length,
+          content: (
+            <>
+              <datalist id={listId}>
+                {variables.map((name) => (
+                  <option key={name} value={`{{${name}}}`} />
+                ))}
+              </datalist>
+              {assignments.length > 0 && (
+                <div className="mb-1 hidden grid-cols-[minmax(0,1fr)_1rem_minmax(0,1.6fr)_1.5rem] gap-1.5 text-[10px] font-medium tracking-wide text-slate-400 uppercase @3xl:grid">
+                  <span>Variable</span>
+                  <span />
+                  <span>Valor</span>
+                </div>
+              )}
+              <div className="space-y-2">
+                {assignments.map((assignment, index) => (
+                  <div
+                    key={index}
+                    className="grid grid-cols-[minmax(0,1fr)_1rem_minmax(0,1.6fr)_1.5rem] items-center gap-1.5"
+                  >
+                    <input
+                      aria-label="Variable"
+                      className={cn(inputClass, "mt-0 font-mono text-[11px]")}
+                      value={assignment.variable}
+                      placeholder="total"
+                      disabled={!canEdit}
+                      onChange={(event) =>
+                        edit(
+                          assignments.map((item, position) =>
+                            position === index ? { ...item, variable: event.target.value } : item,
+                          ),
+                        )
+                      }
+                    />
+                    <span className="text-center text-xs text-slate-400">=</span>
+                    <input
+                      aria-label="Valor"
+                      className={cn(inputClass, "mt-0 font-mono text-[11px]")}
+                      value={assignment.value}
+                      placeholder="{{precio}}"
+                      list={listId}
+                      disabled={!canEdit}
+                      onChange={(event) =>
+                        edit(
+                          assignments.map((item, position) =>
+                            position === index ? { ...item, value: event.target.value } : item,
+                          ),
+                        )
+                      }
+                    />
+                    {canEdit && (
+                      <button
+                        className="text-[11px] text-rose-600"
+                        aria-label="Quitar variable"
+                        onClick={() => edit(assignments.filter((_item, position) => position !== index))}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {canEdit && (
+                <Button
+                  variant="ghost"
+                  className="mt-2 h-8 text-xs"
+                  onClick={() => edit([...assignments, { variable: "", value: "" }])}
+                >
+                  + Variable
+                </Button>
+              )}
+            </>
+          ),
+        },
+        {
+          id: "failure",
+          label: "Si falla",
+          marked: failureSet(step),
+          content: <FailureEditor step={step} canEdit={canEdit} onChange={onChange} />,
+        },
+      ]}
+    />
   );
 }
 
@@ -1044,49 +1380,73 @@ function ScriptInspector({
   const script = step.script ?? { code: "" };
 
   return (
-    <div>
-      <p className="text-xs font-semibold text-slate-800">Script</p>
-      <p className="mt-0.5 text-[11px] leading-5 text-slate-500">
-        JavaScript en un proceso aislado, sin red ni ficheros. Lee con <code className="font-mono">pm.response</code> y{" "}
-        <code className="font-mono">pm.variables.get</code>, escribe con <code className="font-mono">pm.variables.set</code>{" "}
-        (solo para esta corrida) y comprueba con <code className="font-mono">pm.test</code>. Falla si lanza un error o si un{" "}
-        <code className="font-mono">pm.test</code> falla. Lo que imprime queda en el informe, con los secretos ocultos.
-      </p>
-      <Field label="Lee la respuesta de">
-        <select
-          className={inputClass}
-          value={script.from ?? ""}
-          disabled={!canEdit}
-          onChange={(event) =>
-            onChange({ ...step, script: event.target.value ? { code: script.code, from: event.target.value } : { code: script.code } })
-          }
-        >
-          <option value="">Ninguna</option>
-          {sources.map((id) => (
-            <option key={id} value={id}>
-              {id}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <textarea
-        aria-label="Código del script"
-        className={`${inputClass} mt-2 h-48 font-mono text-[11px]`}
-        placeholder={
-          "const body = pm.response.json();\npm.variables.set('total', String(body.data.length));\npm.test('hay datos', () => pm.expect(body.data.length).to.be.above(0));"
-        }
-        value={script.code}
-        disabled={!canEdit}
-        spellCheck={false}
-        onChange={(event) => onChange({ ...step, script: { ...script, code: event.target.value } })}
-      />
-      <FailureEditor step={step} canEdit={canEdit} onChange={onChange} />
-      {canEdit && (
-        <Button variant="ghost" className="mt-3 h-8 w-full text-xs text-rose-600" onClick={onRemove}>
-          Eliminar nodo
-        </Button>
-      )}
-    </div>
+    <NodePanel
+      title="Script"
+      subtitle={step.id}
+      description={
+        <>
+          JavaScript en un proceso aislado, sin red ni ficheros. Lee con <code className="font-mono">pm.response</code>{" "}
+          y <code className="font-mono">pm.variables.get</code>, escribe con{" "}
+          <code className="font-mono">pm.variables.set</code> (solo para esta corrida) y comprueba con{" "}
+          <code className="font-mono">pm.test</code>. Falla si lanza un error o si un{" "}
+          <code className="font-mono">pm.test</code> falla. Lo que imprime queda en el informe, con los secretos
+          ocultos.
+        </>
+      }
+      canEdit={canEdit}
+      onRemove={onRemove}
+      tabs={[
+        {
+          id: "script",
+          label: "Script",
+          content: (
+            <>
+              <div className="max-w-sm">
+                <Field label="Lee la respuesta de">
+                  <select
+                    className={inputClass}
+                    value={script.from ?? ""}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      onChange({
+                        ...step,
+                        script: event.target.value
+                          ? { code: script.code, from: event.target.value }
+                          : { code: script.code },
+                      })
+                    }
+                  >
+                    <option value="">Ninguna</option>
+                    {sources.map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <textarea
+                aria-label="Código del script"
+                className={`${inputClass} mt-3 h-[26rem] font-mono text-[11px]`}
+                placeholder={
+                  "const body = pm.response.json();\npm.variables.set('total', String(body.data.length));\npm.test('hay datos', () => pm.expect(body.data.length).to.be.above(0));"
+                }
+                value={script.code}
+                disabled={!canEdit}
+                spellCheck={false}
+                onChange={(event) => onChange({ ...step, script: { ...script, code: event.target.value } })}
+              />
+            </>
+          ),
+        },
+        {
+          id: "failure",
+          label: "Si falla",
+          marked: failureSet(step),
+          content: <FailureEditor step={step} canEdit={canEdit} onChange={onChange} />,
+        },
+      ]}
+    />
   );
 }
 
@@ -1110,71 +1470,89 @@ function LoopInspector({
   const name = loop.as || "item";
 
   return (
-    <div>
-      <p className="text-xs font-semibold text-slate-800">Bucle</p>
-      <p className="mt-0.5 text-[11px] leading-5 text-slate-500">
-        Recorre una lista que devolvió un paso anterior. Lo que conectes a la salida «cada» —y todo lo que cuelgue de ello— se
-        ejecuta una vez por elemento, en orden, y cada vuelta deja su propio caso por nodo. La salida «fin» sigue cuando
-        terminan todas las vueltas.
-      </p>
-      {sources.length === 0 ? (
-        <p className="mt-3 text-[11px] text-amber-700">Conéctalo al paso cuya respuesta trae la lista.</p>
-      ) : (
-        <Field label="Lee la lista de">
-          <select className={inputClass} value={loop.from} disabled={!canEdit} onChange={(event) => setLoop({ from: event.target.value })}>
-            {!sources.includes(loop.from) && <option value="">Elige un paso</option>}
-            {sources.map((id) => (
-              <option key={id} value={id}>
-                {id}
-              </option>
-            ))}
-          </select>
-        </Field>
-      )}
-      <Field label="Ruta a la lista en el body">
-        <input
-          className={`${inputClass} font-mono text-xs`}
-          value={loop.path}
-          placeholder="data.items"
-          disabled={!canEdit}
-          onChange={(event) => setLoop({ path: event.target.value })}
-        />
-      </Field>
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="Cada elemento">
-          <input
-            className={`${inputClass} font-mono text-xs`}
-            value={loop.as}
-            disabled={!canEdit}
-            onChange={(event) => setLoop({ as: event.target.value })}
-          />
-        </Field>
-        <Field label="Máx. vueltas">
-          <input
-            className={inputClass}
-            type="number"
-            min={1}
-            max={200}
-            value={loop.max ?? 50}
-            disabled={!canEdit}
-            onChange={(event) => setLoop({ max: Math.min(200, Math.max(1, Number(event.target.value) || 1)) })}
-          />
-        </Field>
-      </div>
-      <p className="text-[11px] leading-5 text-slate-500">
-        Úsalo como <code className="font-mono">{`{{${name}.id}}`}</code> campo a campo, o{" "}
-        <code className="font-mono">{`{{${name}}}`}</code> para el elemento entero en JSON.
-      </p>
-      <p className={`mt-2 text-[11px] leading-5 ${body.length ? "text-slate-600" : "text-amber-700"}`}>
-        {body.length ? `Por vuelta: ${body.join(" → ")}` : "Nada conectado a «cada»: el bucle no ejecutará nada."}
-      </p>
-      <FailureEditor step={step} canEdit={canEdit} retries={false} onChange={onChange} />
-      {canEdit && (
-        <Button variant="ghost" className="mt-3 h-8 w-full text-xs text-rose-600" onClick={onRemove}>
-          Eliminar nodo
-        </Button>
-      )}
-    </div>
+    <NodePanel
+      title="Bucle"
+      subtitle={step.id}
+      description="Recorre una lista que devolvió un paso anterior. Lo que conectes a la salida «cada» —y todo lo que cuelgue de ello— se ejecuta una vez por elemento, en orden, y cada vuelta deja su propio caso por nodo. La salida «fin» sigue cuando terminan todas las vueltas."
+      canEdit={canEdit}
+      onRemove={onRemove}
+      tabs={[
+        {
+          id: "main",
+          label: "Bucle",
+          content: (
+            <>
+              <div className="grid gap-3 @3xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_9rem_9rem]">
+                {sources.length === 0 ? (
+                  <p className="text-[11px] text-amber-700 @3xl:self-center">
+                    Conéctalo al paso cuya respuesta trae la lista.
+                  </p>
+                ) : (
+                  <Field label="Lee la lista de">
+                    <select
+                      className={inputClass}
+                      value={loop.from}
+                      disabled={!canEdit}
+                      onChange={(event) => setLoop({ from: event.target.value })}
+                    >
+                      {!sources.includes(loop.from) && <option value="">Elige un paso</option>}
+                      {sources.map((id) => (
+                        <option key={id} value={id}>
+                          {id}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+                <Field label="Ruta a la lista en el body">
+                  <input
+                    className={`${inputClass} font-mono text-xs`}
+                    value={loop.path}
+                    placeholder="data.items"
+                    disabled={!canEdit}
+                    onChange={(event) => setLoop({ path: event.target.value })}
+                  />
+                </Field>
+                <Field label="Cada elemento">
+                  <input
+                    className={`${inputClass} font-mono text-xs`}
+                    value={loop.as}
+                    disabled={!canEdit}
+                    onChange={(event) => setLoop({ as: event.target.value })}
+                  />
+                </Field>
+                <Field label="Máx. vueltas">
+                  <input
+                    className={inputClass}
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={loop.max ?? 50}
+                    disabled={!canEdit}
+                    onChange={(event) => setLoop({ max: Math.min(200, Math.max(1, Number(event.target.value) || 1)) })}
+                  />
+                </Field>
+              </div>
+              <p className="mt-2 text-[11px] leading-5 text-slate-500">
+                Úsalo como <code className="font-mono">{`{{${name}.id}}`}</code> campo a campo, o{" "}
+                <code className="font-mono">{`{{${name}}}`}</code> para el elemento entero en JSON.
+              </p>
+              <p className={`mt-2 text-[11px] leading-5 ${body.length ? "text-slate-600" : "text-amber-700"}`}>
+                {body.length
+                  ? `Por vuelta: ${body.join(" → ")}`
+                  : "Nada conectado a «cada»: el bucle no ejecutará nada."}
+              </p>
+            </>
+          ),
+        },
+        {
+          id: "failure",
+          label: "Si falla",
+          marked: failureSet(step),
+          content: <FailureEditor step={step} canEdit={canEdit} retries={false} onChange={onChange} />,
+        },
+      ]}
+    />
   );
 }
 
@@ -1201,68 +1579,99 @@ function PollInspector({
   const setPoll = (change: Partial<typeof poll>) => onChange({ ...step, poll: { ...poll, ...change } });
 
   return (
-    <div>
-      <p className="text-xs font-semibold text-slate-800">Reintento</p>
-      <p className="mt-0.5 text-[11px] leading-5 text-slate-500">
-        Repite la petición de un paso hasta que su respuesta cumpla las comprobaciones: el trabajo que responde «pendiente»
-        hasta que termina. Primero juzga la respuesta que ese paso ya obtuvo; si ya cumple, no reenvía nada. Lo que cuelgue
-        de este nodo lee la última respuesta.
-      </p>
-
-      {sources.length === 0 ? (
-        <p className="mt-3 text-[11px] text-amber-700">Conéctalo a una petición o un fetch (sin bucle ni login) que repetir.</p>
-      ) : (
-        <Field label="Repite el paso">
-          <select className={inputClass} value={poll.from} disabled={!canEdit} onChange={(event) => setPoll({ from: event.target.value })}>
-            {!sources.includes(poll.from) && <option value="">Elige un paso</option>}
-            {sources.map((id) => (
-              <option key={id} value={id}>
-                {id}
-              </option>
-            ))}
-          </select>
-        </Field>
-      )}
-
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="Reenvíos (máx.)">
-          <input
-            className={inputClass}
-            type="number"
-            min={1}
-            max={20}
-            value={poll.attempts}
-            disabled={!canEdit}
-            onChange={(event) => setPoll({ attempts: Math.min(20, Math.max(1, Number(event.target.value) || 1)) })}
-          />
-        </Field>
-        <Field label="Cada (ms)">
-          <input
-            className={inputClass}
-            type="number"
-            min={0}
-            max={60000}
-            step={500}
-            value={poll.delayMs}
-            disabled={!canEdit}
-            onChange={(event) => setPoll({ delayMs: Math.min(60000, Math.max(0, Number(event.target.value) || 0)) })}
-          />
-        </Field>
-      </div>
-      <p className="text-[11px] leading-5 text-amber-700">Si la petición escribe, cada reenvío vuelve a escribir.</p>
-
-      <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />
-      <div className="mt-4 border-t border-slate-100 pt-3">
-        <p className="text-xs font-semibold text-slate-800">Capturas de la última respuesta</p>
-        <CapturesEditor step={step} canEdit={canEdit} onChange={onChange} />
-      </div>
-      <FailureEditor step={step} canEdit={canEdit} retries={false} onChange={onChange} />
-      {canEdit && (
-        <Button variant="ghost" className="mt-3 h-8 w-full text-xs text-rose-600" onClick={onRemove}>
-          Eliminar nodo
-        </Button>
-      )}
-    </div>
+    <NodePanel
+      title="Reintento"
+      subtitle={step.id}
+      description="Repite la petición de un paso hasta que su respuesta cumpla las comprobaciones: el trabajo que responde «pendiente» hasta que termina. Primero juzga la respuesta que ese paso ya obtuvo; si ya cumple, no reenvía nada. Lo que cuelgue de este nodo lee la última respuesta."
+      canEdit={canEdit}
+      onRemove={onRemove}
+      tabs={[
+        {
+          id: "main",
+          label: "Reintento",
+          content: (
+            <>
+              <div className="grid gap-3 @3xl:grid-cols-[minmax(0,1fr)_9rem_9rem]">
+                {sources.length === 0 ? (
+                  <p className="text-[11px] text-amber-700 @3xl:self-center">
+                    Conéctalo a una petición o un fetch (sin bucle ni login) que repetir.
+                  </p>
+                ) : (
+                  <Field label="Repite el paso">
+                    <select
+                      className={inputClass}
+                      value={poll.from}
+                      disabled={!canEdit}
+                      onChange={(event) => setPoll({ from: event.target.value })}
+                    >
+                      {!sources.includes(poll.from) && <option value="">Elige un paso</option>}
+                      {sources.map((id) => (
+                        <option key={id} value={id}>
+                          {id}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+                <Field label="Reenvíos (máx.)">
+                  <input
+                    className={inputClass}
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={poll.attempts}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      setPoll({ attempts: Math.min(20, Math.max(1, Number(event.target.value) || 1)) })
+                    }
+                  />
+                </Field>
+                <Field label="Cada (ms)">
+                  <input
+                    className={inputClass}
+                    type="number"
+                    min={0}
+                    max={60000}
+                    step={500}
+                    value={poll.delayMs}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      setPoll({ delayMs: Math.min(60000, Math.max(0, Number(event.target.value) || 0)) })
+                    }
+                  />
+                </Field>
+              </div>
+              <p className="mt-2 text-[11px] leading-5 text-amber-700">
+                Si la petición escribe, cada reenvío vuelve a escribir.
+              </p>
+            </>
+          ),
+        },
+        {
+          id: "checks",
+          label: "Comprobaciones",
+          count: step.checks?.length,
+          content: <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />,
+        },
+        {
+          id: "captures",
+          label: "Capturas",
+          count: step.captures?.length,
+          content: (
+            <>
+              <p className="text-xs font-semibold text-slate-800">Capturas de la última respuesta</p>
+              <CapturesEditor step={step} canEdit={canEdit} onChange={onChange} />
+            </>
+          ),
+        },
+        {
+          id: "failure",
+          label: "Si falla",
+          marked: failureSet(step),
+          content: <FailureEditor step={step} canEdit={canEdit} retries={false} onChange={onChange} />,
+        },
+      ]}
+    />
   );
 }
 
@@ -1281,86 +1690,76 @@ function CapturesEditor({
 }) {
   const captures = step.captures ?? [];
   const editCaptures = (next: typeof captures) => onChange({ ...step, captures: next });
+  const patch = (index: number, change: Partial<WorkflowCaptureView>) =>
+    editCaptures(captures.map((item, position) => (position === index ? { ...item, ...change } : item)));
+  const row =
+    "grid grid-cols-[6.5rem_minmax(0,1fr)_1.5rem] items-center gap-2 @3xl:grid-cols-[minmax(0,1fr)_6.5rem_minmax(0,1.5fr)_1.5rem]";
 
   return (
     <div>
-      <p className="mt-3 text-[11px] leading-5 text-slate-500">
+      <p className="text-[11px] leading-5 text-slate-500">
         Extrae valores de esta respuesta para los pasos siguientes. Del cuerpo, con una ruta como{" "}
         <span className="font-mono">data.id</span>; de una cabecera o una cookie, con su nombre; y si la respuesta no
         tiene forma que recorrer, con una expresión regular sobre el texto —su grupo, si lo lleva—.
       </p>
+      {captures.length > 0 && (
+        <div
+          className={cn(row, "mt-3 hidden text-[10px] font-medium tracking-wide text-slate-400 uppercase @3xl:grid")}
+        >
+          <span>Variable</span>
+          <span>Origen</span>
+          <span>Ruta</span>
+        </div>
+      )}
       <div className="mt-2 space-y-2">
         {captures.map((capture, index) => (
-          <div key={index} className="rounded-lg border border-slate-200 p-2">
+          <div key={index} className={cn(row, "rounded-lg border border-slate-200 p-2 @3xl:border-0 @3xl:p-0")}>
             <input
               aria-label="Variable capturada"
-              className={inputClass}
+              className={cn(inputClass, "col-span-3 mt-0 @3xl:col-span-1")}
               value={capture.variable}
               placeholder="userId"
               disabled={!canEdit}
-              onChange={(event) =>
-                editCaptures(
-                  captures.map((item, position) =>
-                    position === index ? { ...item, variable: event.target.value } : item,
-                  ),
-                )
-              }
+              onChange={(event) => patch(index, { variable: event.target.value })}
             />
-            <div className="grid grid-cols-[90px_1fr] gap-2">
-              <select
-                className={inputClass}
-                value={capture.from}
-                disabled={!canEdit}
-                onChange={(event) =>
-                  editCaptures(
-                    captures.map((item, position) =>
-                      position === index ? { ...item, from: event.target.value as CaptureSource } : item,
-                    ),
-                  )
-                }
-              >
-                {CAPTURE_SOURCES.map((source) => (
-                  <option key={source.value} value={source.value}>
-                    {source.value}
-                  </option>
-                ))}
-              </select>
-              <input
-                aria-label="Ruta de captura"
-                className={inputClass}
-                value={capture.path}
-                // El ejemplo cambia con la ruta elegida: `data.id` al lado de un selector que dice
-                // «cookie» es una pista que estorba más de lo que ayuda.
-                placeholder={CAPTURE_SOURCES.find((source) => source.value === capture.from)?.hint}
-                disabled={!canEdit}
-                onChange={(event) =>
-                  editCaptures(
-                    captures.map((item, position) =>
-                      position === index ? { ...item, path: event.target.value } : item,
-                    ),
-                  )
-                }
-              />
-            </div>
-            {canEdit && (
+            <select
+              aria-label="Origen de la captura"
+              className={cn(inputClass, "mt-0")}
+              value={capture.from}
+              disabled={!canEdit}
+              onChange={(event) => patch(index, { from: event.target.value as CaptureSource })}
+            >
+              {CAPTURE_SOURCES.map((source) => (
+                <option key={source.value} value={source.value}>
+                  {source.value}
+                </option>
+              ))}
+            </select>
+            <input
+              aria-label="Ruta de captura"
+              className={cn(inputClass, "mt-0 font-mono text-xs")}
+              value={capture.path}
+              // El ejemplo cambia con la ruta elegida: `data.id` al lado de un selector que dice
+              // «cookie» es una pista que estorba más de lo que ayuda.
+              placeholder={CAPTURE_SOURCES.find((source) => source.value === capture.from)?.hint}
+              disabled={!canEdit}
+              onChange={(event) => patch(index, { path: event.target.value })}
+            />
+            {canEdit ? (
               <button
-                className="mt-1 text-[10px] text-rose-600"
+                className="text-[11px] text-rose-600"
+                aria-label="Eliminar captura"
+                title="Eliminar captura"
                 onClick={() => editCaptures(captures.filter((_item, position) => position !== index))}
               >
-                Eliminar captura
+                ✕
               </button>
+            ) : (
+              <span />
             )}
           </div>
         ))}
       </div>
-      {canEdit && (
-        <CaptureSuggestions
-          sampleBody={sampleBody}
-          existing={captures}
-          onAdd={(capture) => editCaptures([...captures, capture])}
-        />
-      )}
-
       {canEdit && (
         <Button
           variant="ghost"
@@ -1370,7 +1769,13 @@ function CapturesEditor({
           + Captura
         </Button>
       )}
-
+      {canEdit && (
+        <CaptureSuggestions
+          sampleBody={sampleBody}
+          existing={captures}
+          onAdd={(capture) => editCaptures([...captures, capture])}
+        />
+      )}
     </div>
   );
 }
@@ -1446,67 +1851,77 @@ function ChecksEditor({
   const edit = (next: StepCheckView[]) => onChange({ ...step, checks: next.length ? next : undefined });
   const patch = (index: number, change: Partial<StepCheckView>) =>
     edit(checks.map((item, position) => (position === index ? { ...item, ...change } : item)));
+  // One line per check when there is room: source, path, operator, value, then its flags.
+  const row =
+    "grid grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-2 @3xl:grid-cols-[6.5rem_minmax(0,1.3fr)_9rem_minmax(0,1fr)_auto]";
 
   return (
-    <div className="mt-4 border-t border-slate-100 pt-3">
-      <p className="text-xs font-semibold text-slate-800">Comprobaciones</p>
-      <p className="mt-1 text-[11px] leading-5 text-slate-500">
+    <div>
+      <p className="text-[11px] leading-5 text-slate-500">
         Lo que el contrato no dice: que la lista trae algo, que el total cuadra, que responde a tiempo. Un{" "}
         <span className="font-medium">aviso</span> queda escrito y no pone el caso en rojo.
       </p>
+      {checks.length > 0 && (
+        <div
+          className={cn(row, "mt-3 hidden text-[10px] font-medium tracking-wide text-slate-400 uppercase @3xl:grid")}
+        >
+          <span>Origen</span>
+          <span>Ruta o cabecera</span>
+          <span>Operador</span>
+          <span>Valor esperado</span>
+        </div>
+      )}
       <div className="mt-2 space-y-2">
         {checks.map((check, index) => (
-          <div key={index} className="rounded-lg border border-slate-200 p-2">
-            <div className="grid grid-cols-[5.5rem_1fr] gap-2">
-              <select
-                aria-label="Origen"
-                className={inputClass}
-                value={check.source}
-                disabled={!canEdit}
-                onChange={(event) => patch(index, { source: event.target.value as StepCheckView["source"] })}
-              >
-                {CHECK_SOURCES.map((source) => (
-                  <option key={source} value={source}>
-                    {source}
-                  </option>
-                ))}
-              </select>
+          <div key={index} className={cn(row, "rounded-lg border border-slate-200 p-2 @3xl:border-0 @3xl:p-0")}>
+            <select
+              aria-label="Origen"
+              className={cn(inputClass, "mt-0")}
+              value={check.source}
+              disabled={!canEdit}
+              onChange={(event) => patch(index, { source: event.target.value as StepCheckView["source"] })}
+            >
+              {CHECK_SOURCES.map((source) => (
+                <option key={source} value={source}>
+                  {source}
+                </option>
+              ))}
+            </select>
+            <input
+              aria-label="Ruta o cabecera"
+              className={cn(inputClass, "mt-0 font-mono text-xs")}
+              value={check.path ?? ""}
+              placeholder={check.source === "header" ? "X-Total-Count" : "data.0.id"}
+              disabled={!canEdit || check.source === "status" || check.source === "durationMs"}
+              onChange={(event) => patch(index, { path: event.target.value })}
+            />
+            <select
+              aria-label="Operador"
+              className={cn(inputClass, "mt-0")}
+              value={check.operator}
+              disabled={!canEdit}
+              onChange={(event) => patch(index, { operator: event.target.value })}
+            >
+              {CHECK_OPERATORS.map((operator) => (
+                <option key={operator} value={operator}>
+                  {operator}
+                </option>
+              ))}
+            </select>
+            {WITHOUT_OPERAND.includes(check.operator) ? (
+              <span className="text-[11px] text-slate-400">—</span>
+            ) : (
               <input
-                aria-label="Ruta o cabecera"
-                className={inputClass}
-                value={check.path ?? ""}
-                placeholder={check.source === "header" ? "X-Total-Count" : "data.0.id"}
-                disabled={!canEdit || check.source === "status" || check.source === "durationMs"}
-                onChange={(event) => patch(index, { path: event.target.value })}
-              />
-            </div>
-            <div className="mt-2 grid grid-cols-[8rem_1fr] gap-2">
-              <select
-                aria-label="Operador"
-                className={inputClass}
-                value={check.operator}
+                aria-label="Valor esperado"
+                className={cn(inputClass, "mt-0")}
+                value={check.value === undefined ? "" : String(check.value)}
+                placeholder="200"
                 disabled={!canEdit}
-                onChange={(event) => patch(index, { operator: event.target.value })}
-              >
-                {CHECK_OPERATORS.map((operator) => (
-                  <option key={operator} value={operator}>
-                    {operator}
-                  </option>
-                ))}
-              </select>
-              {!WITHOUT_OPERAND.includes(check.operator) && (
-                <input
-                  aria-label="Valor esperado"
-                  className={inputClass}
-                  value={check.value === undefined ? "" : String(check.value)}
-                  placeholder="200"
-                  disabled={!canEdit}
-                  onChange={(event) => patch(index, { value: event.target.value })}
-                />
-              )}
-            </div>
-            <div className="mt-2 flex items-center justify-between">
-              <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                onChange={(event) => patch(index, { value: event.target.value })}
+              />
+            )}
+            <div className="col-span-2 flex items-center justify-between gap-3 @3xl:col-span-1">
+              <label className="flex items-center gap-1.5 text-[11px] whitespace-nowrap text-slate-600">
                 <input
                   type="checkbox"
                   checked={check.severity === "warning"}
@@ -1517,10 +1932,12 @@ function ChecksEditor({
               </label>
               {canEdit && (
                 <button
-                  className="text-[10px] text-rose-600"
+                  className="text-[11px] text-rose-600"
+                  aria-label="Eliminar comprobación"
+                  title="Eliminar comprobación"
                   onClick={() => edit(checks.filter((_item, position) => position !== index))}
                 >
-                  Eliminar
+                  ✕
                 </button>
               )}
             </div>
@@ -1568,97 +1985,108 @@ function FailureEditor({
       .filter((item) => Number.isInteger(item) && item >= 100 && item <= 599);
 
   return (
-    <div className="mt-4 border-t border-slate-100 pt-3">
-      <Field label="Si este paso falla">
-        <select
-          className={inputClass}
-          value={step.onError ?? "skip-dependents"}
-          disabled={!canEdit}
-          onChange={(event) => onChange({ ...step, onError: event.target.value as WorkflowStepView["onError"] })}
-        >
-          {ON_ERROR.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <p className="text-[11px] leading-5 text-slate-500">
-        {ON_ERROR.find((option) => option.value === (step.onError ?? "skip-dependents"))?.hint}
-      </p>
+    <div className="grid gap-x-6 gap-y-4 @3xl:grid-cols-2">
+      <div>
+        <Field label="Si este paso falla">
+          <select
+            className={inputClass}
+            value={step.onError ?? "skip-dependents"}
+            disabled={!canEdit}
+            onChange={(event) => onChange({ ...step, onError: event.target.value as WorkflowStepView["onError"] })}
+          >
+            {ON_ERROR.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <p className="text-[11px] leading-5 text-slate-500">
+          {ON_ERROR.find((option) => option.value === (step.onError ?? "skip-dependents"))?.hint}
+        </p>
+      </div>
 
       {retries && (
-      <>
-      <label className="mt-3 flex items-center gap-1.5 text-[11px] font-semibold text-slate-700">
-        <input
-          type="checkbox"
-          checked={Boolean(retry)}
-          disabled={!canEdit}
-          onChange={(event) =>
-            onChange({ ...step, retry: event.target.checked ? { attempts: 2, delayMs: 500, backoff: 2 } : undefined })
-          }
-        />
-        Reintentar
-      </label>
-      {retry && (
-        <>
-          <div className="mt-2 grid grid-cols-3 gap-2">
-            <Field label="Intentos">
-              <input
-                className={inputClass}
-                type="number"
-                min={0}
-                max={5}
-                value={retry.attempts}
-                disabled={!canEdit}
-                onChange={(event) => onChange({ ...step, retry: { ...retry, attempts: Number(event.target.value) } })}
-              />
-            </Field>
-            <Field label="Espera (ms)">
-              <input
-                className={inputClass}
-                type="number"
-                min={0}
-                max={30000}
-                value={retry.delayMs}
-                disabled={!canEdit}
-                onChange={(event) => onChange({ ...step, retry: { ...retry, delayMs: Number(event.target.value) } })}
-              />
-            </Field>
-            <Field label="Factor">
-              <input
-                className={inputClass}
-                type="number"
-                min={1}
-                max={10}
-                step={0.5}
-                value={retry.backoff ?? 1}
-                disabled={!canEdit}
-                onChange={(event) => onChange({ ...step, retry: { ...retry, backoff: Number(event.target.value) } })}
-              />
-            </Field>
-          </div>
-          <Field label="Solo estos estados" hint="Vacío reintenta cualquier fallo.">
+        <div className="border-t border-slate-100 pt-3 @3xl:border-t-0 @3xl:border-l @3xl:pt-0 @3xl:pl-6">
+          <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-700">
             <input
-              className={`${inputClass} font-mono text-xs`}
-              value={(retry.onStatus ?? []).join(", ")}
-              placeholder="502, 503, 504"
+              type="checkbox"
+              checked={Boolean(retry)}
               disabled={!canEdit}
-              onChange={(event) => {
-                const statuses = writes(event.target.value);
+              onChange={(event) =>
                 onChange({
                   ...step,
-                  retry: { ...retry, ...(statuses.length ? { onStatus: statuses } : { onStatus: undefined }) },
-                });
-              }}
+                  retry: event.target.checked ? { attempts: 2, delayMs: 500, backoff: 2 } : undefined,
+                })
+              }
             />
-          </Field>
-          <p className="text-[11px] leading-5 text-amber-700">
-            Un paso que escribe y se reintenta sin acotar por estado escribe una vez por intento.
-          </p>
-        </>
-      )}
-      </>
+            Reintentar
+          </label>
+          {retry && (
+            <>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                <Field label="Intentos">
+                  <input
+                    className={inputClass}
+                    type="number"
+                    min={0}
+                    max={5}
+                    value={retry.attempts}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      onChange({ ...step, retry: { ...retry, attempts: Number(event.target.value) } })
+                    }
+                  />
+                </Field>
+                <Field label="Espera (ms)">
+                  <input
+                    className={inputClass}
+                    type="number"
+                    min={0}
+                    max={30000}
+                    value={retry.delayMs}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      onChange({ ...step, retry: { ...retry, delayMs: Number(event.target.value) } })
+                    }
+                  />
+                </Field>
+                <Field label="Factor">
+                  <input
+                    className={inputClass}
+                    type="number"
+                    min={1}
+                    max={10}
+                    step={0.5}
+                    value={retry.backoff ?? 1}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      onChange({ ...step, retry: { ...retry, backoff: Number(event.target.value) } })
+                    }
+                  />
+                </Field>
+              </div>
+              <Field label="Solo estos estados" hint="Vacío reintenta cualquier fallo.">
+                <input
+                  className={`${inputClass} font-mono text-xs`}
+                  value={(retry.onStatus ?? []).join(", ")}
+                  placeholder="502, 503, 504"
+                  disabled={!canEdit}
+                  onChange={(event) => {
+                    const statuses = writes(event.target.value);
+                    onChange({
+                      ...step,
+                      retry: { ...retry, ...(statuses.length ? { onStatus: statuses } : { onStatus: undefined }) },
+                    });
+                  }}
+                />
+              </Field>
+              <p className="text-[11px] leading-5 text-amber-700">
+                Un paso que escribe y se reintenta sin acotar por estado escribe una vez por intento.
+              </p>
+            </>
+          )}
+        </div>
       )}
     </div>
   );
@@ -1687,226 +2115,232 @@ function ScheduleEditor({
   const condition = step.runIf;
 
   return (
-    <div className="mt-4 border-t border-slate-100 pt-3">
-      <p className="text-xs font-semibold text-slate-800">Cuándo y cuántas veces</p>
-
-      {/* Solo con varias dependencias: con una, «todas» y «cualquiera» son la misma frase, y un
+    <div>
+      <div className="grid gap-3 @3xl:grid-cols-2">
+        {/* Solo con varias dependencias: con una, «todas» y «cualquiera» son la misma frase, y un
           desplegable que no decide nada es una pregunta que alguien tiene que leer igual. */}
-      {sources.length > 1 && (
-        <Field label="Empieza cuando" hint="«Cualquiera» arranca con el primero que llegue, sin esperar al resto.">
-          <select
-            className={inputClass}
-            value={step.waits ?? "all"}
-            disabled={!canEdit}
-            onChange={(event) => onChange({ ...step, waits: event.target.value === "any" ? "any" : undefined })}
-          >
-            <option value="all">han terminado todos los anteriores</option>
-            <option value="any">ha terminado cualquiera de ellos</option>
-          </select>
-        </Field>
-      )}
+        {sources.length > 1 && (
+          <Field label="Empieza cuando" hint="«Cualquiera» arranca con el primero que llegue, sin esperar al resto.">
+            <select
+              className={inputClass}
+              value={step.waits ?? "all"}
+              disabled={!canEdit}
+              onChange={(event) => onChange({ ...step, waits: event.target.value === "any" ? "any" : undefined })}
+            >
+              <option value="all">han terminado todos los anteriores</option>
+              <option value="any">ha terminado cualquiera de ellos</option>
+            </select>
+          </Field>
+        )}
 
-      <Field
-        label="Esperar antes (ms)"
-        hint="Para el destino que acepta la escritura y tarda un momento en poder leerla."
-      >
-        <input
-          className={inputClass}
-          type="number"
-          min={0}
-          max={60000}
-          value={step.waitMs ?? 0}
-          disabled={!canEdit}
-          onChange={(event) =>
-            onChange({ ...step, waitMs: Number(event.target.value) > 0 ? Number(event.target.value) : undefined })
-          }
-        />
-      </Field>
+        <Field
+          label="Esperar antes (ms)"
+          hint="Para el destino que acepta la escritura y tarda un momento en poder leerla."
+        >
+          <input
+            className={inputClass}
+            type="number"
+            min={0}
+            max={60000}
+            value={step.waitMs ?? 0}
+            disabled={!canEdit}
+            onChange={(event) =>
+              onChange({ ...step, waitMs: Number(event.target.value) > 0 ? Number(event.target.value) : undefined })
+            }
+          />
+        </Field>
+      </div>
 
       {sources.length === 0 ? (
-        <p className="mt-2 text-[11px] text-slate-400">
+        <p className="mt-4 text-[11px] text-slate-400">
           Conecta este paso a otro para poder condicionarlo o recorrer su lista.
         </p>
       ) : (
-        <>
-          <label className="mt-3 flex items-center gap-1.5 text-[11px] font-semibold text-slate-700">
-            <input
-              type="checkbox"
-              checked={Boolean(condition)}
-              disabled={!canEdit}
-              onChange={(event) =>
-                onChange({
-                  ...step,
-                  runIf: event.target.checked
-                    ? { from: sources[0], check: { source: "status", operator: "equals", value: "200" } }
-                    : undefined,
-                })
-              }
-            />
-            Solo si…
-          </label>
-          {condition && (
-            <div className="mt-2 rounded-lg border border-slate-200 p-2">
-              <div className="grid grid-cols-2 gap-2">
-                <Field label="Del paso">
-                  <select
-                    className={inputClass}
-                    value={condition.from}
-                    disabled={!canEdit}
-                    onChange={(event) => onChange({ ...step, runIf: { ...condition, from: event.target.value } })}
-                  >
-                    {sources.map((id) => (
-                      <option key={id} value={id}>
-                        {id}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Origen">
-                  <select
-                    className={inputClass}
-                    value={condition.check.source}
-                    disabled={!canEdit}
-                    onChange={(event) =>
-                      onChange({
-                        ...step,
-                        runIf: {
-                          ...condition,
-                          check: { ...condition.check, source: event.target.value as StepCheckView["source"] },
-                        },
-                      })
-                    }
-                  >
-                    {CHECK_SOURCES.map((source) => (
-                      <option key={source} value={source}>
-                        {source}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
-              <div className="grid grid-cols-[1fr_8rem_1fr] gap-2">
-                <input
-                  aria-label="Ruta de la condición"
-                  className={inputClass}
-                  value={condition.check.path ?? ""}
-                  placeholder="data.0.id"
-                  disabled={!canEdit || condition.check.source === "status" || condition.check.source === "durationMs"}
-                  onChange={(event) =>
-                    onChange({
-                      ...step,
-                      runIf: { ...condition, check: { ...condition.check, path: event.target.value } },
-                    })
-                  }
-                />
-                <select
-                  aria-label="Operador de la condición"
-                  className={inputClass}
-                  value={condition.check.operator}
-                  disabled={!canEdit}
-                  onChange={(event) =>
-                    onChange({
-                      ...step,
-                      runIf: { ...condition, check: { ...condition.check, operator: event.target.value } },
-                    })
-                  }
-                >
-                  {CHECK_OPERATORS.map((operator) => (
-                    <option key={operator} value={operator}>
-                      {operator}
-                    </option>
-                  ))}
-                </select>
-                {!WITHOUT_OPERAND.includes(condition.check.operator) && (
+        <div className="mt-4 grid gap-x-6 gap-y-4 border-t border-slate-100 pt-3 @3xl:grid-cols-2">
+          <div>
+            <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-700">
+              <input
+                type="checkbox"
+                checked={Boolean(condition)}
+                disabled={!canEdit}
+                onChange={(event) =>
+                  onChange({
+                    ...step,
+                    runIf: event.target.checked
+                      ? { from: sources[0], check: { source: "status", operator: "equals", value: "200" } }
+                      : undefined,
+                  })
+                }
+              />
+              Solo si…
+            </label>
+            {condition && (
+              <div className="mt-2 rounded-lg border border-slate-200 p-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="Del paso">
+                    <select
+                      className={inputClass}
+                      value={condition.from}
+                      disabled={!canEdit}
+                      onChange={(event) => onChange({ ...step, runIf: { ...condition, from: event.target.value } })}
+                    >
+                      {sources.map((id) => (
+                        <option key={id} value={id}>
+                          {id}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Origen">
+                    <select
+                      className={inputClass}
+                      value={condition.check.source}
+                      disabled={!canEdit}
+                      onChange={(event) =>
+                        onChange({
+                          ...step,
+                          runIf: {
+                            ...condition,
+                            check: { ...condition.check, source: event.target.value as StepCheckView["source"] },
+                          },
+                        })
+                      }
+                    >
+                      {CHECK_SOURCES.map((source) => (
+                        <option key={source} value={source}>
+                          {source}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+                <div className="grid grid-cols-[1fr_8rem_1fr] gap-2">
                   <input
-                    aria-label="Valor de la condición"
+                    aria-label="Ruta de la condición"
                     className={inputClass}
-                    value={condition.check.value === undefined ? "" : String(condition.check.value)}
-                    disabled={!canEdit}
+                    value={condition.check.path ?? ""}
+                    placeholder="data.0.id"
+                    disabled={
+                      !canEdit || condition.check.source === "status" || condition.check.source === "durationMs"
+                    }
                     onChange={(event) =>
                       onChange({
                         ...step,
-                        runIf: { ...condition, check: { ...condition.check, value: event.target.value } },
+                        runIf: { ...condition, check: { ...condition.check, path: event.target.value } },
                       })
                     }
                   />
-                )}
+                  <select
+                    aria-label="Operador de la condición"
+                    className={inputClass}
+                    value={condition.check.operator}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      onChange({
+                        ...step,
+                        runIf: { ...condition, check: { ...condition.check, operator: event.target.value } },
+                      })
+                    }
+                  >
+                    {CHECK_OPERATORS.map((operator) => (
+                      <option key={operator} value={operator}>
+                        {operator}
+                      </option>
+                    ))}
+                  </select>
+                  {!WITHOUT_OPERAND.includes(condition.check.operator) && (
+                    <input
+                      aria-label="Valor de la condición"
+                      className={inputClass}
+                      value={condition.check.value === undefined ? "" : String(condition.check.value)}
+                      disabled={!canEdit}
+                      onChange={(event) =>
+                        onChange({
+                          ...step,
+                          runIf: { ...condition, check: { ...condition.check, value: event.target.value } },
+                        })
+                      }
+                    />
+                  )}
+                </div>
+                <p className="text-[11px] leading-5 text-slate-500">
+                  Si no se cumple, el paso queda <span className="font-medium">saltado</span>, no en rojo, y lo que
+                  dependa de él se ejecuta igual.
+                </p>
               </div>
-              <p className="text-[11px] leading-5 text-slate-500">
-                Si no se cumple, el paso queda <span className="font-medium">saltado</span>, no en rojo, y lo que
-                dependa de él se ejecuta igual.
-              </p>
-            </div>
-          )}
+            )}
+          </div>
 
-          <label className="mt-3 flex items-center gap-1.5 text-[11px] font-semibold text-slate-700">
-            <input
-              type="checkbox"
-              checked={Boolean(loop)}
-              disabled={!canEdit}
-              onChange={(event) =>
-                onChange({
-                  ...step,
-                  forEach: event.target.checked ? { from: sources[0], path: "data", as: "item", max: 50 } : undefined,
-                })
-              }
-            />
-            Una vez por elemento de…
-          </label>
-          {loop && (
-            <div className="mt-2 rounded-lg border border-slate-200 p-2">
-              <div className="grid grid-cols-2 gap-2">
-                <Field label="Lista del paso">
-                  <select
-                    className={inputClass}
-                    value={loop.from}
-                    disabled={!canEdit}
-                    onChange={(event) => onChange({ ...step, forEach: { ...loop, from: event.target.value } })}
-                  >
-                    {sources.map((id) => (
-                      <option key={id} value={id}>
-                        {id}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Ruta">
-                  <input
-                    className={inputClass}
-                    value={loop.path}
-                    placeholder="data"
-                    disabled={!canEdit}
-                    onChange={(event) => onChange({ ...step, forEach: { ...loop, path: event.target.value } })}
-                  />
-                </Field>
+          <div>
+            <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-700">
+              <input
+                type="checkbox"
+                checked={Boolean(loop)}
+                disabled={!canEdit}
+                onChange={(event) =>
+                  onChange({
+                    ...step,
+                    forEach: event.target.checked ? { from: sources[0], path: "data", as: "item", max: 50 } : undefined,
+                  })
+                }
+              />
+              Una vez por elemento de…
+            </label>
+            {loop && (
+              <div className="mt-2 rounded-lg border border-slate-200 p-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="Lista del paso">
+                    <select
+                      className={inputClass}
+                      value={loop.from}
+                      disabled={!canEdit}
+                      onChange={(event) => onChange({ ...step, forEach: { ...loop, from: event.target.value } })}
+                    >
+                      {sources.map((id) => (
+                        <option key={id} value={id}>
+                          {id}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Ruta">
+                    <input
+                      className={inputClass}
+                      value={loop.path}
+                      placeholder="data"
+                      disabled={!canEdit}
+                      onChange={(event) => onChange({ ...step, forEach: { ...loop, path: event.target.value } })}
+                    />
+                  </Field>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="Se llama" hint="Un objeto también se ata campo a campo: item.id.">
+                    <input
+                      className={`${inputClass} font-mono text-xs`}
+                      value={loop.as}
+                      disabled={!canEdit}
+                      onChange={(event) => onChange({ ...step, forEach: { ...loop, as: event.target.value } })}
+                    />
+                  </Field>
+                  <Field label="Como mucho">
+                    <input
+                      className={inputClass}
+                      type="number"
+                      min={1}
+                      max={200}
+                      value={loop.max ?? 50}
+                      disabled={!canEdit}
+                      onChange={(event) => onChange({ ...step, forEach: { ...loop, max: Number(event.target.value) } })}
+                    />
+                  </Field>
+                </div>
+                <p className="text-[11px] leading-5 text-slate-500">
+                  Cada elemento es su propio caso. El tope no es una formalidad: la lista la decide el destino.
+                </p>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <Field label="Se llama" hint="Un objeto también se ata campo a campo: item.id.">
-                  <input
-                    className={`${inputClass} font-mono text-xs`}
-                    value={loop.as}
-                    disabled={!canEdit}
-                    onChange={(event) => onChange({ ...step, forEach: { ...loop, as: event.target.value } })}
-                  />
-                </Field>
-                <Field label="Como mucho">
-                  <input
-                    className={inputClass}
-                    type="number"
-                    min={1}
-                    max={200}
-                    value={loop.max ?? 50}
-                    disabled={!canEdit}
-                    onChange={(event) => onChange({ ...step, forEach: { ...loop, max: Number(event.target.value) } })}
-                  />
-                </Field>
-              </div>
-              <p className="text-[11px] leading-5 text-slate-500">
-                Cada elemento es su propio caso. El tope no es una formalidad: la lista la decide el destino.
-              </p>
-            </div>
-          )}
-        </>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -1934,7 +2368,7 @@ function SessionEditor({
 }) {
   const auth = step.authorizes;
   return (
-    <div className="mt-4 border-t border-slate-100 pt-3">
+    <div>
       <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
         <input
           type="checkbox"
