@@ -205,9 +205,11 @@ export class RunsController {
         // event is what tells it to re-read the stored run, and `takeWhile` closes the connection
         // on the way out.
         const over = run.status !== "queued" && run.status !== "running";
+        // `pausedAt` rides along for the same reason: a follower that connects while the run waits
+        // would otherwise not know which node it is waiting before until the next pause.
         return over
           ? { type: "finished", payload: { totals: run.totals, status: run.status } }
-          : { type: "snapshot", payload: { totals: run.totals } };
+          : { type: "snapshot", payload: { totals: run.totals, pausedAt: run.paused ?? null } };
       }),
     );
 

@@ -17,6 +17,7 @@ import "@xyflow/react/dist/style.css";
 
 import { Badge } from "@/components/ui";
 import { ConfirmDialog } from "@/components/overlay";
+import { RunPauseOverlay } from "@/components/run-pause-overlay";
 import { cn, methodStyle } from "@/lib/format";
 import {
   addControlStep,
@@ -504,6 +505,9 @@ export function WorkflowCanvas({
   onAddRequest,
   onAddLogin,
   runStatus,
+  pausedStepId,
+  breakpoints,
+  onToggleBreakpoint,
   flowId,
 }: {
   /** Which flow is open. Flows share step ids, so this — not the ids — tells a flow switch from an add. */
@@ -519,6 +523,12 @@ export function WorkflowCanvas({
   onAddLogin?: () => void;
   /** Per-step live status while a run is being watched; nodes light up by it. */
   runStatus?: Record<string, CaseStatus>;
+  /** The node a watched run is paused before, drawn apart until it resumes or ends. */
+  pausedStepId?: string | null;
+  /** The nodes the next run stops before, marked on the canvas. */
+  breakpoints?: readonly string[];
+  /** Mark or unmark a node as a place to stop, from its context menu. */
+  onToggleBreakpoint?: (stepId: string) => void;
 }) {
   const fromDocument = useMemo(
     () => toNodes(steps, templates, operations, runStatus) as Node[],
@@ -663,6 +673,7 @@ export function WorkflowCanvas({
           <Background gap={20} size={1} />
           <MiniMap pannable zoomable />
           <Controls />
+          <RunPauseOverlay pausedId={pausedStepId ?? null} breakpoints={breakpoints ?? []} />
         </ReactFlow>
 
         {menu && menuStep && editable && (
@@ -680,6 +691,11 @@ export function WorkflowCanvas({
             >
               Duplicar nodo
             </MenuItem>
+            {onToggleBreakpoint && (
+              <MenuItem onClick={() => (onToggleBreakpoint(menu.id), setMenu(null))}>
+                {breakpoints?.includes(menu.id) ? "Quitar punto de parada" : "Detenerse antes de este nodo"}
+              </MenuItem>
+            )}
             <div className="my-1 border-t border-slate-100" />
             <MenuItem
               danger

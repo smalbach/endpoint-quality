@@ -45,6 +45,7 @@ import {
   saveRunSettings,
   type RunSettings,
 } from "@/lib/run-settings";
+import { activeBreakpoints, pausedNodeId, toggleBreakpoint } from "@/lib/run-pause";
 import type {
   DatasetRowsView,
   Environment,
@@ -572,6 +573,9 @@ export function WorkflowsPage() {
                 onAddRequest={canEdit ? () => (setAddKind("request"), setDrawer("library")) : undefined}
                 onAddLogin={canEdit ? () => (setAddKind("login"), setDrawer("library")) : undefined}
                 runStatus={stepStatus}
+                pausedStepId={activeRunId ? pausedNodeId(runProgress.paused, runProgress.cases, draft.id) : null}
+                breakpoints={activeBreakpoints(launchSettings)}
+                onToggleBreakpoint={(stepId) => setRunSettings(toggleBreakpoint(launchSettings, stepId))}
               />
             )}
 

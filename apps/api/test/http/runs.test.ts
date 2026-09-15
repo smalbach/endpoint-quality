@@ -3556,4 +3556,54 @@ describe("configuración de ejecución: paso a paso, puntos de parada y detener 
     assert.equal(stepCase(free, "crear").status, "passed", "sin la opción, el nodo independiente corre");
     await flow.target.stop();
   });
+
+  test("el stream dice en qué nodo espera la corrida: al abrirse y en cada pausa", async () => {
+    const flow = await twoStepFlow();
+    const started = await api()
+      .post(`${flow.projectBase}/runs`)
+      .set(as(owner))
+      .send({ environmentId: flow.environmentId, workflowId: flow.workflowId, pauseMode: "step" });
+    assert.equal(started.status, 202, JSON.stringify(started.body));
+    const runId = started.body.runId as string;
+    const waiting = await runUntil(flow.projectBase, runId, (current) => current.paused?.stepId === "listar");
+    // El lienzo encuentra el nodo por el caso: el id de paso solo no distingue dos flujos de una suite.
+    assert.deepEqual(waiting.paused, { caseId: stepCase(waiting, "listar").id, stepId: "listar" });
+
+    // Abierto a mitad de la pausa, y seguido hasta el final. El primer trozo que llega es la foto:
+    // a partir de ahí el stream ya está suscrito y ningún evento de la corrida se pierde.
+    let opened!: () => void;
+    const subscribed = new Promise<void>((resolve) => (opened = resolve));
+    const stream = api()
+      .get(`${flow.projectBase}/runs/${runId}/stream`)
+      .set(as(owner))
+      .buffer(true)
+      .parse((response, next) => {
+        let text = "";
+        response.on("data", (chunk: Buffer) => {
+          text += chunk.toString();
+          opened();
+        });
+        response.on("end", () => next(null, text));
+      })
+      .then((response) => response.body as unknown as string);
+    await subscribed;
+
+    await api().post(`${flow.projectBase}/runs/${runId}/resume`).set(as(owner)).send({ mode: "step" });
+    await runUntil(flow.projectBase, runId, (current) => current.paused?.stepId === "crear");
+    await api().post(`${flow.projectBase}/runs/${runId}/resume`).set(as(owner)).send({ mode: "continue" });
+
+    const events = (await stream)
+      .split("\n\n")
+      .filter((block) => block.includes("data: "))
+      .map((block) => ({ type: /^event: (.*)$/m.exec(block)?.[1], data: JSON.parse(/^data: (.*)$/m.exec(block)![1]) }));
+    assert.equal(events[0].type, "snapshot");
+    assert.deepEqual(events[0].data.pausedAt, { caseId: stepCase(waiting, "listar").id, stepId: "listar" });
+    const pauses = events.filter((event) => event.type === "paused").map((event) => event.data.pausedAt);
+    assert.deepEqual(pauses, [{ caseId: stepCase(waiting, "crear").id, stepId: "crear" }]);
+    const order = events.map((event) => event.type).filter((type) => type === "paused" || type === "resumed");
+    assert.deepEqual(order, ["resumed", "paused", "resumed"]);
+    assert.equal(events.at(-1)?.type, "finished");
+    await context.queue.idle();
+    await flow.target.stop();
+  });
 });

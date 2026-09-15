@@ -229,6 +229,12 @@ export function useRunProgress(base: string, runId: string) {
           setPausedLive(null);
           return;
         }
+        // The opening snapshot says whether the run is waiting right now, which closes the gap
+        // between the page's fetch and the stream: a pause announced in between was never seen.
+        if (event.type === "snapshot") {
+          const { pausedAt } = event.data as { pausedAt?: RunPause | null };
+          if (pausedAt !== undefined) setPausedLive(pausedAt);
+        }
         const payload = event.data as {
           case?: RunCase;
           totals?: RunTotals;
