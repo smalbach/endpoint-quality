@@ -251,7 +251,21 @@ export type StepForEachView = { from: string; path: string; as: string; max?: nu
  * - `set` — writes variables from templates (`{{otra}}`, `{{$uuid}}`) for the steps after it. No request.
  * - `script` — runs JS in the isolated sandbox; can read a step's response and write variables. No request.
  */
-export type StepKind = "request" | "login" | "branch" | "wait" | "merge" | "validate" | "fetch" | "set" | "script";
+export type StepKind =
+  | "request"
+  | "login"
+  | "branch"
+  | "wait"
+  | "merge"
+  | "validate"
+  | "fetch"
+  | "set"
+  | "script"
+  | "poll";
+
+/** A `poll` node: re-sends `from`'s request, up to `attempts` times `delayMs` apart, until the node's
+ * `checks` pass on the answer. `from` must be a request or fetch node this one depends on. */
+export type StepPollView = { from: string; attempts: number; delayMs: number };
 
 /** A `set` node: each assignment is a variable name and a template resolved when the node runs. */
 export type StepSetView = { assignments: { variable: string; value: string }[] };
@@ -299,6 +313,8 @@ export type WorkflowStepView = {
   set?: StepSetView;
   /** On a `script` node: its code and the step it reads, if any. */
   script?: StepScriptView;
+  /** On a `poll` node: the step it repeats until its checks pass. */
+  poll?: StepPollView;
   /** On any node downstream of an `If`: which of its two paths this node sits on. */
   branch?: StepBranchView;
   dependsOn?: string[];

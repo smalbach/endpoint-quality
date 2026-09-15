@@ -181,11 +181,23 @@ export type StepWaits = (typeof STEP_WAITS)[number];
  * - `set` writes variables from templates for the steps after it.
  * - `script` runs code in the isolated sandbox, optionally over a step's response, and can write
  *   variables.
+ * - `poll` re-sends the request of the step it reads until the answer passes its checks — the job
+ *   that is `pending` until it is `done`. It records one case, with the last attempt in it.
  *
  * The ones that send no request (`branch`, `wait`, `merge`, `validate`, `set`, `script`) are
  * *control* nodes: they produce a case that records what the flow did, not one that made an HTTP
  * call. */
-export type StepKind = "request" | "login" | "branch" | "wait" | "merge" | "validate" | "fetch" | "set" | "script";
+export type StepKind =
+  | "request"
+  | "login"
+  | "branch"
+  | "wait"
+  | "merge"
+  | "validate"
+  | "fetch"
+  | "set"
+  | "script"
+  | "poll";
 
 /** The control kinds — the nodes that record a decision instead of making a request. */
 export const CONTROL_KINDS: StepKind[] = ["branch", "wait", "merge", "validate", "set", "script"];
@@ -207,6 +219,26 @@ export type StepSet = { assignments: { variable: string; value: string }[] };
  * else. It fails when it throws or when a `pm.test` it declares fails.
  */
 export type StepScript = { code: string; from?: string };
+
+/**
+ * A `poll` node: the step whose request it repeats, how many times, and how far apart.
+ *
+ * Not the step's own `retry`, and the difference is what each one claims. A retry says «that failure
+ * was not real» and repeats a step that failed. A poll repeats a step that **passed** — the job
+ * answered 200 with `pending` — because the answer the flow is waiting for has not happened yet. So
+ * `from` has to have held, and what decides is the node's own `checks`, judged on every answer.
+ *
+ * The response it first reads is the one `from` already got, so a job already done costs no request.
+ * Its captures are applied to the last answer, and later nodes read that answer from this node.
+ */
+export type StepPoll = {
+  /** A request or fetch node this one depends on. */
+  from: string;
+  /** Re-sends after the first read. */
+  attempts: number;
+  /** Wait before each re-send. */
+  delayMs: number;
+};
 
 /** Which side of a branch a node sits on. */
 export type StepBranch = { of: string; take: "then" | "else" };
@@ -260,6 +292,8 @@ export type WorkflowStep = {
   set?: StepSet;
   /** On a `script` node: its code and the step it reads, if any. */
   script?: StepScript;
+  /** On a `poll` node: the step it repeats until its checks pass. */
+  poll?: StepPoll;
   /** On a node downstream of a branch: which path it sits on. */
   branch?: StepBranch;
   waits?: StepWaits;

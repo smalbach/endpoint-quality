@@ -181,6 +181,14 @@ export function WorkflowInspector({
             onChange={(next) => onSteps(replaceStep(steps, next))}
             onRemove={() => onSteps(removeStep(steps, step.id))}
           />
+        ) : step && step.kind === "poll" ? (
+          <PollInspector
+            step={step}
+            steps={steps}
+            canEdit={canEdit}
+            onChange={(next) => onSteps(replaceStep(steps, next))}
+            onRemove={() => onSteps(removeStep(steps, step.id))}
+          />
         ) : step && step.kind === "fetch" ? (
           <FetchInspector
             step={step}
@@ -1074,6 +1082,94 @@ function ScriptInspector({
   );
 }
 
+/** A poll node: the request it repeats, how often, and the checks that say when to stop. */
+function PollInspector({
+  step,
+  steps,
+  canEdit,
+  onChange,
+  onRemove,
+}: {
+  step: WorkflowStepView;
+  steps: WorkflowStepView[];
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+  onRemove: () => void;
+}) {
+  // Only what it can send again as it is: a request or a fetch it depends on, with no loop and no login.
+  const sources = (step.dependsOn ?? []).filter((id) => {
+    const source = steps.find((other) => other.id === id);
+    return source && ["request", "fetch"].includes(source.kind ?? "request") && !source.forEach && !source.authorizes;
+  });
+  const poll = step.poll ?? { from: "", attempts: 5, delayMs: 2000 };
+  const setPoll = (change: Partial<typeof poll>) => onChange({ ...step, poll: { ...poll, ...change } });
+
+  return (
+    <div>
+      <p className="text-xs font-semibold text-slate-800">Reintento</p>
+      <p className="mt-0.5 text-[11px] leading-5 text-slate-500">
+        Repite la petición de un paso hasta que su respuesta cumpla las comprobaciones: el trabajo que responde «pendiente»
+        hasta que termina. Primero juzga la respuesta que ese paso ya obtuvo; si ya cumple, no reenvía nada. Lo que cuelgue
+        de este nodo lee la última respuesta.
+      </p>
+
+      {sources.length === 0 ? (
+        <p className="mt-3 text-[11px] text-amber-700">Conéctalo a una petición o un fetch (sin bucle ni login) que repetir.</p>
+      ) : (
+        <Field label="Repite el paso">
+          <select className={inputClass} value={poll.from} disabled={!canEdit} onChange={(event) => setPoll({ from: event.target.value })}>
+            {!sources.includes(poll.from) && <option value="">Elige un paso</option>}
+            {sources.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Reenvíos (máx.)">
+          <input
+            className={inputClass}
+            type="number"
+            min={1}
+            max={20}
+            value={poll.attempts}
+            disabled={!canEdit}
+            onChange={(event) => setPoll({ attempts: Math.min(20, Math.max(1, Number(event.target.value) || 1)) })}
+          />
+        </Field>
+        <Field label="Cada (ms)">
+          <input
+            className={inputClass}
+            type="number"
+            min={0}
+            max={60000}
+            step={500}
+            value={poll.delayMs}
+            disabled={!canEdit}
+            onChange={(event) => setPoll({ delayMs: Math.min(60000, Math.max(0, Number(event.target.value) || 0)) })}
+          />
+        </Field>
+      </div>
+      <p className="text-[11px] leading-5 text-amber-700">Si la petición escribe, cada reenvío vuelve a escribir.</p>
+
+      <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />
+      <div className="mt-4 border-t border-slate-100 pt-3">
+        <p className="text-xs font-semibold text-slate-800">Capturas de la última respuesta</p>
+        <CapturesEditor step={step} canEdit={canEdit} onChange={onChange} />
+      </div>
+      <FailureEditor step={step} canEdit={canEdit} retries={false} onChange={onChange} />
+      {canEdit && (
+        <Button variant="ghost" className="mt-3 h-8 w-full text-xs text-rose-600" onClick={onRemove}>
+          Eliminar nodo
+        </Button>
+      )}
+    </div>
+  );
+}
+
 /** What a response yields to the steps after it. Shared by request and fetch nodes. */
 function CapturesEditor({
   step,
@@ -1359,10 +1455,13 @@ function ChecksEditor({
 function FailureEditor({
   step,
   canEdit,
+  retries = true,
   onChange,
 }: {
   step: WorkflowStepView;
   canEdit: boolean;
+  /** Whether to offer the step's own retry. A poll node repeats by itself and ignores it. */
+  retries?: boolean;
   onChange: (step: WorkflowStepView) => void;
 }) {
   const retry = step.retry;
@@ -1392,6 +1491,8 @@ function FailureEditor({
         {ON_ERROR.find((option) => option.value === (step.onError ?? "skip-dependents"))?.hint}
       </p>
 
+      {retries && (
+      <>
       <label className="mt-3 flex items-center gap-1.5 text-[11px] font-semibold text-slate-700">
         <input
           type="checkbox"
@@ -1460,6 +1561,8 @@ function FailureEditor({
             Un paso que escribe y se reintenta sin acotar por estado escribe una vez por intento.
           </p>
         </>
+      )}
+      </>
       )}
     </div>
   );

@@ -559,6 +559,83 @@ describe("flujos reutilizables y variables de entorno", () => {
     await flow.target.stop();
   });
 
+  test("un reintento repite la petición hasta que la respuesta cumple; si nunca cumple, falla y salta lo suyo", async () => {
+    const flow = await flowAgainst({ entityName: "sondeo" });
+    // Cada POST /things da un id nuevo (100, 101, 102…): repetir «crear» es una respuesta que cambia.
+    // crear(100) → ya(cumple sin reenviar) → espera(repite hasta el 102, captura) → leer-ultimo(fetch)
+    //            → nunca(pide el 999, dos reenvíos, falla) → tras-nunca(se salta)
+    const saved = await api()
+      .put(`${flow.projectBase}/workflows/${flow.workflowId}`)
+      .set(as(owner))
+      .send({
+        definition: {
+          steps: [
+            {
+              id: "crear",
+              requestTemplateId: flow.createTemplateId,
+              captures: [{ variable: "thingId", from: "body", path: "data.id" }],
+            },
+            {
+              id: "ya",
+              kind: "poll",
+              dependsOn: ["crear"],
+              poll: { from: "crear", attempts: 3, delayMs: 0 },
+              checks: [{ source: "status", operator: "equals", value: 201 }],
+            },
+            {
+              id: "espera",
+              kind: "poll",
+              dependsOn: ["ya", "crear"],
+              poll: { from: "crear", attempts: 3, delayMs: 0 },
+              checks: [{ source: "body", path: "data.id", operator: "equals", value: "102" }],
+              captures: [{ variable: "ultimo", from: "body", path: "data.id" }],
+            },
+            {
+              id: "leer-ultimo",
+              kind: "fetch",
+              dependsOn: ["espera"],
+              fetch: { method: "GET", url: "/things/{{ultimo}}", expectedStatus: 200 },
+            },
+            {
+              id: "nunca",
+              kind: "poll",
+              dependsOn: ["leer-ultimo", "crear"],
+              poll: { from: "crear", attempts: 2, delayMs: 0 },
+              checks: [{ source: "body", path: "data.id", operator: "equals", value: "999" }],
+            },
+            { id: "tras-nunca", requestTemplateId: flow.readTemplateId, dependsOn: ["nunca"] },
+          ],
+        },
+      });
+    assert.equal(saved.status, 204, JSON.stringify(saved.body));
+
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    const caseOf = (stepId: string) => run.cases.find((item: RunCaseRow) => item.scenarioId.endsWith(`:${stepId}`));
+    const detailOf = async (stepId: string) =>
+      (await api().get(`${flow.projectBase}/runs/${run.id}/cases/${caseOf(stepId)?.id}`).set(as(owner))).body;
+    const retryNote = (detail: { steps: { assertions: { label: string; detail: string }[] }[] }) =>
+      detail.steps[0].assertions.find((assertion) => assertion.label === "Reintento")?.detail ?? "";
+
+    assert.equal(caseOf("ya")?.status, "passed");
+    assert.equal(caseOf("espera")?.status, "passed");
+    assert.equal(caseOf("espera")?.method, "RETRY");
+    assert.equal(caseOf("leer-ultimo")?.status, "passed");
+    assert.equal(caseOf("nunca")?.status, "failed");
+    assert.equal(caseOf("tras-nunca")?.status, "skipped");
+
+    assert.match(retryNote(await detailOf("ya")), /sin reenvíos/);
+    const espera = await detailOf("espera");
+    // El caso guarda la petición real del último intento, no una fila inventada.
+    assert.match(espera.steps[0].request.url, /\/things$/);
+    assert.match(retryNote(espera), /reenvío 2 de 3/);
+    assert.match((await detailOf("leer-ultimo")).steps[0].request.url, /\/things\/102$/);
+    assert.match(retryNote(await detailOf("nunca")), /tras 2 reenvíos/);
+    await flow.target.stop();
+  });
+
   test("las posiciones del lienzo sobreviven a la ida y vuelta", async () => {
     const flow = await flowAgainst();
     const listed = await api().get(`${flow.projectBase}/workflows`).set(as(owner));

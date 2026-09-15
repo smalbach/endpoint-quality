@@ -38,6 +38,7 @@ import {
   type Assertion,
   type FailureKind,
   type ResolvedOperation,
+  type StepPoll,
   type StepRequest,
   type WorkflowStep,
 } from "@eq/runner-core";
@@ -473,6 +474,8 @@ export class RunOrchestrator {
       // What a failed step lets through. `continue` is the step whose failure the rest does not
       // actually depend on — a cleanup that 404s because there was nothing to clean.
       permissive: new Set(prepared.filter((item) => item.step.onError === "continue").map((item) => item.step.id)),
+      // Every step of this walk by id, for the node that sends another step's request again.
+      items: new Map(prepared.map((item) => [item.step.id, item])),
       budget,
       stopped: false,
     };
@@ -740,6 +743,13 @@ export class RunOrchestrator {
       return;
     }
 
+    // A poll node repeats the request of the step it reads until the answer passes the node's own
+    // checks — the job that answers `pending` until it is `done`.
+    if (item.step.kind === "poll" && item.step.poll) {
+      await this.poll(run, context, item, state, startedAt, item.step.poll);
+      return;
+    }
+
     // A condition over what a dependency answered. The step is skipped, not failed: «no había
     // nada que borrar» is a flow behaving correctly, and a red case would say otherwise.
     const condition = item.step.runIf;
@@ -810,21 +820,7 @@ export class RunOrchestrator {
       const started: RunCase = { ...runCase, status: "running", startedAt: boundAt };
       await this.runs.saveCase(started);
       this.eventBus.publish(new RunCaseStartedEvent(run.projectId, run.id, started));
-      const executed = await this.attempt(run, runCase.id, item.step, () =>
-        // A fetch sends the call written on it. Anything else left here is a request or a login
-        // node — control nodes have already returned above — which prepareWorkflow only builds with a
-        // template and an operation, hence the non-null assertions.
-        item.step.kind === "fetch" && item.step.fetch
-          ? this.executor.fetch({ call: item.step.fetch, target: context.target })
-          : this.executor.run({
-              operation: item.operation!,
-              scenario: scenarioFor(item.template!),
-              operations: context.resolved,
-              config: context.config,
-              target: context.target,
-              samples: run.plan.samples,
-            }),
-      );
+      const executed = await this.attempt(run, runCase.id, item.step, () => this.send(run, context, item));
 
       // The capture is an assertion of its own, on the step that was supposed to yield the value.
       // Writing it into the variables without saying so would make the next case fail for a reason
@@ -907,15 +903,152 @@ export class RunOrchestrator {
   }
 
   /**
-   * Closes a control node that did something worth reading — a set, a script — with a step row, so
-   * the case detail shows what it wrote, logged and asserted, the way a request shows its response.
+   * The request a step sends: the call written on a fetch node, or its saved request. Anything else
+   * reaching here is a request or a login node — control nodes are handled before — which
+   * prepareWorkflow only builds with a template and an operation, hence the non-null assertions.
+   */
+  private send(run: Run, context: ExecutionContext, item: PreparedItem): Promise<ExecutedCase> {
+    return item.step.kind === "fetch" && item.step.fetch
+      ? this.executor.fetch({ call: item.step.fetch, target: context.target })
+      : this.executor.run({
+          operation: item.operation!,
+          scenario: scenarioFor(item.template!),
+          operations: context.resolved,
+          config: context.config,
+          target: context.target,
+          samples: run.plan.samples,
+        });
+  }
+
+  /**
+   * A poll node: judge the answer `from` already got with the node's checks and, while it does not
+   * pass, send `from`'s request again.
+   *
+   * The first read costs nothing, so a job already finished sends no request. What it records is one
+   * case holding the last attempt — the answer that decided — rather than a row per «todavía no»,
+   * and later nodes read that answer from this node. Cancellation is looked at between sends, the
+   * same rule as between cases.
+   */
+  private async poll(
+    run: Run,
+    context: ExecutionContext,
+    item: PreparedItem,
+    state: WalkState,
+    startedAt: Date,
+    poll: StepPoll,
+  ): Promise<void> {
+    const source = state.items.get(poll.from);
+    const first = state.responses.get(poll.from);
+    const sent = { method: "RETRY", url: `repite ${poll.from}`, headers: {}, body: null };
+    if (!source || !first) {
+      await this.finishControl(run, item, state, startedAt, {
+        ok: false,
+        failure: "config",
+        assertions: [{ label: "Reintento", pass: false, detail: `El paso ${poll.from} no respondió` }],
+        sent,
+      });
+      return;
+    }
+
+    const judged = evaluateChecks(item.step.checks ?? [], { response: first.actual, durationMs: first.durationMs });
+    if (holds(judged)) {
+      state.responses.set(item.step.id, first);
+      const capture = this.captureInto(item.step, first.actual, context);
+      const assertions: Assertion[] = [
+        ...judged,
+        { label: "Reintento", pass: true, detail: `La respuesta de ${poll.from} ya cumplía: sin reenvíos` },
+        ...(capture ? [capture] : []),
+      ];
+      const ok = holds(assertions);
+      await this.finishControl(run, item, state, startedAt, { ok, failure: ok ? null : "flow", assertions, sent });
+      return;
+    }
+
+    const started: RunCase = { ...item.runCase, status: "running", startedAt };
+    await this.runs.saveCase(started);
+    this.eventBus.publish(new RunCaseStartedEvent(run.projectId, run.id, started));
+
+    let executed: ExecutedCase | null = null;
+    let sends = 0;
+    while (sends < poll.attempts) {
+      if (await this.queue.isCancelled(run.id)) break;
+      sends += 1;
+      // Numbered like a retry — the first read is attempt one — so a follower shows «2 de 6».
+      this.eventBus.publish(
+        new RunCaseRetryingEvent(run.projectId, run.id, item.runCase.id, sends + 1, poll.attempts + 1, poll.delayMs),
+      );
+      if (poll.delayMs > 0) await delay(poll.delayMs);
+      executed = await this.withChecks(item.step, await this.send(run, context, source));
+      const answer = executed.steps.at(-1);
+      if (answer?.actual) state.responses.set(item.step.id, { actual: answer.actual, durationMs: answer.durationMs });
+      if (executed.ok) break;
+    }
+
+    const last = executed?.steps.at(-1);
+    if (!executed || !last) {
+      await this.finishControl(run, item, state, startedAt, {
+        ok: false,
+        failure: "flow",
+        assertions: [...judged, { label: "Reintento", pass: false, detail: "La corrida se canceló antes de repetir" }],
+        sent,
+      });
+      return;
+    }
+    last.assertions.push({
+      label: "Reintento",
+      pass: executed.ok,
+      detail: executed.ok
+        ? `Cumplió en el reenvío ${sends} de ${poll.attempts}`
+        : `No cumplió tras ${sends} ${sends === 1 ? "reenvío" : "reenvíos"}`,
+    });
+    if (executed.ok && last.actual) {
+      const capture = this.captureInto(item.step, last.actual, context);
+      if (capture) last.assertions.push(capture);
+      if (capture && !capture.pass) last.failure ??= "flow";
+    }
+    last.ok = holds(last.assertions);
+    if (!last.ok) last.failure ??= "check";
+    const ok = executed.steps.every((step) => step.ok);
+    await this.finishControl(run, item, state, startedAt, {
+      ok,
+      failure: ok ? null : (failureFor(executed) ?? "check"),
+      assertions: [],
+      sent,
+      steps: executed.steps,
+      durationMs: this.clock.now().getTime() - startedAt.getTime(),
+    });
+  }
+
+  /** A node's captures over one answer, as the assertion a request leaves for them. */
+  private captureInto(step: WorkflowStep, actual: ActualResponse, context: ExecutionContext): Assertion | null {
+    if (!step.captures?.length) return null;
+    const capture = applyCaptures(step.captures, actual, context.target.variables, step.id);
+    const ok = capture.missing.length === 0;
+    return {
+      label: "Variables capturadas",
+      pass: ok,
+      detail: ok ? capture.captured.join(", ") : `No se encontraron: ${capture.missing.join(", ")}`,
+    };
+  }
+
+  /**
+   * Closes a control node that did something worth reading — a set, a script, a poll — with a step
+   * row, so the case detail shows what it wrote, logged and asserted, the way a request shows its
+   * response. A poll hands over the real request it sent last instead of the made-up one.
    */
   private async finishControl(
     run: Run,
-    item: ReturnType<RunOrchestrator["prepareWorkflow"]>["items"][number],
+    item: PreparedItem,
     state: WalkState,
     startedAt: Date,
-    result: { ok: boolean; failure: FailureKind | null; assertions: Assertion[]; sent: ExecutedStep["sent"] },
+    result: {
+      ok: boolean;
+      failure: FailureKind | null;
+      assertions: Assertion[];
+      sent: ExecutedStep["sent"];
+      steps?: ExecutedStep[];
+      durationMs?: number;
+    },
   ): Promise<void> {
     const request: StepRequest = {
       index: 0,
@@ -931,18 +1064,21 @@ export class RunOrchestrator {
       samples: 1,
     };
     await this.runs.saveSteps(
-      toRunSteps(item.runCase.id, [
-        {
-          request,
-          ok: result.ok,
-          failure: result.failure,
-          assertions: result.assertions,
-          actual: null,
-          latency: { samples: [], budgetMs: null },
-          durationMs: 0,
-          sent: result.sent,
-        },
-      ]),
+      toRunSteps(
+        item.runCase.id,
+        result.steps ?? [
+          {
+            request,
+            ok: result.ok,
+            failure: result.failure,
+            assertions: result.assertions,
+            actual: null,
+            latency: { samples: [], budgetMs: null },
+            durationMs: 0,
+            sent: result.sent,
+          },
+        ],
+      ),
     );
     const done: RunCase = {
       ...item.runCase,
@@ -950,7 +1086,7 @@ export class RunOrchestrator {
       failure: result.failure,
       startedAt,
       finishedAt: this.clock.now(),
-      durationMs: 0,
+      durationMs: result.durationMs ?? 0,
     };
     state.passed.set(item.step.id, result.ok);
     await this.runs.saveCase(done);
@@ -973,6 +1109,15 @@ export class RunOrchestrator {
   }
 }
 
+/** One step of a walk, as `prepareWorkflow` builds it: a control node or a fetch has neither
+ * template nor operation. */
+type PreparedItem = {
+  step: WorkflowStep;
+  template: RequestTemplateRow | null;
+  operation: ResolvedOperation | null;
+  runCase: RunCase;
+};
+
 /** What a walk carries between its steps. One object rather than five arguments, because with
  * several in flight they are one shared thing and passing them apart invites copying one. */
 type WalkState = {
@@ -981,6 +1126,7 @@ type WalkState = {
   /** Each branch node's verdict, so the nodes on its «sí» and «no» sides know whether they run. */
   branches: Map<string, boolean>;
   permissive: Set<string>;
+  items: Map<string, PreparedItem>;
   budget: { extra: number };
   stopped: boolean;
 };
@@ -1077,6 +1223,8 @@ function controlCaseFields(step: WorkflowStep): { operationId: string; method: s
       };
     case "script":
       return { operationId: "", method: "SCRIPT", path: step.script?.from ? `lee ${step.script.from}` : "script" };
+    case "poll":
+      return { operationId: "", method: "RETRY", path: `repite ${step.poll?.from ?? ""}` };
     default:
       return null;
   }

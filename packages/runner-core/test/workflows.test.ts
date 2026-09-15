@@ -258,6 +258,33 @@ describe("nodos de la paleta (login, espera, merge, validación)", () => {
     assert.equal(parse([{ id: "x", kind: "script", requestTemplateId: uuid(1), script: { code: "1" } }]), false);
   });
 
+  test("un reintento repite una petición o un fetch del que depende, y necesita una comprobación", () => {
+    const parse = (steps: unknown[]) => safeParseWorkflowDocument({ steps }).ok;
+    const check = { source: "body", path: "data.state", operator: "equals", value: "done" };
+    const poll = (from: string, extra: Record<string, unknown> = {}) => ({
+      id: "p",
+      kind: "poll",
+      dependsOn: [from],
+      poll: { from, attempts: 5, delayMs: 1000 },
+      checks: [check],
+      ...extra,
+    });
+    assert.equal(parse([req("crear"), poll("crear")]), true);
+    assert.equal(parse([{ id: "f", kind: "fetch", fetch: { method: "GET", url: "/jobs/1" } }, poll("f")]), true);
+    // Sin comprobación nada dice cuándo parar.
+    assert.equal(parse([req("crear"), poll("crear", { checks: undefined })]), false);
+    // Lo que repite tiene que ser una dependencia, y una petición o un fetch sin bucle ni login.
+    assert.equal(parse([req("crear"), poll("crear", { dependsOn: undefined })]), false);
+    assert.equal(parse([{ id: "s", kind: "set", set: { assignments: [{ variable: "a", value: "1" }] } }, poll("s")]), false);
+    assert.equal(
+      parse([{ ...req("crear"), kind: "login", authorizes: { from: "body", path: "token" } }, poll("crear")]),
+      false,
+    );
+    assert.equal(parse([req("crear"), poll("crear", { poll: { from: "crear", attempts: 21, delayMs: 0 } })]), false);
+    assert.equal(parse([req("crear"), { id: "p", kind: "poll", dependsOn: ["crear"], checks: [check] }]), false);
+    assert.equal(parse([{ ...req("crear"), poll: { from: "crear", attempts: 1, delayMs: 0 } }]), false);
+  });
+
   test("dos set que pueden correr a la vez no escriben la misma variable", () => {
     const doc = safeParseWorkflowDocument({
       steps: [

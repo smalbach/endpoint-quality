@@ -153,7 +153,16 @@ export const workflowStepSchema = z.object({
   // A control node (branch/wait/merge/validate) sends nothing, so it carries no template; a
   // `request` and a `login` node must (checked below).
   requestTemplateId: z.string().uuid().optional(),
-  kind: z.enum(["request", "login", "branch", "wait", "merge", "validate", "fetch", "set", "script"]).optional(),
+  kind: z.enum(["request", "login", "branch", "wait", "merge", "validate", "fetch", "set", "script", "poll"]).optional(),
+  // The `poll` node: the step whose request it repeats. Capped low for the same reason a retry is:
+  // attempts times the delay is wall clock every run containing it pays.
+  poll: z
+    .object({
+      from: z.string().min(1).max(60),
+      attempts: z.number().int().min(1).max(20),
+      delayMs: z.number().int().min(0).max(60_000),
+    })
+    .optional(),
   // The `set` node: variables written from templates, no request.
   set: z
     .object({
@@ -273,6 +282,7 @@ export const workflowDocumentSchema = z
         ["condition", step.condition?.from],
         ["validate", step.validate?.from],
         ["script", step.script?.from],
+        ["poll", step.poll?.from],
       ] as const) {
         if (!reference) continue;
         if (!ids.has(reference)) {
@@ -369,6 +379,35 @@ export const workflowDocumentSchema = z
       if (kind === "script" && !step.script?.code.trim()) {
         // An empty script asserts nothing and writes nothing: a green case that proves nothing ran.
         context.addIssue({ code: "custom", message: "un nodo script necesita código", path: ["steps", index, "script", "code"] });
+      }
+      if (step.poll && kind !== "poll") {
+        context.addIssue({ code: "custom", message: "solo un nodo reintento lleva su bloque poll", path: ["steps", index, "poll"] });
+      }
+      if (kind === "poll") {
+        if (!step.poll) {
+          context.addIssue({ code: "custom", message: "un reintento necesita el paso que repite", path: ["steps", index, "poll"] });
+          broken = true;
+        } else {
+          // What it repeats has to be one request it can send again as it is. A login would hand the
+          // run a new session per attempt, and a loop has no single request to repeat.
+          const source = document.steps.find((other) => other.id === step.poll!.from);
+          const sourceKind = source?.kind ?? "request";
+          if (source && ((sourceKind !== "request" && sourceKind !== "fetch") || source.forEach || source.authorizes)) {
+            context.addIssue({
+              code: "custom",
+              message: "un reintento solo repite una petición o un fetch, sin bucle ni login",
+              path: ["steps", index, "poll", "from"],
+            });
+          }
+        }
+        if (!step.checks?.length) {
+          // Without a check nothing says when to stop: the first answer would always be the last.
+          context.addIssue({
+            code: "custom",
+            message: "un reintento necesita al menos una comprobación que diga cuándo parar",
+            path: ["steps", index, "checks"],
+          });
+        }
       }
       if (kind === "wait" && !step.waitMs) {
         context.addIssue({

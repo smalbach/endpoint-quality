@@ -531,6 +531,36 @@ describe("los nodos set y script", () => {
   });
 });
 
+describe("el nodo reintento", () => {
+  const base: WorkflowStepView[] = [
+    { id: "crear", requestTemplateId: "t1", position: { x: 40, y: 60 } },
+    { id: "vars", kind: "set", set: { assignments: [{ variable: "a", value: "1" }] } },
+  ];
+
+  test("cae con una comprobación, repite lo que se le conecta, y avisa si no es una petición", () => {
+    const loose = addControlStep(base, "poll");
+    const id = loose.id;
+    const node = loose.steps.find((step) => step.id === id)!;
+    expect(node.poll).toEqual({ from: "", attempts: 5, delayMs: 2000 });
+    expect(node.checks?.length).toBe(1);
+    expect(problemsWith(loose.steps).some((message) => message.includes("no está conectado"))).toBe(true);
+
+    const wired = connectStep(loose.steps, "crear", id);
+    expect(wired.find((step) => step.id === id)!.poll?.from).toBe("crear");
+    expect(problemsWith(wired)).toEqual([]);
+    expect(toNodes(wired, [], []).find((item) => item.id === id)).toMatchObject({
+      type: "poll",
+      data: { from: "crear", attempts: 5, checks: 1 },
+    });
+
+    const onSet = connectStep(loose.steps, "vars", id);
+    expect(problemsWith(onSet).some((message) => message.includes("solo puede repetir"))).toBe(true);
+
+    expect(disconnectEdges(wired, [{ source: "crear", target: id }]).find((step) => step.id === id)!.poll?.from).toBe("");
+    expect(removeStep(wired, "crear").find((step) => step.id === id)!.poll?.from).toBe("");
+  });
+});
+
 describe("la paleta de nodos: soltar y conectar libre", () => {
   const flow = (): WorkflowStepView[] => [{ id: "crear", requestTemplateId: "t1", position: { x: 40, y: 60 } }];
 

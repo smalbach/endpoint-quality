@@ -156,6 +156,7 @@ export function removeStep(steps: WorkflowStepView[], stepId: string): WorkflowS
       if (next.condition?.from === stepId) next = { ...next, condition: { ...next.condition, from: "" } };
       if (next.validate?.from === stepId) next = { ...next, validate: { ...next.validate, from: "" } };
       if (next.script?.from === stepId) next = { ...next, script: { code: next.script.code } };
+      if (next.poll?.from === stepId) next = { ...next, poll: { ...next.poll, from: "" } };
       return next;
     });
 }
@@ -187,6 +188,9 @@ export function connectStep(
     if (linked.kind === "script" && !linked.script?.from) {
       return { ...linked, script: { code: linked.script?.code ?? "", from: source } };
     }
+    if (linked.kind === "poll" && !linked.poll?.from) {
+      return { ...linked, poll: { attempts: 5, delayMs: 2000, ...linked.poll, from: source } };
+    }
     return linked;
   });
 }
@@ -201,11 +205,13 @@ export const CONTROL_PALETTE: { kind: ControlKind; glyph: string; label: string;
   { kind: "fetch", glyph: "⇄", label: "Fetch", hint: "Petición HTTP escrita a mano: cualquier URL, método, cabeceras y body" },
   { kind: "set", glyph: "𝑥", label: "Set", hint: "Asigna variables desde plantillas ({{otra}}, {{$uuid}}) sin hacer peticiones" },
   { kind: "script", glyph: "{ }", label: "Script", hint: "JavaScript en un proceso aislado: lee una respuesta, escribe variables, pm.test" },
+  { kind: "poll", glyph: "↻", label: "Reintento", hint: "Repite la petición de un paso hasta que su respuesta cumpla las comprobaciones (polling)" },
 ];
 
 /** The kinds the palette drops straight onto the canvas. `fetch` sends a call, but one written on the
- * node itself, so it needs no operation from the catalogue and lands like the control kinds. */
-type ControlKind = "branch" | "wait" | "merge" | "validate" | "fetch" | "set" | "script";
+ * node itself, so it needs no operation from the catalogue and lands like the control kinds; `poll`
+ * re-sends the request of the node wired into it. */
+type ControlKind = "branch" | "wait" | "merge" | "validate" | "fetch" | "set" | "script" | "poll";
 const CONTROL_BASE_ID: Record<ControlKind, string> = {
   branch: "rama",
   wait: "espera",
@@ -214,6 +220,7 @@ const CONTROL_BASE_ID: Record<ControlKind, string> = {
   fetch: "fetch",
   set: "variables",
   script: "script",
+  poll: "reintento",
 };
 
 /**
@@ -245,6 +252,10 @@ export function addControlStep(
   if (kind === "fetch") node.fetch = { method: "GET", url: "" };
   if (kind === "set") node.set = { assignments: [{ variable: "", value: "" }] };
   if (kind === "script") node.script = from ? { code: "", from } : { code: "" };
+  if (kind === "poll") {
+    node.poll = { from: from ?? "", attempts: 5, delayMs: 2000 };
+    node.checks = [check];
+  }
   return { steps: [...steps, node], id };
 }
 
@@ -269,6 +280,7 @@ export function disconnectEdges(
     if (next.condition && cut.includes(next.condition.from)) next = { ...next, condition: { ...next.condition, from: "" } };
     if (next.validate && cut.includes(next.validate.from)) next = { ...next, validate: { ...next.validate, from: "" } };
     if (next.script?.from && cut.includes(next.script.from)) next = { ...next, script: { code: next.script.code } };
+    if (next.poll && cut.includes(next.poll.from)) next = { ...next, poll: { ...next.poll, from: "" } };
     if (next.branch && cut.includes(next.branch.of)) {
       const { branch: _branch, ...rest } = next;
       next = rest;
@@ -414,6 +426,21 @@ export function toNodes(
           name: step.id,
           from: step.script?.from ?? "",
           lines: step.script?.code.trim() ? step.script.code.trim().split("\n").length : 0,
+          runStatus: runStatusFor,
+        },
+      };
+    }
+    if (kind === "poll") {
+      return {
+        id: step.id,
+        type: "poll",
+        position,
+        data: {
+          name: step.id,
+          from: step.poll?.from ?? "",
+          attempts: step.poll?.attempts ?? 0,
+          delayMs: step.poll?.delayMs ?? 0,
+          checks: step.checks?.length ?? 0,
           runStatus: runStatusFor,
         },
       };
@@ -674,6 +701,18 @@ export function flowProblems(steps: WorkflowStepView[]): FlowProblem[] {
     }
     if (kind === "script" && !step.script?.code.trim())
       problems.push({ message: `El script «${step.id}» no tiene código.`, stepId: step.id });
+    if (kind === "poll") {
+      const source = steps.find((other) => other.id === step.poll?.from);
+      if (!step.poll?.from)
+        problems.push({ message: `El reintento «${step.id}» no está conectado a ninguna petición que repetir.`, stepId: step.id });
+      else if (source && (!["request", "fetch"].includes(source.kind ?? "request") || source.forEach || source.authorizes))
+        problems.push({
+          message: `El reintento «${step.id}» solo puede repetir una petición o un fetch, sin bucle ni login.`,
+          stepId: step.id,
+        });
+      if (!step.checks?.length)
+        problems.push({ message: `El reintento «${step.id}» no tiene comprobaciones: nada dice cuándo parar.`, stepId: step.id });
+    }
     if (kind === "fetch" && !step.fetch?.url?.trim())
       problems.push({ message: `El fetch «${step.id}» no tiene URL.`, stepId: step.id });
     if (kind === "login" && !step.authorizes)

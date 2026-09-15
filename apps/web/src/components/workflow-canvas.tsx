@@ -357,7 +357,40 @@ function ScriptNode({ data, selected }: NodeProps<Node<ScriptNodeData>>) {
   );
 }
 
+type PollNodeData = { name: string; from: string; attempts: number; delayMs: number; checks: number; runStatus?: CaseStatus };
+
+/** A poll: repeats a step's request until its checks pass — the job that is pending until it is done. */
+function PollNode({ data, selected }: NodeProps<Node<PollNodeData>>) {
+  const status = data.runStatus;
+  return (
+    <div
+      className={cn(
+        "w-52 rounded-xl border bg-white px-3 py-2 shadow-sm transition-colors",
+        status ? RUN_NODE_CLASS[status] : "border-orange-300",
+        selected && "border-slate-900 ring-2 ring-slate-200",
+      )}
+    >
+      <Handle type="target" position={Position.Left} />
+      <div className="flex items-center gap-2">
+        <span className="grid h-6 w-6 place-items-center rounded-md bg-orange-100 text-orange-700" title="Reintento">
+          ↻
+        </span>
+        <span className="truncate text-xs font-semibold text-slate-800">Reintento · {data.name}</span>
+        <RunDot status={status} />
+      </div>
+      <p className="mt-1 truncate font-mono text-[10px] text-slate-500">
+        {data.from ? `repite ${data.from}` : "conéctalo a una petición"}
+      </p>
+      <p className="mt-0.5 text-[10px] text-orange-700">
+        hasta {data.attempts} × cada {data.delayMs} ms · {data.checks ? `${data.checks} comprob.` : "sin comprobaciones"}
+      </p>
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+}
+
 const nodeTypes = {
+  poll: PollNode,
   set: SetNode,
   script: ScriptNode,
   fetch: FetchNode,
