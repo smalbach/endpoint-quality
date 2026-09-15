@@ -30,6 +30,7 @@ import {
   type ProjectConfig,
   type HttpMethod,
   type ResolvedOperation,
+  type StepFetch,
   type StepOutcome,
   type StepRequest,
   type TestScenario,
@@ -172,6 +173,102 @@ export class CaseExecutor {
       steps,
       durationMs: Date.now() - started,
     };
+  }
+
+  /**
+   * A `fetch` node's call: written on the node, not planned from the contract.
+   *
+   * No operation, so no schema and no envelope to hold it to — the verdict is the status (the one
+   * the author expects, or any 2xx) and whatever checks the step adds on top. The same guards as a
+   * planned request apply: unresolved `{{variables}}` are refused before anything leaves, the call
+   * goes through SAFE_FETCH, credentials are masked in what is stored, and an environment that
+   * forbids writes forbids them here too when the URL points at that environment.
+   */
+  async fetch(input: { call: StepFetch; target: ExecutionTarget }): Promise<ExecutedCase> {
+    const started = Date.now();
+    const seed: ComputedSeed = {
+      uuid: randomUUID(),
+      now: new Date(),
+      random: Math.random(),
+      hmacSha256: (key, text) => createHmac("sha256", key).update(text).digest("hex"),
+    };
+    const call = interpolateValue(input.call, input.target.variables, seed);
+    const url = fetchUrl(call.url, input.target.baseUrl);
+    const headers: Record<string, string> = { Accept: "application/json" };
+    const own = call.headers ?? {};
+    const hasContentType = Object.keys(own).some((name) => name.toLowerCase() === "content-type");
+    if (call.body && !hasContentType) headers["Content-Type"] = looksLikeJson(call.body) ? "application/json" : "text/plain";
+    // Only when asked: the session belongs to the API under test, and a fetch is often aimed at
+    // somebody else's host.
+    if (call.useSession && input.target.session) headers[input.target.session.header] = input.target.session.value;
+    Object.assign(headers, own);
+
+    const expectedStatus = call.expectedStatus ?? 200;
+    const request: StepRequest = {
+      index: 0,
+      purpose: "act",
+      label: `${call.method} ${call.url}`,
+      operationId: "",
+      method: call.method,
+      operationPath: call.url,
+      requestPath: url,
+      headers,
+      expectedStatus,
+      expectedShape: "",
+      auth: "none",
+      samples: 1,
+    };
+    const sent = {
+      method: call.method,
+      url,
+      headers: maskHeaders(headers),
+      body: call.body ? (looksLikeJson(call.body) ? JSON.parse(call.body) : call.body) : null,
+    };
+    const done = (step: ExecutedStep): ExecutedCase => ({ ok: step.ok, steps: [step], durationMs: Date.now() - started });
+
+    const missingVariables = unresolvedVariables({ url: call.url, headers: call.headers, body: call.body });
+    if (missingVariables.length) {
+      return done(blocked(request, sent, `Faltan variables: ${missingVariables.join(", ")}`, "Variables del entorno", "config"));
+    }
+    if (!input.target.writesAllowed && !IDEMPOTENT.has(call.method) && sameOrigin(url, input.target.baseUrl)) {
+      return done(
+        blocked(request, sent, "El entorno no permite escrituras: la operación no se ejecutó", "Ejecución", "config"),
+      );
+    }
+
+    let response: Awaited<ReturnType<SafeFetchPort["request"]>>;
+    try {
+      response = await this.http.request(url, {
+        method: call.method,
+        headers,
+        ...(call.body && call.method !== "GET" && call.method !== "HEAD" ? { body: call.body } : {}),
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "La petición falló";
+      return done(blocked(request, sent, detail, "Conexión", "network"));
+    }
+
+    const actual = toActualResponse(response);
+    const pass = call.expectedStatus ? actual.status === call.expectedStatus : actual.status >= 200 && actual.status < 300;
+    const assertions: Assertion[] = [
+      {
+        label: "Estado HTTP",
+        pass,
+        detail: call.expectedStatus
+          ? `Esperado ${call.expectedStatus}, recibido ${actual.status}`
+          : `Esperado 2xx, recibido ${actual.status}`,
+      },
+    ];
+    return done({
+      request,
+      ok: pass,
+      failure: pass ? null : "status",
+      assertions,
+      actual,
+      latency: { samples: [response.durationMs], budgetMs: null, timing: response.timing },
+      durationMs: response.durationMs,
+      sent,
+    });
   }
 
   private async perform(
@@ -369,6 +466,33 @@ function toActualResponse(response: { status: number; headers: Record<string, st
     }
   }
   return { status: response.status, statusText: "", contentType, headers: response.headers, body, raw: response.body };
+}
+
+/** An absolute URL as it is; a path hangs off the environment's base URL. SAFE_FETCH refuses
+ * whatever this leaves that is not http(s). */
+export function fetchUrl(url: string, baseUrl: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  const base = baseUrl.replace(/\/+$/, "");
+  return url.startsWith("/") ? `${base}${url}` : `${base}/${url}`;
+}
+
+function sameOrigin(url: string, baseUrl: string): boolean {
+  try {
+    return new URL(url).origin === new URL(baseUrl).origin;
+  } catch {
+    return false;
+  }
+}
+
+function looksLikeJson(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
+  try {
+    JSON.parse(trimmed);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function blocked(

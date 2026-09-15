@@ -260,7 +260,48 @@ function ValidateNode({ data, selected }: NodeProps<Node<ValidateNodeData>>) {
   );
 }
 
+type FetchNodeData = {
+  name: string;
+  method: string;
+  url: string;
+  captures: number;
+  checks: number;
+  useSession: boolean;
+  runStatus?: CaseStatus;
+};
+
+/** A fetch: an HTTP call written on the node — any URL — rather than one of the saved requests. */
+function FetchNode({ data, selected }: NodeProps<Node<FetchNodeData>>) {
+  const status = data.runStatus;
+  return (
+    <div
+      className={cn(
+        "w-64 rounded-xl border bg-white p-3 shadow-sm transition-colors",
+        status ? RUN_NODE_CLASS[status] : "border-teal-300",
+        selected && "border-slate-900 ring-2 ring-slate-200",
+      )}
+    >
+      <Handle type="target" position={Position.Left} />
+      <div className="flex items-center gap-2">
+        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-teal-100 text-teal-700" title="Fetch">
+          ⇄
+        </span>
+        <Badge className={cn("w-14 justify-center", methodStyle(data.method))}>{data.method}</Badge>
+        <span className="truncate text-xs font-semibold text-slate-800">{data.name}</span>
+        {data.useSession && <span title="Presenta la sesión del login">🔑</span>}
+        <RunDot status={status} />
+      </div>
+      <p className="mt-2 truncate font-mono text-[10px] text-slate-500">{data.url || "sin URL"}</p>
+      <p className="mt-1 text-[10px] text-slate-400">
+        {data.captures} capturas{data.checks > 0 && ` · ${data.checks} comprob.`}
+      </p>
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+}
+
 const nodeTypes = {
+  fetch: FetchNode,
   step: StepNode,
   login: LoginNode,
   branch: BranchNode,

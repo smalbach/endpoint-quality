@@ -207,6 +207,38 @@ describe("nodos de la paleta (login, espera, merge, validación)", () => {
     assert.equal(doc.ok, false);
     if (!doc.ok) assert.ok(doc.issues.some((i) => i.detail.includes("solo puede leer un paso")));
   });
+
+  test("un fetch lleva su método y su URL, y ninguna petición guardada", () => {
+    const valido = safeParseWorkflowDocument({
+      steps: [
+        req("crear"),
+        {
+          id: "f",
+          kind: "fetch",
+          dependsOn: ["crear"],
+          fetch: { method: "POST", url: "https://hooks.example.com/{{thingId}}", body: '{"a":1}', useSession: false },
+        },
+      ],
+    });
+    assert.equal(valido.ok, true);
+
+    assert.equal(safeParseWorkflowDocument({ steps: [{ id: "f", kind: "fetch" }] }).ok, false);
+    assert.equal(
+      safeParseWorkflowDocument({
+        steps: [{ id: "f", kind: "fetch", requestTemplateId: uuid(1), fetch: { method: "GET", url: "/x" } }],
+      }).ok,
+      false,
+    );
+    // El bloque fetch solo en un nodo fetch: en una petición significaría dos llamadas a la vez.
+    assert.equal(
+      safeParseWorkflowDocument({ steps: [{ id: "a", requestTemplateId: uuid(1), fetch: { method: "GET", url: "/x" } }] }).ok,
+      false,
+    );
+    assert.equal(
+      safeParseWorkflowDocument({ steps: [{ id: "f", kind: "fetch", fetch: { method: "GET", url: "/x\r\nHost: y" } }] }).ok,
+      false,
+    );
+  });
 });
 
 test("canvas coordinates survive validation and a bad one is refused", () => {

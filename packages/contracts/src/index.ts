@@ -246,8 +246,24 @@ export type StepForEachView = { from: string; path: string; as: string; max?: nu
  * - `wait` — pauses, then lets the flow through. No request.
  * - `merge` — a join: waits for the branches into it, then continues. No request.
  * - `validate` — reads a step's response and judges it with checks and/or a script. No request.
+ * - `fetch` — sends an HTTP call written on the node (any URL, method, headers, body) instead of a
+ *   saved request. Its answer feeds captures, checks, an `If` or a validation like any other.
  */
-export type StepKind = "request" | "login" | "branch" | "wait" | "merge" | "validate";
+export type StepKind = "request" | "login" | "branch" | "wait" | "merge" | "validate" | "fetch";
+
+/** A `fetch` node's call. `url` is absolute or a path resolved against the environment's base URL;
+ * every text accepts `{{variables}}`. `expectedStatus` absent means any 2xx. `useSession` presents
+ * the credential a login obtained — off by default, so a token never leaves for another host
+ * unless the author says so. */
+export type StepFetchView = {
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+  url: string;
+  headers?: Record<string, string>;
+  disabledHeaders?: Record<string, string>;
+  body?: string;
+  expectedStatus?: number;
+  useSession?: boolean;
+};
 
 /** Which side of an `If` a node hangs off: the «sí» path (`then`) runs when the branch's condition
  * holds, the «no» path (`else`) when it does not. Absent means the node is not on either side. */
@@ -267,6 +283,8 @@ export type WorkflowStepView = {
   condition?: StepConditionView;
   /** On a `validate` node: the step whose response it judges, and an optional sandbox script. */
   validate?: StepValidateView;
+  /** On a `fetch` node: the call it sends. */
+  fetch?: StepFetchView;
   /** On any node downstream of an `If`: which of its two paths this node sits on. */
   branch?: StepBranchView;
   dependsOn?: string[];

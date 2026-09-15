@@ -175,10 +175,13 @@ export type StepWaits = (typeof STEP_WAITS)[number];
  * - `wait` pauses and lets the flow through.
  * - `merge` is a join: it waits for the branches into it and continues.
  * - `validate` reads a step's response and judges it with checks and/or a sandbox script.
+ * - `fetch` sends an HTTP call the author spells out — any URL, method, headers and body — instead
+ *   of one of the project's saved requests. For the call the contract does not describe: a
+ *   webhook, a second service, an identity provider.
  *
  * The four that send no request (`branch`, `wait`, `merge`, `validate`) are *control* nodes: they
  * produce a case that records what the flow did, not one that made an HTTP call. */
-export type StepKind = "request" | "login" | "branch" | "wait" | "merge" | "validate";
+export type StepKind = "request" | "login" | "branch" | "wait" | "merge" | "validate" | "fetch";
 
 /** The control kinds — the nodes that record a decision instead of making a request. */
 export const CONTROL_KINDS: StepKind[] = ["branch", "wait", "merge", "validate"];
@@ -197,6 +200,28 @@ export type StepBranch = { of: string; take: "then" | "else" };
  */
 export type StepValidate = { from: string; script?: string };
 
+export const FETCH_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
+export type FetchMethod = (typeof FETCH_METHODS)[number];
+
+/**
+ * A `fetch` node: one HTTP call written out by hand.
+ *
+ * `url` is absolute (`https://hooks.example.com/x`) or a path (`/things`) that is resolved against
+ * the environment's base URL. Every text field accepts `{{variables}}`. It goes out through the same
+ * SSRF guard as every other request. It presents the run's session only when `useSession` says so:
+ * a token obtained from the API under test must not travel to a third-party host by default.
+ * `expectedStatus` absent means any 2xx.
+ */
+export type StepFetch = {
+  method: FetchMethod;
+  url: string;
+  headers?: Record<string, string>;
+  disabledHeaders?: Record<string, string>;
+  body?: string;
+  expectedStatus?: number;
+  useSession?: boolean;
+};
+
 export type WorkflowStep = {
   id: string;
   /** Present on a `request` node; absent on a `branch`, which sends nothing. */
@@ -207,6 +232,8 @@ export type WorkflowStep = {
   condition?: StepCondition;
   /** On a `validate` node: the step whose response it judges, and an optional sandbox script. */
   validate?: StepValidate;
+  /** On a `fetch` node: the call it sends. */
+  fetch?: StepFetch;
   /** On a node downstream of a branch: which path it sits on. */
   branch?: StepBranch;
   waits?: StepWaits;

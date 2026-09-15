@@ -15,7 +15,7 @@ import { scenarioCredentialSchema } from "./schema.ts";
 import type { WorkflowStep } from "./workflows.ts";
 import { VARIABLE_NAME } from "./variables.ts";
 import { CHECK_OPERATORS, CHECK_SOURCES } from "./checks.ts";
-import { CAPTURE_SOURCES, STEP_ON_ERROR, STEP_WAITS, concurrentPairs } from "./workflows.ts";
+import { CAPTURE_SOURCES, FETCH_METHODS, STEP_ON_ERROR, STEP_WAITS, concurrentPairs } from "./workflows.ts";
 
 const jsonValue: z.ZodType<unknown> = z.lazy(() =>
   z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(jsonValue), z.record(z.string(), jsonValue)]),
@@ -153,7 +153,19 @@ export const workflowStepSchema = z.object({
   // A control node (branch/wait/merge/validate) sends nothing, so it carries no template; a
   // `request` and a `login` node must (checked below).
   requestTemplateId: z.string().uuid().optional(),
-  kind: z.enum(["request", "login", "branch", "wait", "merge", "validate"]).optional(),
+  kind: z.enum(["request", "login", "branch", "wait", "merge", "validate", "fetch"]).optional(),
+  // The `fetch` node: a call written out by hand instead of a saved request.
+  fetch: z
+    .object({
+      method: z.enum(FETCH_METHODS),
+      url: z.string().min(1, "un fetch necesita una URL").max(2000).regex(/^[^\r\n]*$/, "la URL no puede llevar un salto de línea"),
+      headers: z.record(headerName, headerValue).optional(),
+      disabledHeaders: z.record(headerName, headerValue).optional(),
+      body: z.string().max(1_000_000).optional(),
+      expectedStatus: z.number().int().min(100).max(599).optional(),
+      useSession: z.boolean().optional(),
+    })
+    .optional(),
   // The `If`: the step it reads and the check that decides «sí» from «no».
   condition: stepConditionSchema.optional(),
   // The `validate` node: the step whose response it judges, and an optional sandbox script.
@@ -264,9 +276,24 @@ export const workflowDocumentSchema = z
       // A node is a `request` unless it says otherwise. Each kind carries its own fields, and
       // mixing them is a document that means two things at once — a request with no call, or a
       // branch that also fires one. `request` and `login` make an HTTP call; the four control
-      // kinds (branch/wait/merge/validate) send nothing and must not carry a template.
+      // kinds (branch/wait/merge/validate) send nothing and must not carry a template. A `fetch`
+      // sends a call too, but one written on the node itself, so it carries no template either.
       const kind = step.kind ?? "request";
       const sendsRequest = kind === "request" || kind === "login";
+      if (kind === "fetch" && !step.fetch) {
+        context.addIssue({
+          code: "custom",
+          message: "un nodo fetch necesita su método y su URL",
+          path: ["steps", index, "fetch"],
+        });
+      }
+      if (step.fetch && kind !== "fetch") {
+        context.addIssue({
+          code: "custom",
+          message: "solo un nodo fetch lleva su bloque fetch",
+          path: ["steps", index, "fetch"],
+        });
+      }
       if (sendsRequest && !step.requestTemplateId) {
         context.addIssue({
           code: "custom",
@@ -278,7 +305,7 @@ export const workflowDocumentSchema = z
       if (!sendsRequest && step.requestTemplateId) {
         context.addIssue({
           code: "custom",
-          message: "un nodo de control no envía ninguna petición",
+          message: kind === "fetch" ? "un nodo fetch lleva su petición escrita, no una guardada" : "un nodo de control no envía ninguna petición",
           path: ["steps", index, "requestTemplateId"],
         });
       }

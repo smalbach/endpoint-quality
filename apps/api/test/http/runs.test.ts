@@ -402,6 +402,75 @@ describe("flujos reutilizables y variables de entorno", () => {
     await flow.target.stop();
   });
 
+  test("un fetch llama a una URL escrita a mano: captura, comprueba y un If lee su respuesta", async () => {
+    const flow = await flowAgainst({ entityName: "desde-fetch" });
+    // crear → leer-fetch (ruta relativa al entorno, captura + check) → rama(If) → si
+    //       → fetch-roto (URL absoluta que da 404, falla) → tras-roto (se salta)
+    const saved = await api()
+      .put(`${flow.projectBase}/workflows/${flow.workflowId}`)
+      .set(as(owner))
+      .send({
+        definition: {
+          steps: [
+            {
+              id: "crear",
+              requestTemplateId: flow.createTemplateId,
+              captures: [{ variable: "thingId", from: "body", path: "data.id" }],
+            },
+            {
+              id: "leer-fetch",
+              kind: "fetch",
+              dependsOn: ["crear"],
+              fetch: { method: "GET", url: "/things/{{thingId}}", expectedStatus: 200 },
+              captures: [{ variable: "leido", from: "body", path: "data.name" }],
+              checks: [{ source: "body", path: "data.name", operator: "equals", value: "desde-fetch" }],
+            },
+            {
+              id: "fetch-roto",
+              kind: "fetch",
+              dependsOn: ["crear"],
+              fetch: { method: "GET", url: `${flow.target.origin}/no-existe` },
+            },
+            { id: "tras-roto", requestTemplateId: flow.readTemplateId, dependsOn: ["fetch-roto"] },
+            {
+              id: "rama",
+              kind: "branch",
+              dependsOn: ["leer-fetch"],
+              condition: { from: "leer-fetch", check: { source: "status", operator: "equals", value: "200" } },
+            },
+            {
+              id: "si",
+              requestTemplateId: flow.readTemplateId,
+              dependsOn: ["rama"],
+              branch: { of: "rama", take: "then" },
+            },
+          ],
+        },
+      });
+    assert.equal(saved.status, 204, JSON.stringify(saved.body));
+
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    const caseOf = (stepId: string) => run.cases.find((item: RunCaseRow) => item.scenarioId.endsWith(`:${stepId}`));
+
+    assert.equal(caseOf("crear")?.status, "passed");
+    assert.equal(caseOf("leer-fetch")?.status, "passed");
+    assert.equal(caseOf("fetch-roto")?.status, "failed");
+    assert.equal(caseOf("tras-roto")?.status, "skipped");
+    assert.equal(caseOf("rama")?.status, "passed");
+    assert.equal(caseOf("si")?.status, "passed");
+
+    const detail = await api()
+      .get(`${flow.projectBase}/runs/${run.id}/cases/${caseOf("leer-fetch")?.id}`)
+      .set(as(owner));
+    assert.equal(detail.body.steps[0].request.method, "GET");
+    assert.match(detail.body.steps[0].request.url, /\/things\/100$/);
+    assert.match(detail.body.steps[0].assertions.at(-1).detail, /leido/);
+    await flow.target.stop();
+  });
+
   test("las posiciones del lienzo sobreviven a la ida y vuelta", async () => {
     const flow = await flowAgainst();
     const listed = await api().get(`${flow.projectBase}/workflows`).set(as(owner));

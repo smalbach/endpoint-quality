@@ -194,10 +194,19 @@ export const CONTROL_PALETTE: { kind: ControlKind; glyph: string; label: string;
   { kind: "wait", glyph: "⏱", label: "Espera", hint: "Pausa antes de dejar pasar el flujo" },
   { kind: "merge", glyph: "⇉", label: "Merge", hint: "Junta varias ramas en una" },
   { kind: "validate", glyph: "✓", label: "Validación", hint: "Juzga la respuesta de un paso con checks o un script" },
+  { kind: "fetch", glyph: "⇄", label: "Fetch", hint: "Petición HTTP escrita a mano: cualquier URL, método, cabeceras y body" },
 ];
 
-type ControlKind = "branch" | "wait" | "merge" | "validate";
-const CONTROL_BASE_ID: Record<ControlKind, string> = { branch: "rama", wait: "espera", merge: "union", validate: "valida" };
+/** The kinds the palette drops straight onto the canvas. `fetch` sends a call, but one written on the
+ * node itself, so it needs no operation from the catalogue and lands like the control kinds. */
+type ControlKind = "branch" | "wait" | "merge" | "validate" | "fetch";
+const CONTROL_BASE_ID: Record<ControlKind, string> = {
+  branch: "rama",
+  wait: "espera",
+  merge: "union",
+  validate: "valida",
+  fetch: "fetch",
+};
 
 /**
  * A standalone control node, dropped on the canvas and wired by hand.
@@ -225,6 +234,7 @@ export function addControlStep(
   }
   if (kind === "wait") node.waitMs = 1000;
   if (kind === "merge") node.waits = "all";
+  if (kind === "fetch") node.fetch = { method: "GET", url: "" };
   return { steps: [...steps, node], id };
 }
 
@@ -368,6 +378,22 @@ export function toNodes(
           from: step.validate?.from ?? "",
           checks: step.checks?.length ?? 0,
           script: Boolean(step.validate?.script?.trim()),
+          runStatus: runStatusFor,
+        },
+      };
+    }
+    if (kind === "fetch") {
+      return {
+        id: step.id,
+        type: "fetch",
+        position,
+        data: {
+          name: step.id,
+          method: step.fetch?.method ?? "GET",
+          url: step.fetch?.url ?? "",
+          captures: step.captures?.length ?? 0,
+          checks: step.checks?.length ?? 0,
+          useSession: Boolean(step.fetch?.useSession),
           runStatus: runStatusFor,
         },
       };
@@ -602,6 +628,8 @@ export function flowProblems(steps: WorkflowStepView[]): FlowProblem[] {
       problems.push({ message: `La validación «${step.id}» no comprueba nada: añade una comprobación o un script.`, stepId: step.id });
     if (kind === "wait" && !step.waitMs)
       problems.push({ message: `El nodo de espera «${step.id}» no tiene un tiempo.`, stepId: step.id });
+    if (kind === "fetch" && !step.fetch?.url?.trim())
+      problems.push({ message: `El fetch «${step.id}» no tiene URL.`, stepId: step.id });
     if (kind === "login" && !step.authorizes)
       problems.push({ message: `El login «${step.id}» no dice de dónde sale la credencial.`, stepId: step.id });
   }

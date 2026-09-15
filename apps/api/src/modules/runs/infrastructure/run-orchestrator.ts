@@ -398,6 +398,21 @@ export class RunOrchestrator {
       if (controlRow) {
         return { step, template: null, operation: null, runCase: { ...base, ...controlRow } satisfies RunCase };
       }
+      // A fetch sends a call written on the node: no saved request, no operation. Its case names the
+      // method and URL the author typed, `{{variables}}` still in them.
+      if (step.kind === "fetch") {
+        return {
+          step,
+          template: null,
+          operation: null,
+          runCase: {
+            ...base,
+            operationId: "",
+            method: step.fetch?.method ?? "GET",
+            path: step.fetch?.url ?? "",
+          } satisfies RunCase,
+        };
+      }
       const template = templates.get(step.requestTemplateId!);
       if (!template)
         throw new Error(`El paso "${step.id}" referencia la prueba inexistente "${step.requestTemplateId}"`);
@@ -708,16 +723,19 @@ export class RunOrchestrator {
       await this.runs.saveCase(started);
       this.eventBus.publish(new RunCaseStartedEvent(run.projectId, run.id, started));
       const executed = await this.attempt(run, runCase.id, item.step, () =>
-        // Non-null here by construction: a branch node has already returned above, so what remains
-        // is a request node, which prepareWorkflow only builds with a template and an operation.
-        this.executor.run({
-          operation: item.operation!,
-          scenario: scenarioFor(item.template!),
-          operations: context.resolved,
-          config: context.config,
-          target: context.target,
-          samples: run.plan.samples,
-        }),
+        // A fetch sends the call written on it. Anything else left here is a request or a login
+        // node — control nodes have already returned above — which prepareWorkflow only builds with a
+        // template and an operation, hence the non-null assertions.
+        item.step.kind === "fetch" && item.step.fetch
+          ? this.executor.fetch({ call: item.step.fetch, target: context.target })
+          : this.executor.run({
+              operation: item.operation!,
+              scenario: scenarioFor(item.template!),
+              operations: context.resolved,
+              config: context.config,
+              target: context.target,
+              samples: run.plan.samples,
+            }),
       );
 
       // The capture is an assertion of its own, on the step that was supposed to yield the value.

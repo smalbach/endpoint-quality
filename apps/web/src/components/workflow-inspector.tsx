@@ -12,12 +12,14 @@ import type {
   RequestTemplateView,
   StepCheckView,
   StepConditionView,
+  StepFetchView,
   WorkflowCaptureView,
   WorkflowStepView,
   WorkflowView,
 } from "@/lib/types";
 
 const AUTH = ["default", "none", "insufficient", "api-key"];
+const FETCH_METHODS: StepFetchView["method"][] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
 /** The same lists the engine validates against, written here because the contract package emits
  * no runtime. A value the engine does not know is a 422 on save, which is where it belongs. */
@@ -156,6 +158,18 @@ export function WorkflowInspector({
         ) : step && step.kind === "validate" ? (
           <ValidateInspector
             step={step}
+            canEdit={canEdit}
+            onChange={(next) => onSteps(replaceStep(steps, next))}
+            onRemove={() => onSteps(removeStep(steps, step.id))}
+          />
+        ) : step && step.kind === "fetch" ? (
+          <FetchInspector
+            step={step}
+            variables={variablesFor(
+              steps,
+              step.id,
+              Object.keys(environments.find((item) => item.id === environmentId)?.variables ?? {}),
+            )}
             canEdit={canEdit}
             onChange={(next) => onSteps(replaceStep(steps, next))}
             onRemove={() => onSteps(removeStep(steps, step.id))}
@@ -616,8 +630,6 @@ function StepInspector({
   onRemove: () => void;
 }) {
   const shared = sharedBy > 1;
-  const captures = step.captures ?? [];
-  const editCaptures = (next: typeof captures) => onChange({ ...step, captures: next });
   // The last body the preview got back, so the captures below can be suggested from a real response
   // instead of typed by hand. Held here because the preview panel that fetches it and the captures
   // that spend it are two sections of the same node.
@@ -746,6 +758,172 @@ function StepInspector({
         </p>
       )}
 
+      <CapturesEditor step={step} canEdit={canEdit} sampleBody={sampleBody} onChange={onChange} />
+
+      <SessionEditor step={step} canEdit={canEdit} onChange={onChange} />
+      <ScheduleEditor step={step} canEdit={canEdit} onChange={onChange} />
+      <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />
+      <FailureEditor step={step} canEdit={canEdit} onChange={onChange} />
+
+      {canEdit && (
+        <Button variant="danger" className="mt-4 h-8 w-full text-xs" onClick={onRemove}>
+          Eliminar paso
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** A fetch node: the call written by hand, then the same captures, checks and failure handling as
+ * any request. No preview panel — that one sends a saved request. */
+function FetchInspector({
+  step,
+  variables,
+  canEdit,
+  onChange,
+  onRemove,
+}: {
+  step: WorkflowStepView;
+  variables: string[];
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+  onRemove: () => void;
+}) {
+  const call: StepFetchView = step.fetch ?? { method: "GET", url: "" };
+  const setCall = (change: Partial<StepFetchView>) => onChange({ ...step, fetch: { ...call, ...change } });
+  const bodyAllowed = call.method !== "GET" && call.method !== "HEAD";
+
+  return (
+    <div>
+      <p className="text-xs font-semibold text-slate-800">Fetch</p>
+      <p className="mt-0.5 text-[11px] leading-5 text-slate-500">
+        Una petición escrita a mano, fuera del catálogo: un webhook, otro servicio, un proveedor de identidad. Una ruta
+        como <span className="font-mono">/things</span> cuelga de la URL base del entorno. Todo acepta{" "}
+        <span className="font-mono">{"{{variables}}"}</span>.
+      </p>
+      <div className="mt-2 grid grid-cols-[6.5rem_1fr] gap-2">
+        <Field label="Método">
+          <select
+            className={inputClass}
+            value={call.method}
+            disabled={!canEdit}
+            onChange={(event) => setCall({ method: event.target.value as StepFetchView["method"] })}
+          >
+            {FETCH_METHODS.map((method) => (
+              <option key={method} value={method}>
+                {method}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="URL">
+          <input
+            className={`${inputClass} font-mono text-[11px]`}
+            value={call.url}
+            placeholder="https://api.ejemplo.com/recurso/{{id}}"
+            list={`fetch-vars-${step.id}`}
+            disabled={!canEdit}
+            onChange={(event) => setCall({ url: event.target.value })}
+          />
+        </Field>
+      </div>
+      <datalist id={`fetch-vars-${step.id}`}>
+        {variables.map((name) => (
+          <option key={name} value={`{{${name}}}`} />
+        ))}
+      </datalist>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Estado esperado">
+          <input
+            className={inputClass}
+            type="number"
+            min={100}
+            max={599}
+            placeholder="2xx"
+            value={call.expectedStatus ?? ""}
+            disabled={!canEdit}
+            onChange={(event) =>
+              setCall({ expectedStatus: event.target.value ? Number(event.target.value) : undefined })
+            }
+          />
+        </Field>
+        <label className="mt-6 flex items-center gap-1.5 text-[11px] text-slate-600">
+          <input
+            type="checkbox"
+            checked={Boolean(call.useSession)}
+            disabled={!canEdit}
+            onChange={(event) => setCall({ useSession: event.target.checked || undefined })}
+          />
+          Enviar sesión del login
+        </label>
+      </div>
+      {call.useSession && /^https?:\/\//i.test(call.url) && (
+        <p className="mt-1 text-[11px] text-amber-700">
+          La credencial obtenida en el login viajará a esta URL. Úsalo solo con hosts de confianza.
+        </p>
+      )}
+      <RequestFieldsRows
+        label="Cabeceras"
+        kind="header"
+        hint="Content-Type se deduce del body si no la pones."
+        namePlaceholder="Authorization"
+        valuePlaceholder="Bearer {{token}}"
+        enabled={call.headers ?? {}}
+        disabledMap={call.disabledHeaders ?? {}}
+        variables={variables}
+        canEdit={canEdit}
+        onChange={(maps) =>
+          setCall({
+            headers: Object.keys(maps.enabled).length ? maps.enabled : undefined,
+            disabledHeaders: Object.keys(maps.disabled).length ? maps.disabled : undefined,
+          })
+        }
+      />
+      {bodyAllowed && (
+        <Field label="Body">
+          <textarea
+            className={`${inputClass} h-24 font-mono text-[11px]`}
+            placeholder={'{"id": "{{thingId}}"}'}
+            value={call.body ?? ""}
+            disabled={!canEdit}
+            onChange={(event) => setCall({ body: event.target.value || undefined })}
+          />
+        </Field>
+      )}
+
+      <CapturesEditor step={step} canEdit={canEdit} onChange={onChange} />
+      <SessionEditor step={step} canEdit={canEdit} onChange={onChange} />
+      <ScheduleEditor step={step} canEdit={canEdit} onChange={onChange} />
+      <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />
+      <FailureEditor step={step} canEdit={canEdit} onChange={onChange} />
+
+      {canEdit && (
+        <Button variant="danger" className="mt-4 h-8 w-full text-xs" onClick={onRemove}>
+          Eliminar nodo
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** What a response yields to the steps after it. Shared by request and fetch nodes. */
+function CapturesEditor({
+  step,
+  canEdit,
+  sampleBody,
+  onChange,
+}: {
+  step: WorkflowStepView;
+  canEdit: boolean;
+  /** The last body a preview got back, when there is one, to suggest captures from. */
+  sampleBody?: unknown;
+  onChange: (step: WorkflowStepView) => void;
+}) {
+  const captures = step.captures ?? [];
+  const editCaptures = (next: typeof captures) => onChange({ ...step, captures: next });
+
+  return (
+    <div>
       <p className="mt-3 text-[11px] leading-5 text-slate-500">
         Extrae valores de esta respuesta para los pasos siguientes. Del cuerpo, con una ruta como{" "}
         <span className="font-mono">data.id</span>; de una cabecera o una cookie, con su nombre; y si la respuesta no
@@ -833,16 +1011,6 @@ function StepInspector({
         </Button>
       )}
 
-      <SessionEditor step={step} canEdit={canEdit} onChange={onChange} />
-      <ScheduleEditor step={step} canEdit={canEdit} onChange={onChange} />
-      <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />
-      <FailureEditor step={step} canEdit={canEdit} onChange={onChange} />
-
-      {canEdit && (
-        <Button variant="danger" className="mt-4 h-8 w-full text-xs" onClick={onRemove}>
-          Eliminar paso
-        </Button>
-      )}
     </div>
   );
 }

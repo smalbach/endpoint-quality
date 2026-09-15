@@ -458,6 +458,41 @@ describe("nodos de bifurcación en el lienzo", () => {
   });
 });
 
+describe("el nodo fetch", () => {
+  const base: WorkflowStepView[] = [{ id: "crear", requestTemplateId: "t1", position: { x: 40, y: 60 } }];
+
+  test("cae de la paleta con GET y sin URL, y el editor avisa hasta que la tenga", () => {
+    const added = addControlStep(base, "fetch", "crear");
+    const node = added.steps.find((step) => step.id === added.id)!;
+    expect(node.kind).toBe("fetch");
+    expect(node.fetch).toEqual({ method: "GET", url: "" });
+    expect(node.dependsOn).toEqual(["crear"]);
+    expect(node.requestTemplateId).toBeUndefined();
+    expect(problemsWith(added.steps).some((message) => message.includes("no tiene URL"))).toBe(true);
+
+    const withUrl = added.steps.map((step) =>
+      step.id === added.id ? { ...step, fetch: { method: "POST" as const, url: "https://hooks.example.com/x" } } : step,
+    );
+    expect(problemsWith(withUrl)).toEqual([]);
+  });
+
+  test("se dibuja con su método y su URL, y sus capturas cuentan para los pasos siguientes", () => {
+    const steps: WorkflowStepView[] = [
+      {
+        id: "fetch",
+        kind: "fetch",
+        fetch: { method: "DELETE", url: "/things/{{thingId}}", useSession: true },
+        captures: [{ variable: "borrado", from: "body", path: "ok" }],
+      },
+      { id: "despues", requestTemplateId: "t1", dependsOn: ["fetch"] },
+    ];
+    const [node] = toNodes(steps, [], []);
+    expect(node.type).toBe("fetch");
+    expect(node.data).toMatchObject({ method: "DELETE", url: "/things/{{thingId}}", captures: 1, useSession: true });
+    expect(variablesFor(steps, "despues", [])).toContain("borrado");
+  });
+});
+
 describe("la paleta de nodos: soltar y conectar libre", () => {
   const flow = (): WorkflowStepView[] => [{ id: "crear", requestTemplateId: "t1", position: { x: 40, y: 60 } }];
 
