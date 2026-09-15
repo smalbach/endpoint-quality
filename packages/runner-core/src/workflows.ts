@@ -166,9 +166,23 @@ export type StepAuthorizes = {
 export const STEP_WAITS = ["all", "any"] as const;
 export type StepWaits = (typeof STEP_WAITS)[number];
 
+/** What a node is: a `request` sends an HTTP call (the default when absent), a `branch` sends none
+ * and splits the flow into a «sí» and a «no» path. */
+export type StepKind = "request" | "branch";
+
+/** Which side of a branch a node sits on. */
+export type StepBranch = { of: string; take: "then" | "else" };
+
 export type WorkflowStep = {
   id: string;
-  requestTemplateId: string;
+  /** Present on a `request` node; absent on a `branch`, which sends nothing. */
+  requestTemplateId?: string;
+  /** Absent means `request`. */
+  kind?: StepKind;
+  /** On a `branch` node: the step it reads and the check that decides «sí» from «no». */
+  condition?: StepCondition;
+  /** On a node downstream of a branch: which path it sits on. */
+  branch?: StepBranch;
   waits?: StepWaits;
   /** Wait before this step, in milliseconds. For the target that accepts a write and takes a
    * moment to make it readable — a retry says «that failure was not real», and this says «it was

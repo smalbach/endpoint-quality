@@ -234,9 +234,25 @@ export type StepConditionView = { from: string; check: StepCheckView };
  * own case: forty products answering is forty findings, not one. */
 export type StepForEachView = { from: string; path: string; as: string; max?: number };
 
+/** What a node is on the canvas. A `request` sends an HTTP call — the only kind there was, and the
+ * default when the field is absent. A `branch` sends nothing: it reads a previous step and splits
+ * the flow into a «sí» path and a «no» path, the standalone `If` the editor draws. */
+export type StepKind = "request" | "branch";
+
+/** Which side of an `If` a node hangs off: the «sí» path (`then`) runs when the branch's condition
+ * holds, the «no» path (`else`) when it does not. Absent means the node is not on either side. */
+export type StepBranchView = { of: string; take: "then" | "else" };
+
 export type WorkflowStepView = {
   id: string;
-  requestTemplateId: string;
+  /** Absent on a `branch` node, which sends no request; present on every `request` node. */
+  requestTemplateId?: string;
+  /** The node's kind. Absent is `request`, so every flow written before branches keeps working. */
+  kind?: StepKind;
+  /** On a `branch` node: the step it reads and the check that decides «sí» from «no». */
+  condition?: StepConditionView;
+  /** On any node downstream of an `If`: which of its two paths this node sits on. */
+  branch?: StepBranchView;
   dependsOn?: string[];
   /** With several dependencies, whether the step needs all of them or just the first to arrive.
    * Absent means all, which is what a dependency means. */

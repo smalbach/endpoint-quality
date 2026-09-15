@@ -85,6 +85,64 @@ test("an edge to a step that does not exist names the offending id", () => {
   }
 });
 
+describe("nodos de bifurcación (If con sí/no)", () => {
+  const requestNode = (id: string, extra: object = {}) => ({ id, requestTemplateId: uuid(1), ...extra });
+  const branchNode = (id: string, from: string, extra: object = {}) => ({
+    id,
+    kind: "branch",
+    condition: { from, check: { source: "status", operator: "equals", value: "200" } },
+    dependsOn: [from],
+    ...extra,
+  });
+
+  test("un If válido con una rama sí se acepta", () => {
+    const doc = safeParseWorkflowDocument({
+      steps: [
+        requestNode("crear"),
+        branchNode("si-creo", "crear"),
+        requestNode("leer", { dependsOn: ["si-creo"], branch: { of: "si-creo", take: "then" } }),
+      ],
+    });
+    assert.equal(doc.ok, true);
+  });
+
+  test("un nodo de bifurcación sin condición se rechaza", () => {
+    const doc = safeParseWorkflowDocument({
+      steps: [requestNode("crear"), { id: "bif", kind: "branch", dependsOn: ["crear"] }],
+    });
+    assert.equal(doc.ok, false);
+    if (!doc.ok) assert.ok(doc.issues.some((issue) => issue.detail.includes("necesita una condición")));
+  });
+
+  test("un nodo de bifurcación no puede llevar petición", () => {
+    const doc = safeParseWorkflowDocument({
+      steps: [requestNode("crear"), branchNode("bif", "crear", { requestTemplateId: uuid(2) })],
+    });
+    assert.equal(doc.ok, false);
+    if (!doc.ok) assert.ok(doc.issues.some((issue) => issue.detail.includes("no envía ninguna petición")));
+  });
+
+  test("un paso de petición sin petición se rechaza", () => {
+    const doc = safeParseWorkflowDocument({ steps: [{ id: "a" }] });
+    assert.equal(doc.ok, false);
+    if (!doc.ok) assert.ok(doc.issues.some((issue) => issue.detail.includes("necesita una petición")));
+  });
+
+  test("una rama solo cuelga de un nodo de bifurcación, y del que depende", () => {
+    const notBranch = safeParseWorkflowDocument({
+      steps: [requestNode("crear"), requestNode("leer", { dependsOn: ["crear"], branch: { of: "crear", take: "then" } })],
+    });
+    assert.equal(notBranch.ok, false);
+    if (!notBranch.ok) assert.ok(notBranch.issues.some((issue) => issue.detail.includes("nodo de bifurcación")));
+
+    const notDependency = safeParseWorkflowDocument({
+      steps: [requestNode("crear"), branchNode("bif", "crear"), requestNode("suelto", { branch: { of: "bif", take: "else" } })],
+    });
+    assert.equal(notDependency.ok, false);
+    if (!notDependency.ok) assert.ok(notDependency.issues.some((issue) => issue.detail.includes("debe depender de su bifurcación")));
+  });
+});
+
 test("canvas coordinates survive validation and a bad one is refused", () => {
   assert.equal(
     safeParseWorkflowDocument({ steps: [{ id: "a", requestTemplateId: uuid(1), position: { x: 40, y: 60 } }] }).ok,

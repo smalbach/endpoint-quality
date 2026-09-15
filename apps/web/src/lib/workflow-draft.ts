@@ -49,8 +49,8 @@ export const nextStepId = (templateName: string, taken: string[]): string => slu
  * is seen before the flow is saved.
  */
 export function templateUsage(
-  draftSteps: { requestTemplateId: string }[],
-  allFlows: { id: string; steps: { requestTemplateId: string }[] }[],
+  draftSteps: { requestTemplateId?: string }[],
+  allFlows: { id: string; steps: { requestTemplateId?: string }[] }[],
   currentFlowId: string,
   templateId: string,
 ): number {
@@ -210,7 +210,7 @@ export function toNodes(
   const templateById = new Map(templates.map((template) => [template.id, template]));
   const operationById = new Map(operations.map((operation) => [operation.id, operation]));
   return steps.map((step, index) => {
-    const template = templateById.get(step.requestTemplateId);
+    const template = step.requestTemplateId ? templateById.get(step.requestTemplateId) : undefined;
     return {
       id: step.id,
       type: "step",

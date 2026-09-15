@@ -145,15 +145,23 @@ export const stepRetrySchema = z.object({
   onStatus: z.array(z.number().int().min(100).max(599)).max(20).optional(),
 });
 
+export const stepConditionSchema = z.object({ from: z.string().min(1).max(60), check: stepCheckSchema });
+
 export const workflowStepSchema = z.object({
   // Capped because it travels inside `run_cases.scenarioId`, which is a `varchar(200)`.
   id: z.string().min(1).max(60),
-  requestTemplateId: z.string().uuid(),
+  // A `branch` node sends nothing, so it carries no template; a `request` node must (checked below).
+  requestTemplateId: z.string().uuid().optional(),
+  kind: z.enum(["request", "branch"]).optional(),
+  // The `If`: the step it reads and the check that decides «sí» from «no».
+  condition: stepConditionSchema.optional(),
+  // Which side of an `If` this node hangs off.
+  branch: z.object({ of: z.string().min(1).max(60), take: z.enum(["then", "else"]) }).optional(),
   dependsOn: z.array(z.string()).optional(),
   waits: z.enum(STEP_WAITS).optional(),
   captures: z.array(workflowCaptureSchema).optional(),
   waitMs: z.number().int().min(0).max(60_000).optional(),
-  runIf: z.object({ from: z.string().min(1).max(60), check: stepCheckSchema }).optional(),
+  runIf: stepConditionSchema.optional(),
   forEach: z
     .object({
       from: z.string().min(1).max(60),
@@ -229,6 +237,7 @@ export const workflowDocumentSchema = z
       for (const [field, reference] of [
         ["runIf", step.runIf?.from],
         ["forEach", step.forEach?.from],
+        ["condition", step.condition?.from],
       ] as const) {
         if (!reference) continue;
         if (!ids.has(reference)) {
@@ -242,6 +251,71 @@ export const workflowDocumentSchema = z
             code: "custom",
             message: `${field} solo puede leer un paso del que este depende`,
             path: ["steps", index, field, "from"],
+          });
+        }
+      }
+
+      // A node is a `request` unless it says otherwise. The two kinds carry different fields, and
+      // mixing them is a document that means two things at once: a request with no call, or a
+      // branch that also fires one.
+      const kind = step.kind ?? "request";
+      if (kind === "request") {
+        if (!step.requestTemplateId) {
+          context.addIssue({
+            code: "custom",
+            message: "un paso de petición necesita una petición",
+            path: ["steps", index, "requestTemplateId"],
+          });
+          broken = true;
+        }
+        if (step.condition) {
+          context.addIssue({
+            code: "custom",
+            message: "solo un nodo de bifurcación lleva condición",
+            path: ["steps", index, "condition"],
+          });
+        }
+      } else {
+        // A branch (`If`) sends nothing and decides everything: it needs its condition and must not
+        // carry a request, or the report would owe a case to a node that never called.
+        if (step.requestTemplateId) {
+          context.addIssue({
+            code: "custom",
+            message: "un nodo de bifurcación no envía ninguna petición",
+            path: ["steps", index, "requestTemplateId"],
+          });
+        }
+        if (!step.condition) {
+          context.addIssue({
+            code: "custom",
+            message: "un nodo de bifurcación necesita una condición",
+            path: ["steps", index, "condition"],
+          });
+          broken = true;
+        }
+      }
+
+      // A node that hangs off a branch has to name a real branch it depends on: the «sí»/«no» is
+      // read from that node's verdict, so without the edge there is nothing to read.
+      if (step.branch) {
+        const owner = document.steps.find((other) => other.id === step.branch!.of);
+        if (!owner) {
+          context.addIssue({
+            code: "custom",
+            message: `la rama apunta a un paso inexistente: ${step.branch.of}`,
+            path: ["steps", index, "branch", "of"],
+          });
+        } else if ((owner.kind ?? "request") !== "branch") {
+          context.addIssue({
+            code: "custom",
+            message: "una rama solo puede colgar de un nodo de bifurcación",
+            path: ["steps", index, "branch", "of"],
+          });
+        } else if (!(step.dependsOn ?? []).includes(step.branch.of)) {
+          context.addIssue({
+            code: "custom",
+            message: "un nodo en una rama debe depender de su bifurcación",
+            path: ["steps", index, "branch", "of"],
           });
         }
       }

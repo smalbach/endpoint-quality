@@ -346,6 +346,7 @@ export function WorkflowsPage() {
     }
   }
   async function makeIndependent(step: WorkflowStepView, overrides?: Partial<RequestTemplateView>) {
+    if (!step.requestTemplateId) return;
     const current = templates.find((template) => template.id === step.requestTemplateId);
     if (!current || !draft) return;
     const merged = { ...current, ...overrides };
