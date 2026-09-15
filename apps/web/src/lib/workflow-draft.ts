@@ -352,6 +352,44 @@ export function suggestCaptures(sample: unknown, existing: string[] = []): Workf
     .map((item) => item.capture);
 }
 
+/**
+ * A step this one can safely lean on for a condition or a loop.
+ *
+ * Both read another step's response, so that step has to have run first: the pick cannot be one
+ * that already depends on this node —directly or through others— or the edge we would add closes a
+ * cycle. Among the rest the nearest to the left is the natural predecessor. Returns `undefined`
+ * when the node is a root with nothing before it, which is the one case that truly has no answer.
+ */
+export function predecessorFor(steps: WorkflowStepView[], stepId: string): string | undefined {
+  const target = steps.find((step) => step.id === stepId);
+  if (!target) return undefined;
+
+  // Everything downstream of the target: none of it may become its dependency.
+  const descendants = new Set<string>();
+  const stack = [stepId];
+  while (stack.length) {
+    const current = stack.pop()!;
+    for (const step of steps) {
+      if ((step.dependsOn ?? []).includes(current) && !descendants.has(step.id)) {
+        descendants.add(step.id);
+        stack.push(step.id);
+      }
+    }
+  }
+
+  const already = new Set(target.dependsOn ?? []);
+  const candidates = steps.filter(
+    (step) => step.id !== stepId && !descendants.has(step.id) && !already.has(step.id),
+  );
+  if (!candidates.length) return undefined;
+
+  const targetX = target.position?.x ?? 0;
+  const toLeft = candidates
+    .filter((step) => (step.position?.x ?? 0) < targetX)
+    .sort((a, b) => (b.position?.x ?? 0) - (a.position?.x ?? 0));
+  return (toLeft[0] ?? candidates[candidates.length - 1]).id;
+}
+
 export function variablesFor(steps: WorkflowStepView[], stepId: string, environment: string[]): string[] {
   const byId = new Map(steps.map((step) => [step.id, step]));
   const upstream: string[] = [];

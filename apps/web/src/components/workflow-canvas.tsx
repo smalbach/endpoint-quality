@@ -23,6 +23,7 @@ import {
   disconnectEdges,
   duplicateStep,
   mergeNodes,
+  predecessorFor,
   removeStep,
   replaceStep,
   toEdges,
@@ -65,10 +66,15 @@ type NodeBehaviour = {
   label: string;
   hint: string;
   active: (step: WorkflowStepView) => boolean;
-  enabled: (step: WorkflowStepView) => boolean;
+  enabled: (step: WorkflowStepView, steps: WorkflowStepView[]) => boolean;
   disabledHint?: string;
-  apply: (step: WorkflowStepView) => WorkflowStepView;
+  apply: (step: WorkflowStepView, steps: WorkflowStepView[]) => WorkflowStepView;
 };
+
+/** The step a condition or loop will read: one it already depends on, or —when it depends on
+ * nothing yet— the predecessor we will wire it to so the read has something to land on. */
+const readFrom = (step: WorkflowStepView, steps: WorkflowStepView[]): string | undefined =>
+  step.dependsOn?.[0] ?? predecessorFor(steps, step.id);
 
 const BEHAVIOURS: NodeBehaviour[] = [
   {
@@ -84,24 +90,39 @@ const BEHAVIOURS: NodeBehaviour[] = [
     label: "Condición",
     hint: "Se ejecuta solo si un paso anterior cumple algo",
     active: (step) => Boolean(step.runIf),
-    enabled: (step) => (step.dependsOn?.length ?? 0) >= 1,
-    disabledHint: "Conéctalo a otro nodo primero",
-    apply: (step) =>
-      step.runIf
-        ? withoutKey(step, "runIf")
-        : { ...step, runIf: { from: step.dependsOn![0], check: { source: "status", operator: "equals", value: "200" } } },
+    // Reads a previous step, so it needs one to read: either the node already hangs off another, or
+    // there is a node before it we can wire it to. Only a true root (nothing before it) is left out.
+    enabled: (step, steps) => Boolean(readFrom(step, steps)),
+    disabledHint: "No hay ningún nodo antes de este para condicionarlo",
+    apply: (step, steps) => {
+      if (step.runIf) return withoutKey(step, "runIf");
+      const from = readFrom(step, steps);
+      if (!from) return step;
+      return {
+        ...step,
+        // Wire the dependency if it was not there, so the read is guaranteed to have run.
+        dependsOn: step.dependsOn?.length ? step.dependsOn : [from],
+        runIf: { from, check: { source: "status", operator: "equals", value: "200" } },
+      };
+    },
   },
   {
     glyph: "↻",
     label: "Bucle",
     hint: "Una vez por elemento de una lista que devolvió otro paso",
     active: (step) => Boolean(step.forEach),
-    enabled: (step) => (step.dependsOn?.length ?? 0) >= 1,
-    disabledHint: "Conéctalo a otro nodo primero",
-    apply: (step) =>
-      step.forEach
-        ? withoutKey(step, "forEach")
-        : { ...step, forEach: { from: step.dependsOn![0], path: "data", as: "item", max: 50 } },
+    enabled: (step, steps) => Boolean(readFrom(step, steps)),
+    disabledHint: "No hay ningún nodo antes de este cuya lista recorrer",
+    apply: (step, steps) => {
+      if (step.forEach) return withoutKey(step, "forEach");
+      const from = readFrom(step, steps);
+      if (!from) return step;
+      return {
+        ...step,
+        dependsOn: step.dependsOn?.length ? step.dependsOn : [from],
+        forEach: { from, path: "data", as: "item", max: 50 },
+      };
+    },
   },
   {
     glyph: "⇉",
@@ -299,7 +320,7 @@ export function WorkflowCanvas({
         )}
         {BEHAVIOURS.map((behaviour) => {
           const on = selectedStep ? behaviour.active(selectedStep) : false;
-          const can = Boolean(selectedStep) && behaviour.enabled(selectedStep!);
+          const can = Boolean(selectedStep) && behaviour.enabled(selectedStep!, steps);
           return (
             <button
               key={behaviour.label}
@@ -311,7 +332,7 @@ export function WorkflowCanvas({
                     ? (behaviour.disabledHint ?? behaviour.hint)
                     : behaviour.hint
               }
-              onClick={() => selectedStep && onChange(replaceStep(steps, behaviour.apply(selectedStep)))}
+              onClick={() => selectedStep && onChange(replaceStep(steps, behaviour.apply(selectedStep, steps)))}
               className={cn(
                 "flex items-center gap-1 rounded px-1.5 py-1 text-[11px] transition-colors",
                 on ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100",
@@ -399,38 +420,37 @@ export function WorkflowCanvas({
               {menuStep.waitMs ? "⏱ Quitar espera" : "⏱ Añadir espera"}
             </MenuItem>
             {/* Condición y bucle leen la respuesta de un paso anterior: sin dependencia no hay de
-                dónde leer, así que solo se ofrecen cuando el nodo ya cuelga de otro. */}
-            {(menuStep.dependsOn?.length ?? 0) >= 1 && (
-              <>
-                <MenuItem
-                  onClick={() =>
-                    put(
-                      menuStep.runIf
-                        ? drop(menuStep, "runIf")
-                        : {
-                            ...menuStep,
-                            runIf: {
-                              from: menuStep.dependsOn![0],
-                              check: { source: "status", operator: "equals", value: "200" },
-                            },
-                          },
-                    )
-                  }
-                >
-                  {menuStep.runIf ? "◇ Quitar condición" : "◇ Añadir condición"}
-                </MenuItem>
-                <MenuItem
-                  onClick={() =>
-                    put(
-                      menuStep.forEach
-                        ? drop(menuStep, "forEach")
-                        : { ...menuStep, forEach: { from: menuStep.dependsOn![0], path: "data", as: "item", max: 50 } },
-                    )
-                  }
-                >
-                  {menuStep.forEach ? "↻ Quitar bucle" : "↻ Recorrer una lista"}
-                </MenuItem>
-              </>
+                dónde leer, así que solo se ofrecen cuando hay un nodo antes al que colgarse (y si no
+                lo tiene aún, se conecta al pulsar). Solo un nodo raíz se queda sin ellas. */}
+            {(menuStep.runIf || readFrom(menuStep, steps)) && (
+              <MenuItem
+                onClick={() => {
+                  if (menuStep.runIf) return put(drop(menuStep, "runIf"));
+                  const from = readFrom(menuStep, steps)!;
+                  put({
+                    ...menuStep,
+                    dependsOn: menuStep.dependsOn?.length ? menuStep.dependsOn : [from],
+                    runIf: { from, check: { source: "status", operator: "equals", value: "200" } },
+                  });
+                }}
+              >
+                {menuStep.runIf ? "◇ Quitar condición" : "◇ Añadir condición"}
+              </MenuItem>
+            )}
+            {(menuStep.forEach || readFrom(menuStep, steps)) && (
+              <MenuItem
+                onClick={() => {
+                  if (menuStep.forEach) return put(drop(menuStep, "forEach"));
+                  const from = readFrom(menuStep, steps)!;
+                  put({
+                    ...menuStep,
+                    dependsOn: menuStep.dependsOn?.length ? menuStep.dependsOn : [from],
+                    forEach: { from, path: "data", as: "item", max: 50 },
+                  });
+                }}
+              >
+                {menuStep.forEach ? "↻ Quitar bucle" : "↻ Recorrer una lista"}
+              </MenuItem>
             )}
             {(menuStep.dependsOn?.length ?? 0) >= 2 && (
               <MenuItem onClick={() => put({ ...menuStep, waits: menuStep.waits === "any" ? "all" : "any" })}>

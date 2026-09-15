@@ -8,6 +8,7 @@ import {
   flowNodeStatuses,
   mergeNodes,
   positionFor,
+  predecessorFor,
   problemsWith,
   removeStep,
   suggestCaptures,
@@ -362,5 +363,36 @@ describe("el nombre de una operación añadida al vuelo", () => {
   test("sufija « 2», « 3»… al chocar, sin marcar «(copia)»", () => {
     expect(uniqueName("GET /widgets", ["GET /widgets"])).toBe("GET /widgets 2");
     expect(uniqueName("GET /widgets", ["GET /widgets", "GET /widgets 2"])).toBe("GET /widgets 3");
+  });
+});
+
+describe("predecessorFor — a quién colgar una condición o un bucle", () => {
+  const step = (id: string, x: number, dependsOn?: string[]): WorkflowStepView => ({
+    id,
+    requestTemplateId: `t-${id}`,
+    position: { x, y: 0 },
+    ...(dependsOn ? { dependsOn } : {}),
+  });
+
+  test("el nodo raíz no tiene predecesor", () => {
+    const steps = [step("a", 0), step("b", 310, ["a"])];
+    expect(predecessorFor(steps, "a")).toBeUndefined();
+  });
+
+  test("elige el nodo más a la izquierda del objetivo", () => {
+    const steps = [step("a", 0), step("b", 310), step("c", 620)];
+    expect(predecessorFor(steps, "c")).toBe("b");
+  });
+
+  test("nunca elige un descendiente: evita el ciclo", () => {
+    // b depende de a; para a, b es descendiente y queda descartado aunque esté a su lado.
+    const steps = [step("a", 310), step("b", 620, ["a"])];
+    expect(predecessorFor(steps, "a")).toBeUndefined();
+  });
+
+  test("ignora a los que ya son dependencia", () => {
+    const steps = [step("a", 0), step("b", 310), step("c", 620, ["b"])];
+    // c ya depende de b; el otro candidato válido a su izquierda es a.
+    expect(predecessorFor(steps, "c")).toBe("a");
   });
 });
