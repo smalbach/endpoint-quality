@@ -5,7 +5,14 @@ import { RequestFieldsEditor } from "@/components/request-fields-editor";
 import { RequestPreviewPanel } from "@/components/request-preview";
 import { cn } from "@/lib/format";
 import { fieldMapsFrom, fieldProblems, fieldRowsFrom, type FieldRow } from "@/lib/request-fields";
-import { loopBodyIds, removeStep, replaceStep, suggestCaptures, variablesFor } from "@/lib/workflow-draft";
+import {
+  loopBodyIds,
+  removeStep,
+  replaceStep,
+  schemaJsonProblem,
+  suggestCaptures,
+  variablesFor,
+} from "@/lib/workflow-draft";
 import type { OperationSummary } from "@/lib/workflow-draft";
 import type {
   CaptureSource,
@@ -176,6 +183,8 @@ export function WorkflowInspector({
           onChange={onChange}
           onRemove={onRemove}
         />
+      ) : kind === "schema" ? (
+        <SchemaInspector step={step} steps={steps} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
       ) : kind === "poll" ? (
         <PollInspector step={step} steps={steps} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
       ) : kind === "fetch" ? (
@@ -1513,6 +1522,122 @@ function LoopInspector({
               <p className={`mt-2 text-[11px] leading-5 ${body.length ? "text-slate-600" : "text-amber-700"}`}>
                 {body.length ? `Por vuelta: ${body.join(" → ")}` : "Nada conectado a «cada»: el bucle no ejecutará nada."}
               </p>
+            </>
+          ),
+        },
+        {
+          id: "failure",
+          label: "Si falla",
+          marked: failureSet(step),
+          content: <FailureEditor step={step} canEdit={canEdit} retries={false} onChange={onChange} />,
+        },
+      ]}
+    />
+  );
+}
+
+/** A schema node: the step whose body it validates, and the contract's schema or one written here. */
+function SchemaInspector({
+  step,
+  steps,
+  canEdit,
+  onChange,
+  onRemove,
+}: {
+  step: WorkflowStepView;
+  steps: WorkflowStepView[];
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+  onRemove: () => void;
+}) {
+  const sources = step.dependsOn ?? [];
+  const schema = step.schema ?? { from: "", source: "custom" as const };
+  const setSchema = (change: Partial<NonNullable<WorkflowStepView["schema"]>>) =>
+    onChange({ ...step, schema: { ...schema, ...change } });
+  const fromKind = steps.find((other) => other.id === schema.from)?.kind ?? "request";
+  // The contract is looked up by operation, and only a saved request or a login has one.
+  const contractable = fromKind === "request" || fromKind === "login";
+  const jsonProblem = schema.source === "custom" ? schemaJsonProblem(schema.json) : null;
+
+  return (
+    <NodePanel
+      title="Esquema"
+      subtitle={step.id}
+      description="Valida el body de la respuesta de un paso contra un JSON Schema: el que el contrato declara para esa operación y el código que llegó, o uno escrito aquí —para un fetch a un servicio que el contrato no describe—. En modo estricto también falla con los campos que el esquema no declara."
+      canEdit={canEdit}
+      onRemove={onRemove}
+      tabs={[
+        {
+          id: "main",
+          label: "Esquema",
+          content: (
+            <>
+              <div className="grid gap-3 @3xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                {sources.length === 0 ? (
+                  <p className="text-[11px] text-amber-700 @3xl:self-center">Conéctalo al paso cuya respuesta quieres validar.</p>
+                ) : (
+                  <Field label="Valida el paso">
+                    <select
+                      className={inputClass}
+                      value={schema.from}
+                      disabled={!canEdit}
+                      onChange={(event) => setSchema({ from: event.target.value })}
+                    >
+                      {!sources.includes(schema.from) && <option value="">Elige un paso</option>}
+                      {sources.map((id) => (
+                        <option key={id} value={id}>
+                          {id}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+                <Field label="Contra">
+                  <select
+                    className={inputClass}
+                    value={schema.source}
+                    disabled={!canEdit}
+                    onChange={(event) => setSchema({ source: event.target.value as "contract" | "custom" })}
+                  >
+                    <option value="contract" disabled={!contractable}>
+                      El contrato (OpenAPI)
+                    </option>
+                    <option value="custom">Un esquema propio</option>
+                  </select>
+                </Field>
+                <label className="flex items-center gap-2 text-xs text-slate-700 @3xl:self-end @3xl:pb-2">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(schema.strict)}
+                    disabled={!canEdit}
+                    onChange={(event) => setSchema({ strict: event.target.checked })}
+                  />
+                  Estricto: sin campos no declarados
+                </label>
+              </div>
+              {schema.source === "contract" ? (
+                <p className={`mt-3 text-[11px] leading-5 ${contractable ? "text-slate-500" : "text-amber-700"}`}>
+                  {contractable
+                    ? "Usa el esquema que el contrato declara para la operación de ese paso y el código de estado que respondió. Si el contrato no declara uno, el nodo falla."
+                    : "Ese paso no es una petición guardada: el contrato no sabe qué debería responder. Usa un esquema propio."}
+                </p>
+              ) : (
+                <>
+                  <textarea
+                    aria-label="JSON Schema"
+                    className={`${inputClass} mt-3 h-[22rem] font-mono text-[11px]`}
+                    value={schema.json ?? ""}
+                    disabled={!canEdit}
+                    spellCheck={false}
+                    placeholder={'{\n  "type": "object",\n  "required": ["data"]\n}'}
+                    onChange={(event) => setSchema({ json: event.target.value })}
+                  />
+                  <p className={`mt-1 text-[11px] leading-5 ${jsonProblem ? "text-amber-700" : "text-slate-500"}`}>
+                    {jsonProblem ??
+                      "type, required, properties, items, enum, allOf/anyOf/oneOf, mínimos y máximos. $ref locales (#/definitions/…). Sin «pattern»."}
+                  </p>
+                </>
+              )}
             </>
           ),
         },

@@ -389,6 +389,37 @@ function PollNode({ data, selected }: NodeProps<Node<PollNodeData>>) {
   );
 }
 
+type SchemaNodeData = { name: string; from: string; source: "contract" | "custom"; strict: boolean; runStatus?: CaseStatus };
+
+/** A schema check: a step's body against the contract's JSON Schema or one written on the node. */
+function SchemaNode({ data, selected }: NodeProps<Node<SchemaNodeData>>) {
+  const status = data.runStatus;
+  return (
+    <div
+      className={cn(
+        "w-52 rounded-xl border bg-white px-3 py-2 shadow-sm transition-colors",
+        status ? RUN_NODE_CLASS[status] : "border-teal-300",
+        selected && "border-slate-900 ring-2 ring-slate-200",
+      )}
+    >
+      <Handle type="target" position={Position.Left} />
+      <div className="flex items-center gap-2">
+        <span className="grid h-6 w-6 place-items-center rounded-md bg-teal-100 text-teal-700" title="Esquema">
+          ⊨
+        </span>
+        <span className="truncate text-xs font-semibold text-slate-800">Esquema · {data.name}</span>
+        <RunDot status={status} />
+      </div>
+      <p className="mt-1 truncate font-mono text-[10px] text-slate-500">{data.from ? `valida ${data.from}` : "conéctalo a un paso"}</p>
+      <p className="mt-0.5 text-[10px] text-teal-700">
+        {data.source === "contract" ? "del contrato" : "esquema propio"}
+        {data.strict ? " · estricto" : ""}
+      </p>
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+}
+
 type LoopNodeData = {
   name: string;
   from: string;
@@ -435,6 +466,7 @@ function LoopNode({ data, selected }: NodeProps<Node<LoopNodeData>>) {
 }
 
 const nodeTypes = {
+  schema: SchemaNode,
   loop: LoopNode,
   poll: PollNode,
   set: SetNode,

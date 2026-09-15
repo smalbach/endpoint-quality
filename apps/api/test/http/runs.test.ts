@@ -729,6 +729,101 @@ describe("flujos reutilizables y variables de entorno", () => {
     await flow.target.stop();
   });
 
+  test("un esquema valida el body contra el contrato o uno propio; estricto falla con campos no declarados", async () => {
+    const flow = await flowAgainst({ entityName: "con-esquema" });
+    // crear(201 ThingEnvelope) → contrato(estricto, cumple) · propio(cumple) · mal(pide «nope», falla)
+    // listar(fetch /things) → lista(propio estricto que solo declara id, falla) → tras-lista(se salta)
+    const thing = { type: "object", required: ["id", "name"], properties: { id: { type: "string" }, name: { type: "string" }, size: { type: "integer" } } };
+    const saved = await api()
+      .put(`${flow.projectBase}/workflows/${flow.workflowId}`)
+      .set(as(owner))
+      .send({
+        definition: {
+          steps: [
+            {
+              id: "crear",
+              requestTemplateId: flow.createTemplateId,
+              captures: [{ variable: "thingId", from: "body", path: "data.id" }],
+            },
+            { id: "contrato", kind: "schema", dependsOn: ["crear"], schema: { from: "crear", source: "contract", strict: true } },
+            {
+              id: "propio",
+              kind: "schema",
+              dependsOn: ["crear"],
+              schema: {
+                from: "crear",
+                source: "custom",
+                json: JSON.stringify({ type: "object", required: ["data"], properties: { data: { $ref: "#/definitions/thing" } }, definitions: { thing } }),
+              },
+            },
+            {
+              id: "mal",
+              kind: "schema",
+              dependsOn: ["crear"],
+              schema: { from: "crear", source: "custom", json: JSON.stringify({ type: "object", required: ["nope"] }) },
+            },
+            { id: "listar", kind: "fetch", dependsOn: ["crear"], fetch: { method: "GET", url: "/things", expectedStatus: 200 } },
+            {
+              id: "lista",
+              kind: "schema",
+              dependsOn: ["listar"],
+              schema: {
+                from: "listar",
+                source: "custom",
+                strict: true,
+                json: JSON.stringify({
+                  type: "object",
+                  properties: { data: { type: "array", items: { type: "object", properties: { id: { type: "string" } } } } },
+                }),
+              },
+            },
+            { id: "tras-lista", kind: "fetch", dependsOn: ["lista"], fetch: { method: "GET", url: "/things" } },
+          ],
+        },
+      });
+    assert.equal(saved.status, 204, JSON.stringify(saved.body));
+
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    const caseOf = (stepId: string) => run.cases.find((item: RunCaseRow) => item.scenarioId.endsWith(`:${stepId}`));
+    const noteOf = async (stepId: string, label: string) =>
+      (
+        await api().get(`${flow.projectBase}/runs/${run.id}/cases/${caseOf(stepId)?.id}`).set(as(owner))
+      ).body.steps[0].assertions.find((assertion: { label: string }) => assertion.label === label)?.detail ?? "";
+
+    assert.equal(caseOf("contrato")?.status, "passed");
+    assert.equal(caseOf("contrato")?.method, "SCHEMA");
+    assert.equal(caseOf("propio")?.status, "passed");
+    assert.equal(caseOf("mal")?.status, "failed");
+    assert.equal(caseOf("lista")?.status, "failed");
+    assert.equal(caseOf("tras-lista")?.status, "skipped");
+    assert.match(await noteOf("mal", "Esquema"), /\$\.nope: campo requerido/);
+    assert.match(await noteOf("lista", "Campos no declarados"), /\$\.data\[0\]\.name/);
+    assert.equal(await noteOf("contrato", "Campos no declarados"), "Ninguno");
+
+    // Un esquema propio con «pattern» no se guarda: se compilaría en el proceso de la API.
+    const refused = await api()
+      .put(`${flow.projectBase}/workflows/${flow.workflowId}`)
+      .set(as(owner))
+      .send({
+        definition: {
+          steps: [
+            { id: "crear", requestTemplateId: flow.createTemplateId },
+            {
+              id: "e",
+              kind: "schema",
+              dependsOn: ["crear"],
+              schema: { from: "crear", source: "custom", json: '{"properties":{"a":{"type":"string","pattern":"^(a+)+$"}}}' },
+            },
+          ],
+        },
+      });
+    assert.equal(refused.status, 422);
+    await flow.target.stop();
+  });
+
   test("las posiciones del lienzo sobreviven a la ida y vuelta", async () => {
     const flow = await flowAgainst();
     const listed = await api().get(`${flow.projectBase}/workflows`).set(as(owner));

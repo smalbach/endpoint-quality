@@ -562,6 +562,41 @@ describe("el nodo reintento", () => {
   });
 });
 
+describe("el nodo esquema", () => {
+  const base: WorkflowStepView[] = [
+    { id: "crear", requestTemplateId: "t1", position: { x: 40, y: 60 } },
+    { id: "f", kind: "fetch", fetch: { method: "GET", url: "/x" } },
+  ];
+
+  test("cae con un esquema propio, valida lo que se le conecta, y avisa del JSON roto o del contrato sobre un fetch", () => {
+    const loose = addControlStep(base, "schema");
+    const id = loose.id;
+    expect(loose.steps.find((step) => step.id === id)!.schema).toMatchObject({ from: "", source: "custom" });
+    expect(problemsWith(loose.steps).some((message) => message.includes("no está conectado"))).toBe(true);
+
+    const wired = connectStep(loose.steps, "crear", id);
+    expect(wired.find((step) => step.id === id)!.schema?.from).toBe("crear");
+    expect(problemsWith(wired)).toEqual([]);
+    expect(toNodes(wired, [], []).find((item) => item.id === id)).toMatchObject({
+      type: "schema",
+      data: { from: "crear", source: "custom", strict: false },
+    });
+
+    const withSchema = (steps: WorkflowStepView[], change: object) =>
+      steps.map((step) => (step.id === id ? { ...step, schema: { ...step.schema!, ...change } } : step));
+    expect(problemsWith(withSchema(wired, { json: "{" })).some((message) => message.includes("no es JSON"))).toBe(true);
+    expect(
+      problemsWith(withSchema(wired, { json: '{"type":"string","pattern":"a"}' })).some((message) => message.includes("pattern")),
+    ).toBe(true);
+    expect(problemsWith(withSchema(wired, { source: "contract" }))).toEqual([]);
+    const onFetch = withSchema(connectStep(loose.steps, "f", id), { source: "contract" });
+    expect(problemsWith(onFetch).some((message) => message.includes("solo se conoce"))).toBe(true);
+
+    expect(disconnectEdges(wired, [{ source: "crear", target: id }]).find((step) => step.id === id)!.schema?.from).toBe("");
+    expect(removeStep(wired, "crear").find((step) => step.id === id)!.schema?.from).toBe("");
+  });
+});
+
 describe("el nodo bucle", () => {
   test("«cada» mete nodos en su cuerpo, «fin» sigue después, y cortar la arista los saca", () => {
     const start: WorkflowStepView[] = [{ id: "listar", requestTemplateId: "t1", position: { x: 40, y: 60 } }];

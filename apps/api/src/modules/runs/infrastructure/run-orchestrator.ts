@@ -26,6 +26,7 @@ import {
   buildQueue,
   applyCaptures,
   bindElement,
+  dereference,
   evaluateChecks,
   holds,
   interpolateValue,
@@ -33,7 +34,10 @@ import {
   loopBody,
   orderWorkflowSteps,
   readAuthorization,
+  responseSchema,
+  undeclaredPaths,
   unresolvedVariables,
+  validateJson,
   withinBudget,
   type ActualResponse,
   type Assertion,
@@ -775,6 +779,75 @@ export class RunOrchestrator {
       return;
     }
 
+    // A schema node validates the body a dependency got against a JSON Schema: the contract's for
+    // that operation and the status that came back, or the one written on the node. A missing
+    // schema is a failure, not a pass — a check that could not run vouches for nothing.
+    if (item.step.kind === "schema" && item.step.schema) {
+      const config = item.step.schema;
+      const source = responses.get(config.from);
+      const assertions: Assertion[] = [];
+      let schema: unknown;
+      if (!source) {
+        assertions.push({ label: "Esquema", pass: false, detail: `El paso ${config.from} no respondió` });
+      } else if (config.source === "contract") {
+        const operation = state.items.get(config.from)?.operation;
+        schema =
+          context.target.spec && operation
+            ? responseSchema(context.target.spec, operation.path, operation.method, source.actual.status, source.actual.contentType)
+            : undefined;
+        if (schema === undefined) {
+          assertions.push({
+            label: "Esquema del contrato",
+            pass: false,
+            detail: context.target.spec
+              ? `El contrato no declara un esquema para ${operation?.method ?? ""} ${operation?.path ?? config.from} → ${source.actual.status}`
+              : `No hay contrato que consultar: ${context.target.specError ?? "no se pudo leer"}`,
+          });
+        }
+      } else {
+        try {
+          const parsed = JSON.parse(config.json ?? "") as Record<string, unknown>;
+          // Local `$ref`s (`#/definitions/…`) point inside the node's own schema.
+          schema = dereference(parsed, parsed);
+        } catch {
+          assertions.push({ label: "Esquema", pass: false, detail: "El esquema propio no es JSON válido" });
+        }
+      }
+      if (source && schema !== undefined) {
+        const errors = validateJson(source.actual.body, schema);
+        assertions.push(
+          errors.length
+            ? {
+                label: "Esquema",
+                pass: false,
+                detail: [...errors.slice(0, 20), ...(errors.length > 20 ? [`… y ${errors.length - 20} más`] : [])].join("\n"),
+              }
+            : { label: "Esquema", pass: true, detail: "La respuesta cumple el esquema" },
+        );
+        if (config.strict) {
+          const extra = undeclaredPaths(source.actual.body, schema);
+          assertions.push({
+            label: "Campos no declarados",
+            pass: extra.length === 0,
+            detail: extra.length ? extra.slice(0, 20).join(", ") : "Ninguno",
+          });
+        }
+      }
+      const ok = assertions.length > 0 && assertions.every((assertion) => assertion.pass);
+      await this.finishControl(run, item, state, startedAt, {
+        ok,
+        failure: ok ? null : schema === undefined ? "config" : "check",
+        assertions,
+        sent: {
+          method: "SCHEMA",
+          url: `valida ${config.from}`,
+          headers: {},
+          body: config.source === "custom" ? (config.json ?? "") : "contrato",
+        },
+      });
+      return;
+    }
+
     // A poll node repeats the request of the step it reads until the answer passes the node's own
     // checks — the job that answers `pending` until it is `done`.
     if (item.step.kind === "poll" && item.step.poll) {
@@ -1304,7 +1377,7 @@ export class RunOrchestrator {
     state.passed.set(item.step.id, result.ok);
     await this.runs.saveCase(done);
     await this.announce(run, done);
-    if (!result.ok && item.step.onError === "stop") state.stopped = true;
+    if (!result.ok && stopsOnFailure(run, item.step)) state.stopped = true;
   }
 
   /** Progress, per case, so a follower sees it happening instead of a result at the end. */
@@ -1476,6 +1549,8 @@ function controlCaseFields(step: WorkflowStep): { operationId: string; method: s
       return { operationId: "", method: "RETRY", path: `repite ${step.poll?.from ?? ""}` };
     case "loop":
       return { operationId: "", method: "LOOP", path: `recorre ${step.loop?.from ?? ""}.${step.loop?.path ?? ""}` };
+    case "schema":
+      return { operationId: "", method: "SCHEMA", path: `valida ${step.schema?.from ?? ""}` };
     default:
       return null;
   }

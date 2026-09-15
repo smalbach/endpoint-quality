@@ -262,7 +262,13 @@ export type StepKind =
   | "set"
   | "script"
   | "poll"
-  | "loop";
+  | "loop"
+  | "schema";
+
+/** A `schema` node: validates `from`'s response body against the contract's schema for that operation
+ * and status (`contract`, only over a saved request or login) or against `json` (`custom`, no
+ * `pattern` keyword). `strict` also fails on fields the schema does not declare. */
+export type StepSchemaView = { from: string; source: "contract" | "custom"; json?: string; strict?: boolean };
 
 /** A `loop` node: the list at `path` in `from`'s response, each element bound as `as` (and `as.field`),
  * at most `max` (50) times. Its body is the nodes wired to its «cada» output (`inLoop`) and everything
@@ -325,6 +331,8 @@ export type WorkflowStepView = {
   loop?: StepLoopView;
   /** On a node wired to a loop's «cada» output: that loop's id. */
   inLoop?: string;
+  /** On a `schema` node: the step whose body it validates and against what. */
+  schema?: StepSchemaView;
   /** On any node downstream of an `If`: which of its two paths this node sits on. */
   branch?: StepBranchView;
   dependsOn?: string[];

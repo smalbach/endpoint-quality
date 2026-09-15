@@ -285,6 +285,34 @@ describe("nodos de la paleta (login, espera, merge, validación)", () => {
     assert.equal(parse([{ ...req("crear"), poll: { from: "crear", attempts: 1, delayMs: 0 } }]), false);
   });
 
+  test("un esquema valida un paso del que depende; el del contrato solo sobre una petición guardada", () => {
+    const parse = (steps: unknown[]) => safeParseWorkflowDocument({ steps }).ok;
+    const fetchNode = { id: "f", kind: "fetch", fetch: { method: "GET", url: "/x" } };
+    const schema = (from: string, block: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) => ({
+      id: "e",
+      kind: "schema",
+      dependsOn: [from],
+      schema: { from, source: "custom", json: '{"type":"object"}', ...block },
+      ...extra,
+    });
+    assert.equal(parse([req("crear"), schema("crear")]), true);
+    assert.equal(parse([req("crear"), schema("crear", { source: "contract", json: undefined, strict: true })]), true);
+    assert.equal(parse([fetchNode, schema("f")]), true);
+    // Un nombre de propiedad «pattern» vale; la palabra clave no.
+    assert.equal(parse([req("crear"), schema("crear", { json: '{"properties":{"pattern":{"type":"string"}}}' })]), true);
+    assert.equal(parse([fetchNode, schema("f", { source: "contract" })]), false);
+    assert.equal(parse([req("crear"), schema("crear", { json: "{no" })]), false);
+    assert.equal(parse([req("crear"), schema("crear", { json: "[1]" })]), false);
+    assert.equal(parse([req("crear"), schema("crear", { json: undefined })]), false);
+    assert.equal(
+      parse([req("crear"), schema("crear", { json: '{"properties":{"a":{"type":"string","pattern":"^(a+)+$"}}}' })]),
+      false,
+    );
+    assert.equal(parse([req("crear"), schema("crear", {}, { dependsOn: undefined })]), false);
+    assert.equal(parse([req("crear"), { id: "e", kind: "schema", dependsOn: ["crear"] }]), false);
+    assert.equal(parse([req("crear", { schema: { from: "crear", source: "custom", json: "{}" } })]), false);
+  });
+
   test("un bucle recorre lo que cuelga de «cada»; dentro solo se depende de lo que ya terminó", () => {
     const parse = (steps: unknown[]) => safeParseWorkflowDocument({ steps }).ok;
     const loop = { id: "b", kind: "loop", dependsOn: ["listar"], loop: { from: "listar", path: "data", as: "item" } };

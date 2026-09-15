@@ -185,8 +185,10 @@ export type StepWaits = (typeof STEP_WAITS)[number];
  *   that is `pending` until it is `done`. It records one case, with the last attempt in it.
  * - `loop` walks a list a step returned and runs its body — what hangs off its «cada» output, see
  *   {@link loopBody} — once per element, before the steps on its «fin» side.
+ * - `schema` judges a step's response body against a JSON Schema: the one the contract declares for
+ *   that operation and status, or one written on the node.
  *
- * The ones that send no request (`branch`, `wait`, `merge`, `validate`, `set`, `script`) are
+ * The ones that send no request (`branch`, `wait`, `merge`, `validate`, `set`, `script`, `schema`) are
  * *control* nodes: they produce a case that records what the flow did, not one that made an HTTP
  * call. */
 export type StepKind =
@@ -200,10 +202,21 @@ export type StepKind =
   | "set"
   | "script"
   | "poll"
-  | "loop";
+  | "loop"
+  | "schema";
 
 /** The control kinds — the nodes that record a decision instead of making a request. */
-export const CONTROL_KINDS: StepKind[] = ["branch", "wait", "merge", "validate", "set", "script"];
+export const CONTROL_KINDS: StepKind[] = ["branch", "wait", "merge", "validate", "set", "script", "schema"];
+
+/**
+ * A `schema` node: the step whose body it validates, and against what.
+ *
+ * `contract` looks the schema up in the run's OpenAPI document for `from`'s operation and the status
+ * that came back, so `from` has to be a request or a login. `custom` parses `json`, which is how a
+ * fetch to a service the contract does not describe gets a shape check. `strict` also fails on the
+ * fields the schema does not declare — the drift a plain validation lets through.
+ */
+export type StepSchema = { from: string; source: "contract" | "custom"; json?: string; strict?: boolean };
 
 /**
  * A `set` node: variables written without a request.
@@ -342,6 +355,8 @@ export type WorkflowStep = {
   loop?: StepLoop;
   /** On a node wired to a loop's «cada» output: the loop whose body it starts. */
   inLoop?: string;
+  /** On a `schema` node: the step whose body it validates and the schema it uses. */
+  schema?: StepSchema;
   /** On a node downstream of a branch: which path it sits on. */
   branch?: StepBranch;
   waits?: StepWaits;

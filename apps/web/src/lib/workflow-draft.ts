@@ -159,6 +159,7 @@ export function removeStep(steps: WorkflowStepView[], stepId: string): WorkflowS
       if (next.script?.from === stepId) next = { ...next, script: { code: next.script.code } };
       if (next.poll?.from === stepId) next = { ...next, poll: { ...next.poll, from: "" } };
       if (next.loop?.from === stepId) next = { ...next, loop: { ...next.loop, from: "" } };
+      if (next.schema?.from === stepId) next = { ...next, schema: { ...next.schema, from: "" } };
       if (next.inLoop === stepId) {
         const { inLoop: _inLoop, ...rest } = next;
         next = rest;
@@ -203,6 +204,9 @@ export function connectStep(
     if (linked.kind === "poll" && !linked.poll?.from) {
       return { ...linked, poll: { attempts: 5, delayMs: 2000, ...linked.poll, from: source } };
     }
+    if (linked.kind === "schema" && !linked.schema?.from) {
+      return { ...linked, schema: { source: "custom", ...linked.schema, from: source } };
+    }
     return linked;
   });
 }
@@ -219,12 +223,35 @@ export const CONTROL_PALETTE: { kind: ControlKind; glyph: string; label: string;
   { kind: "script", glyph: "{ }", label: "Script", hint: "JavaScript en un proceso aislado: lee una respuesta, escribe variables, pm.test" },
   { kind: "poll", glyph: "↻", label: "Reintento", hint: "Repite la petición de un paso hasta que su respuesta cumpla las comprobaciones (polling)" },
   { kind: "loop", glyph: "∀", label: "Bucle", hint: "Recorre una lista: lo que cuelga de «cada» se ejecuta una vez por elemento, y «fin» sigue después" },
+  { kind: "schema", glyph: "⊨", label: "Esquema", hint: "Valida el body de una respuesta contra el JSON Schema del contrato o uno escrito a mano" },
 ];
+
+/** Why the JSON Schema written on a schema node cannot be used, or null. The server refuses the same
+ * things: not JSON, not an object, or the `pattern` keyword (compiled in the API process). */
+export function schemaJsonProblem(json: string | undefined): string | null {
+  if (!json?.trim()) return "Falta el JSON Schema.";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return "El esquema no es JSON válido.";
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return "El esquema tiene que ser un objeto JSON.";
+  const usesPattern = (node: unknown): boolean =>
+    Array.isArray(node)
+      ? node.some(usesPattern)
+      : Boolean(node) &&
+        typeof node === "object" &&
+        Object.entries(node as Record<string, unknown>).some(
+          ([key, value]) => (key === "pattern" && typeof value === "string") || usesPattern(value),
+        );
+  return usesPattern(parsed) ? "Un esquema propio no puede usar «pattern»." : null;
+}
 
 /** The kinds the palette drops straight onto the canvas. `fetch` sends a call, but one written on the
  * node itself, so it needs no operation from the catalogue and lands like the control kinds; `poll`
  * re-sends the request of the node wired into it. */
-type ControlKind = "branch" | "wait" | "merge" | "validate" | "fetch" | "set" | "script" | "poll" | "loop";
+type ControlKind = "branch" | "wait" | "merge" | "validate" | "fetch" | "set" | "script" | "poll" | "loop" | "schema";
 const CONTROL_BASE_ID: Record<ControlKind, string> = {
   branch: "rama",
   wait: "espera",
@@ -235,6 +262,7 @@ const CONTROL_BASE_ID: Record<ControlKind, string> = {
   script: "script",
   poll: "reintento",
   loop: "bucle",
+  schema: "esquema",
 };
 
 /**
@@ -288,6 +316,7 @@ export function addControlStep(
   if (kind === "set") node.set = { assignments: [{ variable: "", value: "" }] };
   if (kind === "script") node.script = from ? { code: "", from } : { code: "" };
   if (kind === "loop") node.loop = { from: from ?? "", path: "data", as: "item", max: 50 };
+  if (kind === "schema") node.schema = { from: from ?? "", source: "custom", json: '{\n  "type": "object"\n}' };
   if (kind === "poll") {
     node.poll = { from: from ?? "", attempts: 5, delayMs: 2000 };
     node.checks = [check];
@@ -318,6 +347,7 @@ export function disconnectEdges(
     if (next.script?.from && cut.includes(next.script.from)) next = { ...next, script: { code: next.script.code } };
     if (next.poll && cut.includes(next.poll.from)) next = { ...next, poll: { ...next.poll, from: "" } };
     if (next.loop && cut.includes(next.loop.from)) next = { ...next, loop: { ...next.loop, from: "" } };
+    if (next.schema && cut.includes(next.schema.from)) next = { ...next, schema: { ...next.schema, from: "" } };
     if (next.inLoop && cut.includes(next.inLoop)) {
       const { inLoop: _inLoop, ...rest } = next;
       next = rest;
@@ -490,6 +520,20 @@ export function toNodes(
           as: step.loop?.as ?? "",
           max: step.loop?.max ?? 50,
           body: loopBodyIds(steps, step.id).length,
+          runStatus: runStatusFor,
+        },
+      };
+    }
+    if (kind === "schema") {
+      return {
+        id: step.id,
+        type: "schema",
+        position,
+        data: {
+          name: step.id,
+          from: step.schema?.from ?? "",
+          source: step.schema?.source ?? "custom",
+          strict: Boolean(step.schema?.strict),
           runStatus: runStatusFor,
         },
       };
@@ -788,6 +832,21 @@ export function flowProblems(steps: WorkflowStepView[]): FlowProblem[] {
         });
       if (!step.checks?.length)
         problems.push({ message: `El reintento «${step.id}» no tiene comprobaciones: nada dice cuándo parar.`, stepId: step.id });
+    }
+    if (kind === "schema") {
+      const source = steps.find((other) => other.id === step.schema?.from);
+      if (!step.schema?.from)
+        problems.push({ message: `El esquema «${step.id}» no está conectado a ningún paso que validar.`, stepId: step.id });
+      if (step.schema?.source === "contract") {
+        if (source && !["request", "login"].includes(source.kind ?? "request"))
+          problems.push({
+            message: `El esquema «${step.id}» usa el contrato, que solo se conoce para una petición guardada o un login.`,
+            stepId: step.id,
+          });
+      } else {
+        const problem = schemaJsonProblem(step.schema?.json);
+        if (problem) problems.push({ message: `El esquema «${step.id}»: ${problem}`, stepId: step.id });
+      }
     }
     if (kind === "fetch" && !step.fetch?.url?.trim())
       problems.push({ message: `El fetch «${step.id}» no tiene URL.`, stepId: step.id });

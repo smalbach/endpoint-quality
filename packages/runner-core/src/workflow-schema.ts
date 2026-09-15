@@ -147,13 +147,51 @@ export const stepRetrySchema = z.object({
 
 export const stepConditionSchema = z.object({ from: z.string().min(1).max(60), check: stepCheckSchema });
 
+/**
+ * Why a schema written on a node cannot be used, or null.
+ *
+ * It has to be a JSON object, and it may not use `pattern`: the validator compiles that with
+ * `RegExp` inside the API process, and one backtracking expression would stall every run on the
+ * worker — not only the author's. A property *named* `pattern` is fine; only the keyword is refused.
+ */
+function customSchemaProblem(json: string | undefined): string | null {
+  if (!json?.trim()) return "un esquema propio necesita su JSON Schema";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return "el esquema propio no es JSON válido";
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return "el esquema propio tiene que ser un objeto JSON";
+  const usesPattern = (node: unknown): boolean =>
+    Array.isArray(node)
+      ? node.some(usesPattern)
+      : Boolean(node) &&
+        typeof node === "object" &&
+        Object.entries(node as Record<string, unknown>).some(
+          ([key, value]) => (key === "pattern" && typeof value === "string") || usesPattern(value),
+        );
+  return usesPattern(parsed) ? "un esquema propio no puede usar «pattern»" : null;
+}
+
 export const workflowStepSchema = z.object({
   // Capped because it travels inside `run_cases.scenarioId`, which is a `varchar(200)`.
   id: z.string().min(1).max(60),
   // A control node (branch/wait/merge/validate) sends nothing, so it carries no template; a
   // `request` and a `login` node must (checked below).
   requestTemplateId: z.string().uuid().optional(),
-  kind: z.enum(["request", "login", "branch", "wait", "merge", "validate", "fetch", "set", "script", "poll", "loop"]).optional(),
+  kind: z
+    .enum(["request", "login", "branch", "wait", "merge", "validate", "fetch", "set", "script", "poll", "loop", "schema"])
+    .optional(),
+  // The `schema` node: the step whose body it validates, against the contract or a schema of its own.
+  schema: z
+    .object({
+      from: z.string().min(1).max(60),
+      source: z.enum(["contract", "custom"]),
+      json: z.string().max(200_000).optional(),
+      strict: z.boolean().optional(),
+    })
+    .optional(),
   // The `loop` node: the list it walks. Same ceilings as a `forEach`, for the same reason.
   loop: z
     .object({
@@ -295,6 +333,7 @@ export const workflowDocumentSchema = z
         ["script", step.script?.from],
         ["poll", step.poll?.from],
         ["loop", step.loop?.from],
+        ["schema", step.schema?.from],
       ] as const) {
         if (!reference) continue;
         if (!ids.has(reference)) {
@@ -408,6 +447,29 @@ export const workflowDocumentSchema = z
             path: ["steps", index, "inLoop"],
           });
           broken = true;
+        }
+      }
+      if (step.schema && kind !== "schema") {
+        context.addIssue({ code: "custom", message: "solo un nodo esquema lleva su bloque schema", path: ["steps", index, "schema"] });
+      }
+      if (kind === "schema") {
+        if (!step.schema) {
+          context.addIssue({ code: "custom", message: "un nodo esquema necesita el paso que valida", path: ["steps", index, "schema"] });
+          broken = true;
+        } else if (step.schema.source === "contract") {
+          // The contract is looked up by operation, and only a saved request has one.
+          const source = document.steps.find((other) => other.id === step.schema!.from);
+          const sourceKind = source?.kind ?? "request";
+          if (source && sourceKind !== "request" && sourceKind !== "login") {
+            context.addIssue({
+              code: "custom",
+              message: "el esquema del contrato solo se conoce para una petición guardada o un login; usa un esquema propio",
+              path: ["steps", index, "schema", "source"],
+            });
+          }
+        } else {
+          const problem = customSchemaProblem(step.schema.json);
+          if (problem) context.addIssue({ code: "custom", message: problem, path: ["steps", index, "schema", "json"] });
         }
       }
       if (step.poll && kind !== "poll") {
