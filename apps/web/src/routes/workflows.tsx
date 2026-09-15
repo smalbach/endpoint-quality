@@ -500,8 +500,8 @@ export function WorkflowsPage() {
               />
             )}
 
-            {/* Muelle flotante arriba a la izquierda: cada botón abre su drawer. */}
-            <div className="pointer-events-none absolute top-3 left-3 z-30 flex flex-col gap-2">
+            {/* Muelle flotante a la izquierda: bajo la barra de conductas del lienzo, para no taparla. */}
+            <div className="pointer-events-none absolute top-14 left-3 z-30 flex flex-col gap-2">
               <div className="pointer-events-auto flex flex-col gap-1 rounded-2xl border border-slate-200 bg-white/95 p-1 shadow-lg backdrop-blur">
                 <DockButton glyph="≣" label="Flujos" onClick={() => setDrawer(drawer === "flows" ? null : "flows")} />
                 <DockButton
