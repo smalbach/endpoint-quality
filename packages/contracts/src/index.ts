@@ -248,8 +248,18 @@ export type StepForEachView = { from: string; path: string; as: string; max?: nu
  * - `validate` — reads a step's response and judges it with checks and/or a script. No request.
  * - `fetch` — sends an HTTP call written on the node (any URL, method, headers, body) instead of a
  *   saved request. Its answer feeds captures, checks, an `If` or a validation like any other.
+ * - `set` — writes variables from templates (`{{otra}}`, `{{$uuid}}`) for the steps after it. No request.
+ * - `script` — runs JS in the isolated sandbox; can read a step's response and write variables. No request.
  */
-export type StepKind = "request" | "login" | "branch" | "wait" | "merge" | "validate" | "fetch";
+export type StepKind = "request" | "login" | "branch" | "wait" | "merge" | "validate" | "fetch" | "set" | "script";
+
+/** A `set` node: each assignment is a variable name and a template resolved when the node runs. */
+export type StepSetView = { assignments: { variable: string; value: string }[] };
+
+/** A `script` node: code run in the isolated sandbox with the `pm` API. `from` names a step whose
+ * response it reads as `pm.response`. What it writes lives for the run only, never in the
+ * stored environment. */
+export type StepScriptView = { code: string; from?: string };
 
 /** A `fetch` node's call. `url` is absolute or a path resolved against the environment's base URL;
  * every text accepts `{{variables}}`. `expectedStatus` absent means any 2xx. `useSession` presents
@@ -285,6 +295,10 @@ export type WorkflowStepView = {
   validate?: StepValidateView;
   /** On a `fetch` node: the call it sends. */
   fetch?: StepFetchView;
+  /** On a `set` node: the variables it writes. */
+  set?: StepSetView;
+  /** On a `script` node: its code and the step it reads, if any. */
+  script?: StepScriptView;
   /** On any node downstream of an `If`: which of its two paths this node sits on. */
   branch?: StepBranchView;
   dependsOn?: string[];

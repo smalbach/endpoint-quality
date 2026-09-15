@@ -239,6 +239,36 @@ describe("nodos de la paleta (login, espera, merge, validación)", () => {
       false,
     );
   });
+
+  test("set asigna variables con nombre válido; script lleva código y solo lee una dependencia", () => {
+    const parse = (steps: unknown[]) => safeParseWorkflowDocument({ steps }).ok;
+    assert.equal(parse([{ id: "s", kind: "set", set: { assignments: [{ variable: "total", value: "{{a}}-{{$uuid}}" }] } }]), true);
+    assert.equal(parse([{ id: "s", kind: "set", set: { assignments: [{ variable: "mal nombre", value: "x" }] } }]), false);
+    assert.equal(parse([{ id: "s", kind: "set", set: { assignments: [] } }]), false);
+    assert.equal(parse([{ id: "s", kind: "set" }]), false);
+    assert.equal(parse([{ id: "a", requestTemplateId: uuid(1), set: { assignments: [{ variable: "x", value: "y" }] } }]), false);
+
+    assert.equal(
+      parse([req("crear"), { id: "x", kind: "script", dependsOn: ["crear"], script: { from: "crear", code: "pm.test('a', () => {})" } }]),
+      true,
+    );
+    assert.equal(parse([{ id: "x", kind: "script", script: { code: "pm.variables.set('a', '1')" } }]), true);
+    assert.equal(parse([{ id: "x", kind: "script", script: { code: "   " } }]), false);
+    assert.equal(parse([req("crear"), { id: "x", kind: "script", script: { from: "crear", code: "1" } }]), false);
+    assert.equal(parse([{ id: "x", kind: "script", requestTemplateId: uuid(1), script: { code: "1" } }]), false);
+  });
+
+  test("dos set que pueden correr a la vez no escriben la misma variable", () => {
+    const doc = safeParseWorkflowDocument({
+      steps: [
+        req("crear"),
+        { id: "a", kind: "set", dependsOn: ["crear"], set: { assignments: [{ variable: "total", value: "1" }] } },
+        { id: "b", kind: "set", dependsOn: ["crear"], set: { assignments: [{ variable: "total", value: "2" }] } },
+      ],
+    });
+    assert.equal(doc.ok, false);
+    if (!doc.ok) assert.ok(doc.issues.some((i) => i.detail.includes("total")));
+  });
 });
 
 test("canvas coordinates survive validation and a bad one is refused", () => {

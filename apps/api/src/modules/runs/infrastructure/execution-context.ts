@@ -70,15 +70,19 @@ export class ExecutionContextFactory {
     );
     const resolved = resolveOperations(operations, config);
 
+    const plain = resolveVariables(environment.variables, (payload) => this.cipher.decrypt(payload));
     const target: ExecutionTarget = {
       baseUrl: environment.baseUrl,
       writesAllowed: environment.writesAllowed,
       credentials: await this.environments.listCredentials(environment.id),
       // Resolved, not copied: `current` over `initial`, and a sensitive one decrypted here so that
       // nothing further down has to know the concept exists.
-      variables: withEnvironmentNamespace(
-        resolveVariables(environment.variables, (payload) => this.cipher.decrypt(payload)),
-      ),
+      variables: withEnvironmentNamespace(plain),
+      // …except what a script prints, which is redacted against these before it is stored.
+      secrets: Object.entries(environment.variables)
+        .filter(([, variable]) => variable.sensitive)
+        .map(([name]) => plain[name])
+        .filter((value): value is string => Boolean(value)),
       // Nothing has logged in yet. A flow step may publish one while walking.
       session: null,
       ...(await this.loadSpec(environment.specUrl ?? `${environment.baseUrl}/openapi.json`)),

@@ -178,13 +178,35 @@ export type StepWaits = (typeof STEP_WAITS)[number];
  * - `fetch` sends an HTTP call the author spells out — any URL, method, headers and body — instead
  *   of one of the project's saved requests. For the call the contract does not describe: a
  *   webhook, a second service, an identity provider.
+ * - `set` writes variables from templates for the steps after it.
+ * - `script` runs code in the isolated sandbox, optionally over a step's response, and can write
+ *   variables.
  *
- * The four that send no request (`branch`, `wait`, `merge`, `validate`) are *control* nodes: they
- * produce a case that records what the flow did, not one that made an HTTP call. */
-export type StepKind = "request" | "login" | "branch" | "wait" | "merge" | "validate" | "fetch";
+ * The ones that send no request (`branch`, `wait`, `merge`, `validate`, `set`, `script`) are
+ * *control* nodes: they produce a case that records what the flow did, not one that made an HTTP
+ * call. */
+export type StepKind = "request" | "login" | "branch" | "wait" | "merge" | "validate" | "fetch" | "set" | "script";
 
 /** The control kinds — the nodes that record a decision instead of making a request. */
-export const CONTROL_KINDS: StepKind[] = ["branch", "wait", "merge", "validate"];
+export const CONTROL_KINDS: StepKind[] = ["branch", "wait", "merge", "validate", "set", "script"];
+
+/**
+ * A `set` node: variables written without a request.
+ *
+ * Each `value` is a template over what the run already knows — the environment, earlier captures,
+ * computed values like `{{$uuid}}` — resolved when the node runs. Run-scoped, like a capture: the
+ * stored environment is never written.
+ */
+export type StepSet = { assignments: { variable: string; value: string }[] };
+
+/**
+ * A `script` node: code in the isolated sandbox with the `pm` API.
+ *
+ * `from`, when present, is a dependency whose response the script reads as `pm.response`. What it
+ * writes with `pm.variables.set` or `pm.environment.set` goes into the run's variables and nowhere
+ * else. It fails when it throws or when a `pm.test` it declares fails.
+ */
+export type StepScript = { code: string; from?: string };
 
 /** Which side of a branch a node sits on. */
 export type StepBranch = { of: string; take: "then" | "else" };
@@ -234,6 +256,10 @@ export type WorkflowStep = {
   validate?: StepValidate;
   /** On a `fetch` node: the call it sends. */
   fetch?: StepFetch;
+  /** On a `set` node: the variables it writes. */
+  set?: StepSet;
+  /** On a `script` node: its code and the step it reads, if any. */
+  script?: StepScript;
   /** On a node downstream of a branch: which path it sits on. */
   branch?: StepBranch;
   waits?: StepWaits;

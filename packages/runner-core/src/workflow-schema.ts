@@ -153,7 +153,23 @@ export const workflowStepSchema = z.object({
   // A control node (branch/wait/merge/validate) sends nothing, so it carries no template; a
   // `request` and a `login` node must (checked below).
   requestTemplateId: z.string().uuid().optional(),
-  kind: z.enum(["request", "login", "branch", "wait", "merge", "validate", "fetch"]).optional(),
+  kind: z.enum(["request", "login", "branch", "wait", "merge", "validate", "fetch", "set", "script"]).optional(),
+  // The `set` node: variables written from templates, no request.
+  set: z
+    .object({
+      assignments: z
+        .array(
+          z.object({
+            variable: z.string().regex(VARIABLE_NAME, "nombre de variable inválido"),
+            value: z.string().max(10_000),
+          }),
+        )
+        .min(1, "un nodo set necesita al menos una variable")
+        .max(50),
+    })
+    .optional(),
+  // The `script` node: code for the isolated sandbox, and the step whose response it reads.
+  script: z.object({ code: z.string().max(20_000), from: z.string().min(1).max(60).optional() }).optional(),
   // The `fetch` node: a call written out by hand instead of a saved request.
   fetch: z
     .object({
@@ -256,6 +272,7 @@ export const workflowDocumentSchema = z
         ["forEach", step.forEach?.from],
         ["condition", step.condition?.from],
         ["validate", step.validate?.from],
+        ["script", step.script?.from],
       ] as const) {
         if (!reference) continue;
         if (!ids.has(reference)) {
@@ -340,6 +357,19 @@ export const workflowDocumentSchema = z
         });
         broken = true;
       }
+      if (step.set && kind !== "set") {
+        context.addIssue({ code: "custom", message: "solo un nodo set lleva variables que asignar", path: ["steps", index, "set"] });
+      }
+      if (kind === "set" && !step.set) {
+        context.addIssue({ code: "custom", message: "un nodo set necesita al menos una variable", path: ["steps", index, "set"] });
+      }
+      if (step.script && kind !== "script") {
+        context.addIssue({ code: "custom", message: "solo un nodo script lleva código", path: ["steps", index, "script"] });
+      }
+      if (kind === "script" && !step.script?.code.trim()) {
+        // An empty script asserts nothing and writes nothing: a green case that proves nothing ran.
+        context.addIssue({ code: "custom", message: "un nodo script necesita código", path: ["steps", index, "script", "code"] });
+      }
       if (kind === "wait" && !step.waitMs) {
         context.addIssue({
           code: "custom",
@@ -420,9 +450,13 @@ export const workflowDocumentSchema = z
     if (broken) return;
     const concurrent = concurrentPairs(document.steps as WorkflowStep[]);
     for (const [left, right] of concurrent) {
-      const shared = (left.captures ?? [])
-        .map((capture) => capture.variable)
-        .filter((name) => (right.captures ?? []).some((capture) => capture.variable === name));
+      // A set node writes into the same map a capture does, so its names race the same way.
+      const writtenBy = (step: (typeof document.steps)[number]) => [
+        ...(step.captures ?? []).map((capture) => capture.variable),
+        ...(step.set?.assignments ?? []).map((assignment) => assignment.variable),
+      ];
+      const rightWrites = writtenBy(right);
+      const shared = [...new Set(writtenBy(left).filter((name) => rightWrites.includes(name)))];
       if (shared.length) {
         context.addIssue({
           code: "custom",

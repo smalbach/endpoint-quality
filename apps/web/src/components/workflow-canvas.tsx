@@ -300,7 +300,66 @@ function FetchNode({ data, selected }: NodeProps<Node<FetchNodeData>>) {
   );
 }
 
+type SetNodeData = { name: string; variables: string[]; runStatus?: CaseStatus };
+
+/** A set: variables written from templates, no request. */
+function SetNode({ data, selected }: NodeProps<Node<SetNodeData>>) {
+  const status = data.runStatus;
+  return (
+    <div
+      className={cn(
+        "w-52 rounded-xl border bg-white px-3 py-2 shadow-sm transition-colors",
+        status ? RUN_NODE_CLASS[status] : "border-violet-300",
+        selected && "border-slate-900 ring-2 ring-slate-200",
+      )}
+    >
+      <Handle type="target" position={Position.Left} />
+      <div className="flex items-center gap-2">
+        <span className="grid h-6 w-6 place-items-center rounded-md bg-violet-100 text-violet-700" title="Set">
+          𝑥
+        </span>
+        <span className="truncate text-xs font-semibold text-slate-800">Set · {data.name}</span>
+        <RunDot status={status} />
+      </div>
+      <p className="mt-1 truncate font-mono text-[10px] text-slate-500">
+        {data.variables.length ? data.variables.join(", ") : "sin variables"}
+      </p>
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+}
+
+type ScriptNodeData = { name: string; from: string; lines: number; runStatus?: CaseStatus };
+
+/** A script: code in the isolated sandbox, optionally over a step's response. */
+function ScriptNode({ data, selected }: NodeProps<Node<ScriptNodeData>>) {
+  const status = data.runStatus;
+  return (
+    <div
+      className={cn(
+        "w-52 rounded-xl border bg-white px-3 py-2 shadow-sm transition-colors",
+        status ? RUN_NODE_CLASS[status] : "border-slate-400",
+        selected && "border-slate-900 ring-2 ring-slate-200",
+      )}
+    >
+      <Handle type="target" position={Position.Left} />
+      <div className="flex items-center gap-2">
+        <span className="grid h-6 w-6 place-items-center rounded-md bg-slate-800 font-mono text-[10px] text-white" title="Script">
+          {"{ }"}
+        </span>
+        <span className="truncate text-xs font-semibold text-slate-800">Script · {data.name}</span>
+        <RunDot status={status} />
+      </div>
+      <p className="mt-1 truncate font-mono text-[10px] text-slate-500">{data.from ? `lee ${data.from}` : "sin respuesta que leer"}</p>
+      <p className="mt-0.5 text-[10px] text-slate-500">{data.lines ? `${data.lines} ${data.lines === 1 ? "línea" : "líneas"}` : "sin código"}</p>
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+}
+
 const nodeTypes = {
+  set: SetNode,
+  script: ScriptNode,
   fetch: FetchNode,
   step: StepNode,
   login: LoginNode,

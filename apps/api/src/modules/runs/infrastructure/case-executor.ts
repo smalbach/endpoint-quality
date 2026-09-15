@@ -76,7 +76,24 @@ export type ExecutionTarget = {
    * nothing.
    */
   session: { header: string; value: string } | null;
+  /**
+   * Values that must never be shown: the environment's sensitive variables, decrypted. A flow's
+   * script node can `console.log` any variable, so its output is redacted against this list before
+   * it is stored in the report.
+   */
+  secrets?: string[];
 };
+
+/** The values `{{$uuid}}`, `{{$now}}`… resolve to. One per case, so the same token means the same
+ * value everywhere it appears in that case. */
+export function computedSeed(): ComputedSeed {
+  return {
+    uuid: randomUUID(),
+    now: new Date(),
+    random: Math.random(),
+    hmacSha256: (key, text) => createHmac("sha256", key).update(text).digest("hex"),
+  };
+}
 
 export type ExecutedStep = {
   request: StepRequest;
@@ -132,12 +149,7 @@ export class CaseExecutor {
     // One seed for the whole case, so `{{$uuid}}` in an idempotency header and in the payload is
     // the same value, and the read-back step of a flow sees that same value again. A fresh one per
     // occurrence would break exactly the flows computed values exist for.
-    const seed: ComputedSeed = {
-      uuid: randomUUID(),
-      now: new Date(),
-      random: Math.random(),
-      hmacSha256: (key, text) => createHmac("sha256", key).update(text).digest("hex"),
-    };
+    const seed = computedSeed();
     // The substitution pass now runs for every case and not only when the environment defines
     // variables: a project with no variables at all can still write `{{$uuid}}`, and skipping the
     // walk would send the token to the target as a literal.
@@ -186,12 +198,7 @@ export class CaseExecutor {
    */
   async fetch(input: { call: StepFetch; target: ExecutionTarget }): Promise<ExecutedCase> {
     const started = Date.now();
-    const seed: ComputedSeed = {
-      uuid: randomUUID(),
-      now: new Date(),
-      random: Math.random(),
-      hmacSha256: (key, text) => createHmac("sha256", key).update(text).digest("hex"),
-    };
+    const seed = computedSeed();
     const call = interpolateValue(input.call, input.target.variables, seed);
     const url = fetchUrl(call.url, input.target.baseUrl);
     const headers: Record<string, string> = { Accept: "application/json" };

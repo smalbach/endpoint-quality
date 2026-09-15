@@ -155,6 +155,7 @@ export function removeStep(steps: WorkflowStepView[], stepId: string): WorkflowS
       // document stays valid — the editor asks for it to be reconnected rather than the server 422.
       if (next.condition?.from === stepId) next = { ...next, condition: { ...next.condition, from: "" } };
       if (next.validate?.from === stepId) next = { ...next, validate: { ...next.validate, from: "" } };
+      if (next.script?.from === stepId) next = { ...next, script: { code: next.script.code } };
       return next;
     });
 }
@@ -183,6 +184,9 @@ export function connectStep(
     if (linked.kind === "validate" && !linked.validate?.from) {
       return { ...linked, validate: { ...linked.validate, from: source } };
     }
+    if (linked.kind === "script" && !linked.script?.from) {
+      return { ...linked, script: { code: linked.script?.code ?? "", from: source } };
+    }
     return linked;
   });
 }
@@ -195,17 +199,21 @@ export const CONTROL_PALETTE: { kind: ControlKind; glyph: string; label: string;
   { kind: "merge", glyph: "⇉", label: "Merge", hint: "Junta varias ramas en una" },
   { kind: "validate", glyph: "✓", label: "Validación", hint: "Juzga la respuesta de un paso con checks o un script" },
   { kind: "fetch", glyph: "⇄", label: "Fetch", hint: "Petición HTTP escrita a mano: cualquier URL, método, cabeceras y body" },
+  { kind: "set", glyph: "𝑥", label: "Set", hint: "Asigna variables desde plantillas ({{otra}}, {{$uuid}}) sin hacer peticiones" },
+  { kind: "script", glyph: "{ }", label: "Script", hint: "JavaScript en un proceso aislado: lee una respuesta, escribe variables, pm.test" },
 ];
 
 /** The kinds the palette drops straight onto the canvas. `fetch` sends a call, but one written on the
  * node itself, so it needs no operation from the catalogue and lands like the control kinds. */
-type ControlKind = "branch" | "wait" | "merge" | "validate" | "fetch";
+type ControlKind = "branch" | "wait" | "merge" | "validate" | "fetch" | "set" | "script";
 const CONTROL_BASE_ID: Record<ControlKind, string> = {
   branch: "rama",
   wait: "espera",
   merge: "union",
   validate: "valida",
   fetch: "fetch",
+  set: "variables",
+  script: "script",
 };
 
 /**
@@ -235,6 +243,8 @@ export function addControlStep(
   if (kind === "wait") node.waitMs = 1000;
   if (kind === "merge") node.waits = "all";
   if (kind === "fetch") node.fetch = { method: "GET", url: "" };
+  if (kind === "set") node.set = { assignments: [{ variable: "", value: "" }] };
+  if (kind === "script") node.script = from ? { code: "", from } : { code: "" };
   return { steps: [...steps, node], id };
 }
 
@@ -258,6 +268,7 @@ export function disconnectEdges(
     // Cutting the edge into a control node also cuts what it read: the wire was the configuration.
     if (next.condition && cut.includes(next.condition.from)) next = { ...next, condition: { ...next.condition, from: "" } };
     if (next.validate && cut.includes(next.validate.from)) next = { ...next, validate: { ...next.validate, from: "" } };
+    if (next.script?.from && cut.includes(next.script.from)) next = { ...next, script: { code: next.script.code } };
     if (next.branch && cut.includes(next.branch.of)) {
       const { branch: _branch, ...rest } = next;
       next = rest;
@@ -378,6 +389,31 @@ export function toNodes(
           from: step.validate?.from ?? "",
           checks: step.checks?.length ?? 0,
           script: Boolean(step.validate?.script?.trim()),
+          runStatus: runStatusFor,
+        },
+      };
+    }
+    if (kind === "set") {
+      return {
+        id: step.id,
+        type: "set",
+        position,
+        data: {
+          name: step.id,
+          variables: (step.set?.assignments ?? []).map((assignment) => assignment.variable).filter(Boolean),
+          runStatus: runStatusFor,
+        },
+      };
+    }
+    if (kind === "script") {
+      return {
+        id: step.id,
+        type: "script",
+        position,
+        data: {
+          name: step.id,
+          from: step.script?.from ?? "",
+          lines: step.script?.code.trim() ? step.script.code.trim().split("\n").length : 0,
           runStatus: runStatusFor,
         },
       };
@@ -590,6 +626,7 @@ export function variablesFor(steps: WorkflowStepView[], stepId: string, environm
     const step = byId.get(id);
     if (!step) continue;
     upstream.push(...(step.captures ?? []).map((capture) => capture.variable).filter(Boolean));
+    upstream.push(...(step.set?.assignments ?? []).map((assignment) => assignment.variable).filter(Boolean));
     pending.push(...(step.dependsOn ?? []));
   }
   return [...new Set([...environment, ...upstream, ...COMPUTED_VALUES])];
@@ -628,6 +665,15 @@ export function flowProblems(steps: WorkflowStepView[]): FlowProblem[] {
       problems.push({ message: `La validación «${step.id}» no comprueba nada: añade una comprobación o un script.`, stepId: step.id });
     if (kind === "wait" && !step.waitMs)
       problems.push({ message: `El nodo de espera «${step.id}» no tiene un tiempo.`, stepId: step.id });
+    if (kind === "set") {
+      const assignments = step.set?.assignments ?? [];
+      if (!assignments.length)
+        problems.push({ message: `El nodo set «${step.id}» no asigna ninguna variable.`, stepId: step.id });
+      else if (assignments.some((assignment) => !/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(assignment.variable)))
+        problems.push({ message: `El nodo set «${step.id}» tiene un nombre de variable vacío o inválido.`, stepId: step.id });
+    }
+    if (kind === "script" && !step.script?.code.trim())
+      problems.push({ message: `El script «${step.id}» no tiene código.`, stepId: step.id });
     if (kind === "fetch" && !step.fetch?.url?.trim())
       problems.push({ message: `El fetch «${step.id}» no tiene URL.`, stepId: step.id });
     if (kind === "login" && !step.authorizes)

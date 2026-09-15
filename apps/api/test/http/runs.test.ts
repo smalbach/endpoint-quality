@@ -471,6 +471,94 @@ describe("flujos reutilizables y variables de entorno", () => {
     await flow.target.stop();
   });
 
+  test("set y script escriben variables que los pasos siguientes gastan; los que fallan saltan lo suyo", async () => {
+    const flow = await flowAgainst({ entityName: "desde-set" });
+    // crear → asigna(set thingId={{creado}}) → leer-tras-set → guion(script lee crear, escribe scriptId)
+    //       → reasigna(set thingId={{scriptId}}) → leer-final
+    // crear → roto(script que lanza) → tras-roto(se salta)
+    // crear → set-mal(set con variable inexistente, falla)
+    const saved = await api()
+      .put(`${flow.projectBase}/workflows/${flow.workflowId}`)
+      .set(as(owner))
+      .send({
+        definition: {
+          steps: [
+            {
+              id: "crear",
+              requestTemplateId: flow.createTemplateId,
+              captures: [{ variable: "creado", from: "body", path: "data.id" }],
+            },
+            {
+              id: "asigna",
+              kind: "set",
+              dependsOn: ["crear"],
+              set: { assignments: [{ variable: "thingId", value: "{{creado}}" }] },
+            },
+            { id: "leer-tras-set", requestTemplateId: flow.readTemplateId, dependsOn: ["asigna"] },
+            {
+              id: "guion",
+              kind: "script",
+              dependsOn: ["leer-tras-set", "crear"],
+              script: {
+                from: "crear",
+                code: [
+                  "const id = pm.response.json().data.id;",
+                  "pm.variables.set('scriptId', id);",
+                  "console.log('id leído', id);",
+                  "pm.test('trae un id', () => pm.expect(id).to.be.a('string'));",
+                ].join("\n"),
+              },
+            },
+            {
+              id: "reasigna",
+              kind: "set",
+              dependsOn: ["guion"],
+              set: { assignments: [{ variable: "thingId", value: "{{scriptId}}" }] },
+            },
+            { id: "leer-final", requestTemplateId: flow.readTemplateId, dependsOn: ["reasigna"] },
+            { id: "roto", kind: "script", dependsOn: ["crear"], script: { code: "throw new Error('boom');" } },
+            { id: "tras-roto", requestTemplateId: flow.readTemplateId, dependsOn: ["roto"] },
+            {
+              id: "set-mal",
+              kind: "set",
+              dependsOn: ["crear"],
+              set: { assignments: [{ variable: "otra", value: "{{noExiste}}" }] },
+            },
+          ],
+        },
+      });
+    assert.equal(saved.status, 204, JSON.stringify(saved.body));
+
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    const caseOf = (stepId: string) => run.cases.find((item: RunCaseRow) => item.scenarioId.endsWith(`:${stepId}`));
+
+    assert.equal(caseOf("asigna")?.status, "passed");
+    assert.equal(caseOf("leer-tras-set")?.status, "passed");
+    assert.equal(caseOf("guion")?.status, "passed");
+    assert.equal(caseOf("reasigna")?.status, "passed");
+    assert.equal(caseOf("leer-final")?.status, "passed");
+    assert.equal(caseOf("roto")?.status, "failed");
+    assert.equal(caseOf("tras-roto")?.status, "skipped");
+    assert.equal(caseOf("set-mal")?.status, "failed");
+    assert.equal(caseOf("guion")?.method, "SCRIPT");
+
+    const detail = await api()
+      .get(`${flow.projectBase}/runs/${run.id}/cases/${caseOf("guion")?.id}`)
+      .set(as(owner));
+    const labels = detail.body.steps[0].assertions.map((assertion: { label: string }) => assertion.label);
+    assert.ok(labels.includes("pm.test: trae un id"), JSON.stringify(labels));
+    assert.ok(labels.includes("Variables escritas"));
+    assert.ok(labels.includes("console.log"));
+    const final = await api()
+      .get(`${flow.projectBase}/runs/${run.id}/cases/${caseOf("leer-final")?.id}`)
+      .set(as(owner));
+    assert.match(final.body.steps[0].request.url, /\/things\/100$/);
+    await flow.target.stop();
+  });
+
   test("las posiciones del lienzo sobreviven a la ida y vuelta", async () => {
     const flow = await flowAgainst();
     const listed = await api().get(`${flow.projectBase}/workflows`).set(as(owner));

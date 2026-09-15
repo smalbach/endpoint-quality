@@ -493,6 +493,44 @@ describe("el nodo fetch", () => {
   });
 });
 
+describe("los nodos set y script", () => {
+  const base: WorkflowStepView[] = [{ id: "crear", requestTemplateId: "t1", position: { x: 40, y: 60 } }];
+
+  test("set cae con una fila vacía, avisa hasta tener nombre, y su variable llega a los siguientes", () => {
+    const added = addControlStep(base, "set", "crear");
+    const node = added.steps.find((step) => step.id === added.id)!;
+    expect(node.set).toEqual({ assignments: [{ variable: "", value: "" }] });
+    expect(problemsWith(added.steps).some((message) => message.includes("nombre de variable"))).toBe(true);
+
+    const named = added.steps.map((step) =>
+      step.id === added.id ? { ...step, set: { assignments: [{ variable: "total", value: "{{precio}}" }] } } : step,
+    );
+    expect(problemsWith(named)).toEqual([]);
+    const next = [...named, { id: "usa", requestTemplateId: "t1", dependsOn: [added.id] }];
+    expect(variablesFor(next, "usa", [])).toContain("total");
+    expect(toNodes(named, [], []).find((item) => item.id === added.id)).toMatchObject({
+      type: "set",
+      data: { variables: ["total"] },
+    });
+  });
+
+  test("script lee lo que se le conecta, y cortar la arista o borrar el paso lo olvida", () => {
+    const loose = addControlStep(base, "script");
+    const scriptId = loose.id;
+    expect(loose.steps.find((step) => step.id === scriptId)!.script).toEqual({ code: "" });
+    expect(problemsWith(loose.steps).some((message) => message.includes("no tiene código"))).toBe(true);
+
+    const wired = connectStep(loose.steps, "crear", scriptId);
+    expect(wired.find((step) => step.id === scriptId)!.script).toEqual({ code: "", from: "crear" });
+
+    const cut = disconnectEdges(wired, [{ source: "crear", target: scriptId }]);
+    expect(cut.find((step) => step.id === scriptId)!.script).toEqual({ code: "" });
+
+    const removed = removeStep(wired, "crear");
+    expect(removed.find((step) => step.id === scriptId)!.script).toEqual({ code: "" });
+  });
+});
+
 describe("la paleta de nodos: soltar y conectar libre", () => {
   const flow = (): WorkflowStepView[] => [{ id: "crear", requestTemplateId: "t1", position: { x: 40, y: 60 } }];
 

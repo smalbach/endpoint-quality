@@ -28,23 +28,28 @@ import {
   bindElement,
   evaluateChecks,
   holds,
+  interpolateValue,
   listAt,
   orderWorkflowSteps,
   readAuthorization,
+  unresolvedVariables,
   withinBudget,
   type ActualResponse,
+  type Assertion,
+  type FailureKind,
   type ResolvedOperation,
+  type StepRequest,
   type WorkflowStep,
 } from "@eq/runner-core";
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { ENV, type Env } from "@/shared/config/env";
-import { SCRIPT_SANDBOX, type ScriptSandboxPort } from "@/shared/scripts/script-sandbox";
+import { SCRIPT_SANDBOX, redactOutcome, type ScriptSandboxPort } from "@/shared/scripts/script-sandbox";
 import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
 import { scenarioFor, type RequestTemplateRow, type WorkflowRow } from "@/modules/workflows/domain/model";
 import { caseStatusFor, failureFor, verdictFor, type Run, type RunCase, type RunStep } from "../domain/model";
 import { RUN_QUEUE, RUN_REPOSITORY, type RunQueuePort, type RunRepositoryPort } from "../domain/ports";
-import { CaseExecutor, type ExecutedCase, type ExecutedStep } from "./case-executor";
+import { CaseExecutor, computedSeed, type ExecutedCase, type ExecutedStep } from "./case-executor";
 import { ExecutionContextFactory, type ExecutionContext } from "./execution-context";
 import {
   RunCaseFinishedEvent,
@@ -652,6 +657,89 @@ export class RunOrchestrator {
       return;
     }
 
+    // A set node sends no request: it writes variables for the steps after it, from templates over
+    // what the run already knows. Run-scoped like a capture — the stored environment is untouched.
+    // A template that names a variable nobody defined fails the node instead of writing the token.
+    if (item.step.kind === "set") {
+      const assignments = item.step.set?.assignments ?? [];
+      const seed = computedSeed();
+      const values = assignments.map((assignment) => ({
+        variable: assignment.variable,
+        value: interpolateValue(assignment.value, context.target.variables, seed),
+      }));
+      const missing = unresolvedVariables(values.map((entry) => entry.value));
+      const ok = missing.length === 0;
+      if (ok) for (const entry of values) context.target.variables[entry.variable] = entry.value;
+      await this.finishControl(run, item, state, startedAt, {
+        ok,
+        failure: ok ? null : "config",
+        // Names only: a value may carry a secret the template pulled from the environment.
+        assertions: [
+          ok
+            ? { label: "Variables asignadas", pass: true, detail: values.map((entry) => entry.variable).join(", ") }
+            : { label: "Variables del entorno", pass: false, detail: `Faltan variables: ${missing.join(", ")}` },
+        ],
+        sent: {
+          method: "SET",
+          url: "",
+          headers: {},
+          body: Object.fromEntries(assignments.map((assignment) => [assignment.variable, assignment.value])),
+        },
+      });
+      return;
+    }
+
+    // A script node runs in the same isolated sandbox as the endpoint scripts. It may read a
+    // dependency's response, and what it writes goes into the run's variables only. It fails when it
+    // throws or when one of its `pm.test` fails; its console and tests are kept, redacted, so the
+    // report shows what it did.
+    if (item.step.kind === "script") {
+      const from = item.step.script?.from;
+      const source = from ? responses.get(from) : undefined;
+      const outcome = await this.sandbox.run({
+        phase: "post",
+        code: item.step.script?.code ?? "",
+        environment: { name: null, values: { ...context.target.variables } },
+        variables: {},
+        request: { method: "", url: "", headers: {}, body: null },
+        response: source
+          ? {
+              status: source.actual.status,
+              headers: source.actual.headers,
+              body: source.actual.raw,
+              durationMs: source.durationMs,
+            }
+          : null,
+      });
+      const ok = !outcome.error && outcome.tests.every((test) => test.passed);
+      const written = [...Object.keys(outcome.environmentSet), ...Object.keys(outcome.variables)];
+      if (!outcome.error) {
+        Object.assign(context.target.variables, outcome.environmentSet, outcome.variables);
+        for (const name of outcome.environmentUnset) delete context.target.variables[name];
+      }
+      const shown = redactOutcome(outcome, [
+        ...(context.target.secrets ?? []),
+        ...(context.target.session ? [context.target.session.value] : []),
+      ]);
+      const assertions: Assertion[] = [
+        ...(shown.error ? [{ label: "Script", pass: false, detail: shown.error }] : []),
+        ...shown.tests.map((test) => ({
+          label: `pm.test: ${test.name}`,
+          pass: test.passed,
+          detail: test.message ?? (test.passed ? "Pasó" : "Falló"),
+        })),
+        ...(written.length ? [{ label: "Variables escritas", pass: true, detail: [...new Set(written)].join(", ") }] : []),
+        ...shown.logs.slice(0, 50).map((log) => ({ label: `console.${log.level}`, pass: true, detail: log.text })),
+      ];
+      await this.finishControl(run, item, state, startedAt, {
+        ok,
+        failure: ok ? null : outcome.error ? "flow" : "check",
+        assertions,
+        sent: { method: "SCRIPT", url: from ? `lee ${from}` : "", headers: {}, body: item.step.script?.code ?? "" },
+      });
+      return;
+    }
+
     // A condition over what a dependency answered. The step is skipped, not failed: «no había
     // nada que borrar» is a flow behaving correctly, and a red case would say otherwise.
     const condition = item.step.runIf;
@@ -818,6 +906,58 @@ export class RunOrchestrator {
     if (!allPassed && item.step.onError === "stop") state.stopped = true;
   }
 
+  /**
+   * Closes a control node that did something worth reading — a set, a script — with a step row, so
+   * the case detail shows what it wrote, logged and asserted, the way a request shows its response.
+   */
+  private async finishControl(
+    run: Run,
+    item: ReturnType<RunOrchestrator["prepareWorkflow"]>["items"][number],
+    state: WalkState,
+    startedAt: Date,
+    result: { ok: boolean; failure: FailureKind | null; assertions: Assertion[]; sent: ExecutedStep["sent"] },
+  ): Promise<void> {
+    const request: StepRequest = {
+      index: 0,
+      purpose: "act",
+      label: item.runCase.method,
+      operationId: "",
+      method: item.runCase.method,
+      operationPath: item.runCase.path,
+      requestPath: "",
+      expectedStatus: 0,
+      expectedShape: "",
+      auth: "none",
+      samples: 1,
+    };
+    await this.runs.saveSteps(
+      toRunSteps(item.runCase.id, [
+        {
+          request,
+          ok: result.ok,
+          failure: result.failure,
+          assertions: result.assertions,
+          actual: null,
+          latency: { samples: [], budgetMs: null },
+          durationMs: 0,
+          sent: result.sent,
+        },
+      ]),
+    );
+    const done: RunCase = {
+      ...item.runCase,
+      status: result.ok ? "passed" : "failed",
+      failure: result.failure,
+      startedAt,
+      finishedAt: this.clock.now(),
+      durationMs: 0,
+    };
+    state.passed.set(item.step.id, result.ok);
+    await this.runs.saveCase(done);
+    await this.announce(run, done);
+    if (!result.ok && item.step.onError === "stop") state.stopped = true;
+  }
+
   /** Progress, per case, so a follower sees it happening instead of a result at the end. */
   private async announce(run: Run, runCase: RunCase): Promise<void> {
     this.eventBus.publish(
@@ -929,6 +1069,14 @@ function controlCaseFields(step: WorkflowStep): { operationId: string; method: s
       return { operationId: "", method: "MERGE", path: `une ${(step.dependsOn ?? []).length}` };
     case "validate":
       return { operationId: "", method: "CHECK", path: `valida ${step.validate?.from ?? ""}` };
+    case "set":
+      return {
+        operationId: "",
+        method: "SET",
+        path: (step.set?.assignments ?? []).map((assignment) => assignment.variable).join(", "),
+      };
+    case "script":
+      return { operationId: "", method: "SCRIPT", path: step.script?.from ? `lee ${step.script.from}` : "script" };
     default:
       return null;
   }

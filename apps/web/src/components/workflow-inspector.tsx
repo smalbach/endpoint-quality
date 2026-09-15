@@ -162,6 +162,25 @@ export function WorkflowInspector({
             onChange={(next) => onSteps(replaceStep(steps, next))}
             onRemove={() => onSteps(removeStep(steps, step.id))}
           />
+        ) : step && step.kind === "set" ? (
+          <SetInspector
+            step={step}
+            variables={variablesFor(
+              steps,
+              step.id,
+              Object.keys(environments.find((item) => item.id === environmentId)?.variables ?? {}),
+            )}
+            canEdit={canEdit}
+            onChange={(next) => onSteps(replaceStep(steps, next))}
+            onRemove={() => onSteps(removeStep(steps, step.id))}
+          />
+        ) : step && step.kind === "script" ? (
+          <ScriptInspector
+            step={step}
+            canEdit={canEdit}
+            onChange={(next) => onSteps(replaceStep(steps, next))}
+            onRemove={() => onSteps(removeStep(steps, step.id))}
+          />
         ) : step && step.kind === "fetch" ? (
           <FetchInspector
             step={step}
@@ -899,6 +918,155 @@ function FetchInspector({
 
       {canEdit && (
         <Button variant="danger" className="mt-4 h-8 w-full text-xs" onClick={onRemove}>
+          Eliminar nodo
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** The set node: rows of «variable = plantilla», resolved when the node runs. */
+function SetInspector({
+  step,
+  variables,
+  canEdit,
+  onChange,
+  onRemove,
+}: {
+  step: WorkflowStepView;
+  variables: string[];
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+  onRemove: () => void;
+}) {
+  const assignments = step.set?.assignments ?? [];
+  const edit = (next: typeof assignments) => onChange({ ...step, set: { assignments: next } });
+  const listId = `set-vars-${step.id}`;
+
+  return (
+    <div>
+      <p className="text-xs font-semibold text-slate-800">Set (variables)</p>
+      <p className="mt-0.5 text-[11px] leading-5 text-slate-500">
+        Escribe variables para los pasos siguientes sin hacer ninguna petición. El valor es una plantilla:{" "}
+        <span className="font-mono">{"{{thingId}}"}</span>, <span className="font-mono">{"pedido-{{$uuid}}"}</span>. Solo
+        vale durante la corrida; el entorno guardado no cambia.
+      </p>
+      <datalist id={listId}>
+        {variables.map((name) => (
+          <option key={name} value={`{{${name}}}`} />
+        ))}
+      </datalist>
+      <div className="mt-2 space-y-2">
+        {assignments.map((assignment, index) => (
+          <div key={index} className="grid grid-cols-[1fr_auto_1.4fr_auto] items-center gap-1.5">
+            <input
+              aria-label="Variable"
+              className={`${inputClass} font-mono text-[11px]`}
+              value={assignment.variable}
+              placeholder="total"
+              disabled={!canEdit}
+              onChange={(event) =>
+                edit(assignments.map((item, position) => (position === index ? { ...item, variable: event.target.value } : item)))
+              }
+            />
+            <span className="text-xs text-slate-400">=</span>
+            <input
+              aria-label="Valor"
+              className={`${inputClass} font-mono text-[11px]`}
+              value={assignment.value}
+              placeholder="{{precio}}"
+              list={listId}
+              disabled={!canEdit}
+              onChange={(event) =>
+                edit(assignments.map((item, position) => (position === index ? { ...item, value: event.target.value } : item)))
+              }
+            />
+            {canEdit && (
+              <button
+                className="text-[11px] text-rose-600"
+                aria-label="Quitar variable"
+                onClick={() => edit(assignments.filter((_item, position) => position !== index))}
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+      {canEdit && (
+        <Button
+          variant="ghost"
+          className="mt-2 h-8 text-xs"
+          onClick={() => edit([...assignments, { variable: "", value: "" }])}
+        >
+          + Variable
+        </Button>
+      )}
+      <FailureEditor step={step} canEdit={canEdit} onChange={onChange} />
+      {canEdit && (
+        <Button variant="ghost" className="mt-3 h-8 w-full text-xs text-rose-600" onClick={onRemove}>
+          Eliminar nodo
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** The script node: which response it reads, and its code. */
+function ScriptInspector({
+  step,
+  canEdit,
+  onChange,
+  onRemove,
+}: {
+  step: WorkflowStepView;
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+  onRemove: () => void;
+}) {
+  const sources = step.dependsOn ?? [];
+  const script = step.script ?? { code: "" };
+
+  return (
+    <div>
+      <p className="text-xs font-semibold text-slate-800">Script</p>
+      <p className="mt-0.5 text-[11px] leading-5 text-slate-500">
+        JavaScript en un proceso aislado, sin red ni ficheros. Lee con <code className="font-mono">pm.response</code> y{" "}
+        <code className="font-mono">pm.variables.get</code>, escribe con <code className="font-mono">pm.variables.set</code>{" "}
+        (solo para esta corrida) y comprueba con <code className="font-mono">pm.test</code>. Falla si lanza un error o si un{" "}
+        <code className="font-mono">pm.test</code> falla. Lo que imprime queda en el informe, con los secretos ocultos.
+      </p>
+      <Field label="Lee la respuesta de">
+        <select
+          className={inputClass}
+          value={script.from ?? ""}
+          disabled={!canEdit}
+          onChange={(event) =>
+            onChange({ ...step, script: event.target.value ? { code: script.code, from: event.target.value } : { code: script.code } })
+          }
+        >
+          <option value="">Ninguna</option>
+          {sources.map((id) => (
+            <option key={id} value={id}>
+              {id}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <textarea
+        aria-label="Código del script"
+        className={`${inputClass} mt-2 h-48 font-mono text-[11px]`}
+        placeholder={
+          "const body = pm.response.json();\npm.variables.set('total', String(body.data.length));\npm.test('hay datos', () => pm.expect(body.data.length).to.be.above(0));"
+        }
+        value={script.code}
+        disabled={!canEdit}
+        spellCheck={false}
+        onChange={(event) => onChange({ ...step, script: { ...script, code: event.target.value } })}
+      />
+      <FailureEditor step={step} canEdit={canEdit} onChange={onChange} />
+      {canEdit && (
+        <Button variant="ghost" className="mt-3 h-8 w-full text-xs text-rose-600" onClick={onRemove}>
           Eliminar nodo
         </Button>
       )}
