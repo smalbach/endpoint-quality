@@ -112,6 +112,8 @@ export function duplicateStep(steps: WorkflowStepView[], stepId: string): Workfl
   const at = source.position ?? positionFor(steps.length);
   const clone: WorkflowStepView = { ...source, id, position: { x: at.x + 48, y: at.y + 48 } };
   delete clone.dependsOn;
+  // A copy has no edges, so it is on no branch either — its side is decided when it is rewired.
+  delete clone.branch;
   return [...steps, clone];
 }
 
@@ -124,19 +126,58 @@ export function duplicateStep(steps: WorkflowStepView[], stepId: string): Workfl
 export function removeStep(steps: WorkflowStepView[], stepId: string): WorkflowStepView[] {
   return steps
     .filter((step) => step.id !== stepId)
-    .map((step) =>
-      withDependencies(
+    .map((step) => {
+      const trimmed = withDependencies(
         step,
         (step.dependsOn ?? []).filter((id) => id !== stepId),
-      ),
-    );
+      );
+      // A node that hung off the removed branch is no longer on any side of it: drop the membership
+      // so it does not point at a node that is gone.
+      if (trimmed.branch?.of === stepId) {
+        const { branch: _branch, ...rest } = trimmed;
+        return rest;
+      }
+      return trimmed;
+    });
 }
 
-export function connectStep(steps: WorkflowStepView[], source: string, target: string): WorkflowStepView[] {
+export function connectStep(
+  steps: WorkflowStepView[],
+  source: string,
+  target: string,
+  handle?: string | null,
+): WorkflowStepView[] {
   if (!source || !target || source === target) return steps;
-  return steps.map((step) =>
-    step.id === target ? withDependencies(step, [...new Set([...(step.dependsOn ?? []), source])]) : step,
-  );
+  const branching = (steps.find((step) => step.id === source)?.kind ?? "request") === "branch";
+  const take = handle === "then" || handle === "else" ? handle : undefined;
+  return steps.map((step) => {
+    if (step.id !== target) return step;
+    const linked = withDependencies(step, [...new Set([...(step.dependsOn ?? []), source])]);
+    // A wire from a branch handle also records which side of it the target sits on. From an
+    // ordinary node it is a plain dependency.
+    return branching && take ? { ...linked, branch: { of: source, take } } : linked;
+  });
+}
+
+/**
+ * A standalone `If` reading `from`, dropped to its right.
+ *
+ * It carries a default condition —«the step answered 200»— so it is valid the moment it lands and
+ * the inspector only has to change it, not build it. The «sí»/«no» handles are wired to the next
+ * steps by dragging, which is what sets each of those steps' `branch`.
+ */
+export function addBranchStep(steps: WorkflowStepView[], from: string): { steps: WorkflowStepView[]; id: string } {
+  const id = nextStepId("rama", steps.map((step) => step.id));
+  const source = steps.find((step) => step.id === from);
+  const at = source?.position ?? positionFor(steps.length);
+  const node: WorkflowStepView = {
+    id,
+    kind: "branch",
+    dependsOn: [from],
+    condition: { from, check: { source: "status", operator: "equals", value: "200" } },
+    position: { x: at.x + 310, y: at.y },
+  };
+  return { steps: [...steps, node], id };
 }
 
 export function disconnectEdges(
@@ -168,7 +209,18 @@ export function replaceStep(steps: WorkflowStepView[], next: WorkflowStepView): 
 
 export function toEdges(steps: WorkflowStepView[]) {
   return steps.flatMap((step) =>
-    (step.dependsOn ?? []).map((source) => ({ id: `${source}-${step.id}`, source, target: step.id, animated: true })),
+    (step.dependsOn ?? []).map((source) => {
+      // An edge that leaves a branch leaves one of its two handles: the «sí» (then) or the «no»
+      // (else). Labelled so the path a node sits on is readable without opening it.
+      const take = step.branch?.of === source ? step.branch.take : undefined;
+      return {
+        id: `${source}-${step.id}`,
+        source,
+        target: step.id,
+        animated: true,
+        ...(take ? { sourceHandle: take, label: take === "then" ? "sí" : "no" } : {}),
+      };
+    }),
   );
 }
 
@@ -210,12 +262,22 @@ export function toNodes(
   const templateById = new Map(templates.map((template) => [template.id, template]));
   const operationById = new Map(operations.map((operation) => [operation.id, operation]));
   return steps.map((step, index) => {
+    const position = step.position ?? positionFor(index);
+    // A branch node is its own shape: no request, and two outputs (sí/no) instead of one.
+    if ((step.kind ?? "request") === "branch") {
+      return {
+        id: step.id,
+        type: "branch",
+        position,
+        data: { name: step.id, from: step.condition?.from ?? "", runStatus: runStatus?.[step.id] },
+      };
+    }
     const template = step.requestTemplateId ? templateById.get(step.requestTemplateId) : undefined;
     return {
       id: step.id,
       type: "step",
       // A flow authored over the API carries no coordinates; it still has to render.
-      position: step.position ?? positionFor(index),
+      position,
       data: {
         name: template?.name ?? "Prueba eliminada",
         expectedStatus: template?.expectedStatus ?? 0,

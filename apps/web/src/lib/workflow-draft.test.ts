@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  addBranchStep,
   addStep,
   applyPositions,
   connectStep,
@@ -394,5 +395,62 @@ describe("predecessorFor — a quién colgar una condición o un bucle", () => {
     const steps = [step("a", 0), step("b", 310), step("c", 620, ["b"])];
     // c ya depende de b; el otro candidato válido a su izquierda es a.
     expect(predecessorFor(steps, "c")).toBe("a");
+  });
+});
+
+describe("nodos de bifurcación en el lienzo", () => {
+  const flow = (): WorkflowStepView[] => [
+    { id: "crear", requestTemplateId: "t1", position: { x: 40, y: 60 } },
+  ];
+
+  test("addBranchStep suma un If que lee el paso, a su derecha", () => {
+    const { steps, id } = addBranchStep(flow(), "crear");
+    const branch = steps.find((step) => step.id === id)!;
+    expect(branch.kind).toBe("branch");
+    expect(branch.dependsOn).toEqual(["crear"]);
+    expect(branch.condition?.from).toBe("crear");
+    expect(branch.requestTemplateId).toBeUndefined();
+    expect(branch.position).toEqual({ x: 350, y: 60 });
+  });
+
+  test("conectar desde un handle del If marca la rama del destino", () => {
+    const { steps, id } = addBranchStep(flow(), "crear");
+    const withLeer = [...steps, { id: "leer", requestTemplateId: "t2" } as WorkflowStepView];
+    const wired = connectStep(withLeer, id, "leer", "then");
+    const leer = wired.find((step) => step.id === "leer")!;
+    expect(leer.dependsOn).toEqual([id]);
+    expect(leer.branch).toEqual({ of: id, take: "then" });
+  });
+
+  test("conectar desde un nodo normal no marca rama alguna", () => {
+    const wired = connectStep(
+      [...flow(), { id: "leer", requestTemplateId: "t2" } as WorkflowStepView],
+      "crear",
+      "leer",
+      "then",
+    );
+    expect(wired.find((step) => step.id === "leer")!.branch).toBeUndefined();
+  });
+
+  test("toEdges etiqueta la arista que sale de un handle del If", () => {
+    const steps: WorkflowStepView[] = [
+      { id: "crear", requestTemplateId: "t1" },
+      { id: "rama", kind: "branch", dependsOn: ["crear"], condition: { from: "crear", check: { source: "status", operator: "equals", value: "200" } } },
+      { id: "leer", requestTemplateId: "t2", dependsOn: ["rama"], branch: { of: "rama", take: "else" } },
+    ];
+    const edge = toEdges(steps).find((item) => item.target === "leer")!;
+    expect(edge.sourceHandle).toBe("else");
+    expect(edge.label).toBe("no");
+  });
+
+  test("borrar un If quita la rama que le colgaba", () => {
+    const steps: WorkflowStepView[] = [
+      { id: "crear", requestTemplateId: "t1" },
+      { id: "rama", kind: "branch", dependsOn: ["crear"], condition: { from: "crear", check: { source: "status", operator: "equals", value: "200" } } },
+      { id: "leer", requestTemplateId: "t2", dependsOn: ["rama"], branch: { of: "rama", take: "then" } },
+    ];
+    const leer = removeStep(steps, "rama").find((step) => step.id === "leer")!;
+    expect(leer.branch).toBeUndefined();
+    expect(leer.dependsOn ?? []).not.toContain("rama");
   });
 });

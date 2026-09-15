@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui";
 import { ConfirmDialog } from "@/components/overlay";
 import { cn, methodStyle } from "@/lib/format";
 import {
+  addBranchStep,
   applyPositions,
   connectStep,
   disconnectEdges,
@@ -237,7 +238,43 @@ function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
   );
 }
 
-const nodeTypes = { step: StepNode };
+type BranchNodeData = { name: string; from: string; runStatus?: CaseStatus };
+
+/** The standalone `If`: reads a step and splits the flow. A target handle on the left, and two
+ * source handles on the right — «sí» above, «no» below — that the next steps are wired to. */
+function BranchNode({ data, selected }: NodeProps<Node<BranchNodeData>>) {
+  const status = data.runStatus;
+  return (
+    <div
+      className={cn(
+        "w-52 rounded-xl border bg-white px-3 py-2 shadow-sm transition-colors",
+        status ? RUN_NODE_CLASS[status] : "border-amber-300",
+        selected && "border-slate-900 ring-2 ring-slate-200",
+      )}
+    >
+      <Handle type="target" position={Position.Left} />
+      <div className="flex items-center gap-2">
+        <span className="grid h-6 w-6 place-items-center rounded-md bg-amber-100 text-amber-700" title="Bifurcación">
+          ◇
+        </span>
+        <span className="truncate text-xs font-semibold text-slate-800">Si · {data.name}</span>
+        {status && <span className={cn("ml-auto h-2 w-2 rounded-full", RUN_DOT[status])} title={CASE_STATUS_LABEL[status]} />}
+      </div>
+      <p className="mt-1 truncate font-mono text-[10px] text-slate-500">
+        {data.from ? `lee ${data.from}` : "elige qué lee"}
+      </p>
+      {/* Two outputs. The labels sit inside; the handles are the dots React Flow wires from. */}
+      <div className="mt-2 flex flex-col gap-1 text-[10px] font-semibold">
+        <span className="self-end text-emerald-600">sí ▸</span>
+        <span className="self-end text-rose-500">no ▸</span>
+      </div>
+      <Handle id="then" type="source" position={Position.Right} style={{ top: "60%" }} />
+      <Handle id="else" type="source" position={Position.Right} style={{ top: "82%" }} />
+    </div>
+  );
+}
+
+const nodeTypes = { step: StepNode, branch: BranchNode };
 
 /**
  * The graph. Everything it changes goes back into the document through `workflow-draft`, which is
@@ -269,10 +306,10 @@ export function WorkflowCanvas({
   runStatus?: Record<string, CaseStatus>;
 }) {
   const fromDocument = useMemo(
-    () => toNodes(steps, templates, operations, runStatus) as Node<StepNodeData>[],
+    () => toNodes(steps, templates, operations, runStatus) as Node[],
     [steps, templates, operations, runStatus],
   );
-  const [nodes, setNodes] = useState<Node<StepNodeData>[]>(fromDocument);
+  const [nodes, setNodes] = useState<Node[]>(fromDocument);
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
 
@@ -314,6 +351,30 @@ export function WorkflowCanvas({
               className="flex items-center gap-1 rounded px-1.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
             >
               <span aria-hidden>＋</span> Petición
+            </button>
+            <button
+              disabled={!selectedStep || (selectedStep.kind ?? "request") === "branch"}
+              title={
+                !selectedStep
+                  ? "Elige el nodo que decide y añade un If que lo lea"
+                  : (selectedStep.kind ?? "request") === "branch"
+                    ? "Un If lee una petición, no otro If"
+                    : "Añadir un If que lea el nodo seleccionado"
+              }
+              onClick={() => {
+                if (!selectedStep) return;
+                const added = addBranchStep(steps, selectedStep.id);
+                onChange(added.steps);
+                onSelect(added.id);
+              }}
+              className={cn(
+                "flex items-center gap-1 rounded px-1.5 py-1 text-[11px] font-medium",
+                !selectedStep || (selectedStep.kind ?? "request") === "branch"
+                  ? "cursor-not-allowed text-slate-400 opacity-40"
+                  : "text-amber-700 hover:bg-amber-50",
+              )}
+            >
+              <span aria-hidden>◇</span> If
             </button>
             <span className="mx-1 h-4 w-px bg-slate-200" aria-hidden />
           </>
@@ -369,7 +430,9 @@ export function WorkflowCanvas({
               );
             }
           }}
-          onConnect={(connection: Connection) => onChange(connectStep(steps, connection.source, connection.target))}
+          onConnect={(connection: Connection) =>
+            onChange(connectStep(steps, connection.source, connection.target, connection.sourceHandle))
+          }
           onEdgesDelete={(deleted) =>
             onChange(
               disconnectEdges(

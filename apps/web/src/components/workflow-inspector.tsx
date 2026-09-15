@@ -11,6 +11,7 @@ import type {
   Environment,
   RequestTemplateView,
   StepCheckView,
+  StepConditionView,
   WorkflowCaptureView,
   WorkflowStepView,
   WorkflowView,
@@ -131,7 +132,14 @@ export function WorkflowInspector({
       </Field>
 
       <div className="mt-4 border-t border-slate-100 pt-3">
-        {step ? (
+        {step && (step.kind ?? "request") === "branch" ? (
+          <BranchInspector
+            step={step}
+            canEdit={canEdit}
+            onChange={(next) => onSteps(replaceStep(steps, next))}
+            onRemove={() => onSteps(removeStep(steps, step.id))}
+          />
+        ) : step ? (
           <StepInspector
             base={base}
             step={step}
@@ -287,6 +295,117 @@ function CaptureSuggestions({
             <p className="mt-1 text-[10px] text-slate-400">Nada nuevo que capturar en esta respuesta.</p>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The `If` node's panel: what it reads and the check that decides «sí» from «no».
+ *
+ * It sends no request, so there is nothing of the request inspector here — only the condition. The
+ * step it reads has to be one it depends on (the engine reads that node's answer), so the list is
+ * its dependencies; the two sides are wired on the canvas by dragging the «sí»/«no» handles.
+ */
+function BranchInspector({
+  step,
+  canEdit,
+  onChange,
+  onRemove,
+}: {
+  step: WorkflowStepView;
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+  onRemove: () => void;
+}) {
+  const sources = step.dependsOn ?? [];
+  const condition: StepConditionView = step.condition ?? {
+    from: sources[0] ?? "",
+    check: { source: "status", operator: "equals", value: "200" },
+  };
+  const setCheck = (change: Partial<StepCheckView>) =>
+    onChange({ ...step, condition: { ...condition, check: { ...condition.check, ...change } } });
+
+  return (
+    <div>
+      <p className="text-xs font-semibold text-slate-800">Bifurcación (If)</p>
+      <p className="mt-0.5 text-[11px] leading-5 text-slate-500">
+        Lee la respuesta de un paso anterior y parte el flujo: la salida <span className="text-emerald-600">sí</span> se
+        toma cuando la condición se cumple, la <span className="text-rose-500">no</span> cuando no. Conecta cada salida
+        al siguiente paso arrastrando desde su punto.
+      </p>
+
+      {sources.length === 0 ? (
+        <p className="mt-3 text-[11px] text-amber-700">Conéctalo a la petición que quieres leer para poder decidir.</p>
+      ) : (
+        <div className="mt-3 rounded-lg border border-slate-200 p-2">
+          <Field label="Lee el paso">
+            <select
+              className={inputClass}
+              value={condition.from}
+              disabled={!canEdit}
+              onChange={(event) => onChange({ ...step, condition: { ...condition, from: event.target.value } })}
+            >
+              {sources.map((id) => (
+                <option key={id} value={id}>
+                  {id}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Origen">
+            <select
+              className={inputClass}
+              value={condition.check.source}
+              disabled={!canEdit}
+              onChange={(event) => setCheck({ source: event.target.value as StepCheckView["source"] })}
+            >
+              {CHECK_SOURCES.map((source) => (
+                <option key={source} value={source}>
+                  {source}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <div className="grid grid-cols-[1fr_8rem_1fr] gap-2">
+            <input
+              aria-label="Ruta de la condición"
+              className={inputClass}
+              value={condition.check.path ?? ""}
+              placeholder="data.0.id"
+              disabled={!canEdit || condition.check.source === "status" || condition.check.source === "durationMs"}
+              onChange={(event) => setCheck({ path: event.target.value })}
+            />
+            <select
+              aria-label="Operador de la condición"
+              className={inputClass}
+              value={condition.check.operator}
+              disabled={!canEdit}
+              onChange={(event) => setCheck({ operator: event.target.value })}
+            >
+              {CHECK_OPERATORS.map((operator) => (
+                <option key={operator} value={operator}>
+                  {operator}
+                </option>
+              ))}
+            </select>
+            {!WITHOUT_OPERAND.includes(condition.check.operator) && (
+              <input
+                aria-label="Valor de la condición"
+                className={inputClass}
+                value={condition.check.value === undefined ? "" : String(condition.check.value)}
+                disabled={!canEdit}
+                onChange={(event) => setCheck({ value: event.target.value })}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {canEdit && (
+        <Button variant="ghost" className="mt-3 h-8 w-full text-xs text-rose-600" onClick={onRemove}>
+          Eliminar nodo
+        </Button>
       )}
     </div>
   );
