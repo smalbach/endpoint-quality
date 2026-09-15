@@ -22,6 +22,7 @@ import { RunDetailPage, RunsPage } from "@/routes/runs";
 import { SecurityRunDetailPage, SecurityRunsPage } from "@/routes/security-runs";
 import { RolesPage } from "@/routes/roles";
 import { ProjectGeneralPage, ProjectSettingsLayout } from "@/routes/project-settings";
+import { ProjectTransferPage } from "@/routes/project-transfer";
 import { NotFoundPage } from "@/routes/not-found";
 import { ForgotPasswordPage, ResetPasswordPage } from "@/routes/password-reset";
 
@@ -144,6 +145,7 @@ createRoot(document.getElementById("root")!).render(
                       <Route index element={<ProjectGeneralPage />} />
                       <Route path="contract" element={<ConfigPage />} />
                       <Route path="environments" element={<EnvironmentsPage />} />
+                      <Route path="transfer" element={<ProjectTransferPage />} />
                     </Route>
                     <Route path="environments" element={<MovedToSettings to="environments" />} />
                     <Route path="config" element={<MovedToSettings to="contract" />} />

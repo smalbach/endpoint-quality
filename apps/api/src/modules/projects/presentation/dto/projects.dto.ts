@@ -114,3 +114,10 @@ export class ImportElementsDto {
   @IsOptional() @IsArray() @ArrayMaxSize(500) @IsUUID("4", { each: true }) workflowIds?: string[];
   @IsOptional() @IsArray() @ArrayMaxSize(200) @IsUUID("4", { each: true }) environmentIds?: string[];
 }
+
+/** A project file and which of the parts it carries to bring. Its content is validated by the
+ * command, piece by piece, with the validators each editor uses — not here. */
+export class ImportProjectBundleDto {
+  @IsObject() bundle: Record<string, unknown>;
+  @IsOptional() @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) parts?: string[];
+}

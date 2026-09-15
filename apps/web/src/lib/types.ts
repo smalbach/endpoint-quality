@@ -130,4 +130,6 @@ export type {
   HistoryPageView,
   ImportPreviewView,
   ImportElementsResultView,
+  ProjectBundlePart,
+  ProjectBundleImportResultView,
 } from "@eq/contracts";

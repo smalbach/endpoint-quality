@@ -34,6 +34,9 @@ import { TemplateLibrary, type NewTemplate } from "@/components/template-library
 import { ImportRequests } from "@/components/import-requests";
 import { DatasetsPanel } from "@/components/datasets-panel";
 import { SuitesPanel } from "@/components/suites-panel";
+import { ImportOutcome, ImportProblems } from "@/components/project-transfer";
+import { bundleFileName, downloadJson, readBundle } from "@/lib/project-bundle";
+import type { ProjectBundleImportResultView } from "@/lib/types";
 import { RunSettingsDialog } from "@/components/run-settings-dialog";
 import {
   DEFAULT_RUN_SETTINGS,
@@ -212,6 +215,28 @@ export function WorkflowsPage() {
       await invalidate();
     },
   });
+  /** One flow as a file: with the requests, datasets and sub-flows it needs to run elsewhere. */
+  const exportWorkflow = useMutation({
+    mutationFn: async (flow: { id: string; name: string }) => ({
+      bundle: await api<unknown>(`${base}/export?parts=flows&workflowIds=${flow.id}`),
+      name: flow.name,
+    }),
+    onSuccess: ({ bundle, name }) => downloadJson(bundleFileName(name), bundle),
+  });
+  /** Only the flows of a file, even a whole-project one: this drawer is about flows. */
+  const importFlows = useMutation({
+    mutationFn: async (file: File) => {
+      const read = readBundle(await file.text());
+      if (!read.ok) throw new Error(read.error);
+      if (!read.file.parts.includes("flows")) throw new Error("El fichero no trae flujos.");
+      return api<ProjectBundleImportResultView>(`${base}/import-bundle`, {
+        method: "POST",
+        body: { bundle: read.file.bundle, parts: ["flows"] },
+      });
+    },
+    onSuccess: () => void invalidate(),
+  });
+
   const duplicateWorkflow = useMutation({
     mutationFn: (workflowId: string) =>
       api<{ workflowId: string }>(`${base}/workflows/${workflowId}/duplicate`, { method: "POST" }),
@@ -706,14 +731,35 @@ export function WorkflowsPage() {
                 <div className="flex items-center justify-between">
                   <p className="text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Flujos</p>
                   {canEdit && (
-                    <Button
-                      variant="ghost"
-                      className="h-7 px-2 text-xs"
-                      disabled={createWorkflow.isPending}
-                      onClick={() => setNaming(true)}
-                    >
-                      + Nuevo
-                    </Button>
+                    <span className="flex items-center gap-1">
+                      <label
+                        className={cn(
+                          "inline-flex h-7 cursor-pointer items-center rounded-md px-2 text-xs text-slate-600 hover:bg-slate-100",
+                          importFlows.isPending && "pointer-events-none opacity-50",
+                        )}
+                        title="Importar flujos desde un fichero exportado (.json)"
+                      >
+                        Importar
+                        <input
+                          type="file"
+                          accept=".json,application/json"
+                          className="sr-only"
+                          onChange={(event) => {
+                            const picked = event.target.files?.[0];
+                            event.target.value = "";
+                            if (picked) importFlows.mutate(picked);
+                          }}
+                        />
+                      </label>
+                      <Button
+                        variant="ghost"
+                        className="h-7 px-2 text-xs"
+                        disabled={createWorkflow.isPending}
+                        onClick={() => setNaming(true)}
+                      >
+                        + Nuevo
+                      </Button>
+                    </span>
                   )}
                 </div>
                 <div className="mt-2 space-y-1">
@@ -762,6 +808,15 @@ export function WorkflowsPage() {
                     >
                       Duplicar
                     </Button>
+                    <Button
+                      variant="ghost"
+                      className="h-6 px-1.5 text-[11px]"
+                      disabled={exportWorkflow.isPending}
+                      onClick={() => exportWorkflow.mutate({ id: saved.id, name: saved.name })}
+                      title="Descargar este flujo, con sus peticiones, datasets y sub-flujos, como .json"
+                    >
+                      Exportar
+                    </Button>
                     <select
                       value={saved.status}
                       disabled={patchWorkflow.isPending}
@@ -780,6 +835,11 @@ export function WorkflowsPage() {
                 {message(duplicateWorkflow.error) && (
                   <p className="mt-2 text-[11px] text-rose-700">{message(duplicateWorkflow.error)}</p>
                 )}
+                {message(exportWorkflow.error) && (
+                  <p className="mt-2 text-[11px] text-rose-700">{message(exportWorkflow.error)}</p>
+                )}
+                {importFlows.error && <ImportProblems error={importFlows.error} />}
+                {importFlows.data && <ImportOutcome result={importFlows.data} />}
                 <div className="mt-4 border-t border-slate-100 pt-3">
                   <SuitesPanel
                     suites={workflows.data?.suites ?? []}

@@ -11,7 +11,7 @@ import { authDraft, authPayload, authProblems, parseTags } from "@/lib/project-a
 import { cn, formatDate } from "@/lib/format";
 import type { ProjectSummary } from "@/lib/types";
 
-/** The three pages of a project's settings, as absolute paths. */
+/** The pages of a project's settings, as absolute paths. */
 export function settingsTabs(projectId: string | undefined) {
   if (!projectId) return [];
   const base = `/p/${projectId}/settings`;
@@ -19,6 +19,7 @@ export function settingsTabs(projectId: string | undefined) {
     { to: base, label: "General", end: true },
     { to: `${base}/contract`, label: "Contrato y configuración", end: false },
     { to: `${base}/environments`, label: "Entornos", end: false },
+    { to: `${base}/transfer`, label: "Exportar / importar", end: false },
   ];
 }
 

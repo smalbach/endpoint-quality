@@ -67,7 +67,7 @@ export const PERFORMANCE_SERVICES = [PerformanceProgressStream, PerformanceExecu
     ...PERFORMANCE_COMMAND_HANDLERS,
     ...PERFORMANCE_QUERY_HANDLERS,
   ],
-  exports: [PERFORMANCE_RUN_REPOSITORY],
+  exports: [PERFORMANCE_RUN_REPOSITORY, PERFORMANCE_PLAN_REPOSITORY],
 })
 export class PerformanceModule implements OnApplicationBootstrap {
   constructor(private readonly executor: PerformanceExecutor) {}

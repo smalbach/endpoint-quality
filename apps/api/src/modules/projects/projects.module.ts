@@ -15,6 +15,10 @@ import { TypeOrmProjectRepository } from "./infrastructure/persistence/typeorm-p
 import { CreateProjectHandler } from "./application/commands/create-project";
 import { CopyFromProjectHandler } from "./application/commands/copy-from-project";
 import { ImportElementsHandler } from "./application/commands/import-elements";
+import { ImportProjectBundleHandler } from "./application/commands/import-project-bundle";
+import { ExportProjectHandler } from "./application/queries/export-project";
+import { RolesModule } from "@/modules/roles/roles.module";
+import { PerformanceModule } from "@/modules/performance/performance.module";
 import { GetImportPreviewHandler } from "./application/queries/import-preview";
 import { SetProjectArchivedHandler, UpdateProjectHandler } from "./application/commands/update-project";
 import { DeleteProjectHandler } from "./application/commands/delete-project";
@@ -29,8 +33,9 @@ export const PROJECT_COMMAND_HANDLERS = [
   DeleteProjectHandler,
   CopyFromProjectHandler,
   ImportElementsHandler,
+  ImportProjectBundleHandler,
 ];
-export const PROJECT_QUERY_HANDLERS = [ListProjectsHandler, GetProjectHandler, GetImportPreviewHandler];
+export const PROJECT_QUERY_HANDLERS = [ListProjectsHandler, GetProjectHandler, GetImportPreviewHandler, ExportProjectHandler];
 export const PROJECT_ADAPTERS = [{ provide: PROJECT_REPOSITORY, useClass: TypeOrmProjectRepository }];
 
 /**
@@ -50,6 +55,9 @@ export const PROJECT_ADAPTERS = [{ provide: PROJECT_REPOSITORY, useClass: TypeOr
     forwardRef(() => WorkflowsModule),
     forwardRef(() => EnvironmentsModule),
     forwardRef(() => EndpointsModule),
+    // Exporting and importing a project file reads and writes its roles and performance plans too.
+    forwardRef(() => RolesModule),
+    forwardRef(() => PerformanceModule),
     // The project list shows the health of each project's latest run.
     forwardRef(() => RunsModule),
     AuthModule,

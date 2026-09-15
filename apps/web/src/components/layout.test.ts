@@ -67,6 +67,7 @@ describe("las pestañas de settings", () => {
       `/p/${ID}/settings`,
       `/p/${ID}/settings/contract`,
       `/p/${ID}/settings/environments`,
+      `/p/${ID}/settings/transfer`,
     ]);
   });
 });

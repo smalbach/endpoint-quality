@@ -1312,6 +1312,30 @@ export type ImportElementsResultView = {
   skipped: { what: string; detail: string }[];
 };
 
+// ---------------------------------------------------------------------------------------------
+// Export / import a project as a file
+// ---------------------------------------------------------------------------------------------
+
+/** The pieces a project file can carry. Exporting picks some; importing picks among those present. */
+export type ProjectBundlePart = "settings" | "config" | "endpoints" | "roles" | "flows" | "environments" | "performance";
+
+/** What an import wrote, and what it deliberately left out (secrets, duplicates, missing targets). */
+export type ProjectBundleImportResultView = {
+  parts: ProjectBundlePart[];
+  settings: boolean;
+  sections: string[];
+  endpoints: number;
+  roles: number;
+  permissions: number;
+  requestTemplates: number;
+  workflows: number;
+  datasets: number;
+  suites: number;
+  environments: number;
+  performancePlans: number;
+  skipped: { what: string; detail: string }[];
+};
+
 export type Member = MemberOf<string>;
 export type PendingInvitation = PendingInvitationOf<string>;
 export type MembersView = MembersViewOf<string>;

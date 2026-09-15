@@ -29,6 +29,8 @@ import { CreateProjectCommand } from "../application/commands/create-project";
 import { CopyFromProjectCommand } from "../application/commands/copy-from-project";
 import { ImportElementsCommand } from "../application/commands/import-elements";
 import { GetImportPreviewQuery } from "../application/queries/import-preview";
+import { ExportProjectQuery } from "../application/queries/export-project";
+import { ImportProjectBundleCommand } from "../application/commands/import-project-bundle";
 import { SetProjectArchivedCommand, UpdateProjectCommand } from "../application/commands/update-project";
 import { GetProjectQuery, ListProjectsQuery } from "../application/queries/list-projects";
 import {
@@ -41,6 +43,7 @@ import { GetOperationsQuery, ListSpecVersionsQuery } from "@/modules/specs/appli
 import {
   CopyFromProjectDto,
   ImportElementsDto,
+  ImportProjectBundleDto,
   ArchiveProjectDto,
   CreateProjectDto,
   ImportSpecDto,
@@ -78,6 +81,13 @@ function toSource(dto: SpecSourceDto | undefined): SpecSourceInput | undefined {
     ? { kind: "upload", filename: dto.filename ?? "openapi", raw: dto.raw }
     : { kind: "inline", raw: dto.raw };
 }
+
+/** `?parts=flows,roles` as a list; absent or empty is none given. */
+const listParam = (value: string | undefined): string[] =>
+  (value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 
 @Controller("orgs/:organizationId/projects")
 @UseGuards(OrgRoleGuard)
@@ -266,6 +276,35 @@ export class ProjectsController {
         },
         actorId(principal),
       ),
+    );
+  }
+
+  /**
+   * The project as a JSON file (see `project-bundle.ts`): no credential and no secret value in it.
+   * `editor`, like importing: the file carries scripts and headers somebody may not want a viewer
+   * to walk away with in one click.
+   */
+  @Get(":projectId/export")
+  @RequireRole("editor")
+  async exportProject(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Query("parts") parts?: string,
+    @Query("workflowIds") workflowIds?: string,
+  ) {
+    return this.queryBus.execute(new ExportProjectQuery(organizationId, projectId, listParam(parts), listParam(workflowIds)));
+  }
+
+  @Post(":projectId/import-bundle")
+  @RequireRole("editor")
+  async importBundle(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Body() body: ImportProjectBundleDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.commandBus.execute(
+      new ImportProjectBundleCommand(organizationId, projectId, body.bundle, body.parts ?? [], actorId(principal)),
     );
   }
 
