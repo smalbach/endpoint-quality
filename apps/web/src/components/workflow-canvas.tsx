@@ -572,7 +572,14 @@ export function WorkflowCanvas({
     setFocusId(null);
   }, [focusId, flow, nodes]);
 
-  const edges: Edge[] = toEdges(steps);
+  // The edges are rebuilt from the document, so React Flow cannot keep which one is selected: it
+  // reports the click through onEdgesChange and the delete key only removes edges marked selected.
+  // Without keeping that here, Backspace/Delete did nothing on a clicked edge.
+  const [selectedEdges, setSelectedEdges] = useState<ReadonlySet<string>>(new Set());
+  const edges: Edge[] = useMemo(
+    () => toEdges(steps).map((edge) => (selectedEdges.has(edge.id) ? { ...edge, selected: true } : edge)),
+    [steps, selectedEdges],
+  );
   const menuStep = menu ? steps.find((step) => step.id === menu.id) : undefined;
   // The node a control-node add hangs off, for convenience: whichever one ReactFlow has selected.
   const selectedId = nodes.find((node) => node.selected)?.id;
@@ -624,6 +631,18 @@ export function WorkflowCanvas({
           }}
           onConnect={(connection: Connection) =>
             onChange(connectStep(steps, connection.source, connection.target, connection.sourceHandle))
+          }
+          onEdgesChange={(changes) =>
+            setSelectedEdges((current) => {
+              const next = new Set(current);
+              for (const change of changes) {
+                if (change.type === "select") {
+                  if (change.selected) next.add(change.id);
+                  else next.delete(change.id);
+                } else if (change.type === "remove") next.delete(change.id);
+              }
+              return next;
+            })
           }
           onEdgesDelete={(deleted) =>
             onChange(
