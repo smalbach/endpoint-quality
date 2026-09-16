@@ -20,6 +20,7 @@ import {
   UpdateRequestTemplateHandler,
 } from "./application/commands/manage-request-template";
 import { ImportRequestTemplatesHandler } from "./application/commands/import-request-templates";
+import { ImportPostmanFlowsHandler } from "./application/commands/import-postman-flows";
 import {
   CreateWorkflowHandler,
   DeleteWorkflowHandler,
@@ -41,6 +42,7 @@ export const WORKFLOW_COMMAND_HANDLERS = [
   UpdateRequestTemplateHandler,
   DeleteRequestTemplateHandler,
   ImportRequestTemplatesHandler,
+  ImportPostmanFlowsHandler,
   CreateWorkflowHandler,
   UpdateWorkflowHandler,
   DeleteWorkflowHandler,

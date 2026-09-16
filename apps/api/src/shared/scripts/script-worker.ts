@@ -117,8 +117,44 @@ function prelude(global: any): void {
       locals[name] = text(value);
       localSet[name] = locals[name];
     },
+    /**
+     * Forgets a request-scoped name, and **only** that.
+     *
+     * `pm.environment.unset` reaches the stored environment; this one deliberately does not, which
+     * is the difference between the two stores. The cost is that a name this clears is still known
+     * to later steps of the same run — the honest price of not letting an imported cleanup script
+     * empty a variable somebody's environment actually holds.
+     */
+    unset: (key: any) => {
+      const name = variableName(key);
+      delete locals[name];
+      delete localSet[name];
+    },
     toObject: () => assign({}, values, locals),
   });
+
+  /**
+   * A read-only header bag that answers both ways.
+   *
+   * Postman's own is a `HeaderList` with `.get(name)`, and a collection written against it — every
+   * collection that asserts a `Content-Type` — calls that method. A frozen plain object is what
+   * reads better for everything else (`headers["content-type"]`), and a script that had to know
+   * which of the two this is would be a script that only runs here. Both, then: the map's own keys
+   * plus `get`/`has`, case-insensitive, because that is what an HTTP header name is.
+   */
+  const readableHeaders = (map: Record<string, string>) => {
+    const find = (key: any) => keys(map).find((name) => name.toLowerCase() === String(key).toLowerCase());
+    return freeze(
+      assign({}, map, {
+        get: (key: any) => {
+          const found = find(key);
+          return found === undefined ? undefined : map[found];
+        },
+        has: (key: any) => find(key) !== undefined,
+        toObject: () => assign({}, map),
+      }),
+    );
+  };
 
   const findHeader = (key: any) => keys(headers).find((name) => name.toLowerCase() === String(key).toLowerCase());
   const headerEdit = (header: any): [string, string] => {
@@ -153,9 +189,41 @@ function prelude(global: any): void {
     toObject: () => assign({}, headers),
   });
 
+  /**
+   * The URL as the string it is, plus the `query` a collection reads off it.
+   *
+   * `pm.request.url` is a string here and has to stay one: it is interpolated, logged and compared
+   * as text all over. Postman's is an object with a parsed `query`, and the assertion people write
+   * with it — «`links.self` echoes the parameters that were sent» — is one of the most common
+   * things in a generated collection. A `String` object carries both: it still behaves as its text
+   * everywhere, and it answers `.query` with the `{ key, value }` rows Postman would give.
+   */
+  const urlOf = (raw: string) => {
+    const url: any = new String(raw);
+    const cut = raw.indexOf("?");
+    const search = cut === -1 ? "" : raw.slice(cut + 1).split("#")[0];
+    url.query = freeze(
+      search
+        ? search
+            .split("&")
+            .filter((pair: string) => pair)
+            .map((pair: string) => {
+              const equals = pair.indexOf("=");
+              const name = equals === -1 ? pair : pair.slice(0, equals);
+              const value = equals === -1 ? "" : pair.slice(equals + 1);
+              // `disabled` is always false: a row Postman had switched off never reached the URL,
+              // so what is here is what was sent — which is the question the assertion asks.
+              return freeze({ key: name, value, disabled: false });
+            })
+        : [],
+    );
+    url.getQueryString = () => search;
+    return freeze(url);
+  };
+
   const request = freeze({
     method: input.request.method,
-    url: input.request.url,
+    url: urlOf(String(input.request.url ?? "")),
     body: input.request.body,
     headers: headerList,
   });
@@ -173,7 +241,7 @@ function prelude(global: any): void {
     );
   };
 
-  const chain = (actual: any, negate: boolean): any => {
+  const chain = (actual: any, negate: boolean, quantifier: "all" | "any" = "all"): any => {
     const api: any = {};
     const check = (ok: boolean, message: string) => {
       if (ok === negate) throw new AssertionError(`${negate ? "no se esperaba" : "se esperaba"} ${message}`);
@@ -198,7 +266,12 @@ function prelude(global: any): void {
       "also",
     ];
     for (const word of words) Object.defineProperty(api, word, { get: () => api });
-    Object.defineProperty(api, "not", { get: () => chain(actual, !negate) });
+    Object.defineProperty(api, "not", { get: () => chain(actual, !negate, quantifier) });
+    // `all` and `any` are what `keys` below reads: `to.have.all.keys(a, b)` is «exactamente esas»
+    // and `to.have.any.keys(a, b)` is «al menos una». Two words that mean opposite assertions, so
+    // they cannot be noise — a chain that ignored them would turn one into the other.
+    Object.defineProperty(api, "all", { get: () => chain(actual, negate, "all") });
+    Object.defineProperty(api, "any", { get: () => chain(actual, negate, "any") });
     const getters: [string, () => boolean, string][] = [
       ["true", () => actual === true, "true"],
       ["false", () => actual === false, "false"],
@@ -246,6 +319,18 @@ function prelude(global: any): void {
       const has = actual !== null && actual !== undefined && Object.prototype.hasOwnProperty.call(Object(actual), name);
       const ok = value.length ? has && deepEqual(actual[name], value[0]) : has;
       return check(ok, `la propiedad «${String(name)}»${value.length ? ` con ${compact(value[0])}` : ""}`);
+    };
+    api.keys = api.key = (...expected: any[]) => {
+      const wanted = (expected.length === 1 && Array.isArray(expected[0]) ? expected[0] : expected).map(String);
+      const present = actual !== null && typeof actual === "object" ? keys(actual) : [];
+      const ok =
+        quantifier === "any"
+          ? wanted.some((name) => present.indexOf(name) !== -1)
+          : wanted.every((name) => present.indexOf(name) !== -1) && present.length === wanted.length;
+      return check(
+        ok,
+        `${quantifier === "any" ? "alguna de las claves" : "exactamente las claves"} ${compact(wanted)} y llegó ${compact(present)}`,
+      );
     };
     api.lengthOf = (length: any) =>
       check(actual?.length === length, `longitud ${String(length)} y llegó ${String(actual?.length)}`);
@@ -311,7 +396,7 @@ function prelude(global: any): void {
         status: raw.status,
         statusCode: raw.status,
         responseTime: raw.durationMs,
-        headers: freeze(assign({}, raw.headers)),
+        headers: readableHeaders(raw.headers),
         text: () => raw.body,
         json: () => {
           try {
@@ -328,7 +413,7 @@ function prelude(global: any): void {
     status: 0,
     statusCode: 0,
     responseTime: 0,
-    headers: freeze({}),
+    headers: readableHeaders({}),
     text: noResponse("text()"),
     json: noResponse("json()"),
     to: responseAssertions,
@@ -387,6 +472,16 @@ function prelude(global: any): void {
   const pm = freeze({
     environment,
     variables,
+    // Postman keeps four stores — environment, collection, globals, request-scoped — and a run of
+    // this engine has **one** flat map of variables, which is the whole reason `{{name}}` resolves
+    // the same everywhere. So the two stores a collection reaches for are the request-scoped one:
+    // `get` already falls back to what the run knows, and `set` writes where a later step reads.
+    //
+    // Not aliases of `environment`, deliberately: in an endpoint script `pm.environment.set`
+    // *persists* to the stored environment, and a collection variable is not something Postman ever
+    // wrote there. A script that filled forty of them would otherwise leave forty rows behind.
+    collectionVariables: variables,
+    globals: variables,
     request,
     response: response ?? emptyResponse,
     test,

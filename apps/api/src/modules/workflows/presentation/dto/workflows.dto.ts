@@ -82,6 +82,23 @@ export class ImportRequestTemplatesDto {
   @IsString() @MinLength(1) @MaxLength(4_000_000) text: string;
 }
 
+/**
+ * A Postman collection, as the flows its folders describe.
+ *
+ * The same ceiling as the saved-request import and for the same reason: a collection of two hundred
+ * requests is a megabyte of JSON, and refusing it would make the feature useless for exactly the
+ * collections worth importing.
+ *
+ * `flows` narrows the import to the folders named in it — the flow names the reader derives, which
+ * are the top-level folder names plus the collection's own for the requests at its root. Absent
+ * means every one of them.
+ */
+export class ImportPostmanFlowsDto {
+  @IsString() @MinLength(1) @MaxLength(4_000_000) text: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(100) @IsString({ each: true }) @MaxLength(120, { each: true })
+  flows?: string[];
+}
+
 export class CreateWorkflowDto {
   @IsString() @MinLength(1) @MaxLength(120) name: string;
   @IsOptional() @IsString() @MaxLength(500) description?: string | null;

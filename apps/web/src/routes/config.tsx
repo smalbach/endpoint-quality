@@ -7,29 +7,11 @@ import { Badge, Button, Card, Field, inputClass } from "@/components/ui";
 import { SECTION_EDITORS } from "@/components/config-editors";
 import { CopyFromProject } from "@/components/copy-from-project";
 import { ImportElements } from "@/components/import-elements";
+import { ImportPostman } from "@/components/import-postman";
+import { SECTION_GROUPS, SECTION_GUIDE } from "@/lib/config-sections";
 import { unchanged } from "@/lib/config-draft";
-import { cn, formatDate } from "@/lib/format";
+import { formatDate } from "@/lib/format";
 import type { ConfigView, ProjectSummary } from "@/lib/types";
-
-const SECTION_HELP: Record<string, string> = {
-  parameters:
-    "Los valores con los que se ejercita cada filtro, y qué identificador usa un caso cuando quiere que el recurso exista o que no exista.",
-  scenarios:
-    "Los casos que solo aparecen cuando la operación acepta un conjunto de parámetros, y las operaciones que necesitan un tratamiento propio.",
-  bodies:
-    "Los payloads por operación. No se pueden derivar del contrato: tienen que respetar las claves ajenas y esquivar las naturales que ya existen.",
-  authorization: "Cómo se genera la matriz 401/403 a partir de lo que el contrato declara.",
-  access:
-    "Quién puede llegar a qué. Es lo único de aquí que el contrato no puede decir: declara que 403 es una respuesta posible, nunca a quién.",
-  budgets:
-    "Los objetivos de latencia, en orden. Gana la primera regla que casa; una operación que no casa con ninguna no recibe ninguna aserción.",
-  envelope: "Qué envelope se espera cuando el documento en vivo no declara schema para ese estado.",
-  implemented:
-    "Qué operaciones enruta la API hoy. Es un hecho sobre el código, no sobre el contrato: ningún schema puede derivarlo.",
-  labels:
-    "Las palabras del equipo sobre cada operación, al lado de las del contrato. Sirven para lanzar una corrida por ellas.",
-  text: "El texto de los casos generados.",
-};
 
 /**
  * Importing a contract and editing the ten configuration sections.
@@ -84,6 +66,11 @@ export function ConfigPage() {
         onImported={() => queryClient.invalidateQueries()}
       />
 
+      {/* Justo debajo del contrato, porque responde a la misma pregunta —«¿de dónde sale lo que
+          este proyecto prueba?»— y porque para la mayoría de los equipos la respuesta honesta no
+          es un OpenAPI: es la colección de Postman que ya usan. */}
+      <ImportPostman base={base} disabled={!canEdit} onImported={() => queryClient.invalidateQueries()} />
+
       {/* `access` is edited from Roles, its own section of the project: one place to change it. */}
       <p className="px-1 text-[11px] text-slate-500">
         Los permisos por rol se editan en{" "}
@@ -92,21 +79,74 @@ export function ConfigPage() {
         </Link>
         .
       </p>
+
       {config.data &&
-        Object.entries(config.data.sections)
-          .filter(([section]) => section !== "access")
-          .map(([section, value]) => (
-            <SectionEditor
-              key={section}
-              base={base}
-              section={section}
-              data={value}
-              disabled={!canEdit}
-              operationIds={operationIds.data ?? []}
-              onSaved={() => queryClient.invalidateQueries({ queryKey: ["config", projectId] })}
-            />
-          ))}
+        SECTION_GROUPS.map((group) => (
+          <SectionGroup
+            key={group.id}
+            group={group}
+            sections={config.data.sections as Record<string, ConfigView["sections"][string]>}
+            base={base}
+            disabled={!canEdit}
+            operationIds={operationIds.data ?? []}
+            onSaved={() => queryClient.invalidateQueries({ queryKey: ["config", projectId] })}
+          />
+        ))}
     </div>
+  );
+}
+
+/**
+ * Un grupo de secciones, con su título y su razón de ser.
+ *
+ * El grupo avanzado empieza plegado: nueve acordeones idénticos no se leen, se ignoran. Plegado
+ * solo mientras nadie haya configurado nada dentro — una decisión tomada tiene que verse sin
+ * buscarla, así que basta con que una sección esté configurada para que el grupo se abra.
+ */
+function SectionGroup({
+  group,
+  sections,
+  base,
+  disabled,
+  operationIds,
+  onSaved,
+}: {
+  group: (typeof SECTION_GROUPS)[number];
+  sections: Record<string, ConfigView["sections"][string]>;
+  base: string;
+  disabled: boolean;
+  operationIds: string[];
+  onSaved: () => void;
+}) {
+  const present = group.sections.filter((section) => sections[section]);
+  const touched = present.filter((section) => sections[section].configured);
+  const [shown, setShown] = useState(!group.advanced || touched.length > 0);
+  if (!present.length) return null;
+
+  return (
+    <section className="space-y-2">
+      <div className="flex flex-wrap items-baseline gap-2 px-1 pt-2">
+        <h2 className="text-sm font-semibold text-slate-900">{group.title}</h2>
+        <p className="text-[11px] text-slate-500">{group.intro}</p>
+        {group.advanced && !shown && (
+          <button className="text-[11px] font-medium text-slate-700 underline" onClick={() => setShown(true)}>
+            Mostrar las {present.length}
+          </button>
+        )}
+      </div>
+      {shown &&
+        present.map((section) => (
+          <SectionEditor
+            key={section}
+            base={base}
+            section={section}
+            data={sections[section]}
+            disabled={disabled}
+            operationIds={operationIds}
+            onSaved={onSaved}
+          />
+        ))}
+    </section>
   );
 }
 
@@ -299,6 +339,10 @@ export function SectionEditor({
   derivedRoles?: boolean;
 }) {
   const Editor = SECTION_EDITORS[section];
+  const guide = SECTION_GUIDE[section];
+  /** El nombre en castellano manda; `title` lo sobreescribe donde la sección se edita fuera de
+   * esta pantalla y allí significa otra cosa — la matriz de Roles, por ejemplo. */
+  const heading = title ?? guide?.title ?? section;
   const [open, setOpen] = useState(defaultOpen);
   const [asJson, setAsJson] = useState(!Editor);
   const [draft, setDraft] = useState<Record<string, unknown>>(() => (data.data ?? {}) as Record<string, unknown>);
@@ -356,32 +400,55 @@ export function SectionEditor({
   return (
     <Card className="overflow-hidden">
       <button
-        className="flex w-full items-center gap-3 px-4 py-3 text-left"
+        className="flex w-full items-start gap-3 px-4 py-3 text-left"
         onClick={() => setOpen((current) => !current)}
       >
-        {title && <span className="text-sm font-semibold text-slate-900">{title}</span>}
-        <span className={cn("font-mono text-slate-900", title ? "text-[11px] text-slate-400" : "text-sm")}>
-          {section}
-        </span>
-        {/* "Configured" and "uses the defaults" are different states: the first is a decision, the
-            second is a prompt to make one. */}
-        <Badge
-          className={
-            data.configured
-              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-              : "border-slate-200 bg-slate-50 text-slate-500"
-          }
-        >
-          {data.configured ? "configurada" : "por defecto"}
-        </Badge>
-        {data.updatedAt && <span className="text-[11px] text-slate-400">{formatDate(data.updatedAt)}</span>}
-        <span className="ml-auto text-xs text-slate-400">{open ? "−" : "+"}</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-slate-900">{heading}</span>
+            {/* La clave sigue a la vista: es la que viaja en el export y en la API, y la que hay
+                que nombrar para pedir ayuda sobre esta sección. */}
+            <span className="font-mono text-[11px] text-slate-400">{section}</span>
+            {/* "Configured" and "uses the defaults" are different states: the first is a decision, the
+                second is a prompt to make one. */}
+            <Badge
+              className={
+                data.configured
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-slate-200 bg-slate-50 text-slate-500"
+              }
+            >
+              {data.configured ? "configurada" : "por defecto"}
+            </Badge>
+            {data.updatedAt && <span className="text-[11px] text-slate-400">{formatDate(data.updatedAt)}</span>}
+          </div>
+          {guide && <p className="mt-1 text-[11px] leading-5 text-slate-500">{guide.summary}</p>}
+        </div>
+        <span className="shrink-0 pt-1 text-xs text-slate-400">{open ? "−" : "+"}</span>
       </button>
 
       {open && (
         <div className="border-t border-slate-100 px-4 py-3">
           <div className="flex items-start gap-3">
-            <p className="flex-1 text-[11px] leading-5 text-slate-500">{SECTION_HELP[section]}</p>
+            {guide ? (
+              <dl className="flex-1 space-y-1.5 rounded-xl bg-slate-50 px-3 py-2 text-[11px] leading-5">
+                {(
+                  [
+                    ["Qué es", guide.what],
+                    ["Cuándo tocarlo", guide.when],
+                    ["Si no lo tocas", guide.fallback],
+                    ["Cómo suele quedar", guide.recommended],
+                  ] as const
+                ).map(([term, detail]) => (
+                  <div key={term} className="sm:grid sm:grid-cols-[8.5rem_1fr] sm:gap-3">
+                    <dt className="font-medium text-slate-700">{term}</dt>
+                    <dd className="text-slate-500">{detail}</dd>
+                  </div>
+                ))}
+              </dl>
+            ) : (
+              <div className="flex-1" />
+            )}
             {Editor && (
               <Button
                 variant="ghost"

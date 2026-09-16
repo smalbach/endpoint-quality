@@ -324,26 +324,55 @@ function fromKeyValues(list: unknown): { enabled: Record<string, string>; disabl
 }
 
 /**
- * A Postman collection, v2.1.
+ * A Postman collection, v2.1, read whole: its folders, its requests and the scripts beside them.
  *
  * The items nest: a collection is folders of folders of requests, and the depth is whatever its
- * author felt like. Walked rather than flattened by a fixed number of levels, and the folder names
- * are joined into the request's name — `Pedidos / Alta / Crear` is what makes two requests both
- * called «Crear» tellable apart in a list of forty.
+ * author felt like. Walked rather than flattened by a fixed number of levels, and the folder trail
+ * is kept — both because it names the request (`Pedidos / Alta / Crear` is what makes two requests
+ * both called «Crear» tellable apart in a list of forty) and because a folder is the closest thing
+ * a collection has to a flow.
+ *
+ * The `event` blocks come too. They are the point of the whole format for anybody who has written
+ * tests in it: a `prerequest` that fills a variable and a `test` that asserts over the answer are
+ * what turns a pile of requests into a scenario, and a reader that dropped them would leave the
+ * only part nobody can retype.
  *
  * Postman's own `{{variables}}` are left exactly as they are. They are the same syntax this engine
  * interpolates, so a collection written against `{{baseUrl}}` and `{{token}}` arrives working, and
  * rewriting them would break the one thing that already lines up.
  */
-export function parsePostmanCollection(text: string): ImportedRequests {
-  const document = asRecord(safeJson(text));
-  if (!document) return { requests: [], skipped: [{ name: "", method: "", url: "", reason: "el fichero no es JSON" }] };
+export type PostmanItem = {
+  /** The folders it hangs under, outermost first. Empty for a request at the root. */
+  trail: string[];
+  /** What the collection calls it, without its trail. */
+  name: string;
+  /** The trail and the name joined — the label every importer uses. */
+  label: string;
+  request: ParsedRequest;
+  /** The `prerequest` script's code, or empty. */
+  prerequest: string;
+  /** The `test` script's code, or empty. */
+  test: string;
+};
 
-  const requests: ParsedRequest[] = [];
+export type PostmanCollection = {
+  name: string;
+  items: PostmanItem[];
+  skipped: SkippedRequest[];
+  /** The scripts the collection itself declares, which Postman runs around **every** request. */
+  scripts: { prerequest: string; test: string };
+};
+
+/** `null` when the text is not JSON, which is the one thing a reader cannot work around. */
+export function readPostmanCollection(text: string): PostmanCollection | null {
+  const document = asRecord(safeJson(text));
+  if (!document) return null;
+
+  const items: PostmanItem[] = [];
   const skipped: SkippedRequest[] = [];
 
-  const walk = (items: unknown[], trail: string[]) => {
-    for (const entry of items) {
+  const walk = (entries: unknown[], trail: string[]) => {
+    for (const entry of entries) {
       const item = asRecord(entry);
       if (!item) continue;
       const name = asString(item.name);
@@ -360,18 +389,57 @@ export function parsePostmanCollection(text: string): ImportedRequests {
         continue;
       }
       const headers = fromKeyValues(request.header);
-      requests.push({
-        name: label,
-        method: (asString(request.method) || "GET").toUpperCase(),
-        url,
-        headers: headers.enabled,
-        body: postmanBody(request.body, headers.enabled),
+      items.push({
+        trail,
+        name: name || "Sin nombre",
+        label,
+        request: {
+          name: label,
+          method: (asString(request.method) || "GET").toUpperCase(),
+          url,
+          headers: headers.enabled,
+          body: postmanBody(request.body, headers.enabled),
+        },
+        prerequest: eventScript(item.event, "prerequest"),
+        test: eventScript(item.event, "test"),
       });
     }
   };
 
   walk(asArray(document.item), []);
-  return { requests, skipped };
+  return {
+    name: asString(asRecord(document.info)?.name),
+    items,
+    skipped,
+    scripts: { prerequest: eventScript(document.event, "prerequest"), test: eventScript(document.event, "test") },
+  };
+}
+
+/**
+ * The code of one `event` of an item.
+ *
+ * `script.exec` is an array of lines, which is how Postman stores every script it wrote itself; a
+ * string is what a hand-edited file or an older export carries. `src` is an *external* script — a
+ * URL Postman fetches — and is deliberately not read: following it would mean this importer making
+ * a request on behalf of a pasted file.
+ */
+function eventScript(events: unknown, listen: string): string {
+  for (const entry of asArray(events)) {
+    const event = asRecord(entry);
+    if (!event || asString(event.listen) !== listen || event.disabled === true) continue;
+    const exec = asRecord(event.script)?.exec;
+    const code = Array.isArray(exec) ? exec.map(asString).join("\n") : asString(exec);
+    if (code.trim()) return code;
+  }
+  return "";
+}
+
+/** The requests of a collection, which is all the importers of saved requests and of endpoints
+ * need: the folders and the scripts are the flow importer's business. */
+export function parsePostmanCollection(text: string): ImportedRequests {
+  const read = readPostmanCollection(text);
+  if (!read) return { requests: [], skipped: [{ name: "", method: "", url: "", reason: "el fichero no es JSON" }] };
+  return { requests: read.items.map((item) => item.request), skipped: read.skipped };
 }
 
 /** Postman stores a URL either as the string somebody typed or as the parsed object it made of

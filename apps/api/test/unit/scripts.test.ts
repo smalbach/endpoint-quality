@@ -119,6 +119,106 @@ describe("el proceso del script", () => {
   });
 });
 
+/**
+ * Lo que una colección de Postman de verdad usa, y que el sandbox tenía que aprender.
+ *
+ * Sale de pasar una colección generada —53 peticiones, 54 scripts— por el sandbox y mirar cuáles
+ * reventaban. Ninguna de estas cinco cosas es exótica: son las que escribe cualquiera que haya
+ * escrito tests en Postman, y sin ellas un script importado no falla por lo que afirma, sino con un
+ * `TypeError` a la primera línea. **Un rojo que no es sobre el destino es peor que no importar.**
+ */
+describe("la superficie que una colección de Postman espera", () => {
+  const post = (code: string, response: Partial<ScriptInput["response"]> = {}) =>
+    sandbox.run(
+      input(code, {
+        phase: "post",
+        request: { method: "GET", url: "/v1/products?code_sap=MAT-1&limit=20", headers: {}, body: null },
+        response: {
+          status: 200,
+          headers: { "content-type": "application/problem+json" },
+          body: JSON.stringify({ data: [{ id: 7 }], meta: { next_cursor: "c1" }, links: { self: "/v1/products" } }),
+          durationMs: 9,
+          ...response,
+        },
+      }),
+    );
+
+  test("collectionVariables y globals son el mismo almacén de la corrida que pm.variables", async () => {
+    const outcome = await post(
+      'pm.collectionVariables.set("uno", "1"); pm.globals.set("dos", "2"); pm.variables.set("tres", pm.collectionVariables.get("uno"));',
+    );
+    assert.equal(outcome.error, null);
+    assert.deepEqual(outcome.variables, { uno: "1", dos: "2", tres: "1" });
+    // Y **no** en el entorno guardado: una variable de colección nunca estuvo ahí, y un script de
+    // endpoint que las escribiera dejaría cuarenta filas detrás.
+    assert.deepEqual(outcome.environmentSet, {});
+  });
+
+  test("collectionVariables.get cae en lo que la corrida ya sabe", async () => {
+    const outcome = await post(
+      'pm.test("lee", function () { pm.expect(pm.collectionVariables.get("userId")).to.eql("42"); });',
+    );
+    assert.equal(outcome.error, null);
+    assert.deepEqual(outcome.tests, [{ name: "lee", passed: true, message: null }]);
+  });
+
+  test("to.have.all.keys es «exactamente esas» y to.have.any.keys «al menos una»", async () => {
+    const outcome = await post(
+      [
+        "const body = pm.response.json();",
+        'pm.test("todas", function () { pm.expect(body).to.have.all.keys("data", "meta", "links"); });',
+        'pm.test("alguna", function () { pm.expect(body).to.have.any.keys("meta", "no-existe"); });',
+        'pm.test("sobra una", function () { pm.expect(body).to.have.all.keys("data", "meta"); });',
+      ].join("\n"),
+    );
+    assert.equal(outcome.error, null);
+    assert.deepEqual(
+      outcome.tests.map((entry) => [entry.name, entry.passed]),
+      [
+        ["todas", true],
+        ["alguna", true],
+        // La diferencia que obliga a que `all` y `any` no sean ruido: con `all` sobrar una clave es
+        // un fallo, y tratarlas como palabras de adorno convertiría una afirmación en la otra.
+        ["sobra una", false],
+      ],
+    );
+  });
+
+  test("las cabeceras de la respuesta se leen por las dos vías", async () => {
+    const outcome = await post(
+      'pm.test("ct", function () { pm.expect(pm.response.headers.get("Content-Type")).to.include("problem+json"); pm.expect(pm.response.headers["content-type"]).to.include("problem+json"); });',
+    );
+    assert.equal(outcome.error, null);
+    assert.deepEqual(outcome.tests, [{ name: "ct", passed: true, message: null }]);
+  });
+
+  test("pm.request.url sigue siendo su texto y además trae la query", async () => {
+    const outcome = await post(
+      [
+        'pm.test("texto", function () { pm.expect(String(pm.request.url)).to.include("code_sap"); });',
+        'pm.test("query", function () {',
+        "  const sent = pm.request.url.query.filter(function (p) { return !p.disabled; });",
+        "  pm.expect(sent.length).to.eql(2);",
+        '  pm.expect(sent[0].key).to.eql("code_sap");',
+        '  pm.expect(sent[0].value).to.eql("MAT-1");',
+        "});",
+      ].join("\n"),
+    );
+    assert.equal(outcome.error, null);
+    assert.deepEqual(
+      outcome.tests.map((entry) => entry.passed),
+      [true, true],
+    );
+  });
+
+  test("variables.unset olvida el nombre de la petición y no toca el entorno guardado", async () => {
+    const outcome = await post('pm.variables.set("x", "1"); pm.collectionVariables.unset("x");');
+    assert.equal(outcome.error, null);
+    assert.deepEqual(outcome.variables, {});
+    assert.deepEqual(outcome.environmentUnset, []);
+  });
+});
+
 describe("lo que vuelve del proceso", () => {
   test("se lee sin fiarse: tipos, tamaños y nombres de variable", () => {
     const outcome = sanitizeOutcome(

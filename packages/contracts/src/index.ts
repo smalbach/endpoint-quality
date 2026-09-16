@@ -837,6 +837,38 @@ export type EndpointImportResult = {
   skipped: { method: string; path: string; name: string; reason: string }[];
 };
 
+/**
+ * What importing a Postman collection as flows answers.
+ *
+ * A list and not a count, for the reason every import in this product answers with one: «3 flujos,
+ * 2 avisos» is a number nobody can act on, while «Pedidos, actualizado, 7 nodos» and «"Crear": el
+ * test se mantiene como script» are two sentences somebody can do something about.
+ */
+export type PostmanFlowsImportResult = {
+  /** What the collection called itself. */
+  collection: string;
+  flows: {
+    id: string;
+    name: string;
+    /** Whether a flow of that name was already here. Matching by name is what makes a second
+     * import of the same collection an update instead of a copy. */
+    action: "created" | "updated";
+    steps: number;
+    /** Nodes over a saved request — the ones the active contract declares. */
+    requests: number;
+    /** `fetch` nodes: the calls the contract does not declare. */
+    calls: number;
+    /** `script` nodes: the Postman scripts kept verbatim because they could not be read as checks. */
+    scripts: number;
+  }[];
+  /** The saved requests the import created and rewrote along the way. */
+  templates: { created: number; updated: number };
+  skipped: { name: string; method: string; url: string; reason: string }[];
+  /** Everything worth knowing that is not a failure: a script kept as code, a credential dropped,
+   * a collection-level event nobody ran. */
+  notes: string[];
+};
+
 /** What «Send» answers: the request as sent (credentials masked) and the target's response. */
 export type SentRequestView = {
   request: { method: string; url: string; headers: Record<string, string>; body: string | null };

@@ -1101,3 +1101,120 @@ web **97**.
 - Las vueltas de un bucle, en serie, por lo dicho arriba.
 - El módulo de rendimiento del analizador (planes, ventanas, comparativas) sigue
   sin traerse: nunca entró en el alcance.
+
+## Una colección de Postman, en el proyecto
+
+Lo que la gente tiene de verdad no es un OpenAPI: es la colección de Postman que
+ya usa. Traerla entera, y no a trozos, es lo que hace esta tajada — y son dos
+cosas distintas dentro del mismo fichero.
+
+### Las URL son endpoints; los tests son un flujo
+
+El importador de ficheros de endpoints ya leía Postman v2.1. Lo que faltaba era
+la otra mitad, la que nadie puede volver a teclear: **el orden de la carpeta, el
+`{{id}}` que pasa de un paso al siguiente y lo que cada respuesta tiene que
+cumplir**. Eso, en Postman, solo se puede decir como scripts.
+
+El reparto es estrecho a propósito:
+
+- **Una carpeta de primer nivel es un flujo**, y lo que está en la raíz de la
+  colección es uno más. Es la única agrupación que el formato ofrece; agrupar por
+  cualquier otra cosa sería este importador decidiendo cuál es el escenario de
+  alguien.
+- **El orden son las aristas.** El runner de Postman recorre una carpeta de
+  arriba abajo, así que cada nodo depende del anterior. Una cadena y no un
+  abanico: dos peticiones sin arista entre ellas podrían correr a la vez, que no
+  es lo que la colección hacía.
+- **Una petición que el contrato declara es un nodo de petición guardada; una que
+  no, un nodo `fetch` con su llamada escrita.** No se inventa una operación, que
+  es la propiedad sobre la que se apoya todo el producto. Y el nodo `fetch`
+  existe justo para esto: la llamada que el contrato no describe.
+- **Crear o actualizar, por nombre.** Importar la misma colección dos veces es el
+  caso ordinario —cambió un test, la carpeta ganó un paso— y «Pedidos (copia 2)»
+  dejaría a alguien averiguando cuál de tres es el vivo. Lo que no se toca es el
+  estado del flujo ni sus conjuntos de datos: esas decisiones se tomaron aquí y
+  no en Postman.
+
+### El traductor de scripts se rinde entero, o no se rinde
+
+Un `test` de Postman se lee como comprobaciones y capturas del nodo cuando se
+entiende, y **se guarda tal cual en un nodo `script` cuando no**. Lo primero es
+mejor porque una comprobación se lee en el inspector, se edita sin escribir
+código y sale nombrada una por una en el informe, mientras un nodo script
+enseñaría una línea verde.
+
+Lo que ordena el resto: **no hay traducción a medias**. Esto no es un intérprete
+de JavaScript, y traducir la mitad de un `pm.test` callando lo que no se supo
+leer dejaría un flujo verde sobre una respuesta que nadie comprobó. Así que basta
+una sentencia que no se entienda —un `for`, un `to.be.empty` sin inverso, un
+`pm.environment.set` del cuerpo entero— para que el script entero se conserve y
+lo ejecute el sandbox con su API `pm`, que ya existía.
+
+Dos decisiones más, pequeñas y con consecuencia:
+
+- **El nodo destino de un `test` es un `script` y no un `validate`.** Solo el
+  primero escribe variables de la corrida, que es la mitad de lo que un test de
+  Postman hace: `pm.environment.set("id", …)` es lo que el paso siguiente gasta.
+- **El estado que afirma el test sale de las comprobaciones** y pasa a ser lo que
+  el nodo espera. El estado ya _es_ la aserción principal de un caso en este
+  producto; dejarlo en los dos sitios nombraría la misma afirmación dos veces y
+  permitiría que se contradijeran.
+
+Una credencial escrita a mano en una cabecera se cae y el nodo presenta la sesión
+de la corrida; `Bearer {{token}}` se queda, porque dice dónde está el secreto en
+vez de ser uno.
+
+Suites: api **+33** (27 unitarias del lector y del traductor, 6 HTTP de las dos
+importaciones contra la API de verdad).
+
+### Pasarle una colección de verdad, y arreglar lo que se rompió
+
+Una colección generada de un proyecto real —53 peticiones, 54 scripts, cinco
+carpetas— entró entera: 5 flujos, ninguna petición ilegible. Pero **37 de los 53
+tests se conservaban como script, y de esos casi todos reventaban dentro del
+sandbox con un `TypeError` en la primera línea**. Un rojo que no habla del
+destino es peor que no importar: nadie puede distinguirlo de un fallo de verdad.
+
+Lo que faltaba no era exótico; es lo que escribe cualquiera que haya escrito
+tests en Postman:
+
+- **`pm.collectionVariables` y `pm.globals`**, que no existían. Son el almacén
+  con el que una colección pasa un id de un paso al siguiente. Aquí son
+  `pm.variables` —una corrida tiene **un** mapa plano de variables, que es por lo
+  que `{{nombre}}` resuelve igual en todas partes— y no `pm.environment`, a
+  propósito: en un script de endpoint `pm.environment.set` **persiste** en el
+  entorno guardado, y una variable de colección nunca estuvo ahí.
+- **`to.have.all.keys` / `to.have.any.keys`**, que es como se afirma un sobre.
+  `all` y `any` no pueden ser palabras de adorno: con `all` sobrar una clave es un
+  fallo, y tratarlas como ruido convertiría una afirmación en la otra.
+- **`pm.response.headers.get("Content-Type")`**, porque el de Postman es una
+  `HeaderList` con método y el de aquí era un objeto pelado. Ahora responde por
+  las dos vías.
+- **`pm.request.url.query`**: la URL sigue siendo su texto —se interpola, se
+  registra y se compara como tal— y además trae la query parseada, que es lo que
+  lee la aserción «`links.self` devuelve los parámetros que se mandaron».
+
+Y el lector de scripts aprendió dos formas que la colección real usaba y que se
+perdían enteras: **un nombre atado a una parte del cuerpo** (`const data =
+pm.response.json().data`, que leído como la raíz dejaba todo un nivel desplazado)
+y **un literal de lista u objeto** (`to.eql([])`).
+
+Resultado sobre la misma colección: de 16 a **21 tests traducidos** a
+comprobaciones —de 12 a 22 comprobaciones y de 5 a 7 capturas— y, lo que
+importaba, **los 54 scripts corren en el sandbox sin que falte una sola API**.
+
+Los 32 que siguen guardándose como script lo hacen por dos razones que son la
+respuesta correcta: 18 afirman el sobre con `to.have.all.keys` —para lo que no
+hay operador declarativo, y el sobre ya lo comprueba la sección `envelope`— y 12
+recorren la lista con `.map()`, que es código y no una afirmación.
+
+### Lo que queda
+
+- Los scripts de **nivel colección** —los que Postman ejecuta alrededor de cada
+  petición— no se importan: copiarlos en cada nodo enterraría cada flujo bajo las
+  mismas cuarenta líneas. Se avisa en el resultado.
+- El bloque `auth` de una petición o de una colección tampoco: la credencial es
+  del entorno, y eso no cambia.
+- Un `{{id}}` en la ruta no se reconoce como parámetro de ruta, así que
+  `GET /things/{{thingId}}` y `GET /things/{id}` entran como dos endpoints
+  distintos hasta que alguien lo edite.

@@ -22,6 +22,7 @@ import {
   UpdateRequestTemplateCommand,
 } from "../application/commands/manage-request-template";
 import { ImportRequestTemplatesCommand } from "../application/commands/import-request-templates";
+import { ImportPostmanFlowsCommand } from "../application/commands/import-postman-flows";
 import {
   CreateWorkflowCommand,
   DeleteWorkflowCommand,
@@ -40,6 +41,7 @@ import {
   CreateDatasetDto,
   CreateRequestTemplateDto,
   ImportRequestTemplatesDto,
+  ImportPostmanFlowsDto,
   CreateSuiteDto,
   CreateWorkflowDto,
   UpdateDatasetDto,
@@ -123,6 +125,27 @@ export class WorkflowsController {
     @Param("templateId") templateId: string,
   ): Promise<void> {
     await this.commandBus.execute(new DeleteRequestTemplateCommand(organizationId, projectId, templateId));
+  }
+
+  /**
+   * A Postman collection, as the flows its folders describe — created, or updated when a flow of
+   * that name is already here.
+   *
+   * `editor`, like every other write in this controller, and **nothing leaves the process**: the
+   * collection is read, its scripts are translated or kept, and no request in it is ever sent.
+   * Importing a collection is not rehearsing it.
+   */
+  @Post("workflows/import/postman")
+  @RequireRole("editor")
+  async importPostmanFlows(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Body() body: ImportPostmanFlowsDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.commandBus.execute(
+      new ImportPostmanFlowsCommand(organizationId, projectId, body, actorId(principal)),
+    );
   }
 
   @Post("workflows")
