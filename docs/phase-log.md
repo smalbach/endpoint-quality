@@ -2388,3 +2388,93 @@ que rechaza deja la vuelta contando, con una nota que no cita la dirección.
 No se comprobó contra la pila desplegada: es un stack compartido y no se tocó.
 
 `api 905 pruebas (12 nuevas) · web 461 (3 nuevas) · lint 0 errores · typecheck limpio`
+
+## Ola 8c: tres huecos pequeños en paralelo, y dos fallos que solo se ven en la pila
+
+Tres agentes en tres worktrees, uno por hueco, y la integración a mano. Lo que hay que saber de
+repartirlo así: **dos de los tres árboles llegaron siete commits atrasados**, en `0b252f0`. Uno lo
+detectó y se puso al día antes de empezar; el otro no, y midió sus pruebas contra un repositorio sin
+las olas 1 a 8 — 608 en vez de 904, un número que no dice nada de `main`. Por eso su trabajo hubo
+que rebasarlo y revisarlo entero, y por eso la cifra que vale es la que se corre al integrar y no la
+que informa quien trabajó aparte.
+
+### La pestaña de llamadas del mock
+
+Una fila por petición que la URL del mock contestó: cuándo, método, ruta, código, qué ejemplo casó o
+el código del «no», y cuánto tardó. La decisión es lo que **no** hay: ni cabeceras, ni cuerpo, ni la
+cadena de consulta —ni cruda ni redactada, ni los nombres de los parámetros—. La petición que entra
+a un mock es de un tercero y lleva su `Bearer`, su login y su `?api_key=`; guardarlas convertiría la
+tabla en un almacén de credenciales ajenas alimentado por una ruta `@Public()`. Y no es disciplina:
+el comando que escribe la fila **nunca recibe la petición**, así que no puede guardar lo que no
+tiene.
+
+Lo que sí sobrevive de la petición es la ruta, porque es la mitad de «pediste `/user/42` y el mock
+sirve `/users/{id}`» — y una ruta puede llevar un secreto en un segmento. Es el único dato de quien
+llama que queda, dicho aquí para que nadie lo descubra después.
+
+Retención de 200 por servidor y no las 50 de `MONITOR_HISTORY`: un monitor escribe una fila cada
+cinco minutos y un mock una por cada recarga de un front. La escritura va después de la respuesta y
+es best-effort: un mock que se cae porque su bitácora se cayó es peor que un mock sin bitácora.
+`mock-not-found` no se registra —no hay fila donde colgarlo, y contar URLs inventadas sería registrar
+el escaneo de un desconocido—, pero `mock-disabled` y `mock-key-invalid` sí, porque ahí el mock
+existe y es él quien decidió no contestar.
+
+### El import por URL: credencial, zip y enlace
+
+La credencial de la URL **no se guarda en ninguna parte**: ni tabla, ni resumen, ni log, ni vuelta en
+la respuesta. Es la diferencia con la del contrato, que sí se guarda cifrada porque un chequeo de
+deriva programado tiene que releer la misma URL él solo; un import es un acto único, así que
+guardarla no compra nada y cuesta una fila que alguien puede leer. Los errores lo respetan: el de
+forma nombra el problema («trae un salto de línea»), el de red dice «401 con la credencial que se
+envió», y ninguno cita el valor.
+
+El zip por URL necesitaba bytes, que viajan **a petición** (`responseAs: "bytes"`) y no como un campo
+más: los llamantes de SAFE_FETCH son catorce y el motor hace miles de peticiones, y tenerlas todas
+dos veces en memoria se paga donde no hace falta. Se reconoce por los cuatro bytes mágicos y el
+nombre no vota, porque una URL que acaba en `.zip` y contesta un JSON no es un zip.
+
+Y aquí está la corrección que la integración salvó: el agente escribió **un segundo lector de zip**,
+porque en su base atrasada el primero no existía. Se cambió por `readZip` de `@eq/import-detect`, el
+mismo que abre el zip que se arrastra a la pantalla. Un segundo lector de un formato que llega de
+fuera es un segundo sitio donde equivocarse con los topes, y las dos puertas tienen que aceptar
+exactamente lo mismo. Leerlo desde el servidor sacó además un fallo del lector compartido: **no
+miraba el bit de cifrado**, así que una entrada con contraseña salía como «texto» —bytes de
+criptografía decodificados a UTF-8—, y eso arreglaba también el fichero subido. Los topes ahora
+tienen prueba donde viven: una entrada que **declara** más de lo que cabe se queda fuera sin
+inflarse, que es lo que miente una bomba zip, y el total se cuenta sobre lo que de verdad salió.
+
+### Y los dos fallos que la suite verde no veía
+
+**Un monitor con el plan roto sumaba fallos en silencio.** El aviso lo decidía sólo el manejador del
+fin de corrida, que es lo correcto para el aviso normal porque lo que se avisa es un resultado. Pero
+una vuelta que muere antes de tener corrida no tiene final que escuchar: el entorno borrado, el flujo
+que ya no existe, el contrato sin importar. La racha subía, la pantalla lo contaba, y nadie recibía
+nada **justo cuando lo roto es la vigilancia y no el servicio vigilado**. Ahora el aviso también sale
+de la vuelta que se cierra en el turno, con el mismo `shouldAlert`: una vez por racha, y una saltada
+no avisa porque no es un fallo.
+
+**Un ejemplo con la forma equivocada contestaba 500.** El DTO declara `request` y `response` como
+`@IsObject()` y nada más: el tipo de TypeScript describe lo que _debería_ haber llegado, no lo que
+llegó. Un `response.body` que era un objeto en vez de texto llegaba hasta `Buffer.byteLength` y salía
+una traza de Node. Un 500 por una petición mal escrita es una respuesta equivocada: quien la escribió
+no sabe qué arreglar. Ahora la forma se comprueba antes de medirla y la respuesta es 422 con el campo.
+
+Los dos salieron de la pila, no de la suite, y los dos tienen prueba que se pone roja sin su arreglo
+—comprobado revirtiendo uno cada vez: 2 fallos la de los ejemplos, 1 la del monitor—.
+
+### Cómo se comprobó
+
+Contra la pila desplegada, con la migración `MockCalls1700000027000` aplicada: se sirvió un mock con
+un token en la cabecera, otro en la query y otro en el cuerpo, y `select count(*) from mock_calls
+where mock_calls::text like '%TOKEN%'` dio **0**, con las tres maneras de contestar registradas
+(acierto con su `exampleId`, `mock-wrong-method`, `mock-no-route`). Un monitor con el canal correo y
+el plan roto disparó, y el correo llegó al log del contenedor con el motivo dentro: «La corrida no
+llegó a ejecutarse: El proyecto no tiene contrato importado». La vuelta quedó con las dos notas, la
+del fallo primero.
+
+Sigue en pie lo de la clave: `SECRETS_KEY` de `docker/.env` decodifica a 48 bytes y tiene que ser de
+32, así que en esa instalación nada cifrado funciona y un aviso no puede leer su URL de una variable
+secreta. Y `ALLOW_PRIVATE_TARGETS=false` explica que una corrida contra `sample-api` salga roja: la
+guarda la rechaza por red privada, no es un fallo del producto.
+
+`api 959 pruebas (55 nuevas) · web 472 (14 nuevas) · runner-core 311 · import-detect 29 (4 nuevas) · lint 0 errores · typecheck limpio`
