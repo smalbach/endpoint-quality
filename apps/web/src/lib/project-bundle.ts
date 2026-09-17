@@ -135,6 +135,7 @@ export function downloadJson(filename: string, data: unknown): void {
 export function describeImport(result: ProjectBundleImportResultView): string {
   const counted: [number, string, string][] = [
     [result.endpoints, "endpoint", "endpoints"],
+    [result.examples, "ejemplo guardado", "ejemplos guardados"],
     [result.roles, "rol", "roles"],
     [result.permissions, "permiso", "permisos"],
     [result.requestTemplates, "petición", "peticiones"],

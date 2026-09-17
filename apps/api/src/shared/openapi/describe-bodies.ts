@@ -28,7 +28,9 @@ import {
   BulkEndpointStatusDto,
   CreateEndpointDto,
   ImportEndpointCurlDto,
+  SaveExampleDto,
   UpdateEndpointDto,
+  UpdateExampleDto,
 } from "@/modules/endpoints/presentation/dto/endpoints.dto";
 import type { OpenAPIObject } from "@nestjs/swagger";
 
@@ -167,6 +169,8 @@ const DTOS = [
   BulkEndpointStatusDto,
   BulkDeleteEndpointsDto,
   ImportEndpointCurlDto,
+  SaveExampleDto,
+  UpdateExampleDto,
   CreatePlanDto,
   UpdatePlanDto,
   StartPerformanceRunDto,

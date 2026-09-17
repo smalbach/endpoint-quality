@@ -19,6 +19,11 @@ import {
   endpointProblems,
   type EndpointInput,
 } from "@/modules/endpoints/domain/model";
+import {
+  MAX_EXAMPLES_PER_ENDPOINT,
+  MAX_EXAMPLE_BODY,
+  MAX_EXAMPLE_NAME,
+} from "@/modules/endpoints/domain/examples";
 import { DATA_SCOPES, roleProblems } from "@/modules/roles/domain/model";
 import { WORKFLOW_STATUSES } from "@/modules/workflows/domain/model";
 import { safeParsePlanDefinition } from "@/modules/performance/domain/plan-schema";
@@ -66,6 +71,12 @@ type Problem = { field: string; detail: string };
 const ref = z.string().min(1).max(100);
 const name = z.string().trim().min(1).max(120);
 const stringMap = z.record(z.string().max(200), z.string().max(100_000));
+
+/** Una lista de cabeceras, con la misma forma en el endpoint y en sus ejemplos. */
+const bundleHeaders = z
+  .array(z.object({ name: z.string().max(200), value: z.string().max(10_000), enabled: z.boolean().default(true) }))
+  .max(100)
+  .default([]);
 
 const bundleEndpoint = z.object({
   method: z.enum(ENDPOINT_METHODS),
@@ -131,6 +142,37 @@ const bundleEndpoint = z.object({
   operationId: z.string().max(200).nullable().default(null),
   preRequestScript: z.string().default(""),
   postResponseScript: z.string().default(""),
+  /**
+   * Los ejemplos guardados: el par petición/respuesta que este endpoint contestó una vez.
+   *
+   * Van dentro del endpoint y no en una lista suya arriba porque no significan nada sueltos, y
+   * porque así la ida y la vuelta no tiene que emparejarlos por id — un bundle es un fichero que se
+   * edita a mano, y un id que apunta a nada es el error que nadie ve al escribirlo.
+   *
+   * Lo que hay aquí **ya pasó por la redacción**: no lleva credenciales, y por eso el bundle puede
+   * llevarlo entero cuando la variable sensible sale vacía.
+   */
+  examples: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(MAX_EXAMPLE_NAME),
+        request: z.object({
+          method: z.string().max(10),
+          url: z.string().max(4000),
+          headers: bundleHeaders,
+          body: z.object({ text: z.string().max(MAX_EXAMPLE_BODY), contentType: z.string().max(200) }),
+        }),
+        response: z.object({
+          status: z.number().int().min(100).max(599),
+          headers: bundleHeaders,
+          body: z.string().max(MAX_EXAMPLE_BODY),
+          contentType: z.string().max(200),
+          durationMs: z.number().min(0).default(0),
+        }),
+      }),
+    )
+    .max(MAX_EXAMPLES_PER_ENDPOINT)
+    .default([]),
 });
 
 const bundleRole = z.object({

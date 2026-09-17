@@ -1,5 +1,10 @@
 import type { Endpoint, EndpointStatus } from "@/modules/endpoints/domain/model";
-import type { EndpointFilter, EndpointRepositoryPort } from "@/modules/endpoints/domain/ports";
+import type { EndpointExample } from "@/modules/endpoints/domain/examples";
+import type {
+  EndpointFilter,
+  EndpointRepositoryPort,
+  ExampleRepositoryPort,
+} from "@/modules/endpoints/domain/ports";
 
 export class InMemoryEndpointRepository implements EndpointRepositoryPort {
   readonly rows = new Map<string, Endpoint>();
@@ -68,5 +73,56 @@ export class InMemoryEndpointRepository implements EndpointRepositoryPort {
   async nextOrderIndex(projectId: string) {
     const all = [...this.rows.values()].filter((row) => row.projectId === projectId);
     return all.length ? Math.max(...all.map((row) => row.orderIndex)) + 1 : 0;
+  }
+}
+
+/**
+ * Los ejemplos guardados, en memoria.
+ *
+ * Ordenados igual que la tabla —`orderIndex` y luego la fecha— y con `projectId` en cada lectura
+ * aunque haya un id: si aquí se ignorara, una prueba de aislamiento entre inquilinos pasaría
+ * mintiendo.
+ */
+export class InMemoryExampleRepository implements ExampleRepositoryPort {
+  readonly rows = new Map<string, EndpointExample>();
+
+  private sorted(examples: EndpointExample[]): EndpointExample[] {
+    return examples.sort(
+      (a, b) => a.orderIndex - b.orderIndex || a.createdAt.getTime() - b.createdAt.getTime(),
+    );
+  }
+
+  async listByEndpoint(projectId: string, endpointId: string) {
+    return this.sorted(
+      [...this.rows.values()].filter((row) => row.projectId === projectId && row.endpointId === endpointId),
+    );
+  }
+
+  async listByProject(projectId: string) {
+    return this.sorted([...this.rows.values()].filter((row) => row.projectId === projectId));
+  }
+
+  async findById(projectId: string, id: string) {
+    const row = this.rows.get(id);
+    return row && row.projectId === projectId ? row : null;
+  }
+
+  async save(example: EndpointExample) {
+    this.rows.set(example.id, structuredClone(example));
+  }
+
+  async saveMany(examples: EndpointExample[]) {
+    for (const example of examples) await this.save(example);
+  }
+
+  async remove(projectId: string, id: string) {
+    const row = await this.findById(projectId, id);
+    if (!row) return false;
+    this.rows.delete(id);
+    return true;
+  }
+
+  async countByEndpoint(projectId: string, endpointId: string) {
+    return (await this.listByEndpoint(projectId, endpointId)).length;
   }
 }

@@ -538,6 +538,29 @@ export class RequestCookieEntity {
   @Column({ type: "timestamptz" }) createdAt: Date;
 }
 
+/**
+ * Un ejemplo guardado de un endpoint: el par petición/respuesta, con los secretos ya fuera.
+ *
+ * Del proyecto y no de la persona, al contrario que el tarro de cookies: un ejemplo es
+ * documentación, y documentación que solo ve quien la guardó no documenta nada.
+ */
+@Entity({ name: "endpoint_examples" })
+@Index("IDX_endpoint_examples_endpoint", ["projectId", "endpointId", "orderIndex"])
+@Index("UQ_endpoint_examples_name", ["endpointId", "name"], { unique: true })
+export class EndpointExampleEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Column("uuid") projectId: string;
+  @Column("uuid") endpointId: string;
+  @Column({ type: "varchar", length: 200 }) name: string;
+  @Column({ type: "jsonb" }) request: unknown;
+  @Column({ type: "jsonb" }) response: unknown;
+  @Column({ type: "varchar", length: 20, default: "manual" }) origin: string;
+  @Column({ type: "int", default: 0 }) orderIndex: number;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) updatedAt: Date;
+  @Column("uuid") createdBy: string;
+}
+
 /** A role of the API a project tests. The `access` section is derived from these rows. */
 @Entity({ name: "project_roles" })
 export class RoleEntity {
@@ -699,7 +722,7 @@ export const ENTITIES = [
   EnvironmentEntity, EnvironmentCredentialEntity, SessionTokenEntity, RequestCookieEntity, ProjectConfigEntity,
   RequestTemplateEntity, WorkflowEntity, WorkflowDatasetEntity, WorkflowSuiteEntity,
   RunEntity, RunCaseEntity, RunStepEntity,
-  EndpointEntity,
+  EndpointEntity, EndpointExampleEntity,
   RoleEntity, RolePermissionEntity, RoleRuleEntity,
   SecurityRunEntity,
   PerformancePlanEntity, PerformanceRunEntity,

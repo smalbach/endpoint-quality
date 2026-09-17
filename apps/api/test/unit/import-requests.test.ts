@@ -40,6 +40,7 @@ const request = (overrides: Partial<ParsedRequest> = {}): ParsedRequest => ({
   name: "GET /widgets",
   method: "GET",
   url: "/widgets",
+  examples: [],
   headers: {},
   body: { type: "none" },
   auth: { type: "inherit", params: {} },

@@ -5,7 +5,13 @@ import type { ProjectBundlePart } from "@eq/contracts";
 import { InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { CONFIG_REPOSITORY, type ConfigRepositoryPort } from "@/modules/config/domain/ports";
-import { ENDPOINT_REPOSITORY, type EndpointRepositoryPort } from "@/modules/endpoints/domain/ports";
+import {
+  ENDPOINT_REPOSITORY,
+  EXAMPLE_REPOSITORY,
+  type EndpointRepositoryPort,
+  type ExampleRepositoryPort,
+} from "@/modules/endpoints/domain/ports";
+import type { EndpointExample } from "@/modules/endpoints/domain/examples";
 import { ROLE_REPOSITORY, type RoleRepositoryPort } from "@/modules/roles/domain/ports";
 import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
@@ -51,6 +57,7 @@ export class ExportProjectHandler implements IQueryHandler<ExportProjectQuery, P
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(CONFIG_REPOSITORY) private readonly config: ConfigRepositoryPort,
     @Inject(ENDPOINT_REPOSITORY) private readonly endpoints: EndpointRepositoryPort,
+    @Inject(EXAMPLE_REPOSITORY) private readonly examples: ExampleRepositoryPort,
     @Inject(ROLE_REPOSITORY) private readonly roles: RoleRepositoryPort,
     @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
     @Inject(ENVIRONMENT_REPOSITORY) private readonly environments: EnvironmentRepositoryPort,
@@ -105,6 +112,15 @@ export class ExportProjectHandler implements IQueryHandler<ExportProjectQuery, P
 
     const endpoints = parts.has("endpoints") || parts.has("roles") ? await this.endpoints.listAll(project.id) : [];
     if (parts.has("endpoints")) {
+      // Los ejemplos del proyecto entero en una consulta y agrupados aquí: una por endpoint serían
+      // cuarenta consultas para exportar cuarenta endpoints.
+      const examples = await this.examples.listByProject(project.id);
+      const byEndpoint = new Map<string, EndpointExample[]>();
+      for (const example of examples) {
+        const list = byEndpoint.get(example.endpointId);
+        if (list) list.push(example);
+        else byEndpoint.set(example.endpointId, [example]);
+      }
       bundle.endpoints = endpoints.map((endpoint) => ({
         method: endpoint.method,
         path: endpoint.path,
@@ -120,6 +136,11 @@ export class ExportProjectHandler implements IQueryHandler<ExportProjectQuery, P
         operationId: endpoint.operationId,
         preRequestScript: endpoint.preRequestScript,
         postResponseScript: endpoint.postResponseScript,
+        examples: (byEndpoint.get(endpoint.id) ?? []).map((example) => ({
+          name: example.name,
+          request: example.request,
+          response: example.response,
+        })),
       }));
     }
 

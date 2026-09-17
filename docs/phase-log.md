@@ -1741,3 +1741,116 @@ del contenido en C#— sí tienen prueba unitaria, pero eso no es lo mismo que u
 dice en vez de dejarlo implícito.
 
 `web 402 pruebas (48 nuevas) · api 646 · runner-core 311 · import-detect 25 · lint 0 errores · typecheck limpio`
+
+## Paridad con Postman, ola 4: los ejemplos guardados, y dónde duerme un token
+
+La pregunta _«qué devolvía esto la semana pasada»_ solo se respondía buceando en el historial de una
+corrida. Y una colección de Postman con ejemplos entraba **perdiéndolos enteros**: el array
+`response` de cada `item` no se leía en ningún sitio del repositorio.
+
+Un ejemplo es un **par**, no una respuesta. Un 404 suelto no significa nada; un 404 junto a la
+petición que lo produjo es documentación. Postman lo guarda así y es lo correcto, y además es lo
+que permite las tres cosas para las que sirve: documentar el endpoint, alimentar un mock, y comparar
+lo que contesta hoy contra lo que contestaba.
+
+### Los secretos, que es la mitad del trabajo
+
+Un ejemplo es exactamente donde una credencial se queda dormida para siempre. Se guarda una vez,
+nadie la vuelve a mirar, y sale en la exportación, en la documentación y en el repositorio donde
+alguien commitea el fichero. **Postman los guarda en claro.** Aquí no.
+
+Tres capas, porque el secreto entra por tres sitios distintos:
+
+1. **Las cabeceras de la petición.** `Authorization`, `Cookie`, una clave de API con cualquiera de
+   sus quince nombres. Se van y **se nombran**: un ejemplo al que le falta la cabecera y no lo dice
+   se lee como «esto funcionaba sin credencial», y alguien lo va a creer.
+2. **El `Set-Cookie` de la respuesta**, que es la sesión que el servidor acababa de abrir.
+3. **El cuerpo.** Esta es la difícil, porque el cuerpo _es_ el valor del ejemplo y no se puede
+   tirar. Se conserva la forma —que es para lo que sirve— y se tapa el valor.
+
+El `Content-Type` **se queda**, al contrario que en el importador de peticiones guardadas, que sí lo
+tira. Allí el ejecutor lo deriva del cuerpo y uno viejo contradiría lo que de verdad se manda; aquí
+es la mitad de lo que documenta una respuesta.
+
+### Reconocer un JWT por su forma, no por el nombre del campo
+
+El caso real que una lista de nombres no atrapa: un login devuelve el token en un campo que se llama
+`data`, o `jwt`, o `t`, o directamente en la raíz del cuerpo. Así que además de los nombres se mira
+la **estructura**: tres segmentos en base64url cuyo primero decodifica a un objeto con `alg` es un
+JWT.
+
+Y el riesgo simétrico, que es el que nadie prueba: **tapar de más**. `abcdefgh.ijklmnop.qrstuvwx`
+tiene tres trozos y no es una credencial; `com.ejemplo.aplicacion` tampoco; `tokenCount` y
+`passwordPolicy` no son secretos. Un ejemplo que ha perdido un campo que hacía falta se lee como el
+contrato del endpoint, y entonces miente. Comprobar que el primer trozo decodifica es lo que separa
+las dos cosas.
+
+Un cuerpo que no es JSON **se deja tal cual y se dice que no se ha mirado dentro**. Buscar un secreto
+en un HTML con una expresión regular corta el ejemplo por la mitad o tapa un identificador que hacía
+falta. Lo honesto es no mirar y decirlo, en vez de dar a entender que está revisado.
+
+### Dónde vive y dónde se ve
+
+Tabla del **proyecto**, no de la persona — al contrario que el tarro de cookies o el token de sesión.
+Un ejemplo es documentación, y documentación que solo ve quien la guardó no documenta nada. Clave
+única por endpoint y nombre, y `ON DELETE CASCADE` sobre `endpoints`: un ejemplo sin su endpoint no
+es nada. El borrado de un endpoint es blando, así que en la práctica los ejemplos sobreviven a un
+borrado reversible y solo desaparecen cuando la fila se va de verdad.
+
+En pantalla, en las pestañas de **la petición** y no en las de la respuesta: un ejemplo es del
+endpoint, y las pestañas de respuesta solo aparecen después de enviar. El camino normal es **guardar
+lo que ya tienes delante**, no teclear un ejemplo: un formulario en blanco con quince campos se
+rellena una vez y no se vuelve a tocar, y entonces la lista se queda vacía. El botón está apagado
+mientras no hay respuesta y dice por qué.
+
+### La ida y la vuelta
+
+- **Importar** una colección lee sus `response[]`, con el `originalRequest` cuando lo trae —y es el
+  caso interesante: un ejemplo de 422 se guardó con un cuerpo inválido a propósito, y colgarlo de la
+  petición actual contaría lo contrario de lo que pasó—. Sin `originalRequest`, la del `item`, que es
+  lo que Postman enseña.
+- Un ejemplo **sin código de estado se descarta.** Es el único campo sin valor por defecto honesto:
+  uno que dijera «200» sin que el fichero lo dijera es una afirmación inventada sobre la API de
+  alguien, y es justo lo que se va a leer como contrato.
+- **La redacción se aplica al importar**, no solo al guardar a mano. Un fichero de Postman llega con
+  los tokens en claro, y entrar por el importador no puede ser la puerta por la que un token se cuela
+  en la base de datos. Lo mismo al restaurar un bundle: viene redactado, pero un bundle es un fichero
+  que se edita a mano y confiar en que llega limpio sería lo mismo que no limpiar.
+- **Exportar** los escribe de vuelta como el array `response`, con `code`, `status`,
+  `_postman_previewlanguage` y el `originalRequest` entero. Nada que redactar en la salida: se limpia
+  en la puerta, y así hay una puerta y no tres.
+
+### Tres fallos míos, por el camino
+
+- **`redactBody` devolvía el valor donde `Object.fromEntries` espera el par.** Cualquier cuerpo con
+  un objeto dentro habría salido destrozado.
+- **`languageContentType` espera un `{ language }`,** y `_postman_previewlanguage` es una cadena
+  suelta: mi llamada devolvía siempre vacío, así que todos los ejemplos importados habrían caído a
+  `text/plain` y ninguno se habría mirado por dentro.
+- **`examples` duplicado** en el `PostmanItem` y en su `ParsedRequest`. Dos sitios que dicen lo
+  mismo es un sitio que se va a quedar atrás.
+
+### Cómo se comprobó
+
+Contra la base de datos real, no solo en memoria: se guardó por HTTP un ejemplo con cinco secretos
+distintos —una cabecera `Authorization`, una contraseña en el cuerpo de la petición, un
+`access_token`, un JWT en un campo llamado `data`, y un `Set-Cookie`— y después se consultó la tabla:
+
+```
+SELECT count(*) FROM endpoint_examples
+WHERE request::text || response::text ~ 'TOKEN-EN-CLARO|clave-real|SECRETO-DEL-CUERPO|...'
+→ 0
+```
+
+Las pruebas del dominio no pueden demostrar eso. Se puede tener un `redactExample` perfecto y una
+ruta que guarda el cuerpo sin llamarlo, y seguirían verdes con el token dentro.
+
+También contra la base real: la cascada (borrar la fila del endpoint se lleva sus ejemplos), y en el
+navegador la lista, abrir un ejemplo —el cuerpo llega con los valores tapados—, borrar uno, y el
+botón apagado con su explicación cuando el destino está bloqueado y no hay respuesta que guardar.
+
+Y la ida y vuelta completa por HTTP: una colección con tres ejemplos entra con dos —el que no trae
+código de estado se descarta—, sin el token que traía el fichero, y sale otra vez en el `response[]`
+del fichero exportado.
+
+`api 689 pruebas (43 nuevas) · web 415 (13 nuevas) · runner-core 311 · lint 0 errores · typecheck limpio`

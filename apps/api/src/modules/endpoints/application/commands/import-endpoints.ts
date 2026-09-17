@@ -14,10 +14,17 @@ import {
   type Endpoint,
   type EndpointView,
 } from "../../domain/model";
-import { ENDPOINT_REPOSITORY, type EndpointRepositoryPort } from "../../domain/ports";
+import type { EndpointExample } from "../../domain/examples";
+import {
+  ENDPOINT_REPOSITORY,
+  EXAMPLE_REPOSITORY,
+  type EndpointRepositoryPort,
+  type ExampleRepositoryPort,
+} from "../../domain/ports";
 import {
   detectFormat,
   draftFromCurl,
+  examplesFromFile,
   parseEndpointFile,
   type EndpointDraft,
   type ImportFileFormat,
@@ -30,6 +37,15 @@ export type ImportEndpointsResult = {
   format: ImportFileFormat;
   imported: { id: string; method: string; path: string }[];
   skipped: ImportSkip[];
+  /**
+   * Cuántos ejemplos entraron, y qué se les quitó por ser una credencial.
+   *
+   * Se cuenta aparte de los endpoints porque no es lo mismo: un fichero puede traer cuarenta
+   * endpoints y cero ejemplos, o cuatro y ciento veinte. Y lo redactado se nombra por lo mismo que
+   * al guardar uno a mano — un ejemplo que perdió la cabecera de autenticación en silencio se lee
+   * como «esto funcionaba sin credencial».
+   */
+  examples: { imported: number; redacted: string[] };
 };
 
 export class ImportEndpointFileCommand implements ICommand {
@@ -54,6 +70,7 @@ export class ImportEndpointFileHandler implements ICommandHandler<ImportEndpoint
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(ENDPOINT_REPOSITORY) private readonly endpoints: EndpointRepositoryPort,
+    @Inject(EXAMPLE_REPOSITORY) private readonly examples: ExampleRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
   ) {}
 
@@ -112,9 +129,35 @@ export class ImportEndpointFileHandler implements ICommandHandler<ImportEndpoint
       seen.add(key);
     }
 
-    const rows = await materialize(this.endpoints, project.id, accepted, "import", this.clock.now(), command.actorId);
+    const now = this.clock.now();
+    const rows = await materialize(this.endpoints, project.id, accepted, "import", now, command.actorId);
     await this.endpoints.saveMany(rows);
-    return { format, imported: rows.map(({ id, method, path }) => ({ id, method, path })), skipped };
+
+    // Los ejemplos después de los endpoints y no antes: la fila del ejemplo referencia la del
+    // endpoint, y guardarla primero sería guardar una referencia a algo que todavía no está.
+    const examples: EndpointExample[] = [];
+    const redacted = new Set<string>();
+    for (const [index, draft] of accepted.entries()) {
+      if (!draft.examples?.length) continue;
+      const read = examplesFromFile({
+        projectId: project.id,
+        endpointId: rows[index]!.id,
+        draft,
+        from: draft.examples,
+        now,
+        actorId: command.actorId,
+      });
+      examples.push(...read.examples);
+      for (const name of read.redacted) redacted.add(name);
+    }
+    await this.examples.saveMany(examples);
+
+    return {
+      format,
+      imported: rows.map(({ id, method, path }) => ({ id, method, path })),
+      skipped,
+      examples: { imported: examples.length, redacted: [...redacted] },
+    };
   }
 }
 
@@ -128,7 +171,7 @@ export async function materialize(
   actorId: string,
 ): Promise<Endpoint[]> {
   const first = await endpoints.nextOrderIndex(projectId);
-  return drafts.map(({ operationId, ...draft }, index) => ({
+  return drafts.map(({ operationId, examples: _examples, ...draft }, index) => ({
     ...applyEndpointInput(
       blankEndpoint({ id: randomUUID(), projectId, origin, orderIndex: first + index, now, actorId }),
       draft,

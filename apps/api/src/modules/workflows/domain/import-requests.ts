@@ -35,6 +35,15 @@ export type ParsedRequest = {
   body: RequestBody;
   /** Cómo entra. `inherit` cuando la fuente no dice nada, que es lo que dice Postman. */
   auth: RequestAuth;
+  /**
+   * Las respuestas que la fuente guardaba para esta petición: los ejemplos.
+   *
+   * Vive aquí y no en un canal aparte porque es lo mismo que el resto — «lo que el fichero decía de
+   * esta petición»— y porque así los dos importadores que la usan, el de endpoints y el de
+   * peticiones guardadas, la reciben sin que ninguno tenga un caso especial. Vacío en los formatos
+   * que no guardan respuestas, que son todos menos Postman.
+   */
+  examples: PostmanExample[];
 };
 
 /** A request that could not be turned into a template, and why — said in words somebody can act
@@ -254,6 +263,8 @@ export function parseCurl(command: string): ParsedRequest | null {
     headers,
     body,
     auth: redactAuth(auth).auth,
+    // Un `curl` no guarda respuestas: no hay ejemplos que traer.
+    examples: [],
   };
 }
 
@@ -374,6 +385,23 @@ export type PostmanItem = {
   test: string;
 };
 
+/**
+ * Una respuesta guardada de una colección.
+ *
+ * Postman guarda el par entero: la respuesta y, en `originalRequest`, la petición que la produjo,
+ * que puede diferir de la petición actual del `item` —es justo el caso interesante, porque un
+ * ejemplo de 422 se guardó con un cuerpo inválido a propósito—. Cuando no la trae, se entiende que
+ * es la del `item`, que es lo que hace Postman al enseñarla.
+ */
+export type PostmanExample = {
+  name: string;
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+  contentType: string;
+  request: { method: string; url: string; headers: Record<string, string>; body: string; contentType: string } | null;
+};
+
 /** Una credencial que venía escrita en el fichero y no se guarda. Se nombra para poder decirlo. */
 export type DroppedSecret = { label: string; type: string; params: string[] };
 
@@ -447,6 +475,7 @@ export function readPostmanCollection(text: string): PostmanCollection | null {
           headers: headers.enabled,
           body: postmanBody(request.body, headers.enabled),
           auth: resolved.auth,
+          examples: postmanExamples(item.response),
         },
         prerequest: eventScript(item.event, "prerequest"),
         test: eventScript(item.event, "test"),
@@ -462,6 +491,68 @@ export function readPostmanCollection(text: string): PostmanCollection | null {
     secrets,
     scripts: { prerequest: eventScript(document.event, "prerequest"), test: eventScript(document.event, "test") },
   };
+}
+
+/** El `Content-Type` que Postman implica cuando anota el lenguaje de un cuerpo en vez del tipo. */
+const LANGUAGE_TYPES: Record<string, string> = {
+  json: "application/json",
+  xml: "application/xml",
+  html: "text/html",
+  javascript: "application/javascript",
+  text: "text/plain",
+};
+
+/**
+ * Las respuestas guardadas de un `item`, leídas como ejemplos.
+ *
+ * El `Content-Type` sale de las cabeceras de la respuesta cuando está, y si no de
+ * `_postman_previewlanguage`, que es lo que Postman anota cuando el servidor no lo dijo. Sin
+ * ninguno de los dos se queda en `text/plain`: inventar `application/json` haría que el lector de
+ * cuerpos intentara parsear un HTML y lo diera por roto.
+ *
+ * Un ejemplo sin código de estado se descarta. Es el único campo del que no hay valor por defecto
+ * honesto: un ejemplo que dice «200» sin que el fichero lo dijera es una afirmación inventada sobre
+ * la API de alguien, y es exactamente lo que alguien va a leer como contrato.
+ */
+function postmanExamples(value: unknown): PostmanExample[] {
+  const examples: PostmanExample[] = [];
+  for (const entry of asArray(value)) {
+    const row = asRecord(entry);
+    if (!row) continue;
+    const status = Number(row.code);
+    if (!Number.isInteger(status) || status < 100 || status > 599) continue;
+
+    const headers = fromKeyValues(row.header).enabled;
+    const declared = Object.entries(headers).find(([name]) => name.toLowerCase() === "content-type")?.[1];
+    // `_postman_previewlanguage` es la cadena suelta («json», «html»), no el `{ language }` que
+    // lleva un cuerpo de petición: se busca directo en la tabla.
+    const contentType =
+      declared || LANGUAGE_TYPES[asString(row._postman_previewlanguage).toLowerCase()] || "text/plain";
+
+    const original = asRecord(row.originalRequest);
+    const originalHeaders = original ? fromKeyValues(original.header).enabled : {};
+    const originalBody = original ? asString(asRecord(original.body)?.raw) : "";
+
+    examples.push({
+      name: asString(row.name),
+      status,
+      headers,
+      body: asString(row.body),
+      contentType,
+      request: original
+        ? {
+            method: (asString(original.method) || "GET").toUpperCase(),
+            url: postmanUrl(original.url),
+            headers: originalHeaders,
+            body: originalBody,
+            contentType:
+              Object.entries(originalHeaders).find(([name]) => name.toLowerCase() === "content-type")?.[1] ??
+              "application/json",
+          }
+        : null,
+    });
+  }
+  return examples;
 }
 
 /**
@@ -526,13 +617,6 @@ function postmanBody(value: unknown, headers: Record<string, string>): RequestBo
   return bodyFrom({ form: {}, payload: raw, declared, urlencodeOnly: false });
 }
 
-const LANGUAGE_TYPES: Record<string, string> = {
-  json: "application/json",
-  xml: "application/xml",
-  html: "text/html",
-  javascript: "application/javascript",
-  text: "text/plain",
-};
 const languageContentType = (options: unknown): string =>
   LANGUAGE_TYPES[asString(asRecord(options)?.language).toLowerCase()] ?? "";
 
@@ -601,6 +685,8 @@ export function parseInsomniaExport(text: string): ImportedRequests {
       headers: headers.enabled,
       body: insomniaBody(row.body, headers.enabled),
       auth: redactAuth(insomniaAuth(row.authentication)).auth,
+      // Insomnia tampoco guarda respuestas junto a la petición.
+      examples: [],
     });
   }
   return { requests, skipped };

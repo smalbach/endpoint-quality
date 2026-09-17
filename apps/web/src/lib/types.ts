@@ -54,6 +54,8 @@ export type {
   RequestAuthView,
   AuthTypeView,
   CookieView,
+  ExampleView,
+  SavedExampleView,
   SentRequestView,
   Member,
   MembersView,

@@ -22,8 +22,20 @@ import {
   pathOf,
   queryOf,
   type ParsedRequest,
+  type PostmanExample,
 } from "@/modules/workflows/domain/import-requests";
 import { importableHeaders } from "@/modules/workflows/application/commands/import-request-templates";
+import {
+  MAX_EXAMPLES_PER_ENDPOINT,
+  blankExample,
+  defaultExampleName,
+  exampleProblems,
+  redactExample,
+  uniqueExampleName,
+  type EndpointExample,
+  type ExampleRequest,
+  type ExampleResponse,
+} from "./examples";
 import {
   EMPTY_BODY,
   ENDPOINT_METHODS,
@@ -43,6 +55,14 @@ export type EndpointDraft = EndpointInput & {
   method: EndpointMethod;
   path: string;
   operationId: string | null;
+  /**
+   * Los ejemplos que el fichero guardaba para esta petición.
+   *
+   * Vienen con el borrador y no en un segundo viaje porque se guardan en la misma operación: un
+   * endpoint importado con sus ejemplos a medias —el endpoint sí, los ejemplos no— sería un estado
+   * que nadie puede ver ni arreglar.
+   */
+  examples?: PostmanExample[];
 };
 
 export type ImportSkip = { method: string; path: string; name: string; reason: string };
@@ -188,6 +208,7 @@ function draftFromRequest(request: ParsedRequest): EndpointDraft | string {
     // Cómo entra, leído del bloque `auth` del fichero. Sin secretos literales: los quitó el lector.
     auth: request.auth,
     operationId: null,
+    examples: request.examples,
   };
 }
 
@@ -269,4 +290,69 @@ export function draftFromOperation(
     tags: operation.tag ? [operation.tag] : [],
     operationId: linked ? operation.id : null,
   };
+}
+
+/**
+ * Los ejemplos de un fichero, como filas de este proyecto.
+ *
+ * La petición del ejemplo se resuelve aquí y no se deja para después: un ejemplo sin la petición que
+ * lo produjo es media documentación, y cuando el fichero no trae `originalRequest` la que vale es
+ * la de la petición actual, que es lo que Postman enseña.
+ *
+ * La redacción se aplica **al importar**, no solo al guardar a mano. Un fichero de Postman llega con
+ * los tokens en claro —es lo que ese producto guarda— y entrar por el importador no puede ser la
+ * puerta por la que un token se cuela en la base de datos.
+ */
+export function examplesFromFile(fields: {
+  projectId: string;
+  endpointId: string;
+  draft: EndpointDraft;
+  from: PostmanExample[];
+  now: Date;
+  actorId: string;
+}): { examples: EndpointExample[]; redacted: string[] } {
+  const examples: EndpointExample[] = [];
+  const redacted = new Set<string>();
+  const taken = new Set<string>();
+
+  for (const [index, entry] of fields.from.slice(0, MAX_EXAMPLES_PER_ENDPOINT).entries()) {
+    const own = entry.request;
+    const request: ExampleRequest = {
+      method: own?.method || fields.draft.method,
+      url: own?.url || fields.draft.path,
+      headers: Object.entries(own?.headers ?? {}).map(([name, value]) => ({ name, value, enabled: true })),
+      body: { text: own?.body ?? "", contentType: own?.contentType ?? "application/json" },
+    };
+    const response: ExampleResponse = {
+      status: entry.status,
+      headers: Object.entries(entry.headers).map(([name, value]) => ({ name, value, enabled: true })),
+      body: entry.body,
+      contentType: entry.contentType,
+      // Un fichero no guarda cuánto tardó: cero, que se lee como «no se sabe» y no como «fue
+      // instantáneo». Inventar un número sería afirmar algo sobre la API de alguien.
+      durationMs: 0,
+    };
+    if (exampleProblems({ request, response }).length) continue;
+
+    const clean = redactExample(request, response);
+    for (const name of clean.redaction.droppedHeaders) redacted.add(name);
+    for (const field of clean.redaction.maskedFields) redacted.add(field);
+
+    const name = uniqueExampleName(entry.name.trim() || defaultExampleName(entry.status), taken);
+    taken.add(name);
+    examples.push(
+      blankExample({
+        projectId: fields.projectId,
+        endpointId: fields.endpointId,
+        name,
+        request: clean.request,
+        response: clean.response,
+        origin: "import",
+        orderIndex: index,
+        now: fields.now,
+        actorId: fields.actorId,
+      }),
+    );
+  }
+  return { examples, redacted: [...redacted] };
 }

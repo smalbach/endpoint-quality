@@ -1024,6 +1024,55 @@ export type SentRequestView = {
   cookies: { sent: string[]; stored: string[]; rejected: { line: string; why: string }[] };
 };
 
+/**
+ * Un ejemplo guardado de un endpoint, como sale de la API.
+ *
+ * Sale entero, con el cuerpo, al contrario que una cookie o que una variable sensible: lo guardado
+ * **ya** pasó por la redacción, así que no hay ningún secreto que pedir aparte. Enseñarlo a medias
+ * obligaría a una segunda llamada para leer lo único que un ejemplo tiene que decir.
+ */
+export type ExampleView = {
+  id: string;
+  endpointId: string;
+  name: string;
+  request: {
+    method: string;
+    url: string;
+    headers: { name: string; value: string; enabled: boolean }[];
+    body: { text: string; contentType: string };
+  };
+  response: {
+    status: number;
+    headers: { name: string; value: string; enabled: boolean }[];
+    body: string;
+    contentType: string;
+    durationMs: number;
+  };
+  origin: "manual" | "import";
+  orderIndex: number;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+  /** Lo que ocupa el cuerpo de la respuesta, calculado en el servidor para que la lista no mida. */
+  sizeBytes: number;
+};
+
+/**
+ * Lo que contesta guardar un ejemplo: el ejemplo y **qué se le quitó** por ser una credencial.
+ *
+ * El parte no es un detalle de cortesía. Un ejemplo que perdió la cabecera de autenticación en
+ * silencio se lee como «esto funcionaba sin credencial», y alguien lo va a creer.
+ */
+export type SavedExampleView = {
+  example: ExampleView;
+  redaction: {
+    droppedHeaders: string[];
+    maskedFields: string[];
+    /** Falso cuando el cuerpo no es JSON: entonces no se ha mirado dentro, y hay que decirlo. */
+    bodyScanned: boolean;
+  };
+};
+
 /** Una cookie del tarro, como sale de la API. El valor solo va si se pide ver. */
 export type CookieView = {
   name: string;
@@ -1516,6 +1565,8 @@ export type ProjectBundleImportResultView = {
   contract: "imported" | "unchanged" | null;
   sections: string[];
   endpoints: number;
+  /** Cuántos ejemplos guardados entraron con esos endpoints. */
+  examples: number;
   roles: number;
   permissions: number;
   requestTemplates: number;

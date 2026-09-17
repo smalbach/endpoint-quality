@@ -39,7 +39,13 @@ import {
 } from "../application/commands/manage-endpoints";
 import { ImportEndpointCurlCommand, ImportEndpointFileCommand } from "../application/commands/import-endpoints";
 import { SendEndpointRequestCommand } from "../application/commands/send-endpoint-request";
+import {
+  DeleteExampleCommand,
+  SaveExampleCommand,
+  UpdateExampleCommand,
+} from "../application/commands/manage-examples";
 import { GetEndpointQuery, ListEndpointsQuery } from "../application/queries/list-endpoints";
+import { ListExamplesQuery } from "../application/queries/list-examples";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_FILES, type UploadedPart } from "../domain/send-request";
 import {
   BulkDeleteEndpointsDto,
@@ -47,7 +53,9 @@ import {
   CreateEndpointDto,
   ImportEndpointCurlDto,
   ListEndpointsQueryDto,
+  SaveExampleDto,
   UpdateEndpointDto,
+  UpdateExampleDto,
 } from "./dto/endpoints.dto";
 
 const actorId = (principal: Principal): string => (principal.kind === "user" ? principal.userId : principal.tokenId);
@@ -202,5 +210,66 @@ export class EndpointsController {
     @Param("endpointId") endpointId: string,
   ): Promise<void> {
     await this.commandBus.execute(new DeleteEndpointsCommand(organizationId, projectId, [endpointId], true));
+  }
+
+  /**
+   * Los ejemplos guardados: lo que este endpoint contestó, con la petición que lo provocó.
+   *
+   * `viewer` los lee y `editor` los escribe, como todo lo demás de aquí. No hace falta `admin`
+   * aunque un ejemplo se parezca a una credencial guardada: lo que se guarda **ya** pasó por la
+   * redacción, así que en la tabla no hay ningún secreto que proteger con otra llave.
+   */
+  @Get(":endpointId/examples")
+  @RequireRole("viewer")
+  async examples(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("endpointId") endpointId: string,
+  ) {
+    return this.queryBus.execute(new ListExamplesQuery(organizationId, projectId, endpointId));
+  }
+
+  @Post(":endpointId/examples")
+  @RequireRole("editor")
+  async saveExample(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("endpointId") endpointId: string,
+    @Body() body: SaveExampleDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.commandBus.execute(
+      new SaveExampleCommand(
+        organizationId,
+        projectId,
+        endpointId,
+        body.name ?? "",
+        body.request,
+        body.response,
+        actorId(principal),
+      ),
+    );
+  }
+
+  @Patch(":endpointId/examples/:exampleId")
+  @RequireRole("editor")
+  async updateExample(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("exampleId") exampleId: string,
+    @Body() body: UpdateExampleDto,
+  ) {
+    return this.commandBus.execute(new UpdateExampleCommand(organizationId, projectId, exampleId, body));
+  }
+
+  @Delete(":endpointId/examples/:exampleId")
+  @RequireRole("editor")
+  @HttpCode(204)
+  async removeExample(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("exampleId") exampleId: string,
+  ): Promise<void> {
+    await this.commandBus.execute(new DeleteExampleCommand(organizationId, projectId, exampleId));
   }
 }

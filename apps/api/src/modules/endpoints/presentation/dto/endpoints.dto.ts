@@ -28,6 +28,7 @@ import {
   type EndpointQueryParameter,
   type EndpointStatus,
 } from "../../domain/model";
+import { MAX_EXAMPLE_NAME, type ExampleRequest, type ExampleResponse } from "../../domain/examples";
 
 const LIST_STATUSES = [...ENDPOINT_STATUSES, "all"] as const;
 
@@ -85,4 +86,25 @@ export class BulkDeleteEndpointsDto {
 
 export class ImportEndpointCurlDto {
   @IsString() @MinLength(4) @MaxLength(200_000) curl: string;
+}
+
+/**
+ * Un ejemplo guardado, tal y como sale de «Enviar».
+ *
+ * El `name` es opcional: vacío se lo pone el código de estado, que es lo que alguien busca en la
+ * lista —se guardan ejemplos precisamente para tener el 200, el 404 y el 422 al lado—. El par entero
+ * entra como objeto y **el dominio lo valida**, porque los límites de tamaño y la redacción son
+ * suyos: repetirlos aquí como decoradores daría dos reglas que tendrían que coincidir.
+ */
+export class SaveExampleDto {
+  @IsOptional() @IsString() @MaxLength(MAX_EXAMPLE_NAME) name?: string;
+  @IsObject() request: ExampleRequest;
+  @IsObject() response: ExampleResponse;
+}
+
+export class UpdateExampleDto {
+  @IsOptional() @IsString() @MaxLength(MAX_EXAMPLE_NAME) name?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) orderIndex?: number;
+  @IsOptional() @IsObject() request?: ExampleRequest;
+  @IsOptional() @IsObject() response?: ExampleResponse;
 }

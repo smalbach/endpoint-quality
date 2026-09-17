@@ -7,7 +7,13 @@ import type { ProjectBundleImportResultView, ProjectBundlePart } from "@eq/contr
 import { InvalidInputError } from "@/shared/errors/domain-error";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { CONFIG_REPOSITORY, type ConfigRepositoryPort } from "@/modules/config/domain/ports";
-import { ENDPOINT_REPOSITORY, type EndpointRepositoryPort } from "@/modules/endpoints/domain/ports";
+import {
+  ENDPOINT_REPOSITORY,
+  EXAMPLE_REPOSITORY,
+  type EndpointRepositoryPort,
+  type ExampleRepositoryPort,
+} from "@/modules/endpoints/domain/ports";
+import { blankExample, redactExample, type EndpointExample } from "@/modules/endpoints/domain/examples";
 import { endpointKey, normalizePath, reconcilePathParameters, type Endpoint } from "@/modules/endpoints/domain/model";
 import { ROLE_REPOSITORY, type RoleRepositoryPort } from "@/modules/roles/domain/ports";
 import { ROLE_COLORS, type PermissionChange, type RoleRule } from "@/modules/roles/domain/model";
@@ -70,6 +76,7 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(CONFIG_REPOSITORY) private readonly config: ConfigRepositoryPort,
     @Inject(ENDPOINT_REPOSITORY) private readonly endpoints: EndpointRepositoryPort,
+    @Inject(EXAMPLE_REPOSITORY) private readonly examples: ExampleRepositoryPort,
     @Inject(ROLE_REPOSITORY) private readonly roles: RoleRepositoryPort,
     @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
     @Inject(ENVIRONMENT_REPOSITORY) private readonly environments: EnvironmentRepositoryPort,
@@ -119,6 +126,7 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
       contract: null,
       sections: [],
       endpoints: 0,
+      examples: 0,
       roles: 0,
       permissions: 0,
       requestTemplates: 0,
@@ -193,6 +201,7 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
     );
     let orderIndex = await this.endpoints.nextOrderIndex(project.id);
     const rows: Endpoint[] = [];
+    const examples: EndpointExample[] = [];
     for (const endpoint of bundle.endpoints ?? []) {
       const path = normalizePath(endpoint.path);
       const key = endpointKey(endpoint.method, path);
@@ -201,11 +210,15 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
         continue;
       }
       taken.add(key);
+      // `examples` se saca del spread: no es una columna del endpoint, y dejarlo entrar escribía un
+      // campo que la tabla ignora en silencio — que es la clase de cosa que parece funcionar.
+      const { examples: saved, ...fields } = endpoint;
+      const id = randomUUID();
       rows.push({
-        ...endpoint,
+        ...fields,
         path,
         pathParameters: reconcilePathParameters(path, endpoint.pathParameters),
-        id: randomUUID(),
+        id,
         projectId: project.id,
         origin: "import",
         orderIndex: orderIndex++,
@@ -214,9 +227,30 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
         updatedBy: actorId,
         deletedAt: null,
       });
+      // El bundle ya viene redactado —es lo que se exportó— pero se vuelve a redactar al entrar: un
+      // bundle es un fichero que se edita a mano, y confiar en que llega limpio sería hacer del
+      // importador la puerta por la que un token entra a la base de datos.
+      for (const [index, example] of (saved ?? []).entries()) {
+        const clean = redactExample(example.request, example.response);
+        examples.push(
+          blankExample({
+            projectId: project.id,
+            endpointId: id,
+            name: example.name,
+            request: clean.request,
+            response: clean.response,
+            origin: "import",
+            orderIndex: index,
+            now,
+            actorId,
+          }),
+        );
+      }
     }
     if (rows.length) await this.endpoints.saveMany(rows);
+    if (examples.length) await this.examples.saveMany(examples);
     result.endpoints = rows.length;
+    result.examples = examples.length;
   }
 
   private async importRoles(bundle: ProjectBundle, { project, actorId, now, result }: Context): Promise<void> {

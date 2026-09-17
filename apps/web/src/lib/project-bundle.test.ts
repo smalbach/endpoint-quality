@@ -9,6 +9,7 @@ const empty: ProjectBundleImportResultView = {
   contract: null,
   sections: [],
   endpoints: 0,
+  examples: 0,
   roles: 0,
   permissions: 0,
   requestTemplates: 0,

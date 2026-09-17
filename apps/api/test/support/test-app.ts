@@ -38,8 +38,8 @@ import { AUTH_COMMAND_HANDLERS, AUTH_EVENT_HANDLERS, AUTH_QUERY_HANDLERS } from 
 import { PASSWORD_RESET_REPOSITORY } from "@/modules/auth/domain/password-reset";
 import { MAILER, RecordingMailer } from "@/shared/mail/mailer";
 import { InMemoryPasswordResetRepository } from "./in-memory-password-resets";
-import { InMemoryEndpointRepository } from "./in-memory-endpoints";
-import { ENDPOINT_REPOSITORY } from "@/modules/endpoints/domain/ports";
+import { InMemoryEndpointRepository, InMemoryExampleRepository } from "./in-memory-endpoints";
+import { ENDPOINT_REPOSITORY, EXAMPLE_REPOSITORY } from "@/modules/endpoints/domain/ports";
 import { EndpointsController } from "@/modules/endpoints/presentation/endpoints.controller";
 import {
   ENDPOINT_COMMAND_HANDLERS,
@@ -235,6 +235,7 @@ export type TestContext = {
     runs: InMemoryRunRepository;
     passwordResets: InMemoryPasswordResetRepository;
     endpoints: InMemoryEndpointRepository;
+    examples: InMemoryExampleRepository;
   };
   http: StubSafeFetch;
   /** Every mail the application sent. The reset link is only reachable through here. */
@@ -270,6 +271,7 @@ export async function createTestApp(): Promise<TestContext> {
     runs: new InMemoryRunRepository(),
     passwordResets: new InMemoryPasswordResetRepository(),
     endpoints: new InMemoryEndpointRepository(),
+    examples: new InMemoryExampleRepository(),
   };
   const mailer = new RecordingMailer();
   // Loopback is allowed here because the run tests point the engine at a stub server on
@@ -352,6 +354,7 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: GITHUB_SOURCE, useClass: GithubSource },
       { provide: WORKFLOW_REPOSITORY, useValue: repositories.workflows },
       { provide: ENDPOINT_REPOSITORY, useValue: repositories.endpoints },
+      { provide: EXAMPLE_REPOSITORY, useValue: repositories.examples },
       // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the
       // repository is ciphertext, and a pass-through would make that assertion meaningless.
       { provide: SECRET_CIPHER, useValue: new AesGcmSecretCipher(Buffer.alloc(32, 9).toString("base64")) },

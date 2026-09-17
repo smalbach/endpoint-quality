@@ -25,6 +25,7 @@ import { useToast } from "@/components/toast";
 import { AuthEditor } from "@/components/auth-editor";
 import { CodeModal } from "@/components/code-modal";
 import { CookieManager, CookiePanel } from "@/components/cookie-manager";
+import { ExamplePanel } from "@/components/example-panel";
 import { VariableSuggest } from "@/components/variable-suggest";
 import { cn, formatBytes, formatDuration, httpStatusStyle, methodStyle } from "@/lib/format";
 import {
@@ -64,6 +65,9 @@ const TABS = [
   { id: "headers", label: "Headers" },
   { id: "body", label: "Body" },
   { id: "auth", label: "Auth" },
+  // Los ejemplos son del endpoint, no de la última respuesta: por eso viven en las pestañas de la
+  // petición, que están siempre, y no en las de la respuesta, que solo aparecen tras enviar.
+  { id: "examples", label: "Ejemplos" },
   { id: "scripts", label: "Scripts" },
   { id: "access", label: "Acceso" },
 ] as const;
@@ -375,6 +379,15 @@ export function EndpointEditor({
               onChange={(postResponseScript) => set({ postResponseScript })}
             />
           </div>
+        )}
+
+        {tab === "examples" && (
+          <ExamplePanel
+            projectId={projectId}
+            endpointId={endpointId}
+            sent={send.data ?? null}
+            canEdit={canEdit}
+          />
         )}
 
         {tab === "access" && (

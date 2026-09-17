@@ -48,12 +48,32 @@ type PostmanRequest = {
   auth?: Record<string, unknown>;
   description?: string;
 };
+/**
+ * Una respuesta guardada, que es lo que Postman llama un ejemplo.
+ *
+ * `code` y `status` los dos, porque Postman escribe los dos y su interfaz enseña el segundo. El
+ * `_postman_previewlanguage` es lo que decide cómo lo pinta al abrirlo: sin él, un JSON sale como
+ * un muro de texto.
+ */
+export type PostmanResponse = {
+  name: string;
+  originalRequest: PostmanRequest;
+  status: string;
+  code: number;
+  _postman_previewlanguage: string;
+  header: KeyValue[];
+  cookie: never[];
+  body: string;
+};
+
 /** Una petición de la colección. Con nombre propio porque es lo que se le cuelga un `event`. */
 export type PostmanRequestItem = {
   name: string;
   request: PostmanRequest;
   event?: PostmanEvent[];
   description?: string;
+  /** Las respuestas guardadas. Ausente cuando no hay ninguna, como en los ficheros de Postman. */
+  response?: PostmanResponse[];
 };
 export type PostmanItem = PostmanRequestItem | { name: string; description?: string; item: PostmanItem[] };
 
@@ -358,8 +378,96 @@ function endpointItem(endpoint: BundleEndpoint, baseUrl: string, skipped: Postma
       ...authOf(endpoint.auth, label, skipped),
       ...(endpoint.description ? { description: endpoint.description } : {}),
     },
+    ...exampleResponses(endpoint.examples ?? []),
   };
 }
+
+/**
+ * Los ejemplos guardados, escritos como el array `response` de un `item`.
+ *
+ * Es el inverso exacto del lector, y por eso da la vuelta: exportar un proyecto con ejemplos,
+ * volver a importar el fichero, y encontrarse los mismos.
+ *
+ * `originalRequest` sale entero. Sin él, Postman enseña la respuesta colgando de la petición
+ * *actual*, y un ejemplo de 422 —que se guardó con un cuerpo inválido a propósito— quedaría junto a
+ * un cuerpo válido, contando lo contrario de lo que pasó.
+ *
+ * Nada que redactar aquí: lo que está guardado ya pasó por la redacción al entrar. Es la ventaja de
+ * limpiar en la puerta y no en la salida — hay una sola puerta y no tres.
+ */
+function exampleResponses(examples: NonNullable<BundleEndpoint["examples"]>): { response?: PostmanResponse[] } {
+  if (!examples.length) return {};
+  return {
+    response: examples.map((example) => ({
+      name: example.name,
+      originalRequest: {
+        method: example.request.method,
+        header: example.request.headers
+          .filter((header) => header.enabled)
+          .map((header) => ({ key: header.name, value: header.value })),
+        url: { raw: example.request.url },
+        ...(example.request.body.text
+          ? {
+              body: {
+                mode: "raw" as const,
+                raw: example.request.body.text,
+                options: { raw: { language: previewLanguage(example.request.body.contentType) } },
+              },
+            }
+          : {}),
+      },
+      status: STATUS_TEXT[example.response.status] ?? "",
+      code: example.response.status,
+      _postman_previewlanguage: previewLanguage(example.response.contentType),
+      header: example.response.headers
+        .filter((header) => header.enabled)
+        .map((header) => ({ key: header.name, value: header.value })),
+      cookie: [],
+      body: example.response.body,
+    })),
+  };
+}
+
+/** Cómo Postman pinta un cuerpo. Lo deduce del `Content-Type`, que es lo único que hay. */
+function previewLanguage(contentType: string): string {
+  const type = contentType.toLowerCase();
+  if (type.includes("json")) return "json";
+  if (type.includes("xml")) return "xml";
+  if (type.includes("html")) return "html";
+  if (type.includes("javascript")) return "javascript";
+  return "text";
+}
+
+/**
+ * El texto del estado, para los códigos que aparecen.
+ *
+ * Una tabla y no una biblioteca: son los que una API contesta, y un código que no esté sale con el
+ * texto vacío, que Postman acepta. Inventar «Unknown» sería escribir en el fichero algo que el
+ * servidor no dijo.
+ */
+const STATUS_TEXT: Record<number, string> = {
+  200: "OK",
+  201: "Created",
+  202: "Accepted",
+  204: "No Content",
+  301: "Moved Permanently",
+  302: "Found",
+  304: "Not Modified",
+  400: "Bad Request",
+  401: "Unauthorized",
+  403: "Forbidden",
+  404: "Not Found",
+  405: "Method Not Allowed",
+  409: "Conflict",
+  410: "Gone",
+  415: "Unsupported Media Type",
+  422: "Unprocessable Entity",
+  429: "Too Many Requests",
+  500: "Internal Server Error",
+  502: "Bad Gateway",
+  503: "Service Unavailable",
+  504: "Gateway Timeout",
+};
 
 /**
  * El bloque `auth` de vuelta al fichero, sin el secreto.
