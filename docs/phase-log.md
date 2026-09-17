@@ -1854,3 +1854,85 @@ código de estado se descarta—, sin el token que traía el fichero, y sale otr
 del fichero exportado.
 
 `api 689 pruebas (43 nuevas) · web 415 (13 nuevas) · runner-core 311 · lint 0 errores · typecheck limpio`
+
+## Paridad con Postman, ola 5: importar un HAR, y tirar el 99% de lo que trae
+
+Un HAR es lo que graba la pestaña de red de cualquier navegador, y es **el camino más corto que
+existe** entre _«funciona en el navegador»_ y _«hay una prueba»_: se abre el inspector, se usa la
+aplicación, se exporta, y dentro están las peticiones de verdad con sus cabeceras de verdad y —esto
+es lo que ningún otro formato trae— **lo que el servidor contestó**. Es el único del que sale un
+endpoint ya documentado con sus ejemplos, y por eso venía justo después de ellos.
+
+Antes el detector reconocía la forma y decía «todavía no se lee: exporta las peticiones como curl».
+Había una prueba que lo afirmaba, y ahora dice otra cosa.
+
+### Lo que se tira, que es casi todo
+
+Un HAR de una pestaña son doscientas entradas y **unas ocho son la API**. El resto es el HTML, los
+bundles de JavaScript, las hojas de estilo, las fuentes, los iconos, la telemetría, y un `OPTIONS`
+de preflight por cada petición con CORS. Importarlo tal cual daría doscientos endpoints donde los
+que importan no se encuentran, y eso es **peor que no importar nada**: hay que borrar ciento noventa
+a mano para llegar a lo que se venía a buscar.
+
+Tres filtros, cada uno con su motivo:
+
+- **El tipo que contestó el servidor**, y no la extensión de la URL, que puede no tener.
+- **El `OPTIONS` de preflight**, que no lo manda la aplicación sino el navegador por su cuenta.
+- **Los dominios de telemetría conocidos**, que no son la API que se prueba y a los que meter
+  tráfico de prueba no le hace bien a nadie. El dominio se compara exigiendo el punto, igual que las
+  cookies de la RFC 6265: `misentry.io` no es `sentry.io`, y `sentry.io.miapi.test` tampoco.
+
+Lo tirado **se cuenta agrupado por motivo**. «Se importaron 8 de 213» sin explicación es un número
+que nadie puede comprobar; ochenta y tres líneas iguales tampoco informan más que una.
+
+### Y el riesgo simétrico, que es el que nadie prueba
+
+Tirar de más. Un `application/problem+json` es la respuesta de error de una API de verdad —RFC
+9457—, un endpoint que contesta `text/plain` existe, y un 204 no lleva ningún tipo. Si el filtro se
+los come, el import se queda corto **en silencio**, que es el peor resultado posible. Cada uno de
+esos casos tiene su prueba.
+
+### La misma ruta veinte veces
+
+En una sesión de navegador la misma ruta aparece una y otra vez. Las repetidas **no se descartan**:
+la primera es el endpoint y las siguientes son más ejemplos suyos. Un 200, un 404 y un 422 de la
+misma ruta es exactamente la colección de ejemplos que alguien querría tener y que a mano no va a
+escribir nunca. La cadena de consulta no separa dos endpoints: `?page=1` y `?page=2` son la misma
+ruta con dos respuestas.
+
+### La credencial, con el tipo y sin el valor
+
+Un HAR trae la cabecera `Authorization` **de verdad**, con el token de alguien dentro. El tipo se
+conserva —es lo que hace falta para volver a mandarla y no es un secreto— y el valor no: un `Bearer`
+entra como `{ type: "bearer", params: { token: "" } }`, y `Basic` y `Digest` igual. Un esquema que el
+editor no sabe firmar se queda en `inherit` en vez de inventar un tipo.
+
+Las pseudo-cabeceras de HTTP/2 —`:method`, `:path`, `:authority`— se quedan fuera: las escribe el
+navegador, no son cabeceras, y mandarlas a mano da un 400.
+
+Un cuerpo de respuesta en base64 se decodifica, que es cómo el navegador guarda cualquier cosa que
+no sea texto. Y una entrada **sin código de estado no da ejemplo**: el HAR anota cero en una petición
+que se canceló, y un ejemplo que dijera «0» o que se inventara un 200 sería una afirmación falsa
+sobre la API de alguien.
+
+### Comprobado con un HAR real, no solo con uno escrito para la prueba
+
+Se grabó una sesión de verdad en el navegador de este producto —84 entradas, con sus tipos y sus
+estados reales— y se pasó por el lector:
+
+```
+endpoints: 1
+   GET /api/auth/refresh · ejemplos: 1
+descartes:
+   83 peticiones: son recursos de la página y no de la API (text/javascript)
+```
+
+De 84 queda **una**: la única llamada a la API que esa sesión hizo. Y era un
+`application/problem+json`, que es justo el tipo que un filtro descuidado se habría comido.
+
+Además, por HTTP de punta a punta con una sesión sintética que mezcla las siete clases de entrada:
+entran dos endpoints, los descartes salen con su motivo, los dos ejemplos de la misma ruta cuelgan
+del mismo endpoint, el cuerpo que se mandó entra con el endpoint que lo mandaba, y ni el token de la
+cabecera, ni el del cuerpo, ni la cookie de sesión llegan a la base de datos.
+
+`api 720 pruebas (31 nuevas) · web 415 · import-detect 25 · runner-core 311 · lint 0 errores · typecheck limpio`

@@ -81,6 +81,7 @@ const KIND_LABEL: Record<ImportKind, string> = {
   openapi: "OpenAPI",
   insomnia: "Insomnia",
   curl: "Comandos cURL",
+  har: "Grabación del navegador (HAR)",
   "eq-bundle": "Proyecto exportado de aquí",
   unknown: "No reconocido",
 };

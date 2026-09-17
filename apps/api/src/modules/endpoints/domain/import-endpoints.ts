@@ -17,6 +17,7 @@ import { exampleFromSchema, type RequestBody } from "@eq/runner-core";
 import {
   parseCurl,
   parseCurlDocument,
+  parseHar,
   parseInsomniaExport,
   parsePostmanCollection,
   pathOf,
@@ -47,7 +48,7 @@ import {
   INHERIT_AUTH,
 } from "./model";
 
-export const IMPORT_FILE_FORMATS = ["openapi", "postman", "insomnia", "markdown"] as const;
+export const IMPORT_FILE_FORMATS = ["openapi", "postman", "insomnia", "har", "markdown"] as const;
 export type ImportFileFormat = (typeof IMPORT_FILE_FORMATS)[number];
 
 /** An endpoint as read, before it belongs to a project. */
@@ -90,6 +91,10 @@ export function detectFormat(filename: string, text: string): ImportFileFormat |
     }
     const info = document.info as Record<string, unknown> | undefined;
     if (typeof info?.schema === "string" && info.schema.includes("postman")) return "postman";
+    // Antes que el resto: la raíz de un HAR solo tiene `log`, así que no choca con nada, y su
+    // `log.version` no es el `openapi`/`swagger` de un contrato.
+    const log = document.log as Record<string, unknown> | undefined;
+    if (log && Array.isArray(log.entries)) return "har";
     if (document._type === "export" || Array.isArray(document.resources)) return "insomnia";
     if (typeof document.openapi === "string" || typeof document.swagger === "string") return "openapi";
     return null;
@@ -106,7 +111,9 @@ export function parseEndpointFile(format: ImportFileFormat, text: string): Parse
       ? parsePostmanCollection(text)
       : format === "insomnia"
         ? parseInsomniaExport(text)
-        : parseCurlDocument(text);
+        : format === "har"
+          ? parseHar(text)
+          : parseCurlDocument(text);
   const drafts: EndpointDraft[] = [];
   const skipped: ImportSkip[] = read.skipped.map((entry) => ({
     method: entry.method,

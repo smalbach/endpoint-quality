@@ -32,6 +32,7 @@ export const IMPORT_KINDS = [
   "openapi",
   "insomnia",
   "curl",
+  "har",
   "eq-bundle",
   "unknown",
 ] as const;
@@ -62,6 +63,7 @@ export function targetsOf(kind: PieceKind): ImportTarget[] {
       return ["project"];
     case "insomnia":
     case "curl":
+    case "har":
       return ["endpoints"];
   }
 }
@@ -237,6 +239,30 @@ function fromJson(parsed: unknown, label: string): Detected {
       reason: null,
     };
   }
+  // Un HAR: `log.entries`, que es lo que graba la pestaña de red de cualquier navegador. Se mira
+  // antes del OpenAPI y del resto porque su raíz solo tiene `log` y no choca con nada, y el
+  // `version` de dentro no es el `openapi`/`swagger` de un contrato.
+  const log = asRecord(document.log);
+  if (log && Array.isArray(log.entries)) {
+    // El título de la primera página es lo que la gente reconoce —es la pestaña que grabó—, y si
+    // no, quién lo grabó: «Chrome DevTools». El nombre del fichero es el último recurso.
+    const page = Array.isArray(log.pages) ? asRecord(log.pages[0]) : null;
+    const name = asString(page?.title) || asString(asRecord(log.creator)?.name) || label;
+    return {
+      kind: "har",
+      name,
+      pieces: [
+        {
+          kind: "har",
+          name: label,
+          detail: plural(count(log.entries), "petición grabada", "peticiones grabadas"),
+          text: JSON.stringify(document),
+        },
+      ],
+      reason: null,
+    };
+  }
+
   if (typeof document.openapi === "string" || typeof document.swagger === "string") {
     const paths = asRecord(document.paths);
     return {
@@ -263,12 +289,14 @@ function fromJson(parsed: unknown, label: string): Detected {
       reason: "es una colección de Postman v1, que ya no se admite: expórtala como v2.1",
     };
   }
+  // Un `log` sin `entries` sí queda aquí: tiene la forma de un HAR y no trae ninguna petición, que
+  // es distinto de «no lo reconozco» y distinto de un HAR legible.
   if (asRecord(document.log)) {
     return {
       kind: "unknown",
       name: label,
       pieces: [],
-      reason: "es un HAR del navegador, que todavía no se lee: exporta las peticiones como curl",
+      reason: "parece un HAR del navegador pero no trae ninguna petición grabada en `log.entries`",
     };
   }
   return {

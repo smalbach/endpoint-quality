@@ -857,3 +857,248 @@ export function expectedStatusFor(operation: Operation): number {
   const success = operation.statuses.filter((status) => status >= 200 && status < 300).sort((a, b) => a - b);
   return success[0] ?? 200;
 }
+
+/**
+ * Un HAR, que es lo que graba la pestaña de red de cualquier navegador.
+ *
+ * Es el camino más corto que existe entre *«funciona en el navegador»* y *«hay una prueba»*: se abre
+ * el inspector, se usa la aplicación, se exporta, y dentro están las peticiones de verdad con sus
+ * cabeceras de verdad y **lo que el servidor contestó**. Ningún otro formato que entra aquí trae las
+ * respuestas, así que es el único del que sale un endpoint ya documentado con sus ejemplos.
+ *
+ * ## Lo que se tira, que es casi todo
+ *
+ * Un HAR de una pestaña son doscientas entradas y **unas ocho son la API**. El resto es el HTML, los
+ * bundles de JavaScript, las hojas de estilo, las fuentes, los iconos, la telemetría, y un `OPTIONS`
+ * de preflight por cada petición con CORS. Importarlo tal cual daría una lista de doscientos
+ * endpoints donde los que importan no se encuentran, y eso es peor que no importar nada: hay que
+ * borrar ciento noventa a mano para llegar a lo que se venía a buscar.
+ *
+ * Tres filtros, cada uno con su motivo:
+ *
+ * - **El tipo de la respuesta.** Un `text/html`, un `text/css`, una imagen o una fuente no es una
+ *   API. Se mira el tipo que contestó el servidor y no la extensión de la URL, que puede no tener.
+ * - **El `OPTIONS` de preflight.** No lo manda la aplicación: lo manda el navegador por su cuenta,
+ *   y no es una petición que nadie quiera repetir.
+ * - **Los dominios de telemetría conocidos.** No son la API que se está probando, y meterlas invita
+ *   a mandarles tráfico de prueba.
+ *
+ * Todo lo tirado **se cuenta y se dice por qué**, agrupado por motivo: «se importaron 8 de 213» sin
+ * explicación es un número que nadie puede comprobar, y con el motivo quien lo lee puede ver si el
+ * filtro se pasó de listo con algo suyo.
+ *
+ * ## Y lo que se junta
+ *
+ * En una sesión de navegador la misma ruta aparece veinte veces. Las repetidas **no se descartan**:
+ * la primera es el endpoint y las siguientes son más ejemplos suyos — un 200, un 404 y un 422 de la
+ * misma ruta es exactamente la colección de ejemplos que alguien querría tener y que a mano no va a
+ * escribir nunca.
+ *
+ * Las cabeceras salen **como estaban**, incluida la `Authorization`. Este lector dice lo que el
+ * fichero decía; quitar la credencial es del importador, que ya lo hace para todos los formatos, y
+ * de la redacción del ejemplo. Hacerlo aquí además sería una tercera copia de la misma regla.
+ */
+export function parseHar(text: string): ImportedRequests {
+  const document = asRecord(safeJson(text));
+  const log = document ? asRecord(document.log) : null;
+  if (!log || !Array.isArray(log.entries)) {
+    return { requests: [], skipped: [{ name: "", method: "", url: "", reason: "no es un HAR con `log.entries`" }] };
+  }
+
+  const requests: ParsedRequest[] = [];
+  const skipped: SkippedRequest[] = [];
+  /** Por método y ruta: la segunda vez que aparece una ruta es otro ejemplo, no otro endpoint. */
+  const byKey = new Map<string, ParsedRequest>();
+  /** Los motivos se agrupan: 180 líneas de «es un bundle de JavaScript» no informan más que una. */
+  const dropped = new Map<string, number>();
+
+  for (const entry of log.entries) {
+    const row = asRecord(entry);
+    const harRequest = row ? asRecord(row.request) : null;
+    if (!harRequest) continue;
+
+    const method = (asString(harRequest.method) || "GET").toUpperCase();
+    const url = asString(harRequest.url);
+    if (!url) {
+      skipped.push({ name: "", method, url: "", reason: "la entrada no lleva URL" });
+      continue;
+    }
+
+    const harResponse = asRecord(row?.response);
+    const responseType = asString(asRecord(harResponse?.content)?.mimeType);
+    const why = harNoise(method, url, responseType);
+    if (why) {
+      dropped.set(why, (dropped.get(why) ?? 0) + 1);
+      continue;
+    }
+
+    const headers = harHeaders(harRequest.headers);
+    const key = `${method} ${pathOf(url)}`;
+    const example = harExample(harResponse, harRequest, url);
+
+    const existing = byKey.get(key);
+    if (existing) {
+      // Otra vez la misma ruta: su respuesta es otro ejemplo del endpoint que ya está.
+      if (example) existing.examples.push(example);
+      continue;
+    }
+
+    const parsed: ParsedRequest = {
+      name: `${method} ${pathOf(url)}`,
+      method,
+      url,
+      headers,
+      body: harBody(harRequest.postData, headers),
+      auth: harAuth(headers),
+      examples: example ? [example] : [],
+    };
+    byKey.set(key, parsed);
+    requests.push(parsed);
+  }
+
+  for (const [reason, count] of dropped) {
+    skipped.push({
+      name: "",
+      method: "",
+      url: "",
+      reason: `${count} ${count === 1 ? "petición" : "peticiones"}: ${reason}`,
+    });
+  }
+  return { requests, skipped };
+}
+
+/** Los tipos de respuesta que no son una API. */
+const NOISE_TYPE =
+  /^(text\/html|text\/css|text\/javascript|application\/javascript|application\/ecmascript|image\/|font\/|video\/|audio\/|application\/font|application\/x-font|application\/wasm)/i;
+
+/** Dominios que no son la API que se está probando. */
+const TELEMETRY =
+  /(^|\.)(google-analytics\.com|googletagmanager\.com|doubleclick\.net|sentry\.io|segment\.(io|com)|mixpanel\.com|hotjar\.com|intercom\.io|newrelic\.com|datadoghq\.com|fullstory\.com|amplitude\.com|facebook\.net|clarity\.ms)$/i;
+
+/** Por qué una entrada no entra, o `null` cuando sí entra. */
+export function harNoise(method: string, url: string, responseType: string): string | null {
+  // El preflight se comprueba antes que nada: su respuesta no lleva tipo, así que caería en el
+  // filtro de los recursos por el motivo equivocado.
+  if (method === "OPTIONS") return "son el `OPTIONS` de preflight que manda el navegador";
+  let host = "";
+  try {
+    const parsed = new URL(url);
+    host = parsed.hostname;
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return `no van por http (${parsed.protocol})`;
+  } catch {
+    // Una URL que no se puede partir no es motivo para tirarla: el emparejador solo lee la ruta.
+  }
+  if (host && TELEMETRY.test(host)) return `son de un servicio de telemetría (${host})`;
+  const type = responseType.split(";")[0]!.trim();
+  if (type && NOISE_TYPE.test(type)) return `son recursos de la página y no de la API (${type})`;
+  return null;
+}
+
+/** Las cabeceras de una entrada, tal cual, sin las que escribe el propio protocolo. */
+function harHeaders(list: unknown): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const entry of asArray(list)) {
+    const row = asRecord(entry);
+    const name = asString(row?.name).trim();
+    // Las pseudo-cabeceras de HTTP/2 (`:method`, `:path`, `:authority`) las escribe el navegador y
+    // no son cabeceras: mandarlas a mano da un 400.
+    if (!row || !name || name.startsWith(":")) continue;
+    headers[name] = asString(row.value);
+  }
+  return headers;
+}
+
+/**
+ * Qué autenticación llevaba, leída de la cabecera que el navegador grabó.
+ *
+ * **Con el tipo y sin el valor.** El tipo es lo que hace falta para volver a mandarla y no es un
+ * secreto; el valor es el token de alguien, y este lector nunca lo guarda literal —lo mismo que
+ * hace con el bloque `auth` de una colección—. Una cabecera con otro esquema se deja en `inherit`
+ * en vez de inventar un tipo que el editor no sabe firmar.
+ */
+function harAuth(headers: Record<string, string>): RequestAuth {
+  const value = Object.entries(headers).find(([name]) => name.toLowerCase() === "authorization")?.[1] ?? "";
+  const scheme = value.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+  if (scheme === "bearer") return { type: "bearer", params: { token: "" } };
+  if (scheme === "basic") return { type: "basic", params: { username: "", password: "" } };
+  if (scheme === "digest") return { type: "digest", params: { username: "", password: "" } };
+  return { type: "inherit", params: {} };
+}
+
+/** El cuerpo que la entrada mandó. */
+function harBody(postData: unknown, headers: Record<string, string>): RequestBody {
+  const data = asRecord(postData);
+  if (!data) return { type: "none" };
+  const params = asArray(data.params);
+  if (params.length) {
+    const fields: Record<string, string> = {};
+    for (const entry of params) {
+      const row = asRecord(entry);
+      const name = asString(row?.name).trim();
+      if (name) fields[name] = asString(row?.value);
+    }
+    const declared = asString(data.mimeType);
+    const type = /multipart/i.test(declared) ? "form-data" : "x-www-form-urlencoded";
+    return { type, fields, disabledFields: {} };
+  }
+  const payload = asString(data.text);
+  if (!payload.trim()) return { type: "none" };
+  const declared =
+    asString(data.mimeType) ||
+    Object.entries(headers).find(([name]) => name.toLowerCase() === "content-type")?.[1] ||
+    "";
+  return bodyFrom({ form: {}, payload, declared, urlencodeOnly: false });
+}
+
+/**
+ * La respuesta de una entrada, como ejemplo guardado.
+ *
+ * `null` cuando no hay código de estado. El HAR lo anota a cero en una petición que el navegador
+ * canceló o que falló sin llegar, y un ejemplo que dijera «0» —o que se inventara un 200— sería una
+ * afirmación falsa sobre la API, que es justo lo que alguien va a leer como contrato.
+ *
+ * El cuerpo en base64 se decodifica: es cómo el navegador guarda cualquier respuesta que no sea
+ * texto, y el propio HAR lo dice en `encoding`.
+ */
+function harExample(
+  response: Record<string, unknown> | null,
+  request: Record<string, unknown>,
+  url: string,
+): PostmanExample | null {
+  if (!response) return null;
+  const status = Number(response.status);
+  if (!Number.isInteger(status) || status < 100 || status > 599) return null;
+
+  const content = asRecord(response.content);
+  const raw = asString(content?.text);
+  const requestHeaders = harHeaders(request.headers);
+  const postData = asRecord(request.postData);
+
+  return {
+    // El código y el texto que el propio HAR trae, no una etiqueta inventada.
+    name: `${status}${asString(response.statusText) ? ` ${asString(response.statusText)}` : ""}`,
+    status,
+    headers: harHeaders(response.headers),
+    body: asString(content?.encoding) === "base64" ? decodeBase64(raw) : raw,
+    contentType: asString(content?.mimeType).split(";")[0]!.trim() || "text/plain",
+    request: {
+      method: (asString(request.method) || "GET").toUpperCase(),
+      url,
+      headers: requestHeaders,
+      body: asString(postData?.text),
+      contentType:
+        Object.entries(requestHeaders).find(([name]) => name.toLowerCase() === "content-type")?.[1] ||
+        asString(postData?.mimeType) ||
+        "application/json",
+    },
+  };
+}
+
+/** Un base64 que puede venir roto: un HAR truncado es lo normal, y no es motivo para no importar. */
+function decodeBase64(value: string): string {
+  try {
+    return Buffer.from(value, "base64").toString("utf8");
+  } catch {
+    return "";
+  }
+}

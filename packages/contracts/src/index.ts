@@ -893,6 +893,8 @@ export type ImportKindView =
   | "openapi"
   | "insomnia"
   | "curl"
+  /** Un HAR del navegador: el único formato que trae además las respuestas, como ejemplos. */
+  | "har"
   /** A project exported by this product, which used to have an import door of its very own. */
   | "eq-bundle"
   | "unknown";

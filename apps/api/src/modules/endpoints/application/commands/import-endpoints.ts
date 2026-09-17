@@ -89,7 +89,8 @@ export class ImportEndpointFileHandler implements ICommandHandler<ImportEndpoint
         [
           {
             field: "file",
-            detail: "Se admiten OpenAPI (JSON o YAML), Postman v2.1, Insomnia v4 y markdown con comandos curl",
+            detail:
+              "Se admiten OpenAPI (JSON o YAML), Postman v2.1, Insomnia v4, un HAR del navegador y markdown con comandos curl",
           },
         ],
         "import-format-unknown",

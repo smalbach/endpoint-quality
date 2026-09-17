@@ -112,10 +112,11 @@ export class ImportAnythingHandler implements ICommandHandler<ImportAnythingComm
       "postman-collection": 2,
       insomnia: 3,
       curl: 4,
+      har: 5,
       // Last: an exported project brings its own contract, environments and flows, and the merge
       // rules that keep what is already here are its own. It has no business running before the
       // pieces whose linking it would change.
-      "eq-bundle": 5,
+      "eq-bundle": 6,
     };
     for (const [index, entry] of detected.entries()) {
       for (const piece of entry.pieces) ordered.push({ piece, item: items[index] });
@@ -217,11 +218,15 @@ export class ImportAnythingHandler implements ICommandHandler<ImportAnythingComm
       }
       case "postman-collection":
       case "insomnia":
+      case "har":
       case "curl": {
         const results: ImportedItemResult["results"] = [];
         // The URLs, as endpoints of the project. `.json` and `.txt` are what the reader tells
         // JSON from a page of `curl` by, so the name it is given has to match the piece.
-        const filename = piece.kind === "curl" ? `${piece.name || "pegado"}.txt` : `${piece.name || "pegado"}.json`;
+        // El lector distingue los formatos por el sufijo que se le dé, así que el nombre tiene que
+        // coincidir con la pieza: `.txt` para una página de `curl`, `.har` para un HAR.
+        const suffix = piece.kind === "curl" ? ".txt" : piece.kind === "har" ? ".har" : ".json";
+        const filename = `${piece.name || "pegado"}${suffix}`;
         try {
           const endpoints = await this.commandBus.execute<
             ImportEndpointFileCommand,

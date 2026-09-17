@@ -172,10 +172,12 @@ describe("lo que no se puede leer se dice con algo que hacer", () => {
     assert.match(detected.reason ?? "", /v1.*v2\.1/);
   });
 
-  test("un HAR se reconoce y se dice que todavía no", () => {
-    const detected = detectImport("red.har", JSON.stringify({ log: { version: "1.2", entries: [] } }));
+  test("un HAR con la forma pero sin peticiones lo dice, que no es lo mismo que no reconocerlo", () => {
+    // Esta prueba decía antes «se reconoce y todavía no se lee». Ahora sí se lee, así que lo único
+    // que queda aquí es el HAR vacío: la forma está y no hay nada dentro.
+    const detected = detectImport("red.har", JSON.stringify({ log: { version: "1.2" } }));
     assert.equal(detected.kind, "unknown");
-    assert.match(detected.reason ?? "", /HAR/);
+    assert.match(detected.reason ?? "", /HAR.*no trae ninguna petición/);
   });
 
   test("un JSON roto no es «no se reconoce», es «empieza como JSON y no lo es»", () => {

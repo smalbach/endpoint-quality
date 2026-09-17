@@ -333,3 +333,132 @@ describe("una colección de Postman con ejemplos", () => {
     assert.match(ok?.body ?? "", /expires_in/);
   });
 });
+
+describe("un HAR del navegador", () => {
+  /**
+   * Una sesión como la que sale de la pestaña de red: la página, sus recursos, un preflight,
+   * telemetría, y tres peticiones a la API — dos de ellas a la misma ruta.
+   */
+  const session = {
+    log: {
+      version: "1.2",
+      creator: { name: "Chrome DevTools" },
+      pages: [{ title: "https://tienda.test/pedidos" }],
+      entries: [
+        {
+          request: { method: "GET", url: "https://tienda.test/pedidos", headers: [] },
+          response: { status: 200, headers: [], content: { mimeType: "text/html", text: "<html></html>" } },
+        },
+        {
+          request: { method: "GET", url: "https://tienda.test/assets/app.js", headers: [] },
+          response: { status: 200, headers: [], content: { mimeType: "application/javascript", text: "//" } },
+        },
+        {
+          request: { method: "OPTIONS", url: "https://api.tienda.test/v1/pedidos", headers: [] },
+          response: { status: 204, headers: [], content: { mimeType: "" } },
+        },
+        {
+          request: { method: "POST", url: "https://www.google-analytics.com/collect", headers: [] },
+          response: { status: 200, headers: [], content: { mimeType: "application/json", text: "{}" } },
+        },
+        {
+          request: {
+            method: "GET",
+            url: "https://api.tienda.test/v1/pedidos?page=1",
+            headers: [
+              { name: ":authority", value: "api.tienda.test" },
+              { name: "Authorization", value: "Bearer TOKEN-DEL-NAVEGADOR" },
+              { name: "Accept", value: "application/json" },
+            ],
+          },
+          response: {
+            status: 200,
+            statusText: "OK",
+            headers: [
+              { name: "Content-Type", value: "application/json" },
+              { name: "Set-Cookie", value: "sesion=abc; Path=/" },
+            ],
+            content: { mimeType: "application/json", text: '{"items":[{"id":7}],"access_token":"SECRETO-HAR"}' },
+          },
+        },
+        {
+          request: { method: "GET", url: "https://api.tienda.test/v1/pedidos?page=2", headers: [] },
+          response: {
+            status: 404,
+            statusText: "Not Found",
+            headers: [{ name: "Content-Type", value: "application/json" }],
+            content: { mimeType: "application/json", text: '{"error":"no hay más"}' },
+          },
+        },
+        {
+          request: {
+            method: "POST",
+            url: "https://api.tienda.test/v1/pedidos",
+            headers: [{ name: "Content-Type", value: "application/json" }],
+            postData: { mimeType: "application/json", text: '{"total":10}' },
+          },
+          response: {
+            status: 201,
+            statusText: "Created",
+            headers: [{ name: "Content-Type", value: "application/json" }],
+            content: { mimeType: "application/json", text: '{"id":8}' },
+          },
+        },
+      ],
+    },
+  };
+
+  let imported: { id: string; method: string; path: string }[] = [];
+
+  test("de siete entradas entran dos endpoints, y los descartes se cuentan con su motivo", async () => {
+    const response = await api()
+      .post(`${base()}/endpoints/import/file`)
+      .set(as(owner))
+      .attach("file", Buffer.from(JSON.stringify(session)), "tienda.har");
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.format, "har");
+
+    imported = response.body.imported;
+    // `GET /v1/pedidos` y `POST /v1/pedidos`: la cadena de consulta no separa dos endpoints.
+    assert.deepEqual(imported.map((row: { method: string; path: string }) => `${row.method} ${row.path}`).sort(), [
+      "GET /v1/pedidos",
+      "POST /v1/pedidos",
+    ]);
+    const reasons = response.body.skipped.map((row: { reason: string }) => row.reason).join(" | ");
+    assert.match(reasons, /preflight/);
+    assert.match(reasons, /telemetría/);
+    assert.match(reasons, /recursos de la página/);
+  });
+
+  test("y con ellos los ejemplos: es el único formato que trae las respuestas", async () => {
+    const get = imported.find((row) => row.method === "GET")!;
+    const list = await api().get(`${base()}/endpoints/${get.id}/examples`).set(as(owner));
+    assert.equal(list.status, 200);
+    // Dos entradas de la misma ruta: dos ejemplos del mismo endpoint, no dos endpoints.
+    assert.deepEqual(list.body.examples.map((row: { name: string }) => row.name).sort(), ["200 OK", "404 Not Found"]);
+  });
+
+  test("el token que el navegador grabó no llega a ningún sitio", async () => {
+    const get = imported.find((row) => row.method === "GET")!;
+    const list = await api().get(`${base()}/endpoints/${get.id}/examples`).set(as(owner));
+    const text = JSON.stringify(list.body);
+    assert.ok(!text.includes("TOKEN-DEL-NAVEGADOR"), "la cabecera Authorization del HAR está guardada");
+    assert.ok(!text.includes("SECRETO-HAR"), "el token del cuerpo de la respuesta está guardado");
+    assert.ok(!text.includes("sesion=abc"), "la cookie de sesión está guardada");
+    // Y lo que no era un secreto sobrevive: el ejemplo documenta algo.
+    assert.match(list.body.examples.find((row: { name: string }) => row.name === "200 OK").response.body, /"id": 7/);
+
+    // El endpoint sabe que llevaba credencial, con el tipo y sin el valor.
+    const endpoint = await api().get(`${base()}/endpoints/${get.id}`).set(as(owner));
+    assert.equal(endpoint.body.auth.type, "bearer");
+    assert.equal(endpoint.body.auth.params.token, "");
+    assert.equal(endpoint.body.requiresAuth, true);
+  });
+
+  test("el cuerpo que se mandó entra con el endpoint que lo mandaba", async () => {
+    const post = imported.find((row) => row.method === "POST")!;
+    const endpoint = await api().get(`${base()}/endpoints/${post.id}`).set(as(owner));
+    assert.equal(endpoint.body.body.mode, "json");
+    assert.match(endpoint.body.body.text, /"total"/);
+  });
+});
