@@ -22,6 +22,8 @@ import { RunDetailPage, RunsPage } from "@/routes/runs";
 import { SecurityRunDetailPage, SecurityRunsPage } from "@/routes/security-runs";
 import { RolesPage } from "@/routes/roles";
 import { MocksPage } from "@/routes/mocks";
+import { DocSitesPage } from "@/routes/doc-sites";
+import { PublishedDocsPage } from "@/routes/published-docs";
 import { ProjectGeneralPage, ProjectSettingsLayout } from "@/routes/project-settings";
 import { ProjectTransferPage } from "@/routes/project-transfer";
 import { NotFoundPage } from "@/routes/not-found";
@@ -84,6 +86,10 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="/register" element={<LoginPage mode="register" />} />
                 <Route path="/forgot-password" element={<ForgotPasswordPage />} />
                 <Route path="/reset-password" element={<ResetPasswordPage />} />
+                {/* La documentación publicada: **fuera** de `Protected`, que es de lo que va. La lee
+                    alguien que no tiene cuenta aquí, y si estuviera dentro del portero lo mandaría
+                    a `/login` con un enlace que se le acaba de dar. */}
+                <Route path="/docs/:publicId" element={<PublishedDocsPage />} />
                 <Route element={<Protected />}>
                   <Route element={<PageLayout />}>
                     <Route index element={<Navigate to="/projects" replace />} />
@@ -143,6 +149,7 @@ createRoot(document.getElementById("root")!).render(
                       }
                     />
                     <Route path="mocks" element={<MocksPage />} />
+                    <Route path="doc-sites" element={<DocSitesPage />} />
                     <Route path="settings" element={<ProjectSettingsLayout />}>
                       <Route index element={<ProjectGeneralPage />} />
                       <Route path="contract" element={<ConfigPage />} />

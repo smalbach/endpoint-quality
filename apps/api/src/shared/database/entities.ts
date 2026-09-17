@@ -583,6 +583,32 @@ export class MockServerEntity {
   @Column("uuid") createdBy: string;
 }
 
+/**
+ * Una documentación publicada de un proyecto: la URL que la enseña a quien no tiene cuenta aquí.
+ *
+ * Casi la misma fila que un mock, y eso dice lo que es: una superficie pública de un proyecto, con
+ * su identificador opaco y su clave opcional. `publicId` es único en toda la instalación porque es
+ * lo único que llega en la URL.
+ */
+@Entity({ name: "doc_sites" })
+export class DocSiteEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Column({ type: "varchar", length: 120 }) name: string;
+  @Column({ type: "varchar", length: 64, unique: true }) publicId: string;
+  @Column({ type: "varchar", length: 20 }) visibility: string;
+  @Column({ type: "varchar", length: 64, nullable: true }) apiKeyHash: string | null;
+  @Column({ type: "varchar", length: 20, default: "" }) apiKeyPreview: string;
+  /** Escrita a mano al publicar, nunca leída de un entorno: un entorno lleva secretos dentro. */
+  @Column({ type: "varchar", length: 300, default: "" }) baseUrl: string;
+  @Column({ type: "text", default: "" }) intro: string;
+  @Column({ type: "boolean", default: false }) includeExamples: boolean;
+  @Column({ type: "boolean", default: true }) enabled: boolean;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) updatedAt: Date;
+  @Column("uuid") createdBy: string;
+}
+
 /** A role of the API a project tests. The `access` section is derived from these rows. */
 @Entity({ name: "project_roles" })
 export class RoleEntity {
@@ -746,6 +772,7 @@ export const ENTITIES = [
   RunEntity, RunCaseEntity, RunStepEntity,
   EndpointEntity, EndpointExampleEntity,
   MockServerEntity,
+  DocSiteEntity,
   RoleEntity, RolePermissionEntity, RoleRuleEntity,
   SecurityRunEntity,
   PerformancePlanEntity, PerformanceRunEntity,

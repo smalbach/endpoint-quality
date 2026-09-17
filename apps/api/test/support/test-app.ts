@@ -40,12 +40,17 @@ import { MAILER, RecordingMailer } from "@/shared/mail/mailer";
 import { InMemoryPasswordResetRepository } from "./in-memory-password-resets";
 import { InMemoryEndpointRepository, InMemoryExampleRepository } from "./in-memory-endpoints";
 import { InMemoryMockRepository } from "./in-memory-mocks";
+import { InMemoryDocSiteRepository } from "./in-memory-doc-sites";
 import { ENDPOINT_REPOSITORY, EXAMPLE_REPOSITORY } from "@/modules/endpoints/domain/ports";
 import { EndpointsController } from "@/modules/endpoints/presentation/endpoints.controller";
 import { MOCK_REPOSITORY } from "@/modules/mocks/domain/ports";
 import { MocksController } from "@/modules/mocks/presentation/mocks.controller";
 import { MockServeController } from "@/modules/mocks/presentation/mock-serve.controller";
 import { MOCK_COMMAND_HANDLERS, MOCK_QUERY_HANDLERS } from "@/modules/mocks/mocks.module";
+import { DOC_SITE_REPOSITORY } from "@/modules/docs/domain/ports";
+import { DocSitesController } from "@/modules/docs/presentation/doc-sites.controller";
+import { PublishedDocsController } from "@/modules/docs/presentation/published-docs.controller";
+import { DOC_SITE_COMMAND_HANDLERS, DOC_SITE_QUERY_HANDLERS } from "@/modules/docs/docs.module";
 import {
   ENDPOINT_COMMAND_HANDLERS,
   ENDPOINT_EVENT_HANDLERS,
@@ -242,6 +247,7 @@ export type TestContext = {
     endpoints: InMemoryEndpointRepository;
     examples: InMemoryExampleRepository;
     mocks: InMemoryMockRepository;
+    docSites: InMemoryDocSiteRepository;
   };
   http: StubSafeFetch;
   /** Every mail the application sent. The reset link is only reachable through here. */
@@ -279,6 +285,7 @@ export async function createTestApp(): Promise<TestContext> {
     endpoints: new InMemoryEndpointRepository(),
     examples: new InMemoryExampleRepository(),
     mocks: new InMemoryMockRepository(),
+    docSites: new InMemoryDocSiteRepository(),
   };
   const mailer = new RecordingMailer();
   // Loopback is allowed here because the run tests point the engine at a stub server on
@@ -305,6 +312,8 @@ export async function createTestApp(): Promise<TestContext> {
       EndpointsController,
       MockServeController,
       MocksController,
+      PublishedDocsController,
+      DocSitesController,
       RolesController,
       SecurityRunsController,
       PerformanceController,
@@ -365,6 +374,7 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: ENDPOINT_REPOSITORY, useValue: repositories.endpoints },
       { provide: EXAMPLE_REPOSITORY, useValue: repositories.examples },
       { provide: MOCK_REPOSITORY, useValue: repositories.mocks },
+      { provide: DOC_SITE_REPOSITORY, useValue: repositories.docSites },
       // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the
       // repository is ciphertext, and a pass-through would make that assertion meaningless.
       { provide: SECRET_CIPHER, useValue: new AesGcmSecretCipher(Buffer.alloc(32, 9).toString("base64")) },
@@ -390,6 +400,8 @@ export async function createTestApp(): Promise<TestContext> {
       ...ENDPOINT_EVENT_HANDLERS,
       ...MOCK_COMMAND_HANDLERS,
       ...MOCK_QUERY_HANDLERS,
+      ...DOC_SITE_COMMAND_HANDLERS,
+      ...DOC_SITE_QUERY_HANDLERS,
       ...ROLE_COMMAND_HANDLERS,
       ...ROLE_QUERY_HANDLERS,
       ...SECURITY_RUN_COMMAND_HANDLERS,

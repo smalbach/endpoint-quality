@@ -29,6 +29,7 @@ describe("las secciones de un proyecto", () => {
       ["Performance", `/p/${ID}/performance`],
       ["Escáner", `/p/${ID}/code-scan`],
       ["Mocks", `/p/${ID}/mocks`],
+      ["Docs", `/p/${ID}/doc-sites`],
       ["Settings", `/p/${ID}/settings`],
     ]);
   });

@@ -2061,3 +2061,123 @@ a la vieja en el mismo momento; apagarlo da 503 diciéndolo; el preflight sale 2
 En el navegador, el botón de crear con el nombre puesto y sin elegir visibilidad: apagado.
 
 `api 802 pruebas (82 nuevas) · web 424 (9 nuevas) · import-detect 25 · runner-core 311 · lint 0 errores · typecheck limpio`
+
+## Paridad con Postman, ola 7: la documentación publicada, y una lista de lo que entra
+
+Los ejemplos de la ola 4 tenían dos consumidores posibles. El mock los sirve para que una máquina los
+consuma; esto los **enseña** para que una persona de otro equipo entienda la API sin que nadie le
+explique nada y sin darle acceso a este producto. Con esto, lo que se guarda en un proyecto sale por
+los dos lados que Postman tiene, y la ola 4 deja de ser un almacén con una sola salida.
+
+Es la segunda superficie pública del producto, y la primera que **pinta una pantalla** sin sesión.
+
+### La decisión que da forma al módulo: una lista de lo que entra
+
+Un endpoint guardado lleva dentro cosas que existen para poder _enviar_ la petición: el token de su
+bloque `auth`, las cabeceras que alguien escribió a mano —`Authorization: Bearer eyJ…` entre ellas—,
+el cuerpo con el que se probó y dos scripts. Publicar el endpoint sería publicar todo eso.
+
+Así que `doc-page.ts` escribe `DocEndpoint` **campo a campo**. No hay ni un `...endpoint` en el
+fichero, y eso no es estilo: es la diferencia entre que un campo nuevo aparezca solo en la página
+pública —callado, el día que alguien añada `internalNotes`— y que no aparezca hasta que se decida. Al
+revés, con una lista de lo que se quita, el campo nuevo se publica solo, que es exactamente cómo se
+filtran las cosas.
+
+Lo que nunca está en la lista: `auth.params`, los dos scripts, las filas con `enabled: false` —una
+cabecera que no se manda no es el contrato de nada— y los endpoints que no están `active`.
+
+**Las cabeceras llevan la política contraria** que al guardar un ejemplo, y a propósito, porque cambia
+para qué sirve el dato. `redactHeaders` tira la cabecera entera: un ejemplo guardado no necesita
+saber que había un `Authorization`. Una documentación sí — «esta ruta pide `Authorization`» es justo
+lo que hay que decir. Así que el nombre se queda y el valor se tapa.
+
+La única excepción en `auth` tiene el mismo tamaño: de una API key sale **el nombre** por el que
+entra. Sin él, quien lee la página no sabe dónde poner su clave. Su valor no sale ni tapado. Un
+usuario de `basic` no sale: es un dato personal de alguien, no documentación.
+
+### La URL base se escribe, no se hereda
+
+La documentación necesita una URL base para que el código de la página se pueda pegar. La tentación
+es leerla del entorno activo del proyecto, y es justo lo que no se puede hacer: un entorno tiene
+`{{token}}`, `{{apiKey}}` y el host interno de preproducción, y resolver variables contra él para
+pintar una página pública es publicar sus valores. Así que el sitio tiene **su propia** URL base,
+escrita a mano, validada como URL entera y **sin variables** —esta página no tiene entorno con el que
+resolverlas—, y las variables de la documentación se quedan escritas como `{{variable}}`.
+
+En la pantalla hay un botón que copia la del proyecto, y hay que pulsarlo. Así el valor que va a
+salir publicado se lee antes de salir, en vez de aparecer ya puesto en un campo que nadie mira.
+
+### Dos decisiones, y ninguna cómoda por omisión
+
+`visibility` no tiene valor por defecto, como en un mock. Y hay una segunda que no es la misma:
+`includeExamples` empieza en `false`. Publicar la **forma** de una API es una cosa y publicar sus
+**datos** es otra — los cuerpos van sin credenciales, eso lo hizo la redacción al guardarlos, pero
+siguen siendo respuestas reales con nombres, correos e identificadores de alguien. La que arrastra
+datos no puede ser la que pasa sin mirarse.
+
+### Dos direcciones para lo mismo, y `noindex`
+
+`GET /shared/docs/<publicId>` devuelve JSON: es lo que consume una máquina y lo que lee el programa
+del navegador. `/docs/<publicId>` en el origen del navegador es la página, y es la que se le manda a
+una persona. Un `publicId` sirve para las dos.
+
+No es `/docs` en la API porque ahí vive el OpenAPI de este producto, y esa colisión es de las que solo
+aparecen en el despliegue.
+
+Las dos respuestas llevan `X-Robots-Tag: noindex, nofollow`. Una documentación «pública» de aquí está
+protegida solo por que su URL no se adivine, y un buscador que la indexe convierte eso en nada: deja
+de hacer falta adivinarla porque está en una lista.
+
+La clave de una privada se pide **en la página** y viaja en `x-api-key`, no en la URL: una URL con la
+clave dentro acaba en el historial, en el registro del proxy y en el «compartir» de cualquiera. Se
+guarda en el `localStorage` de quien la escribe, por `publicId`.
+
+### Tres fallos míos, y el primero solo se ve en los bytes
+
+- **nginx perdía el `X-Robots-Tag` de la página.** El bloque `location ^~ /docs/` lo añadía y
+  resolvía con `try_files … /index.html`, que hace un **salto interno** a `location = /index.html` —
+  y nginx **no** arrastra los `add_header` de la location de origen. La única señal era que la
+  respuesta traía el `Cache-Control` del otro bloque. Con `rewrite ^ /index.html break` el documento
+  se sirve dentro de la misma location y la cabecera sale. Ninguna prueba de este repositorio ve eso:
+  se encontró leyendo las cabeceras de una respuesta real.
+- **El aviso nombraba un `{{token}}` que no aparecía en el código.** `snippetNotes` recorre
+  `auth.params` tanto si el plan los usó como si no, y una cabecera `Authorization` escrita a mano
+  gana sobre el bloque `auth`. Ahora la página aplica la misma regla que `authPlan` antes de
+  sintetizar nada: un aviso que no se corresponde con lo que se ve es peor que ninguno.
+- **Los ocho puntos entraban en el fragmento de código.** Un `"password": "••••••••"` se pega tal
+  cual y manda ocho puntos por contraseña. En el cuerpo del código los campos tapados salen como
+  `{{password}}` —igual que ya se hacía con las cabeceras—, y el generador los cuenta en su aviso de
+  lo que queda sin sustituir. Solo en JSON que parsea: adivinar dónde está el campo dentro de un XML
+  con una expresión regular es la clase de cosa que corta el cuerpo por la mitad.
+
+### Los dieciséis lenguajes son los mismos, no una copia
+
+La página usa `renderSnippet` de la ola 3. Lo que Postman hace con un generador aparte por lenguaje,
+aquí sale del que ya estaba probado, con su selector y sus avisos encima del código.
+
+### Cómo se comprobó
+
+La proyección entera en memoria, y casi cada prueba es la misma pregunta escrita de otra manera:
+_esto que está en la fila, ¿aparece en la página?_ Y contra la pila desplegada, con nginx delante, se
+publicó un endpoint con todo lo que no puede salir puesto —token en `auth`, otro en una cabecera,
+contraseña en el cuerpo, dos scripts— y se leyó la URL **sin ninguna cabecera de autenticación**:
+
+```
+GET /api/shared/docs/<publicId>          → 200 · X-Robots-Tag: noindex, nofollow
+GET /docs/<publicId>                     → 200 · X-Robots-Tag: noindex, nofollow
+
+cabeceras: Authorization ••••••••  (tapada)   Accept application/json
+cuerpo:    { "cliente": "Ana", "password": "••••••••" }
+código:    curl -H 'Authorization: {{authorization}}' --data '{ …, "password": "{{password}}" }'
+ejemplo:   201 · { "id": "42", "cliente": "Ana", "access_token": "••••••••" }
+```
+
+Los cuatro secretos que se mandaron —`TOKEN-DEL-ENDPOINT`, el de la cabecera, el del script y
+`hunter2`— salen a cero en el volcado de la respuesta.
+
+También contra la pila: la privada da 401 sin clave, 401 con otra y 200 con la suya; una `publicId`
+inventada y una borrada dan el mismo 404; la clave en claro no está en la tabla; y borrar el proyecto
+se lleva sus sitios por la cascada. En el navegador de verdad: la página privada pide la clave, la
+acepta, y al recargar ya no la pide.
+
+`api 843 pruebas (41 nuevas) · web 448 (24 nuevas) · import-detect 25 · runner-core 311 · lint 0 errores · typecheck limpio`

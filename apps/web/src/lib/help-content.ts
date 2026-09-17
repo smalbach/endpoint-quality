@@ -222,6 +222,36 @@ export const HELP_TOPICS: HelpTopic[] = [
     ],
   },
   {
+    id: "doc-sites",
+    title: "Docs",
+    intro: "Los endpoints de este proyecto como una página que se le puede mandar a alguien que no tiene cuenta aquí.",
+    steps: [
+      {
+        title: "Antes: escribe las descripciones",
+        body: "La página saca el nombre, la ruta, los parámetros y las cabeceras de cada endpoint. Lo que no puede sacar de ningún sitio es qué hace cada uno: eso se escribe en el editor del endpoint. La pantalla dice cuántas rutas tienen descripción antes de publicar nada.",
+        tip: "Sin descripciones la página sale igual, y es una lista de paths: quien la lea sabrá qué rutas hay y no para qué sirven.",
+      },
+      {
+        title: "Publica y elige quién la lee",
+        body: "Privada pide una clave al abrirla, y la clave se enseña una sola vez. Pública la abre cualquiera que tenga la URL. No hay opción marcada de antemano.",
+        tip: "La URL no se adivina, y eso es todo lo que protege a una pública. La página lleva «noindex» para que un buscador no la convierta en una lista.",
+      },
+      {
+        title: "Escribe la URL base",
+        body: "Es contra qué se pega el código de ejemplo de la página. Se escribe entera y sin variables, porque la página no tiene entorno con el que resolverlas. Hay un botón para copiar la del proyecto, y hay que pulsarlo: así se ve el valor que va a salir publicado.",
+      },
+      {
+        title: "Decide si salen los ejemplos",
+        body: "Empieza apagado. Las respuestas guardadas son lo que convierte una documentación en algo que se entiende, y a la vez son datos reales: nombres, correos e identificadores de alguien. Las credenciales no están —se quitaron al guardarlas—, el resto sí.",
+      },
+      {
+        title: "Qué no sale nunca",
+        body: "El token de la autenticación de un endpoint, sus scripts, y el valor de cualquier cabecera que sea una credencial: de esas sale el nombre, que es lo que hay que documentar. Las variables se quedan escritas como {{variable}}.",
+        tip: "Despublicar corta desde ese momento. Lo que ya se leyó sigue leído: una dirección que circula no se retira de donde esté pegada.",
+      },
+    ],
+  },
+  {
     id: "settings",
     title: "Settings",
     intro: "El proyecto, su contrato, su configuración y sus entornos.",

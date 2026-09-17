@@ -66,7 +66,20 @@ export function onAccessTokenChange(listener: (token: string | null) => void): (
   return () => listeners.delete(listener);
 }
 
-type RequestOptions = { method?: string; body?: unknown; signal?: AbortSignal; retryOnUnauthorized?: boolean };
+type RequestOptions = {
+  method?: string;
+  body?: unknown;
+  signal?: AbortSignal;
+  retryOnUnauthorized?: boolean;
+  /**
+   * Cabeceras extra.
+   *
+   * Existe por una sola cosa: la clave de una documentación privada, que viaja en `x-api-key` y la
+   * escribe quien abre la página. No es la sesión de este producto —esa va en `Authorization` y la
+   * pone esta función— y por eso no se guarda aquí ni se reintenta al refrescar.
+   */
+  headers?: Record<string, string>;
+};
 
 /**
  * Opens a report the browser cannot reach with a plain link: the route needs the Authorization
@@ -94,6 +107,7 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
     headers: {
       ...(options.body === undefined || form ? {} : { "Content-Type": "application/json" }),
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      ...(options.headers ?? {}),
     },
     // Always, because the refresh cookie is the session and a request without it cannot renew.
     credentials: "include",

@@ -122,6 +122,7 @@ describe("el contrato que publica esta API", () => {
       // aleatorio más la `x-api-key` cuando se creó privado.
       "/mock/{publicId}",
       "/mock/{publicId}/{rest}",
+      "/shared/docs/{publicId}",
       "/shared/security-runs/{shareToken}",
       "/shared/security-runs/{shareToken}/report",
     ]);

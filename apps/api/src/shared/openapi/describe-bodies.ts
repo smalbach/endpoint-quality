@@ -33,6 +33,7 @@ import {
   UpdateExampleDto,
 } from "@/modules/endpoints/presentation/dto/endpoints.dto";
 import { CreateMockDto, UpdateMockDto } from "@/modules/mocks/presentation/dto/mocks.dto";
+import { CreateDocSiteDto, UpdateDocSiteDto } from "@/modules/docs/presentation/dto/doc-sites.dto";
 import type { OpenAPIObject } from "@nestjs/swagger";
 
 import {
@@ -174,6 +175,8 @@ const DTOS = [
   UpdateExampleDto,
   CreateMockDto,
   UpdateMockDto,
+  CreateDocSiteDto,
+  UpdateDocSiteDto,
   CreatePlanDto,
   UpdatePlanDto,
   StartPerformanceRunDto,

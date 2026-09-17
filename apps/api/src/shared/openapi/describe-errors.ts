@@ -49,6 +49,10 @@ export const PUBLIC_PATHS = new Set([
   // abierto tiene que poder leerse aquí.
   "/mock/{publicId}",
   "/mock/{publicId}/{rest}",
+  // La documentación publicada de un proyecto: la lee alguien de otro equipo que no tiene cuenta
+  // aquí. Igual que el mock, lo que la protege es que el `publicId` no se adivine, más la
+  // `x-api-key` cuando se creó privada. En esta lista **a propósito**, por lo mismo.
+  "/shared/docs/{publicId}",
 ]);
 
 const PROBLEM_DETAILS = "ProblemDetails";

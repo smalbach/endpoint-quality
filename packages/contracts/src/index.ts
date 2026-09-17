@@ -1112,6 +1112,124 @@ export type MockListView = {
 /** Crear un mock privado, o rotar su clave: la clave en claro, esta vez y ninguna más. */
 export type IssuedMockView = { mock: MockServerView; apiKey: string | null };
 
+// ---------------------------------------------------------------------------------------------
+// Documentación publicada
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Un sitio de documentación publicada, como sale de la API de gestión.
+ *
+ * Sin `apiKeyHash`, como el mock y por lo mismo. La clave en claro solo aparece al crearlo o al
+ * rotarla, y no vuelve a salir nunca.
+ */
+export type DocSiteView = {
+  id: string;
+  name: string;
+  /** El segmento opaco de la URL pública: `/docs/<publicId>`. */
+  publicId: string;
+  visibility: "public" | "private";
+  apiKeyPreview: string;
+  /** Contra qué se pegan los ejemplos de código de la página. Se escribe a mano al publicar: no
+   * sale del entorno del proyecto, que está lleno de secretos. */
+  baseUrl: string;
+  intro: string;
+  /** Si los cuerpos de ejemplo guardados salen en la página. Empieza apagado. */
+  includeExamples: boolean;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+};
+
+/**
+ * La lista, con **qué calidad tendría la página**.
+ *
+ * «12 rutas, 3 con descripción» dice que esa página va a ser una lista de paths, y lo dice antes de
+ * que el enlace salga por correo a otro equipo.
+ */
+export type DocSiteListView = {
+  sites: DocSiteView[];
+  coverage: { endpoints: number; described: number; withExamples: number };
+  /** El primer segmento de la URL de la página, decidido por el servidor. */
+  prefix: string;
+};
+
+/** Crear una documentación privada, o rotar su clave: la clave en claro, esta vez y ninguna más. */
+export type IssuedDocSiteView = { site: DocSiteView; apiKey: string | null };
+
+/** `masked` dice que ahí había una credencial: el nombre documenta, el valor no se publica. */
+export type DocHeaderView = { name: string; value: string; masked: boolean };
+
+export type DocParameterView = {
+  name: string;
+  type: string;
+  required: boolean;
+  description: string;
+  /** El valor guardado, con sus `{{variables}}` intactas: la página no tiene entorno. */
+  example: string;
+};
+
+export type DocBodyView = {
+  mode: "none" | "json" | "raw" | "form-data" | "x-www-form-urlencoded" | "binary";
+  contentType: string;
+  text: string;
+  fields: { name: string; value: string; file: boolean }[];
+  /** Qué campos se taparon, para decirlo en vez de que los ocho puntos parezcan el valor. */
+  masked: string[];
+};
+
+/**
+ * De la autenticación sale el tipo y qué hay que mandar. **Nunca un valor.**
+ *
+ * `keyName` es la excepción: el nombre de la cabecera por la que entra una API key es documentación
+ * —sin él no se sabe dónde poner la clave— y no es un secreto. Su valor no sale ni tapado.
+ */
+export type DocAuthView = {
+  type: AuthTypeView;
+  label: string;
+  detail: string;
+  keyName: string;
+  in: "header" | "query";
+};
+
+export type DocExampleView = {
+  name: string;
+  status: number;
+  contentType: string;
+  body: string;
+  headers: DocHeaderView[];
+};
+
+export type DocEndpointView = {
+  id: string;
+  method: string;
+  path: string;
+  /** La URL entera con la base del sitio delante, o la ruta sola si el sitio no tiene base. */
+  url: string;
+  description: string;
+  tags: string[];
+  requiresAuth: boolean;
+  auth: DocAuthView;
+  pathParameters: DocParameterView[];
+  query: DocParameterView[];
+  headers: DocHeaderView[];
+  body: DocBodyView | null;
+  examples: DocExampleView[];
+};
+
+export type DocGroupView = { tag: string; endpoints: DocEndpointView[] };
+
+/** La página publicada, tal y como la lee quien abre la URL: sin sesión y sin cuenta aquí. */
+export type DocPageView = {
+  title: string;
+  description: string;
+  intro: string;
+  baseUrl: string;
+  groups: DocGroupView[];
+  counts: { endpoints: number; documented: number; examples: number };
+  generatedAt: string;
+};
+
 /** Una cookie del tarro, como sale de la API. El valor solo va si se pide ver. */
 export type CookieView = {
   name: string;
