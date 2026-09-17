@@ -11,6 +11,11 @@
  * La clave de un mock privado se enseña **una vez**. De ella solo queda el hash, así que no hay
  * ningún sitio donde volver a mirarla: si se pierde, se rota. Por eso sale en un aviso que hay que
  * cerrar a mano y no en un toast que se va solo.
+ *
+ * Las llamadas van en un **panel que se abre por servidor**, y no en una lista suelta al final. Dos
+ * razones: la pregunta es siempre «¿llegó a *este* mock?» —la bitácora no se mira en abstracto, se
+ * mira cuando un front concreto no funciona— y la consulta es una por mock, así que un panel cerrado
+ * no pide nada. Abrirlo es lo que la lanza.
  */
 import { useState } from "react";
 import { useParams } from "react-router-dom";
@@ -21,8 +26,8 @@ import { useCan, useOrganization } from "@/lib/auth";
 import { Badge, Button, Card, Empty, Field, inputClass } from "@/components/ui";
 import { ConfirmDialog, Modal } from "@/components/overlay";
 import { useToast } from "@/components/toast";
-import { formatDate } from "@/lib/format";
-import type { IssuedMockView, MockListView, MockServerView } from "@/lib/types";
+import { formatDate, httpStatusStyle, methodStyle } from "@/lib/format";
+import type { IssuedMockView, MockCallListView, MockListView, MockServerView } from "@/lib/types";
 
 const MAX_DELAY_MS = 5_000;
 
@@ -52,6 +57,8 @@ export function MocksPage() {
   const [creating, setCreating] = useState(false);
   const [issued, setIssued] = useState<{ name: string; apiKey: string } | null>(null);
   const [deleting, setDeleting] = useState<MockServerView | null>(null);
+  /** Qué panel de llamadas está abierto. Uno, porque la pregunta es siempre por un mock concreto. */
+  const [showingCalls, setShowingCalls] = useState<string | null>(null);
 
   const list = useQuery({
     queryKey: ["mocks", projectId],
@@ -172,6 +179,20 @@ export function MocksPage() {
                   : `Pide la cabecera x-api-key. La de ahora acaba en ${mock.apiKeyPreview || "…"}.`}
               </p>
 
+              <div className="border-t border-slate-100 pt-3">
+                <Button
+                  variant="ghost"
+                  className="h-7 px-2 text-[11px]"
+                  onClick={() => setShowingCalls(showingCalls === mock.id ? null : mock.id)}
+                >
+                  {showingCalls === mock.id ? "Ocultar llamadas" : "Llamadas"}
+                </Button>
+                {/* Montado solo al abrirlo: la consulta es una por mock, y un panel cerrado no pide
+                    nada. Con diez mocks, pedirlas todas al entrar serían diez consultas que casi
+                    nadie mira. */}
+                {showingCalls === mock.id && <MockCalls base={base} mockId={mock.id} />}
+              </div>
+
               {canEdit && (
                 <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-3">
                   <Button variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => toggle.mutate(mock)}>
@@ -238,6 +259,83 @@ export function MocksPage() {
           onClose={() => setDeleting(null)}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * Por qué no casó, en palabras.
+ *
+ * Lo que guarda el servidor es el código, no la frase: así se decide en un sitio, se puede contar y
+ * se puede buscar. Traducirlo es trabajo de la pantalla, y un código que no esté en esta lista sale
+ * tal cual en vez de desaparecer — un motivo nuevo tiene que verse, aunque se vea feo.
+ */
+const MISS_LABEL: Record<string, string> = {
+  "mock-no-route": "esa ruta no la sirve",
+  "mock-wrong-method": "ese método no, en esa ruta",
+  "mock-no-example": "la ruta no tiene ningún ejemplo guardado",
+  "mock-example-unknown": "pidió un ejemplo que no existe",
+  "mock-status-unknown": "pidió un estado que no tiene ejemplo",
+  "mock-key-invalid": "sin la clave, o con otra",
+  "mock-disabled": "el mock estaba apagado",
+};
+
+/** La hora, que es lo que se lee en una lista de llamadas. La fecha entera va en el `title`. */
+const timeOf = (at: string) => new Date(at).toLocaleTimeString();
+
+/**
+ * Las llamadas recientes de un mock.
+ *
+ * Seis columnas y ni una más, porque no hay ni una más guardada: de la petición no se guardan sus
+ * cabeceras, ni su cuerpo, ni su cadena de consulta —es de un tercero y lleva sus credenciales
+ * dentro—, así que esta pantalla no puede enseñarlas ni por descuido. Lo dice al final, porque quien
+ * abre esto esperando ver el cuerpo tiene que enterarse de por qué no está.
+ */
+function MockCalls({ base, mockId }: { base: string; mockId: string }) {
+  const calls = useQuery({
+    queryKey: ["mock-calls", mockId],
+    queryFn: () => api<MockCallListView>(`${base}/${mockId}/calls`),
+  });
+
+  const rows = calls.data?.calls ?? [];
+
+  return (
+    <div className="mt-3 space-y-2">
+      {rows.length === 0 ? (
+        <p className="text-[11px] text-slate-500">
+          {calls.isPending
+            ? "…"
+            : "Todavía no ha llegado ninguna petición a esta URL. Si tu front ya apunta aquí y esto sigue vacío, la petición no está saliendo."}
+        </p>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {rows.map((call) => (
+            <li key={call.id} className="flex flex-wrap items-center gap-2 py-1.5 text-[11px]">
+              <span className="font-mono text-slate-400" title={formatDate(call.at)}>
+                {timeOf(call.at)}
+              </span>
+              <Badge className={`font-mono ${methodStyle(call.method)}`}>{call.method}</Badge>
+              <code className="min-w-0 flex-1 truncate font-mono text-slate-700">{call.path}</code>
+              <Badge className={`font-mono ${httpStatusStyle(call.status)}`}>{call.status}</Badge>
+              <span className="w-full text-slate-500 sm:w-auto">
+                {call.exampleName ? (
+                  <>
+                    ejemplo <span className="text-slate-700">«{call.exampleName}»</span>
+                  </>
+                ) : (
+                  <span className="text-amber-700">{MISS_LABEL[call.missCode] ?? call.missCode}</span>
+                )}
+              </span>
+              <span className="font-mono text-slate-400">{call.durationMs} ms</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-[11px] text-slate-400">
+        Las {calls.data?.keep ?? 200} últimas. De cada petición se guarda la hora, el método, la ruta y qué se contestó:
+        ni sus cabeceras, ni su cuerpo, ni su cadena de consulta, porque ahí van los tokens y los datos de quien la
+        manda.
+      </p>
     </div>
   );
 }

@@ -1112,6 +1112,36 @@ export type MockListView = {
 /** Crear un mock privado, o rotar su clave: la clave en claro, esta vez y ninguna más. */
 export type IssuedMockView = { mock: MockServerView; apiKey: string | null };
 
+/**
+ * Una llamada que el mock contestó, como sale de la API.
+ *
+ * Es a propósito **tan corta**: la petición que llega a un mock es de un tercero y lleva dentro sus
+ * credenciales, así que de ella no se guarda ni una cabecera, ni el cuerpo, ni la cadena de
+ * consulta. Lo que hay es lo que hace útil la pantalla. El razonamiento entero está en
+ * `apps/api/src/modules/mocks/domain/mock-call.ts`.
+ */
+export type MockCallView = {
+  id: string;
+  at: string;
+  method: string;
+  /** La ruta del mock, normalizada y sin la cadena de consulta. */
+  path: string;
+  status: number;
+  /** El ejemplo que se sirvió, o nulo cuando no se sirvió ninguno. */
+  exampleId: string | null;
+  exampleName: string;
+  /** El código del «no»: `mock-no-route`, `mock-wrong-method`, `mock-no-example`… Vacío si acertó. */
+  missCode: string;
+  /** Lo que costó decidir y servir, sin el retardo simulado. */
+  durationMs: number;
+};
+
+export type MockCallListView = {
+  calls: MockCallView[];
+  /** Cuántas se guardan por mock: lo anterior a eso ya no está. */
+  keep: number;
+};
+
 // ---------------------------------------------------------------------------------------------
 // Documentación publicada
 // ---------------------------------------------------------------------------------------------

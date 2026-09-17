@@ -19,6 +19,7 @@ import {
   RotateMockKeyCommand,
   UpdateMockCommand,
 } from "../application/commands/manage-mocks";
+import { ListMockCallsQuery } from "../application/queries/list-mock-calls";
 import { ListMocksQuery } from "../application/queries/list-mocks";
 import { MOCK_PATH_PREFIX } from "../domain/model";
 import { CreateMockDto, UpdateMockDto } from "./dto/mocks.dto";
@@ -40,6 +41,22 @@ export class MocksController {
     // El prefijo sale del servidor y no se compone en el navegador: la URL que hay que pegar en un
     // front la decide quien sirve el mock, y si algún día cambia el sitio, cambia en uno.
     return { ...list, prefix: `/${MOCK_PATH_PREFIX}` };
+  }
+
+  /**
+   * Las llamadas que ha contestado ese mock. `viewer`, como listar: es mirar el proyecto.
+   *
+   * No es pública, y la ruta que sirve el mock sí. Que cualquiera pueda llamar a un mock no
+   * significa que cualquiera pueda ver quién lo ha llamado y qué le pidió.
+   */
+  @Get(":mockId/calls")
+  @RequireRole("viewer")
+  async calls(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("mockId") mockId: string,
+  ) {
+    return this.queryBus.execute(new ListMockCallsQuery(organizationId, projectId, mockId));
   }
 
   @Post()

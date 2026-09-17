@@ -386,6 +386,132 @@ describe("un mock privado", () => {
   });
 });
 
+/**
+ * La bitácora: lo que queda de cada llamada, y **lo que no queda**.
+ *
+ * Es la única prueba que puede demostrar lo segundo. Las unitarias dicen que la fila que construye
+ * el dominio no tiene esas columnas; esta manda una petición de verdad por la ruta pública, con un
+ * token en una cabecera y otro en el cuerpo, y comprueba que no aparecen **en ninguna parte** de lo
+ * guardado — ni en la fila, ni en el listado, ni de rebote en la ruta. Entre las dos está lo que
+ * hace falta para creerse que apuntar un front a un mock no es entregarle sus credenciales.
+ */
+describe("la bitácora del mock", () => {
+  let mockId: string;
+  let publicId: string;
+
+  const calls = () => api().get(`${base()}/mocks/${mockId}/calls`).set(as(owner));
+
+  before(async () => {
+    await endpointWith("GET", "/v1/bitacora/{id}", [{ name: "el bueno", status: 200, body: '{"id":"7"}' }]);
+    await endpointWith("POST", "/v1/bitacora/entrar", [{ name: "entrado", status: 200, body: '{"ok":true}' }]);
+    await endpointWith("DELETE", "/v1/bitacora/{id}", []);
+    const created = await createMock({ name: "el de la bitácora", visibility: "public" });
+    mockId = created.mock.id;
+    publicId = created.mock.publicId;
+  });
+
+  test("servir el mock deja la llamada registrada, y el listado la enseña", async () => {
+    const served = await api().get(`/mock/${publicId}/v1/bitacora/7`);
+    assert.equal(served.status, 200);
+
+    const list = await calls();
+    assert.equal(list.status, 200);
+    assert.equal(list.body.keep, 200);
+    const [last] = list.body.calls;
+    assert.equal(last.method, "GET");
+    assert.equal(last.path, "/v1/bitacora/7");
+    assert.equal(last.status, 200);
+    assert.equal(last.exampleName, "el bueno");
+    assert.equal(last.missCode, "");
+    // El reloj de las pruebas está parado, así que la hora es la suya y no la del reloj de verdad.
+    assert.equal(last.at, "2026-03-01T10:00:00.000Z");
+    assert.equal(typeof last.durationMs, "number");
+  });
+
+  test("cada manera de no contestar queda con su código, que es lo que se pregunta al mirarla", async () => {
+    await api().get(`/mock/${publicId}/v1/bitacor/7`);
+    await api().put(`/mock/${publicId}/v1/bitacora/7`).send({});
+    await api().delete(`/mock/${publicId}/v1/bitacora/7`);
+
+    const list = await calls();
+    const recent: { status: number; missCode: string; path: string }[] = list.body.calls.slice(0, 3);
+    assert.deepEqual(
+      recent.map((row) => [row.status, row.missCode]),
+      [
+        [501, "mock-no-example"],
+        [405, "mock-wrong-method"],
+        [404, "mock-no-route"],
+      ],
+    );
+    // La ruta que se pidió, que es la mitad de «pediste /v1/bitacor y el mock sirve /v1/bitacora».
+    assert.equal(recent[2].path, "/v1/bitacor/7");
+  });
+
+  test("ni una cabecera ni un cuerpo con un token acaban en ninguna parte de lo guardado", async () => {
+    // La petición que entra al mock es de un tercero: lleva el `Bearer` de un usuario real y, en el
+    // cuerpo del login que se está probando, su contraseña. Guardarlas convertiría esta tabla en un
+    // almacén de credenciales ajenas alimentado por una ruta que cualquiera puede llamar.
+    const secret = "TOKEN-DE-QUIEN-LLAMA";
+    const served = await api()
+      .post(`/mock/${publicId}/v1/bitacora/entrar?api_key=${secret}-EN-LA-QUERY`)
+      .set("Authorization", `Bearer ${secret}-EN-LA-CABECERA`)
+      .set("X-Empresa-Token", `${secret}-EN-UNA-CABECERA-RARA`)
+      .set("Cookie", `sesion=${secret}-EN-LA-COOKIE`)
+      .send({ usuario: "ana@example.test", password: `${secret}-EN-EL-CUERPO` });
+    assert.equal(served.status, 200);
+
+    const list = await calls();
+    // El listado entero, serializado: si algo de eso estuviera guardado, saldría por aquí.
+    assert.equal(JSON.stringify(list.body).includes(secret), false, JSON.stringify(list.body.calls[0]));
+    // Y la fila tal cual está en el almacén, sin pasar por la vista: la vista podría estar tapándolo.
+    const stored = [...context.repositories.mocks.calls.values()];
+    assert.equal(JSON.stringify(stored).includes(secret), false);
+    // La cadena de consulta no está ni redactada: `?token=` sigue siendo la forma más vieja de
+    // mandar una credencial, y los nombres de los parámetros no valen lo que cuesta el riesgo.
+    assert.equal(list.body.calls[0].path, "/v1/bitacora/entrar");
+  });
+
+  test("un fallo al guardar no rompe la respuesta del mock", async () => {
+    // Un mock que se cae porque su bitácora se cayó es peor que un mock sin bitácora, y esta ruta
+    // recibe tráfico de verdad: la escritura va después de la respuesta y dentro de un `try`.
+    const repository = context.repositories.mocks;
+    const original = repository.saveCall.bind(repository);
+    repository.saveCall = async () => {
+      throw new Error("la base de datos se ha ido");
+    };
+    try {
+      const served = await api().get(`/mock/${publicId}/v1/bitacora/7`);
+      assert.equal(served.status, 200);
+      assert.deepEqual(served.body, { id: "7" });
+      assert.equal(served.headers["x-eq-mock-example"], "el bueno");
+    } finally {
+      repository.saveCall = original;
+    }
+  });
+
+  test("la bitácora no es pública, aunque la URL que la llena lo sea", async () => {
+    // Que cualquiera pueda llamar a un mock no significa que cualquiera pueda ver qué le pidieron.
+    assert.equal((await api().get(`${base()}/mocks/${mockId}/calls`)).status, 401);
+  });
+
+  test("desde otra organización es un 403, y no un 404 que diga que no existe", async () => {
+    const other = await signUp(`mocks-bitacora-${Date.now()}@example.test`);
+    assert.equal((await api().get(`${base()}/mocks/${mockId}/calls`).set(as(other))).status, 403);
+  });
+
+  test("borrar el mock se lleva su bitácora, que sin él es tráfico ajeno sin dueño", async () => {
+    const created = await createMock({ name: "efímero", visibility: "public" });
+    await api().get(`/mock/${created.mock.publicId}/v1/bitacora/7`);
+    assert.equal((await api().get(`${base()}/mocks/${created.mock.id}/calls`).set(as(owner))).body.calls.length, 1);
+
+    assert.equal((await api().delete(`${base()}/mocks/${created.mock.id}`).set(as(owner))).status, 204);
+    assert.equal(
+      [...context.repositories.mocks.calls.values()].some((call) => call.mockServerId === created.mock.id),
+      false,
+    );
+  });
+});
+
 describe("el mock es de su proyecto y de nadie más", () => {
   test("la URL de un mock solo sirve los endpoints de su propio proyecto", async () => {
     // El `publicId` se resuelve sin saber de quién es, así que esto es lo único que separa los datos

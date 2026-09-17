@@ -12,6 +12,8 @@
  * - **La clave se enseña una vez y hay que cerrarla a mano.** Un toast se iría antes de copiarla, y
  *   no hay ningún sitio donde volver a mirarla.
  * - **La cobertura se dice antes**, porque un mock de un proyecto sin ejemplos contesta 501 a todo.
+ * - **Las llamadas se piden al abrir el panel**, no al entrar en la pantalla, y cada fila dice el
+ *   ejemplo que casó o **por qué no casó** — que es toda la razón de que esta pantalla exista.
  */
 import { describe, expect, test, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -20,7 +22,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import { MocksPage } from "@/routes/mocks";
 import { ToastProvider } from "@/components/toast";
-import type { MockListView, MockServerView } from "@/lib/types";
+import type { MockCallListView, MockCallView, MockListView, MockServerView } from "@/lib/types";
 
 const call = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api", async (original) => ({
@@ -52,6 +54,26 @@ const list = (patch: Partial<MockListView> = {}): MockListView => ({
   prefix: "/mock",
   ...patch,
 });
+
+const served = (patch: Partial<MockCallView> = {}): MockCallView => ({
+  id: "c1",
+  at: "2026-03-01T10:00:00.000Z",
+  method: "GET",
+  path: "/v1/pedidos/42",
+  status: 200,
+  exampleId: "e1",
+  exampleName: "el bueno",
+  missCode: "",
+  durationMs: 3,
+  ...patch,
+});
+
+/** Contesta la lista de mocks o la bitácora según la ruta, que es lo que hace el programa real. */
+function answering(rows: MockCallView[], listed: MockListView = list()) {
+  call.mockReset();
+  const log: MockCallListView = { calls: rows, keep: 200 };
+  call.mockImplementation((path: string) => Promise.resolve(path.endsWith("/calls") ? log : listed));
+}
 
 function draw() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -157,6 +179,73 @@ describe("la pantalla de mocks", () => {
     await waitFor(() => expect(screen.getByText("la-clave-en-claro")).toBeTruthy());
     // Y no se va sola: no hay ningún otro sitio donde volver a verla.
     expect(screen.getByRole("button", { name: "Ya la he guardado" })).toBeTruthy();
+  });
+
+  test("las llamadas no se piden hasta que se abre el panel de ese mock", async () => {
+    // Un panel cerrado no pide nada: con diez mocks serían diez consultas que casi nadie mira.
+    answering([served()]);
+    draw();
+    await waitFor(() => expect(screen.getByText("Llamadas")).toBeTruthy());
+    expect(call.mock.calls.some((args: unknown[]) => String(args[0]).endsWith("/calls"))).toBe(false);
+
+    fireEvent.click(screen.getByText("Llamadas"));
+    await waitFor(() => expect(call.mock.calls.some((args: unknown[]) => String(args[0]).endsWith("/calls"))).toBe(true));
+  });
+
+  test("cada llamada dice la hora, el método, la ruta, el código y el ejemplo que casó", async () => {
+    answering([served()]);
+    draw();
+    await waitFor(() => expect(screen.getByText("Llamadas")).toBeTruthy());
+    fireEvent.click(screen.getByText("Llamadas"));
+
+    await waitFor(() => expect(screen.getByText("/v1/pedidos/42")).toBeTruthy());
+    expect(screen.getByText("GET")).toBeTruthy();
+    expect(screen.getByText("200")).toBeTruthy();
+    expect(screen.getByText(/«el bueno»/)).toBeTruthy();
+    expect(screen.getByText("3 ms")).toBeTruthy();
+  });
+
+  test("una que no casó dice por qué, que es toda la razón de mirar esta lista", async () => {
+    // El servidor guarda el código y la pantalla lo traduce: «404» a secas no distingue una ruta
+    // mal escrita de una ruta declarada a la que nadie le ha guardado un ejemplo.
+    answering([
+      served({ id: "c1", status: 404, exampleId: null, exampleName: "", missCode: "mock-no-route" }),
+      served({ id: "c2", status: 501, exampleId: null, exampleName: "", missCode: "mock-no-example" }),
+      served({ id: "c3", status: 405, exampleId: null, exampleName: "", missCode: "mock-wrong-method" }),
+    ]);
+    draw();
+    await waitFor(() => expect(screen.getByText("Llamadas")).toBeTruthy());
+    fireEvent.click(screen.getByText("Llamadas"));
+
+    await waitFor(() => expect(screen.getByText("esa ruta no la sirve")).toBeTruthy());
+    expect(screen.getByText("la ruta no tiene ningún ejemplo guardado")).toBeTruthy();
+    expect(screen.getByText("ese método no, en esa ruta")).toBeTruthy();
+  });
+
+  test("un motivo que la pantalla no conoce sale tal cual, en vez de desaparecer", async () => {
+    answering([served({ status: 418, exampleId: null, exampleName: "", missCode: "mock-motivo-nuevo" })]);
+    draw();
+    await waitFor(() => expect(screen.getByText("Llamadas")).toBeTruthy());
+    fireEvent.click(screen.getByText("Llamadas"));
+    await waitFor(() => expect(screen.getByText("mock-motivo-nuevo")).toBeTruthy());
+  });
+
+  test("sin ninguna llamada lo dice, y dice qué significa que esté vacío", async () => {
+    answering([]);
+    draw();
+    await waitFor(() => expect(screen.getByText("Llamadas")).toBeTruthy());
+    fireEvent.click(screen.getByText("Llamadas"));
+    await waitFor(() => expect(screen.getByText(/la petición no está saliendo/)).toBeTruthy());
+  });
+
+  test("el panel dice que del cuerpo y las cabeceras de quien llama no se guarda nada", async () => {
+    // Quien abre esto esperando ver el cuerpo tiene que enterarse de por qué no está: la petición es
+    // de un tercero y ahí van sus tokens.
+    answering([served()]);
+    draw();
+    await waitFor(() => expect(screen.getByText("Llamadas")).toBeTruthy());
+    fireEvent.click(screen.getByText("Llamadas"));
+    await waitFor(() => expect(screen.getByText(/ni sus cabeceras, ni su cuerpo/)).toBeTruthy());
   });
 
   test("eliminar pide confirmación y dice que la URL deja de contestar para todo el mundo", async () => {

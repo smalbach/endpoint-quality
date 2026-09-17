@@ -2,8 +2,16 @@
  * La ruta pública del mock: `/mock/<publicId>/lo-que-sea`.
  *
  * Es el único controlador `@Public()` de este producto que contesta con datos de un proyecto, y por
- * eso lo que hace está deliberadamente reducido a lo mínimo: **lee dos tablas y escribe la
- * respuesta.** No manda nada a ninguna parte, no guarda nada, y no sabe quién llama.
+ * eso lo que hace está deliberadamente reducido a lo mínimo: **lee dos tablas, escribe la respuesta,
+ * y anota una fila diciendo qué contestó.** No manda nada a ninguna parte y no sabe quién llama.
+ *
+ * ## La bitácora va después de la respuesta, y no puede tumbarla
+ *
+ * La fila se escribe **cuando la respuesta ya salió**, y dentro de un `try` que se lo traga todo.
+ * Esta ruta recibe tráfico de verdad, y un mock que se cayera porque su bitácora se cayó es peor que
+ * un mock sin bitácora. De la petición no se anota nada de lo que trae dentro —ni cabeceras, ni
+ * cuerpo, ni la cadena de consulta—: el por qué está en `mock-call.ts`, y lo que lo sostiene es que
+ * el comando no recibe la petición, así que no puede escribirla aunque se le olvide a alguien.
  *
  * ## Las cabeceras de la respuesta vienen de una respuesta ajena
  *
@@ -19,10 +27,11 @@
  * ejemplo. Eso no sale de un objeto serializado por el pipeline: es escribir la respuesta.
  */
 import { All, Controller, HttpCode, Options, Param, Req, Res } from "@nestjs/common";
-import { QueryBus } from "@nestjs/cqrs";
+import { CommandBus, QueryBus } from "@nestjs/cqrs";
 import type { Request, Response } from "express";
 
 import { Public } from "@/modules/auth/infrastructure/guards/auth.guard";
+import { RecordMockCallCommand } from "../application/commands/record-mock-call";
 import { AnswerMockQuery, type MockAnswer } from "../application/queries/answer-mock";
 import { MOCK_PATH_PREFIX } from "../domain/model";
 import type { MockRequest } from "../domain/serve-mock";
@@ -83,7 +92,10 @@ function decodePath(path: string): string {
 
 @Controller(`${MOCK_PATH_PREFIX}/:publicId`)
 export class MockServeController {
-  constructor(private readonly queryBus: QueryBus) {}
+  constructor(
+    private readonly queryBus: QueryBus,
+    private readonly commandBus: CommandBus,
+  ) {}
 
   /**
    * El preflight del navegador, para cuando este proceso corre sin el middleware de delante.
@@ -107,6 +119,7 @@ export class MockServeController {
   @All(["", "*rest"])
   @Public()
   async serve(@Param("publicId") publicId: string, @Req() request: Request, @Res() response: Response): Promise<void> {
+    const startedAt = Date.now();
     // La ruta se saca de la URL cruda y no del parámetro comodín: Express 5 lo entrega troceado y ya
     // decodificado, y volver a juntarlo perdería un `%2F` que sí importa.
     const url = request.originalUrl || request.url;
@@ -143,6 +156,7 @@ export class MockServeController {
           detail,
           instance: request.originalUrl || request.url,
         });
+      await this.record(answer, mockRequest, startedAt);
       return;
     }
 
@@ -167,5 +181,37 @@ export class MockServeController {
     response.status(status);
     if (NEVER_HAS_BODY.has(status) || !body) response.end();
     else response.send(body);
+
+    await this.record(answer, mockRequest, startedAt);
+  }
+
+  /**
+   * La fila de la bitácora, con la respuesta ya escrita.
+   *
+   * Se traga cualquier fallo a propósito: la petición ya se contestó, así que un error aquí no puede
+   * arreglar nada y sí puede estropear lo que ya salió bien — el filtro de errores intentaría
+   * escribir un 500 sobre una respuesta ya enviada, y lo que quedaría en el registro sería eso en
+   * vez de la base de datos que se fue.
+   *
+   * Del tiempo se descuenta el retardo simulado. Es lo único que se puede descontar con sentido: el
+   * retardo es un número de la configuración que ya se ve en la misma pantalla, y dejarlo dentro
+   * taparía la única parte que varía —encontrar la ruta y elegir el ejemplo—, que es para lo que se
+   * mira esta columna.
+   */
+  private async record(answer: MockAnswer, request: MockRequest, startedAt: number): Promise<void> {
+    if (!answer.mockServerId) return;
+    try {
+      await this.commandBus.execute(
+        new RecordMockCallCommand(
+          answer.mockServerId,
+          request.method,
+          request.path,
+          answer.outcome,
+          Date.now() - startedAt - answer.delayMs,
+        ),
+      );
+    } catch {
+      /* un mock que se cae porque su bitácora se cayó es peor que un mock sin bitácora */
+    }
   }
 }

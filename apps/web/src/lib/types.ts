@@ -20,6 +20,8 @@ export type {
   IssuedMockView,
   MockListView,
   MockServerView,
+  MockCallView,
+  MockCallListView,
   DocSiteView,
   DocSiteListView,
   IssuedDocSiteView,

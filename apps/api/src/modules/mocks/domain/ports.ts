@@ -1,3 +1,4 @@
+import type { MockCall } from "./mock-call";
 import type { MockServer } from "./model";
 
 export const MOCK_REPOSITORY = Symbol("MOCK_REPOSITORY");
@@ -13,4 +14,10 @@ export interface MockRepositoryPort {
   findByPublicId(publicId: string): Promise<MockServer | null>;
   save(mock: MockServer): Promise<void>;
   remove(projectId: string, id: string): Promise<boolean>;
+
+  /** Una llamada servida. Quien lo llama traga el fallo: el mock contesta aunque esto no escriba. */
+  saveCall(call: MockCall): Promise<void>;
+  listCalls(mockServerId: string, limit: number): Promise<MockCall[]>;
+  /** Deja solo las `keep` últimas de ese mock. La bitácora de una URL pública la llena un tercero. */
+  trimCalls(mockServerId: string, keep: number): Promise<void>;
 }

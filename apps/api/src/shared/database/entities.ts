@@ -584,6 +584,29 @@ export class MockServerEntity {
 }
 
 /**
+ * Una llamada que un mock contestó: la bitácora de su URL pública.
+ *
+ * **Sin cabeceras, sin cuerpo y sin la cadena de consulta.** La petición es de un tercero y lleva
+ * sus credenciales dentro —el `Bearer` de un usuario real, la contraseña del login que se prueba, un
+ * `?token=`—, así que de ella solo se guarda lo que hace útil la pantalla: cuándo, qué se pidió, qué
+ * se contestó y con qué. El razonamiento entero está en `mocks/domain/mock-call.ts`.
+ */
+@Entity({ name: "mock_calls" })
+export class MockCallEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") mockServerId: string;
+  @Column({ type: "timestamptz" }) at: Date;
+  @Column({ type: "varchar", length: 16 }) method: string;
+  @Column({ type: "varchar", length: 300 }) path: string;
+  @Column({ type: "int" }) status: number;
+  @Column({ type: "uuid", nullable: true }) exampleId: string | null;
+  @Column({ type: "varchar", length: 120, default: "" }) exampleName: string;
+  /** El código del «no» que ya decide el dominio: `mock-no-route`, `mock-wrong-method`… */
+  @Column({ type: "varchar", length: 40, default: "" }) missCode: string;
+  @Column({ type: "int", default: 0 }) durationMs: number;
+}
+
+/**
  * Una documentación publicada de un proyecto: la URL que la enseña a quien no tiene cuenta aquí.
  *
  * Casi la misma fila que un mock, y eso dice lo que es: una superficie pública de un proyecto, con
@@ -814,7 +837,7 @@ export const ENTITIES = [
   RequestTemplateEntity, WorkflowEntity, WorkflowDatasetEntity, WorkflowSuiteEntity,
   RunEntity, RunCaseEntity, RunStepEntity,
   EndpointEntity, EndpointExampleEntity,
-  MockServerEntity,
+  MockServerEntity, MockCallEntity,
   DocSiteEntity,
   MonitorEntity, MonitorExecutionEntity,
   RoleEntity, RolePermissionEntity, RoleRuleEntity,

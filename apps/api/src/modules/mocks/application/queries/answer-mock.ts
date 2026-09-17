@@ -5,6 +5,10 @@
  * que le piden, ni toca la API de verdad, ni cambia un ejemplo. Un mock que tuviera estado dejaría
  * de ser reproducible, que es lo único que se le pide.
  *
+ * La bitácora de llamadas no rompe eso, y por eso no está aquí: es un comando aparte
+ * (`RecordMockCallCommand`) que se dispara cuando la respuesta ya salió, con lo que esta consulta
+ * decidió. Lo que se anota no cambia lo que el mock contesta la próxima vez.
+ *
  * Aquí viven las dos cosas que el motor puro no puede saber: si el `publicId` existe, y si la clave
  * que trae la petición es la del mock. Todo lo demás —encontrar la ruta, elegir el ejemplo, limpiar
  * las cabeceras— es `serve-mock.ts` y se prueba sin base de datos.
@@ -30,6 +34,14 @@ export type MockAnswer = {
   outcome: MockOutcome;
   /** Milisegundos a esperar antes de contestar. Cero cuando el mock no simula latencia. */
   delayMs: number;
+  /**
+   * De qué mock era la URL, para que quien sirve pueda anotar la llamada en su bitácora.
+   *
+   * Nulo cuando el `publicId` no corresponde a ninguno, y entonces no hay nada que anotar: una fila
+   * de una llamada a un mock que no existe no tiene dónde colgarse, y contar los intentos contra
+   * URLs inventadas sería guardar el rastreo de un tercero.
+   */
+  mockServerId: string | null;
 };
 
 export class AnswerMockQuery implements IQuery {
@@ -39,9 +51,16 @@ export class AnswerMockQuery implements IQuery {
   ) {}
 }
 
-const problem = (status: number, code: string, title: string, detail: string): MockAnswer => ({
+const problem = (
+  status: number,
+  code: string,
+  title: string,
+  detail: string,
+  mockServerId: string | null,
+): MockAnswer => ({
   delayMs: 0,
   outcome: { kind: "problem", status, code, title, detail },
+  mockServerId,
 });
 
 @QueryHandler(AnswerMockQuery)
@@ -62,6 +81,7 @@ export class AnswerMockHandler implements IQueryHandler<AnswerMockQuery, MockAns
         "mock-not-found",
         "Ese mock no existe",
         "La URL no corresponde a ningún mock de este servidor.",
+        null,
       );
 
     if (!mock.enabled)
@@ -70,6 +90,8 @@ export class AnswerMockHandler implements IQueryHandler<AnswerMockQuery, MockAns
         "mock-disabled",
         "Este mock está apagado",
         "Existe y su configuración sigue ahí, pero está apagado. Enciéndelo desde el proyecto para que vuelva a contestar.",
+        // Anotada igual: «apunté el front y me da 503» es exactamente lo que la bitácora resuelve.
+        mock.id,
       );
 
     if (mock.visibility === "private") {
@@ -81,6 +103,8 @@ export class AnswerMockHandler implements IQueryHandler<AnswerMockQuery, MockAns
           "mock-key-invalid",
           "Falta la clave de este mock",
           `Este mock es privado: manda la clave en la cabecera «${MOCK_KEY_HEADER}».`,
+          // El código del «no», nunca la clave que llegó: de eso trata la cabecera de `mock-call.ts`.
+          mock.id,
         );
     }
 
@@ -96,6 +120,7 @@ export class AnswerMockHandler implements IQueryHandler<AnswerMockQuery, MockAns
     return {
       outcome: serveMock(endpoints, (endpointId) => byEndpoint.get(endpointId) ?? [], query.request),
       delayMs: delayFor(mock.delay as MockDelay),
+      mockServerId: mock.id,
     };
   }
 }
