@@ -26,6 +26,7 @@ export default tseslint.config(
       // Clones enteros de este repo, creados por los agentes en segundo plano. Linterlos es
       // linter el proyecto otra vez, con un `tsconfig` que se resuelve desde otra raíz.
       ".claude/worktrees/**",
+      ".kilo/worktrees/**",
     ],
   },
   js.configs.recommended,

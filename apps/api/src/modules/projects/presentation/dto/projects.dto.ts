@@ -129,6 +129,24 @@ export class ImportSourceDto {
 }
 
 /**
+ * La credencial con la que leer la URL de un import. **No se guarda en ninguna parte.**
+ *
+ * Es el secreto de un tercero y llega para una sola petición: no hay tabla donde acabe, no sale en
+ * el resumen del import, no aparece en el error y no se escribe en ningún log. Se usa y se olvida
+ * — lo contrario que la del contrato, que sí se guarda cifrada porque un chequeo de deriva
+ * programado tiene que volver a leer la misma URL él solo. Ver `shared/import/url-credential.ts`.
+ *
+ * Qué campos hacen falta con cada `kind` lo decide el comando y no estos decoradores: es una sola
+ * comprobación, en el módulo que construye la cabecera.
+ */
+export class ImportUrlAuthDto {
+  @IsIn(["bearer", "header"]) kind: "bearer" | "header";
+  @IsOptional() @IsString() @MaxLength(8000) token?: string;
+  @IsOptional() @IsString() @MaxLength(200) name?: string;
+  @IsOptional() @IsString() @MaxLength(8000) value?: string;
+}
+
+/**
  * The one import: files, a paste, or a link — and it works out what each one is.
  *
  * Nothing here says what the things *are*: that is read off their content, which is the whole
@@ -144,6 +162,8 @@ export class ImportAnythingDto {
   sources?: ImportSourceDto[];
   /** Read through the same SSRF guard as every other outbound request. */
   @IsOptional() @IsString() @IsUrl({ require_tld: false }) @MaxLength(2000) url?: string;
+  /** Para una colección o un OpenAPI detrás de auth. Se usa para esa petición y se olvida. */
+  @IsOptional() @ValidateNested() @Type(() => ImportUrlAuthDto) urlAuth?: ImportUrlAuthDto;
   @IsOptional() @IsBoolean() dryRun?: boolean;
   /** The base URL every environment in the batch is stored with, overriding what its file says. */
   @IsOptional() @IsString() @MaxLength(2000) baseUrl?: string;

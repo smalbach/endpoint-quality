@@ -920,6 +920,15 @@ export type ImportedItemResult = {
     summary: string | null;
     error: string | null;
     notes?: string[];
+    /**
+     * What was created, when the destination creates things that have an address of their own.
+     *
+     * Only `endpoints` fills it, and it is here so the summary can *lead somewhere*: «12 nuevos»
+     * with no way to reach one of them leaves the person doing by hand the search the import was
+     * supposed to save. Absent on a dry run and on the destinations that write a single thing the
+     * screen already knows how to reach — a contract, an environment.
+     */
+    endpoints?: { id: string; method: string; path: string }[];
   }[];
 };
 

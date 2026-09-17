@@ -1,6 +1,6 @@
 import { CommandBus, CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 import { Inject } from "@nestjs/common";
-import { detectImport, targetsOf, type DetectedPiece } from "@eq/import-detect";
+import { detectImport, looksZipped, readZip, targetsOf, type DetectedPiece } from "@eq/import-detect";
 import type {
   ImportAnythingResult,
   ImportedItemResult,
@@ -11,8 +11,12 @@ import type {
 
 import { InvalidInputError } from "@/shared/errors/domain-error";
 import { SAFE_FETCH, type SafeFetchPort } from "@/shared/http/safe-fetch";
+import { credentialHeaders, type ImportUrlCredential } from "@/shared/import/url-credential";
 import { ImportSpecVersionCommand } from "@/modules/specs/application/commands/import-spec-version";
-import { ImportEndpointFileCommand } from "@/modules/endpoints/application/commands/import-endpoints";
+import {
+  ImportEndpointFileCommand,
+  type ImportEndpointsResult,
+} from "@/modules/endpoints/application/commands/import-endpoints";
 import { ImportPostmanFlowsCommand } from "@/modules/workflows/application/commands/import-postman-flows";
 import { ImportPostmanEnvironmentCommand } from "@/modules/environments/application/commands/import-postman-environment";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "../../domain/ports";
@@ -31,6 +35,15 @@ export class ImportAnythingCommand implements ICommand {
       sources?: ImportSource[];
       /** A link to read one from, through the same SSRF guard as every other request. */
       url?: string;
+      /**
+       * The credential to present at that URL, **used once and forgotten**.
+       *
+       * A third party's secret, arriving to make one request: it is not stored in any table, does
+       * not reach the summary, the error or any log, and there is nothing to read it back with.
+       * See `shared/import/url-credential.ts` for why this one is not kept while the contract's
+       * is.
+       */
+      urlAuth?: ImportUrlCredential;
       /** Only say what was found and where it would go. Nothing is written. */
       dryRun?: boolean;
       /** The base URL any environment in the batch is stored with, overriding the file's. */
@@ -82,7 +95,7 @@ export class ImportAnythingHandler implements ICommandHandler<ImportAnythingComm
     await ownedProject(this.projects, command.organizationId, command.projectId);
 
     const sources = [...(command.input.sources ?? [])];
-    if (command.input.url) sources.push(await this.read(command.input.url));
+    if (command.input.url) sources.push(...(await this.read(command.input.url, command.input.urlAuth)));
     if (!sources.length) {
       throw new InvalidInputError(
         "No hay nada que importar",
@@ -228,10 +241,9 @@ export class ImportAnythingHandler implements ICommandHandler<ImportAnythingComm
         const suffix = piece.kind === "curl" ? ".txt" : piece.kind === "har" ? ".har" : ".json";
         const filename = `${piece.name || "pegado"}${suffix}`;
         try {
-          const endpoints = await this.commandBus.execute<
-            ImportEndpointFileCommand,
-            { imported: unknown[]; skipped: { reason: string }[] }
-          >(new ImportEndpointFileCommand(organizationId, projectId, filename, piece.text, actorId));
+          const endpoints = await this.commandBus.execute<ImportEndpointFileCommand, ImportEndpointsResult>(
+            new ImportEndpointFileCommand(organizationId, projectId, filename, piece.text, actorId),
+          );
           // «46 sin importar» reads as a failure and means «el proyecto ya los tenía», which is the
           // normal outcome of importing a collection over its own contract. The two are counted
           // apart so nobody goes looking for a problem that is not there.
@@ -248,6 +260,10 @@ export class ImportAnythingHandler implements ICommandHandler<ImportAnythingComm
               .filter(Boolean)
               .join(" · "),
             error: null,
+            // Los ids de lo que se acaba de crear, para que el resumen pueda llevar a uno de
+            // ellos. Sin esto la pantalla contaba «12 nuevos» y dejaba a la persona buscándolos
+            // en una lista, que es el paso que el import venía a quitar.
+            endpoints: endpoints.imported.map(({ id, method, path }) => ({ id, method, path })),
           });
         } catch (error) {
           results.push({ target: "endpoints", name: piece.name, summary: null, error: message(error) });
@@ -285,13 +301,36 @@ export class ImportAnythingHandler implements ICommandHandler<ImportAnythingComm
    * The same reason the contract import has one: a URL somebody pastes is a URL this process is
    * being asked to fetch, and without the guard «importa esto» is a way to make the server read
    * something on its own network.
+   *
+   * **Bytes, not text.** A `.zip` is what Postman's «Export data» downloads, and it is the one
+   * thing that cannot survive a trip through a string — which is why this asks for the bytes and
+   * decodes them itself, once it knows what they are. A link answers with several sources rather
+   * than one for the same reason: a zip is a batch.
+   *
+   * The credential, when there is one, is turned into a header here and referenced nowhere else.
+   * It is a **third party's secret**: nothing below this line stores it, logs it, or names it in
+   * anything that comes back — the failures quote the URL and the status, never the header's
+   * value. `credentialHeaders` throws with a phrase about the *shape* of what arrived for the
+   * same reason.
    */
-  private async read(url: string): Promise<ImportSource> {
+  private async read(url: string, credential: ImportUrlCredential | undefined): Promise<ImportSource[]> {
+    let headers: Record<string, string>;
+    try {
+      headers = credentialHeaders(credential);
+    } catch (error) {
+      throw new InvalidInputError(
+        "La credencial de la URL no es válida",
+        [{ field: "urlAuth", detail: message(error) }],
+        "url-credential-invalid",
+      );
+    }
+
     let response: Awaited<ReturnType<SafeFetchPort["request"]>>;
     try {
       response = await this.http.request(url, {
         method: "GET",
-        headers: { Accept: "application/json, text/yaml, */*" },
+        headers: { Accept: "application/json, text/yaml, application/zip, */*", ...headers },
+        responseAs: "bytes",
       });
     } catch (error) {
       throw new InvalidInputError(
@@ -303,13 +342,65 @@ export class ImportAnythingHandler implements ICommandHandler<ImportAnythingComm
     if (response.status >= 400) {
       throw new InvalidInputError(
         "La URL no contestó con el documento",
-        [{ field: "url", detail: `Contestó ${response.status}` }],
+        [
+          {
+            field: "url",
+            // 401 y 403 con una credencial puesta significan que la credencial no sirve, y decirlo
+            // ahorra el rato de mirar la URL. El valor no se repite: sólo el hecho de haberlo
+            // mandado.
+            detail:
+              (response.status === 401 || response.status === 403) && credential
+                ? `Contestó ${response.status} con la credencial que se envió`
+                : `Contestó ${response.status}`,
+          },
+        ],
         "url-unreadable",
       );
     }
+
+    const bytes = response.bytes ?? new Uint8Array(0);
     // The last segment of the path as the name, which is what a browser would have called it.
     const name = url.split("?")[0].split("/").filter(Boolean).pop() ?? url;
-    return { name, text: response.body };
+    if (!looksZipped("", bytes)) return [{ name, text: new TextDecoder().decode(bytes) }];
+    return this.unzip(name, bytes);
+  }
+
+  /**
+   * Un zip que ha llegado por una URL, abierto en las cosas que trae dentro.
+   *
+   * **El lector es el mismo que abre el zip que se arrastra a la pantalla** —`readZip`, de
+   * `@eq/import-detect`— y eso es la mitad del valor de este trozo. Un segundo lector de un
+   * formato que llega de fuera es un segundo sitio donde equivocarse con los topes, y los dos
+   * caminos tienen que aceptar exactamente lo mismo: por una URL no puede entrar más que
+   * soltando los ficheros a mano, que es la comparación que importa. Sus topes —número de
+   * entradas, tamaño por entrada y total descomprimido— viven ahí, porque un zip de 1 MB
+   * descomprime a lo que quiera y eso es memoria del servidor a petición de quien pegue un
+   * enlace.
+   *
+   * Lanza sólo cuando el fichero no es un zip legible. Una entrada que no se puede descomprimir
+   * se salta: un volcado con nueve colecciones y un binario roto tiene que traer las nueve.
+   */
+  private async unzip(name: string, bytes: Uint8Array): Promise<ImportSource[]> {
+    let entries: { name: string; text: string }[];
+    try {
+      entries = await readZip(bytes);
+    } catch (error) {
+      throw new InvalidInputError(
+        `No se pudo abrir ${name}`,
+        [{ field: "url", detail: message(error) }],
+        "zip-unreadable",
+      );
+    }
+    if (!entries.length) {
+      throw new InvalidInputError(
+        `${name} no trae nada que importar`,
+        [{ field: "url", detail: "Es un zip y dentro no hay ningún .json, .yaml ni .txt" }],
+        "nothing-to-import",
+      );
+    }
+    // Con el nombre de dentro del zip y no con el del zip: la detección usa la extensión para
+    // desempatar YAML de JSON, y «volcado.zip» no desempata nada.
+    return entries;
   }
 }
 

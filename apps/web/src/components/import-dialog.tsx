@@ -18,8 +18,14 @@
  *
  * Cuatro vías de entrada, las mismas que importan aquí: ficheros, una carpeta entera, texto pegado
  * y una URL. La quinta de Postman —un repositorio— ya es otra cosa en este producto: el Escáner.
+ *
+ * La vía de la URL lleva además **una credencial opcional**, porque un contrato interno vive detrás
+ * de un gateway y sin ella «desde una URL» sólo servía para lo que ya era público; no se guarda en
+ * ningún sitio, ni aquí ni en el servidor. Y lo que se importa **se puede abrir desde el resumen**:
+ * antes contaba «12 nuevos» y dejaba a la persona buscándolos en la lista.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { detectImport, looksZipped, readZip, targetsOf, type Detected, type ImportKind } from "@eq/import-detect";
 
@@ -41,9 +47,12 @@ export type DroppedFile = {
 /**
  * Los ficheros elegidos o soltados, leídos — y **los `.zip` abiertos**.
  *
- * Un zip se abre aquí y no en el servidor porque lo que cruza la red es texto, y un zip metido en
- * un JSON como si fuera texto llega con los bytes ya estropeados. Abrirlo antes deja además el
- * resto igual: el detector, el plan y el import siguen viendo ficheros sueltos.
+ * Un zip **subido** se abre aquí y no en el servidor porque lo que cruza la red en `sources` es
+ * texto, y un zip metido en un JSON como si fuera texto llega con los bytes ya estropeados. Por
+ * una URL sí lo abre el servidor, que es quien tiene los bytes, y con este mismo lector: `readZip`
+ * de `@eq/import-detect` corre en los dos lados, así que por las dos puertas entra lo mismo.
+ * Abrirlo antes deja además el resto igual: el detector, el plan y el import siguen viendo
+ * ficheros sueltos.
  *
  * Vive fuera del diálogo porque el arrastre global lo necesita igual: soltar el zip en cualquier
  * parte de la ventana tiene que hacer lo mismo que elegirlo aquí dentro.
@@ -72,6 +81,26 @@ export async function readDropped(files: File[]): Promise<DroppedFile[]> {
 }
 
 type Tab = "files" | "text" | "url";
+
+/**
+ * La credencial con la que leer la URL, tal como se pide en pantalla.
+ *
+ * `none` es una opción de verdad y no un hueco vacío: la mayoría de los enlaces que se pegan aquí
+ * son públicos, y enseñar dos campos de secreto a quien no los necesita es enseñar dos campos que
+ * hay que entender antes de importar.
+ */
+type UrlAuth = { kind: "none" | "bearer" | "header"; token: string; name: string; value: string };
+const NO_AUTH: UrlAuth = { kind: "none", token: "", name: "", value: "" };
+
+/**
+ * Cuántos endpoints recién creados se enlazan de uno en uno.
+ *
+ * Una colección de verdad trae cuarenta o cien, y cien enlaces no son una lista: son una pared que
+ * hay que leer para no encontrar nada. Los primeros cinco cubren el caso por el que existe esto
+ * —«acabo de importar, llévame a uno y lo miro»— y el resto va donde están todos, que es la lista
+ * de endpoints del proyecto con su buscador.
+ */
+const LINKED_ENDPOINTS = 5;
 
 /** Cómo se llama cada formato en pantalla. Las mismas palabras que usa el servidor. */
 const KIND_LABEL: Record<ImportKind, string> = {
@@ -110,6 +139,7 @@ export function ImportDialog({
   const [files, setFiles] = useState<DroppedFile[]>(initial);
   const [pasted, setPasted] = useState("");
   const [url, setUrl] = useState("");
+  const [auth, setAuth] = useState<UrlAuth>(NO_AUTH);
   const [baseUrl, setBaseUrl] = useState("");
   const [target, setTarget] = useState(projectId ?? "");
   const [dragging, setDragging] = useState(false);
@@ -146,7 +176,7 @@ export function ImportDialog({
       api<ImportAnythingResult>(`/orgs/${organization?.id}/projects/${target}/import`, {
         method: "POST",
         body: {
-          ...(tab === "url" ? { url: url.trim() } : {}),
+          ...(tab === "url" ? { url: url.trim(), ...urlAuthBody(auth) } : {}),
           ...(tab === "text" && pasted.trim() ? { sources: [{ name: "", text: pasted }] } : {}),
           ...(tab === "files" && files.length
             ? { sources: files.filter((file) => !file.reason).map((file) => ({ name: file.name, text: file.text })) }
@@ -158,7 +188,8 @@ export function ImportDialog({
   });
 
   const ready =
-    Boolean(target) && (tab === "url" ? Boolean(url.trim()) : tab === "text" ? Boolean(pasted.trim()) : readable);
+    Boolean(target) &&
+    (tab === "url" ? Boolean(url.trim()) && authReady(auth) : tab === "text" ? Boolean(pasted.trim()) : readable);
 
   const take = async (picked: FileList | File[]) => {
     const read = await readDropped([...picked]);
@@ -293,10 +324,10 @@ export function ImportDialog({
         )}
 
         {tab === "url" && (
-          <div className="mt-3">
+          <div className="mt-3 space-y-3">
             <Field
               label="URL"
-              hint="Se comprueba la dirección resuelta antes de pedirla, y se vuelve a comprobar en cada redirección. Lo que conteste se reconoce igual que un fichero."
+              hint="Se comprueba la dirección resuelta antes de pedirla, y se vuelve a comprobar en cada redirección. Lo que conteste se reconoce igual que un fichero, y un .zip se abre solo."
             >
               <input
                 className={inputClass}
@@ -308,6 +339,65 @@ export function ImportDialog({
                 }}
               />
             </Field>
+
+            {/* Un contrato interno o una colección de un repositorio privado están detrás de un
+                gateway, así que sin esto «desde una URL» sólo servía para lo que ya era público.
+                Se dice en el sitio donde se escribe lo que pasa con el secreto: se usa para esta
+                petición y no se guarda en ninguna parte. */}
+            <Field
+              label="Autenticación (opcional)"
+              hint="Para una URL que no es pública. No se guarda: se usa para esta petición y se olvida, así que un import de la misma URL mañana la pedirá otra vez."
+            >
+              <select
+                className={inputClass}
+                aria-label="Autenticación de la URL"
+                value={auth.kind}
+                onChange={(event) => {
+                  setAuth({ ...NO_AUTH, kind: event.target.value as UrlAuth["kind"] });
+                  run.reset();
+                }}
+              >
+                <option value="none">Ninguna</option>
+                <option value="bearer">Token bearer</option>
+                <option value="header">Una cabecera</option>
+              </select>
+            </Field>
+
+            {auth.kind === "bearer" && (
+              <Field label="Token">
+                <input
+                  className={inputClass}
+                  type="password"
+                  aria-label="Token bearer"
+                  value={auth.token}
+                  placeholder="el token, sin «Bearer» delante"
+                  onChange={(event) => setAuth({ ...auth, token: event.target.value })}
+                />
+              </Field>
+            )}
+
+            {auth.kind === "header" && (
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Cabecera">
+                  <input
+                    className={inputClass}
+                    aria-label="Nombre de la cabecera"
+                    value={auth.name}
+                    placeholder="X-API-Key"
+                    onChange={(event) => setAuth({ ...auth, name: event.target.value })}
+                  />
+                </Field>
+                <Field label="Valor">
+                  <input
+                    className={inputClass}
+                    type="password"
+                    aria-label="Valor de la cabecera"
+                    value={auth.value}
+                    onChange={(event) => setAuth({ ...auth, value: event.target.value })}
+                  />
+                </Field>
+              </div>
+            )}
           </div>
         )}
 
@@ -342,7 +432,7 @@ export function ImportDialog({
         )}
 
         {run.error && <Problem error={run.error} />}
-        {run.data && <Done result={run.data} />}
+        {run.data && <Done result={run.data} projectId={target} onClose={onClose} />}
 
         <div className="mt-4 flex items-center justify-end gap-2">
           <Button variant="ghost" className="h-8 text-xs" onClick={onClose}>
@@ -415,6 +505,26 @@ function Recognised({ entry, filename, onRemove }: { entry: Detected; filename?:
   );
 }
 
+/** Con qué se puede importar ya: un bearer necesita su token, y una cabecera sus dos partes. */
+function authReady(auth: UrlAuth): boolean {
+  if (auth.kind === "bearer") return Boolean(auth.token.trim());
+  if (auth.kind === "header") return Boolean(auth.name.trim() && auth.value);
+  return true;
+}
+
+/**
+ * La credencial, en el cuerpo de la petición y en ningún otro sitio.
+ *
+ * No se guarda en el navegador —ni en `localStorage`, ni en la caché de la consulta— por el mismo
+ * motivo por el que el servidor no la guarda en una tabla: es el secreto de un tercero y sólo hace
+ * falta para esta petición. El estado vive en el diálogo y se va con él.
+ */
+function urlAuthBody(auth: UrlAuth): { urlAuth?: { kind: string; token?: string; name?: string; value?: string } } {
+  if (auth.kind === "bearer") return { urlAuth: { kind: "bearer", token: auth.token.trim() } };
+  if (auth.kind === "header") return { urlAuth: { kind: "header", name: auth.name.trim(), value: auth.value } };
+  return {};
+}
+
 function Problem({ error }: { error: unknown }) {
   const problem = error instanceof ApiError ? error : null;
   return (
@@ -430,18 +540,26 @@ function Problem({ error }: { error: unknown }) {
 }
 
 /** Lo que se hizo, por destino. La misma lista de antes, con lo que escribió cada uno. */
-function Done({ result }: { result: ImportAnythingResult }) {
+function Done({
+  result,
+  projectId,
+  onClose,
+}: {
+  result: ImportAnythingResult;
+  projectId: string;
+  onClose: () => void;
+}) {
   return (
     <div className="mt-3 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
       <p className="text-[11px] font-medium text-slate-600">Esto es lo que se hizo:</p>
       {result.items.map((item, index) => (
-        <Item key={index} item={item} />
+        <Item key={index} item={item} projectId={projectId} onClose={onClose} />
       ))}
     </div>
   );
 }
 
-function Item({ item }: { item: ImportedItemResult }) {
+function Item({ item, projectId, onClose }: { item: ImportedItemResult; projectId: string; onClose: () => void }) {
   const unreadable = item.kind === "unknown" || (!item.pieces.length && !item.results.length);
   return (
     <div className={cn("rounded-md border bg-white p-2", unreadable ? "border-amber-200" : "border-slate-200")}>
@@ -467,8 +585,57 @@ function Item({ item }: { item: ImportedItemResult }) {
               ))}
             </ul>
           )}
+          {entry.endpoints && entry.endpoints.length > 0 && (
+            <Created endpoints={entry.endpoints} projectId={projectId} onClose={onClose} />
+          )}
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * Los endpoints que acaba de crear este import, para ir a uno.
+ *
+ * Es el final del camino que faltaba: el resumen decía «12 nuevos» y ahí se acababa, así que para
+ * ver uno había que cerrar el diálogo, ir a la lista y buscarlo entre los que ya estaban — el paso
+ * que el import venía a quitar.
+ *
+ * El diálogo se cierra al pulsar porque navegar debajo de un modal abierto deja a alguien mirando
+ * la pantalla que acaba de tapar.
+ */
+function Created({
+  endpoints,
+  projectId,
+  onClose,
+}: {
+  endpoints: NonNullable<ImportedItemResult["results"][number]["endpoints"]>;
+  projectId: string;
+  onClose: () => void;
+}) {
+  const rest = endpoints.length - LINKED_ENDPOINTS;
+  return (
+    <ul className="mt-1 space-y-0.5">
+      {endpoints.slice(0, LINKED_ENDPOINTS).map((endpoint) => (
+        <li key={endpoint.id}>
+          <Link
+            to={`/p/${projectId}/endpoints/${endpoint.id}`}
+            onClick={onClose}
+            className="font-mono text-[11px] text-slate-600 underline decoration-slate-300 hover:text-slate-900"
+          >
+            {endpoint.method} {endpoint.path}
+          </Link>
+        </li>
+      ))}
+      {rest > 0 && (
+        <li>
+          {/* La lista del proyecto es su pantalla de inicio, y es donde está su buscador: con
+              cuarenta endpoints nuevos, encontrar uno se hace ahí y no en esta lista. */}
+          <Link to={`/p/${projectId}`} onClick={onClose} className="text-[11px] text-slate-500 hover:text-slate-900">
+            y {rest} más, en la lista de endpoints →
+          </Link>
+        </li>
+      )}
+    </ul>
   );
 }

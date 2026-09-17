@@ -71,6 +71,15 @@ export type SafeFetchResult = {
    */
   setCookie: string[];
   body: string;
+  /**
+   * The bytes, and only when the caller asked for them with `responseAs: "bytes"`.
+   *
+   * Opt-in rather than always present because every response would then be held twice — once
+   * decoded and once raw — and the run engine makes thousands of them. When it is set, `body` is
+   * the empty string: a `.zip` decoded into a UTF-8 string is a corrupted `.zip`, and returning
+   * that alongside the real bytes would be handing the next caller a trap.
+   */
+  bytes?: Uint8Array;
   finalUrl: string;
   /** Milliseconds for the request that produced this response, redirects excluded. */
   durationMs: number;
@@ -188,6 +197,9 @@ export type SafeRequestOptions = {
    * escribe está diciendo exactamente qué quiere mandar.
    */
   jar?: Cookie[];
+  /** What to do with the response body. `"bytes"` skips the decode and fills `bytes` instead —
+   * see `SafeFetchResult.bytes`. Anything not UTF-8 (a `.zip`) needs it. */
+  responseAs?: "text" | "bytes";
 };
 
 /**
@@ -285,8 +297,9 @@ export async function safeFetch(
     // and the body having been read. Those are the two halves of a slow response and they have
     // different owners.
     const headersAt = Date.now();
-    const text = await readCapped(response, policy.maxResponseBytes, current);
+    const raw = await readCapped(response, policy.maxResponseBytes, current);
     const readAt = Date.now();
+    const asBytes = options.responseAs === "bytes";
     return {
       status: response.status,
       headers: {
@@ -298,7 +311,8 @@ export async function safeFetch(
         ...(setCookie.length ? { "set-cookie": setCookie.join(", ") } : {}),
       },
       setCookie,
-      body: text,
+      body: asBytes ? "" : new TextDecoder().decode(raw),
+      ...(asBytes ? { bytes: raw } : {}),
       finalUrl: url.toString(),
       durationMs: readAt - started,
       timing: { dnsMs, ttfbMs: headersAt - started, downloadMs: readAt - headersAt },
@@ -314,10 +328,13 @@ export async function safeFetch(
  * Streamed rather than `await response.text()`: a `Content-Length` can lie or be absent, and a
  * URL that emits bytes forever would otherwise fill the process's memory. The cap is enforced on
  * what actually arrives.
+ *
+ * It hands back the bytes and lets the caller decide whether to decode them, because that is the
+ * one decision this function cannot make for a `.zip`.
  */
-async function readCapped(response: Response, maxBytes: number, target: string): Promise<string> {
+async function readCapped(response: Response, maxBytes: number, target: string): Promise<Uint8Array> {
   const reader = response.body?.getReader();
-  if (!reader) return "";
+  if (!reader) return new Uint8Array(0);
   const chunks: Uint8Array[] = [];
   let total = 0;
   while (true) {
@@ -330,7 +347,7 @@ async function readCapped(response: Response, maxBytes: number, target: string):
     }
     chunks.push(value);
   }
-  return new TextDecoder().decode(concat(chunks, total));
+  return concat(chunks, total);
 }
 
 function concat(chunks: Uint8Array[], total: number): Uint8Array {

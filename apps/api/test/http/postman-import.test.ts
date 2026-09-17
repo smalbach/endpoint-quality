@@ -21,6 +21,7 @@ import request from "supertest";
 
 import { createTestApp, type TestContext } from "../support/test-app";
 import { STUB_SPEC_YAML } from "../support/stub-target";
+import { makeZip } from "../support/make-zip";
 
 let context: TestContext;
 const api = () => request(context.app.getHttpServer());
@@ -635,6 +636,154 @@ describe("y de vuelta a Postman, que es lo que faltaba", () => {
 });
 
 /**
+ * Una URL detrás de auth, y un `.zip` por URL: los dos huecos que dejaban la puerta a medias.
+ *
+ * **La credencial.** Un contrato interno o una colección publicada en un repositorio privado viven
+ * detrás de un gateway, así que «importar desde una URL» sin credencial servía sólo para lo que ya
+ * era público. Lo que fija esta suite, más que el camino feliz, es la regla: **se usa y se
+ * olvida**. No vuelve en la respuesta, no se guarda contra el proyecto —un segundo import de la
+ * misma URL sin ella vuelve a dar 401— y ni el error de la red ni el de la forma citan su valor.
+ *
+ * **El zip.** Es lo que descarga «Export data» de Postman, y por una URL llega tan a menudo como
+ * `application/octet-stream` desde un `/download` sin extensión como con su tipo bueno. Se
+ * reconoce por sus cuatro bytes mágicos, que es el único dato que no depende de la configuración
+ * de nadie.
+ */
+describe("una URL con credencial, y un zip por URL", () => {
+  const SECRET = "sk-esto-no-debe-salir-nunca";
+  const ENVIRONMENT = JSON.stringify({
+    name: "stub local",
+    values: [{ key: "baseUrl", value: "http://localhost:9999", type: "default", enabled: true }],
+    _postman_variable_scope: "environment",
+  });
+
+  test("una colección detrás de un bearer entra, y el token no vuelve en la respuesta", async () => {
+    const base = await project(true);
+    const url = "https://privado.example.com/tienda.postman_collection.json";
+    context.http.replyBehindAuth(url, COLLECTION, "Authorization", `Bearer ${SECRET}`);
+
+    const response = await api()
+      .post(`${base}/import`)
+      .set(as(owner))
+      .send({ url, urlAuth: { kind: "bearer", token: SECRET } });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.items[0].kind, "postman-collection");
+    assert.equal(context.http.calls.at(-1)?.headers.authorization, `Bearer ${SECRET}`);
+
+    // La regla, comprobada sobre la respuesta entera y no sobre un campo: ni el resumen, ni un
+    // nombre, ni una nota traen el secreto.
+    assert.doesNotMatch(JSON.stringify(response.body), new RegExp(SECRET));
+
+    // Y no se ha guardado en ninguna parte: la misma URL sin credencial vuelve a ser un 401.
+    const again = await api().post(`${base}/import`).set(as(owner)).send({ url });
+    assert.equal(again.status, 422, JSON.stringify(again.body));
+    assert.match(String(again.body.type), /url-unreadable$/);
+    assert.match(again.body.errors[0].detail, /401/);
+  });
+
+  test("una cabecera con nombre y valor, para lo que no es un bearer", async () => {
+    const base = await project(true);
+    const url = "https://privado.example.com/contrato.yaml";
+    context.http.replyBehindAuth(url, STUB_SPEC_YAML, "X-API-Key", SECRET);
+
+    const response = await api()
+      .post(`${base}/import`)
+      .set(as(owner))
+      .send({ url, urlAuth: { kind: "header", name: "X-API-Key", value: SECRET } });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.items[0].kind, "openapi");
+    assert.equal(context.http.calls.at(-1)?.headers["x-api-key"], SECRET);
+    assert.doesNotMatch(JSON.stringify(response.body), new RegExp(SECRET));
+  });
+
+  test("un 401 con credencial lo dice, porque «revisa la URL» sería mirar al sitio equivocado", async () => {
+    const base = await project(true);
+    const url = "https://privado.example.com/otra.json";
+    context.http.replyBehindAuth(url, COLLECTION, "Authorization", "Bearer el-bueno");
+
+    const response = await api()
+      .post(`${base}/import`)
+      .set(as(owner))
+      .send({ url, urlAuth: { kind: "bearer", token: SECRET } });
+    assert.equal(response.status, 422, JSON.stringify(response.body));
+    assert.match(response.body.errors[0].detail, /401 con la credencial/);
+    assert.doesNotMatch(JSON.stringify(response.body), new RegExp(SECRET));
+  });
+
+  test("una credencial mal formada se para antes de salir a la red, y sin citar su valor", async () => {
+    const base = await project(true);
+    const before = context.http.requested.length;
+    const response = await api()
+      .post(`${base}/import`)
+      .set(as(owner))
+      .send({
+        url: "https://privado.example.com/x.json",
+        // Un valor con un salto de línea dentro es una inyección de cabeceras.
+        urlAuth: { kind: "header", name: "X-API-Key", value: `${SECRET}\r\nX-Admin: 1` },
+      });
+    assert.equal(response.status, 422, JSON.stringify(response.body));
+    assert.match(String(response.body.type), /url-credential-invalid$/);
+    assert.match(response.body.errors[0].detail, /salto de línea/);
+    assert.doesNotMatch(JSON.stringify(response.body), new RegExp(SECRET));
+    assert.equal(context.http.requested.length, before, "no se llegó a pedir nada");
+  });
+
+  test("un zip por URL entra por sus bytes, y cada cosa de dentro va a su sitio", async () => {
+    const base = await project(true);
+    // Sin extensión y sin `Content-Type` de zip, como un `/download?id=7` cualquiera: lo único
+    // que lo delata son los cuatro primeros bytes.
+    const url = "https://privado.example.com/export?id=7";
+    context.http.replyBytes(
+      url,
+      makeZip([
+        { name: "collections/tienda.json", text: COLLECTION, deflate: true },
+        { name: "environments/local.json", text: ENVIRONMENT, deflate: true },
+        // Lo que un import no sabe leer no ensucia el resumen con líneas de «no reconocido».
+        { name: "__MACOSX/._tienda.json", text: "basura" },
+        { name: "captura.png", text: "\x89PNG" },
+      ]),
+    );
+
+    const response = await api().post(`${base}/import`).set(as(owner)).send({ url });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.deepEqual(
+      response.body.items.map((item: { kind: string }) => item.kind),
+      ["postman-collection", "postman-environment"],
+    );
+    // Con el nombre de dentro del zip: la detección desempata YAML de JSON por la extensión, y
+    // «export» no desempata nada.
+    assert.deepEqual(
+      response.body.items.map((item: { name: string }) => item.name),
+      ["Tienda", "stub local"],
+    );
+    const targets = response.body.items.flatMap((item: { results: { target: string }[] }) =>
+      item.results.map((entry) => entry.target),
+    );
+    assert.deepEqual([...new Set(targets)].sort(), ["endpoints", "environment", "flows"]);
+  });
+
+  test("un zip que no trae nada legible se dice con algo que hacer", async () => {
+    const base = await project(true);
+    const url = "https://privado.example.com/fotos.zip";
+    context.http.replyBytes(url, makeZip([{ name: "captura.png", text: "\x89PNG" }]));
+    const response = await api().post(`${base}/import`).set(as(owner)).send({ url });
+    assert.equal(response.status, 422, JSON.stringify(response.body));
+    assert.match(String(response.body.type), /nothing-to-import$/);
+    assert.match(response.body.errors[0].detail, /\.json/);
+  });
+
+  test("un zip roto no sale como «no es JSON», que no dice nada", async () => {
+    const base = await project(true);
+    const url = "https://privado.example.com/roto.zip";
+    const good = makeZip([{ name: "tienda.json", text: COLLECTION }]);
+    context.http.replyBytes(url, good.subarray(0, good.byteLength - 8));
+    const response = await api().post(`${base}/import`).set(as(owner)).send({ url });
+    assert.equal(response.status, 422, JSON.stringify(response.body));
+    assert.match(String(response.body.type), /zip-unreadable$/);
+  });
+});
+
+/**
  * La autenticación de la colección, que es la que de verdad llevan los ficheros de la gente.
  *
  * Antes se tiraba entera y en silencio: todas las peticiones importadas quedaban sin credencial y
@@ -727,5 +876,46 @@ describe("la autenticación de una colección, que antes se tiraba entera", () =
     // vez: se quedó fuera al importar, y lo que se exporta ya no la tiene.
     const bearer = authOf("/heredado") as unknown as { bearer: { key: string; value: string; type: string }[] };
     assert.deepEqual(bearer.bearer, [{ key: "token", value: "{{authToken}}", type: "string" }]);
+  });
+});
+
+/**
+ * Y lo que se importó, alcanzable.
+ *
+ * El resumen contaba «12 nuevos» y ahí se acababa: para ver uno había que cerrar el diálogo e ir a
+ * buscarlo a la lista, que es justo el paso que el import venía a quitar. Los ids viajan en el
+ * resultado para que la pantalla pueda enlazar.
+ */
+describe("los ids de lo que se acaba de crear", () => {
+  test("cada endpoint nuevo vuelve con su id, y el id existe", async () => {
+    const base = await project(true);
+    const response = await api()
+      .post(`${base}/import`)
+      .set(as(owner))
+      .send({ sources: [{ name: "tienda.postman_collection.json", text: COLLECTION }] });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+
+    const endpoints = response.body.items[0].results.find((entry: { target: string }) => entry.target === "endpoints");
+    assert.ok(endpoints.endpoints?.length, "el resumen tiene que traer los ids");
+    assert.match(endpoints.summary, new RegExp(`^${endpoints.endpoints.length} nuevos`));
+    for (const created of endpoints.endpoints as { id: string; method: string; path: string }[]) {
+      const fetched = await api().get(`${base}/endpoints/${created.id}`).set(as(owner));
+      assert.equal(fetched.status, 200, JSON.stringify(fetched.body));
+      assert.equal(fetched.body.method, created.method);
+      assert.equal(fetched.body.path, created.path);
+    }
+  });
+
+  test("lo que ya estaba no vuelve como id, porque no se ha creado nada", async () => {
+    const base = await project(true);
+    const send = () =>
+      api()
+        .post(`${base}/import`)
+        .set(as(owner))
+        .send({ sources: [{ name: "tienda.postman_collection.json", text: COLLECTION }] });
+    await send();
+    const again = await send();
+    const endpoints = again.body.items[0].results.find((entry: { target: string }) => entry.target === "endpoints");
+    assert.deepEqual(endpoints.endpoints, []);
   });
 });

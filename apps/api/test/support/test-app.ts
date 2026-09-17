@@ -172,7 +172,7 @@ import {
 export class StubSafeFetch implements SafeFetchPort {
   readonly responses = new Map<
     string,
-    { status: number; body: string; requires?: { header: string; value: string } }
+    { status: number; body: string | Uint8Array; requires?: { header: string; value: string } }
   >();
   readonly requested: string[] = [];
   /** What was sent, headers and body included. `requested` keeps only the URLs, and a credential
@@ -189,6 +189,11 @@ export class StubSafeFetch implements SafeFetchPort {
   /** A contract behind authentication: 401 unless the header arrives with the expected value. */
   replyBehindAuth(url: string, body: string, header: string, value: string) {
     this.responses.set(url, { status: 200, body, requires: { header: header.toLowerCase(), value } });
+  }
+
+  /** Bytes, for the callers that cannot use a string: a `.zip` served from a URL. */
+  replyBytes(url: string, body: Uint8Array, status = 200) {
+    this.responses.set(url, { status, body });
   }
 
   async get(url: string, options: { headers?: Record<string, string> } = {}): Promise<SafeFetchResult> {
@@ -218,7 +223,17 @@ export class StubSafeFetch implements SafeFetchPort {
       if (stored.requires && headers[stored.requires.header] !== stored.requires.value) {
         return { ...reply, status: 401, body: "no autorizado" };
       }
-      return { ...reply, status: stored.status, body: stored.body };
+      // Como el guardia de verdad: pedir bytes deja `body` vacío y llena `bytes`, y no pedirlos
+      // decodifica. Si el stub devolviera las dos cosas siempre, una prueba pasaría aquí con un
+      // camino que en producción no existe.
+      const asBytes = options.responseAs === "bytes";
+      const bytes = typeof stored.body === "string" ? new TextEncoder().encode(stored.body) : stored.body;
+      return {
+        ...reply,
+        status: stored.status,
+        body: asBytes ? "" : new TextDecoder().decode(bytes),
+        ...(asBytes ? { bytes } : {}),
+      };
     }
     return safeFetch(url, this.policy, options);
   }

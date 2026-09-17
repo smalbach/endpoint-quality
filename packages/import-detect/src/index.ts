@@ -110,16 +110,18 @@ export function detectImport(filename: string, text: string): Detected {
   const label = filename.trim() || "lo pegado";
   if (!text.trim()) return { kind: "unknown", name: label, pieces: [], reason: "está vacío" };
 
-  // A zip that arrived as *text*, which means it did not come through the reader that opens one.
-  // A dropped or picked `.zip` never reaches here — `readZip` turns it into its files first — so
-  // this is the URL path, where what crosses the wire is a string and the zip's bytes are gone by
-  // the time anybody could inflate them.
+  // A zip that arrived as *text*, which means it did not come through a reader that opens one.
+  // Neither of the two doors that can reaches here: a dropped or picked `.zip` is turned into its
+  // files by `readZip` in the browser, and a URL is fetched as bytes and passed through the same
+  // reader on the server. What is left is a zip pasted into a box or sent as a `sources[]` entry,
+  // where crossing the wire as a string has already destroyed the bytes nobody can inflate now.
   if (text.startsWith(ZIP_MAGIC) || /\.zip$/i.test(label)) {
     return {
       kind: "unknown",
       name: label,
       pieces: [],
-      reason: "es un .zip, y por URL no se puede abrir: bájalo y suéltalo como fichero, que ahí sí se abre solo",
+      reason:
+        "es un .zip y ha llegado como texto, que ya lo ha roto: suéltalo como fichero o pega su URL, que así sí se abre",
     };
   }
 

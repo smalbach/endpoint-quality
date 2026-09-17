@@ -189,7 +189,9 @@ describe("la pantalla de mocks", () => {
     expect(call.mock.calls.some((args: unknown[]) => String(args[0]).endsWith("/calls"))).toBe(false);
 
     fireEvent.click(screen.getByText("Llamadas"));
-    await waitFor(() => expect(call.mock.calls.some((args: unknown[]) => String(args[0]).endsWith("/calls"))).toBe(true));
+    await waitFor(() =>
+      expect(call.mock.calls.some((args: unknown[]) => String(args[0]).endsWith("/calls"))).toBe(true),
+    );
   });
 
   test("cada llamada dice la hora, el método, la ruta, el código y el ejemplo que casó", async () => {

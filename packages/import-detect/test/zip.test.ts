@@ -18,7 +18,9 @@ import { readZip, looksZipped } from "../src/zip.ts";
 import { detectImport } from "../src/index.ts";
 
 /** Un zip mínimo pero de verdad: índice central, cabeceras locales y los dos métodos que se usan. */
-function buildZip(files: { name: string; body: string; store?: boolean }[]): Uint8Array {
+function buildZip(
+  files: { name: string; body: string; store?: boolean; declared?: number; encrypted?: boolean }[],
+): Uint8Array {
   const locals: Buffer[] = [];
   const central: Buffer[] = [];
   let offset = 0;
@@ -28,17 +30,19 @@ function buildZip(files: { name: string; body: string; store?: boolean }[]): Uin
     const data = file.store ? raw : deflateRawSync(raw);
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(file.encrypted ? 0x1 : 0, 6);
     local.writeUInt16LE(file.store ? 0 : 8, 8);
     local.writeUInt32LE(data.length, 18);
-    local.writeUInt32LE(raw.length, 22);
+    local.writeUInt32LE(file.declared ?? raw.length, 22);
     local.writeUInt16LE(name.length, 26);
     locals.push(Buffer.concat([local, name, data]));
 
     const entry = Buffer.alloc(46);
     entry.writeUInt32LE(0x02014b50, 0);
+    entry.writeUInt16LE(file.encrypted ? 0x1 : 0, 8);
     entry.writeUInt16LE(file.store ? 0 : 8, 10);
     entry.writeUInt32LE(data.length, 20);
-    entry.writeUInt32LE(raw.length, 24);
+    entry.writeUInt32LE(file.declared ?? raw.length, 24);
     entry.writeUInt16LE(name.length, 28);
     entry.writeUInt32LE(offset, 42);
     central.push(Buffer.concat([entry, name]));
@@ -106,8 +110,67 @@ describe("lo de dentro sale como si se hubiera soltado suelto", () => {
     );
   });
 
+  test("una entrada con contraseña se salta, en vez de salir como texto ilegible", async () => {
+    // Sin mirar el bit de cifrado, lo que sale de ahí son bytes de criptografía decodificados a
+    // UTF-8: un «fichero» que el detector no reconoce y que nadie sabe de dónde ha salido.
+    const entries = await readZip(
+      buildZip([
+        { name: "cifrada.json", body: collection("Secreta"), encrypted: true },
+        { name: "tienda.json", body: collection("Tienda") },
+      ]),
+    );
+    assert.deepEqual(
+      entries.map((entry) => entry.name),
+      ["tienda.json"],
+    );
+  });
+
   test("lo que no es un zip se dice, no se adivina", async () => {
     await assert.rejects(() => readZip(new Uint8Array([0x7b, 0x7d])), /no parece un \.zip/);
+  });
+});
+
+/**
+ * Los topes, que son lo único que separa «este fichero no vale» de que se caiga el proceso.
+ *
+ * Se prueban por el tamaño que **declara** el índice y no por el que ocupa el fichero de prueba,
+ * porque es ahí donde vive el riesgo: una bomba zip son 2 KB en el disco que dicen traer 10 GB
+ * dentro, y el lector tiene que creerse ese número para poder rechazarlo *antes* de inflar nada.
+ * Escribir 32 MB en una prueba mediría el `deflate` de Node, no esta defensa.
+ *
+ * Y el tope **se salta la entrada, no tira el zip**: un volcado con nueve colecciones buenas y una
+ * entrada gigante tiene que traer las nueve.
+ */
+describe("los topes de lo que se saca", () => {
+  test("una entrada que declara más de lo que cabe se queda fuera, y las demás entran", async () => {
+    const entries = await readZip(
+      buildZip([
+        { name: "bomba.json", body: "0".repeat(1_000), declared: 40 * 1024 * 1024 },
+        { name: "tienda.json", body: collection("Tienda") },
+      ]),
+    );
+    assert.deepEqual(
+      entries.map((entry) => entry.name),
+      ["tienda.json"],
+    );
+  });
+
+  test("y el número declarado no excluye a nadie más: el total se cuenta sobre lo que salió", async () => {
+    // La distinción que hay que no perder. El tamaño declarado sirve para **rechazar** una entrada
+    // antes de inflarla; lo que se acumula contra el tope total es lo que de verdad ha salido. Si
+    // se acumulara lo declarado, un zip con cien entradas que mienten —y dos bytes dentro— se
+    // quedaría fuera entero sin haber ocupado nada.
+    const small = (name: string) => ({ name, body: "{}", declared: 20 * 1024 * 1024 });
+    const entries = await readZip(buildZip([small("a.json"), small("b.json"), small("c.json")]));
+    assert.deepEqual(
+      entries.map((entry) => entry.name),
+      ["a.json", "b.json", "c.json"],
+    );
+  });
+
+  test("y hay un tope de cuántos ficheros salen", async () => {
+    const many = Array.from({ length: 205 }, (_, index) => ({ name: `c${index}.json`, body: "{}" }));
+    assert.equal((await readZip(buildZip(many))).length, 200);
   });
 });
 

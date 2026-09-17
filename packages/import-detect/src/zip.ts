@@ -74,6 +74,7 @@ export async function readZip(bytes: Uint8Array): Promise<ZipEntry[]> {
     if (offset + 46 > bytes.length || view.getUint32(offset, true) !== CENTRAL) {
       throw new Error("el .zip tiene el índice corrupto");
     }
+    const flags = view.getUint16(offset + 8, true);
     const method = view.getUint16(offset + 10, true);
     const compressed = view.getUint32(offset + 20, true);
     const uncompressed = view.getUint32(offset + 24, true);
@@ -85,6 +86,11 @@ export async function readZip(bytes: Uint8Array): Promise<ZipEntry[]> {
     offset += 46 + nameLength + extraLength + commentLength;
 
     if (!wanted(name)) continue;
+    // Una entrada cifrada se salta. Sin mirar este bit, su contenido sale como «texto»: bytes de
+    // criptografía decodificados a UTF-8, que el detector no reconoce y que nadie sabe de dónde
+    // vienen. Se salta y no se lanza, por lo mismo que el resto de este bucle: un volcado con
+    // nueve colecciones buenas y una entrada con contraseña tiene que traer las nueve.
+    if ((flags & 0x1) !== 0) continue;
     if (uncompressed > MAX_ENTRY_BYTES || total + uncompressed > MAX_TOTAL_BYTES) continue;
     if (entries.length >= MAX_ENTRIES) break;
 
