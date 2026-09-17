@@ -19,8 +19,9 @@
  * a `{{var}}` inside a path, a collection nested four folders deep — and every one of them is a
  * test that must not need a database.
  */
-import type { Operation } from "@eq/runner-core";
+import type { Operation, RequestAuth } from "@eq/runner-core";
 import type { RequestBody } from "@eq/runner-core";
+import { isReadable, readPostmanAuth, redactAuth, resolveAuth } from "./postman-auth";
 
 /** One request as it was read, before anything of this project is known about it. */
 export type ParsedRequest = {
@@ -32,6 +33,8 @@ export type ParsedRequest = {
   url: string;
   headers: Record<string, string>;
   body: RequestBody;
+  /** Cómo entra. `inherit` cuando la fuente no dice nada, que es lo que dice Postman. */
+  auth: RequestAuth;
 };
 
 /** A request that could not be turned into a template, and why — said in words somebody can act
@@ -136,11 +139,8 @@ const IGNORED_FLAGS = new Set([
   "--progress-bar",
 ]);
 /** Flags whose value is deliberately dropped, with their value consumed so it is not read as the
- * URL. Credentials are the environment's to hold: an imported `-u user:pass` would put somebody's
- * password in a `jsonb` column, which is exactly what the credentials table exists to avoid. */
+ * URL. */
 const DROPPED_WITH_VALUE = new Set([
-  "-u",
-  "--user",
   "-A",
   "--user-agent",
   "-e",
@@ -177,6 +177,7 @@ export function parseCurl(command: string): ParsedRequest | null {
   const data: string[] = [];
   let urlencodeOnly = false;
   let asQuery = false;
+  let basic = "";
 
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
@@ -206,6 +207,10 @@ export function parseCurl(command: string): ParsedRequest | null {
       urlencodeOnly = true;
     } else if (token === "-G" || token === "--get") {
       asQuery = true;
+    } else if (token === "-u" || token === "--user") {
+      // El usuario se queda; la contraseña la quita `redactAuth`, porque iría a una columna en
+      // claro. Antes se tiraban los dos y el `Basic` importado no existía.
+      basic = next();
     } else if (token === "-b" || token === "--cookie") {
       headers["Cookie"] = next();
     } else if (token === "--url") {
@@ -235,7 +240,21 @@ export function parseCurl(command: string): ParsedRequest | null {
   // POST, and one without is a GET.
   const inferred = method || (body.type === "none" ? "GET" : "POST");
 
-  return { name: `${inferred} ${pathOf(url)}`, method: inferred, url, headers, body };
+  const cut = basic.indexOf(":");
+  const auth: RequestAuth = basic
+    ? {
+        type: "basic",
+        params: { username: cut >= 0 ? basic.slice(0, cut) : basic, password: cut >= 0 ? basic.slice(cut + 1) : "" },
+      }
+    : { type: "inherit", params: {} };
+  return {
+    name: `${inferred} ${pathOf(url)}`,
+    method: inferred,
+    url,
+    headers,
+    body,
+    auth: redactAuth(auth).auth,
+  };
 }
 
 function bodyFrom(input: {
@@ -355,10 +374,15 @@ export type PostmanItem = {
   test: string;
 };
 
+/** Una credencial que venía escrita en el fichero y no se guarda. Se nombra para poder decirlo. */
+export type DroppedSecret = { label: string; type: string; params: string[] };
+
 export type PostmanCollection = {
   name: string;
   items: PostmanItem[];
   skipped: SkippedRequest[];
+  /** Los secretos literales que traía el fichero y que no se guardan en claro. */
+  secrets: DroppedSecret[];
   /** The scripts the collection itself declares, which Postman runs around **every** request. */
   scripts: { prerequest: string; test: string };
 };
@@ -370,14 +394,23 @@ export function readPostmanCollection(text: string): PostmanCollection | null {
 
   const items: PostmanItem[] = [];
   const skipped: SkippedRequest[] = [];
+  const secrets: DroppedSecret[] = [];
 
-  const walk = (entries: unknown[], trail: string[]) => {
+  // La autenticación de la colección y la de cada carpeta por la que se baja: una petición sin
+  // bloque propio hereda la de la carpeta más cercana que tenga uno, y si no, la de la colección.
+  const ownAuth = (value: unknown): RequestAuth | null => {
+    const read = readPostmanAuth(value);
+    return read && isReadable(read) ? read : null;
+  };
+  const collectionAuth = ownAuth(document.auth);
+
+  const walk = (entries: unknown[], trail: string[], folderAuth: (RequestAuth | null)[]) => {
     for (const entry of entries) {
       const item = asRecord(entry);
       if (!item) continue;
       const name = asString(item.name);
       if (Array.isArray(item.item)) {
-        walk(item.item, name ? [...trail, name] : trail);
+        walk(item.item, name ? [...trail, name] : trail, [...folderAuth, ownAuth(item.auth)]);
         continue;
       }
       const request = asRecord(item.request);
@@ -389,6 +422,20 @@ export function readPostmanCollection(text: string): PostmanCollection | null {
         continue;
       }
       const headers = fromKeyValues(request.header);
+      const own = readPostmanAuth(request.auth);
+      if (own && !isReadable(own)) {
+        skipped.push({
+          name: label,
+          method: asString(request.method),
+          url,
+          reason: `usa una autenticación «${own.unsupported}» que este lector no conoce`,
+        });
+        continue;
+      }
+      const resolved = redactAuth(resolveAuth(own, { collection: collectionAuth, folders: folderAuth }));
+      if (resolved.dropped.length) {
+        secrets.push({ label, params: resolved.dropped, type: resolved.auth.type });
+      }
       items.push({
         trail,
         name: name || "Sin nombre",
@@ -399,6 +446,7 @@ export function readPostmanCollection(text: string): PostmanCollection | null {
           url,
           headers: headers.enabled,
           body: postmanBody(request.body, headers.enabled),
+          auth: resolved.auth,
         },
         prerequest: eventScript(item.event, "prerequest"),
         test: eventScript(item.event, "test"),
@@ -406,11 +454,12 @@ export function readPostmanCollection(text: string): PostmanCollection | null {
     }
   };
 
-  walk(asArray(document.item), []);
+  walk(asArray(document.item), [], []);
   return {
     name: asString(asRecord(document.info)?.name),
     items,
     skipped,
+    secrets,
     scripts: { prerequest: eventScript(document.event, "prerequest"), test: eventScript(document.event, "test") },
   };
 }
@@ -439,6 +488,8 @@ function eventScript(events: unknown, listen: string): string {
 export function parsePostmanCollection(text: string): ImportedRequests {
   const read = readPostmanCollection(text);
   if (!read) return { requests: [], skipped: [{ name: "", method: "", url: "", reason: "el fichero no es JSON" }] };
+  // Los secretos que no se guardan se cuentan como avisos, no como peticiones perdidas: la
+  // petición sí se importó, y lo que falta es un valor que su autor tiene que poner en una variable.
   return { requests: read.items.map((item) => item.request), skipped: read.skipped };
 }
 
@@ -549,9 +600,57 @@ export function parseInsomniaExport(text: string): ImportedRequests {
       url: search ? `${url}${url.includes("?") ? "&" : "?"}${search}` : url,
       headers: headers.enabled,
       body: insomniaBody(row.body, headers.enabled),
+      auth: redactAuth(insomniaAuth(row.authentication)).auth,
     });
   }
   return { requests, skipped };
+}
+
+/**
+ * La autenticación de Insomnia, que usa otros nombres para lo mismo.
+ *
+ * `disabled: true` es «déjala escrita pero no la mandes», que es `inherit` aquí y no `none`: `none`
+ * significaría que esta petición decide no autenticarse, y lo que dice el fichero es otra cosa.
+ */
+function insomniaAuth(value: unknown): RequestAuth {
+  const block = asRecord(value);
+  if (!block || block.disabled === true) return { type: "inherit", params: {} };
+  const type = asString(block.type).toLowerCase();
+  const pick = (...names: string[]): Record<string, string> => {
+    const params: Record<string, string> = {};
+    for (const name of names) params[name] = asString(block[name]);
+    return params;
+  };
+  switch (type) {
+    case "basic":
+      return { type: "basic", params: pick("username", "password") };
+    case "bearer":
+      return { type: "bearer", params: { token: asString(block.token), headerPrefix: asString(block.prefix) } };
+    case "digest":
+      return { type: "digest", params: pick("username", "password") };
+    case "apikey":
+      return { type: "apikey", params: { key: asString(block.key), value: asString(block.value), in: asString(block.addTo) || "header" } };
+    case "oauth2":
+      return {
+        type: "oauth2",
+        params: {
+          accessToken: asString(block.accessToken),
+          accessTokenUrl: asString(block.accessTokenUrl),
+          clientId: asString(block.clientId),
+          clientSecret: asString(block.clientSecret),
+          scope: asString(block.scope),
+          grantType: asString(block.grantType) === "password" ? "password_credentials" : "client_credentials",
+        },
+      };
+    case "hawk":
+      return { type: "hawk", params: { authId: asString(block.id), authKey: asString(block.key), algorithm: asString(block.algorithm) || "sha256" } };
+    case "awsiam":
+      return { type: "awsv4", params: { accessKey: asString(block.accessKeyId), secretKey: asString(block.secretAccessKey), sessionToken: asString(block.sessionToken) } };
+    case "ntlm":
+      return { type: "ntlm", params: pick("username", "password") };
+    default:
+      return { type: "inherit", params: {} };
+  }
 }
 
 function insomniaBody(value: unknown, headers: Record<string, string>): RequestBody {

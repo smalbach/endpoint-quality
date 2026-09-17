@@ -15,6 +15,10 @@
  * the exception — the bytes belong to whoever is at the keyboard, and only its field name is kept.
  */
 
+import { AUTH_TYPES, isAuthType, type RequestAuth } from "@eq/runner-core";
+
+import { storableParams } from "@/modules/workflows/domain/postman-auth";
+
 export const ENDPOINT_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 export type EndpointMethod = (typeof ENDPOINT_METHODS)[number];
 
@@ -80,6 +84,8 @@ export type Endpoint = {
   headers: EndpointHeader[];
   body: EndpointBody;
   requiresAuth: boolean;
+  /** Cuál: `inherit` usa la del proyecto, que es lo que hacía todo antes de que esto existiera. */
+  auth: RequestAuth;
   tags: string[];
   status: EndpointStatus;
   origin: EndpointOrigin;
@@ -106,12 +112,17 @@ export type EndpointInput = Partial<
     | "headers"
     | "body"
     | "requiresAuth"
+    | "auth"
     | "tags"
     | "status"
     | "preRequestScript"
     | "postResponseScript"
   >
 >;
+
+export const INHERIT_AUTH: RequestAuth = { type: "inherit", params: {} };
+export const MAX_AUTH_PARAM = 4_000;
+export const MAX_AUTH_PARAMS = 30;
 
 export const MAX_PATH = 500;
 export const MAX_SCRIPT = 50_000;
@@ -184,6 +195,27 @@ export function reconcilePathParameters(path: string, previous: EndpointPathPara
 export const endpointKey = (method: string, path: string): string =>
   `${method.toUpperCase()} ${normalizePath(path).replace(/(?<!\{)\{[^{}]+\}(?!\})/g, "{}")}`;
 
+/**
+ * La autenticación tal cual llega, sin confiar en ella.
+ *
+ * Un tope por parámetro y por número de parámetros porque esto es una columna `jsonb`: un `payload`
+ * de JWT es lo más largo que cabe aquí legítimamente, y sin tope cualquiera guarda un megabyte por
+ * petición.
+ */
+export function authProblems(auth: RequestAuth): Problem[] {
+  const problems: Problem[] = [];
+  if (!isAuthType(auth.type)) return [{ field: "auth.type", detail: `Uno de ${AUTH_TYPES.join(", ")}` }];
+  const names = Object.keys(auth.params ?? {});
+  if (names.length > MAX_AUTH_PARAMS) problems.push({ field: "auth.params", detail: `Como mucho ${MAX_AUTH_PARAMS}` });
+  for (const name of names) {
+    const value = auth.params[name];
+    if (typeof value !== "string") problems.push({ field: `auth.params.${name}`, detail: "Tiene que ser texto" });
+    else if (value.length > MAX_AUTH_PARAM)
+      problems.push({ field: `auth.params.${name}`, detail: `Como mucho ${MAX_AUTH_PARAM} caracteres` });
+  }
+  return problems;
+}
+
 type Problem = { field: string; detail: string };
 
 /** What is wrong with an input, field by field. Assumes nothing about which fields are present. */
@@ -191,6 +223,7 @@ export function endpointProblems(input: EndpointInput): Problem[] {
   const problems: Problem[] = [];
   const problem = (field: string, detail: string) => problems.push({ field, detail });
 
+  if (input.auth !== undefined) problems.push(...authProblems(input.auth));
   if (input.method !== undefined && !(ENDPOINT_METHODS as readonly string[]).includes(input.method))
     problem("method", `Uno de ${ENDPOINT_METHODS.join(", ")}`);
   if (input.path !== undefined) {
@@ -294,6 +327,7 @@ export function applyEndpointInput(current: Endpoint, input: EndpointInput): End
         }
       : current.body,
     requiresAuth: input.requiresAuth ?? current.requiresAuth,
+    auth: input.auth ? { type: input.auth.type, params: storableParams(input.auth) } : current.auth,
     tags: input.tags ? [...new Set(input.tags.map((tag) => tag.trim()).filter(Boolean))] : current.tags,
     status: input.status ?? current.status,
     preRequestScript: input.preRequestScript ?? current.preRequestScript,
@@ -320,6 +354,7 @@ export function blankEndpoint(fields: {
     headers: [],
     body: EMPTY_BODY,
     requiresAuth: false,
+    auth: INHERIT_AUTH,
     tags: [],
     status: "active",
     origin: fields.origin,

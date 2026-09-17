@@ -10,6 +10,7 @@
  * `revokeSession` closes every unrevoked token of a session, and `findByHash` matches on the
  * hash and not on the plaintext.
  */
+import type { Cookie } from "@eq/runner-core";
 import type { ApiToken, RefreshToken, User } from "@/modules/auth/domain/model";
 import type {
   ApiTokenRepositoryPort,
@@ -27,7 +28,11 @@ import type { ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import type { SpecOperation, SpecSource, SpecVersion, SpecVersionSummary } from "@/modules/specs/domain/model";
 import type { SpecRepositoryPort } from "@/modules/specs/domain/ports";
 import type { Credential, CredentialRole, Environment } from "@/modules/environments/domain/model";
-import type { EnvironmentRepositoryPort, SessionTokenRepositoryPort } from "@/modules/environments/domain/ports";
+import type {
+  CookieJarRepositoryPort,
+  EnvironmentRepositoryPort,
+  SessionTokenRepositoryPort,
+} from "@/modules/environments/domain/ports";
 import type { SessionToken } from "@/modules/environments/domain/session-token";
 import type { PermissionChange, Role, RolePermission, RoleRule } from "@/modules/roles/domain/model";
 import type { RoleRepositoryPort } from "@/modules/roles/domain/ports";
@@ -554,6 +559,50 @@ export class InMemorySessionTokenRepository implements SessionTokenRepositoryPor
   }
   async remove(actorId: string, projectId: string): Promise<void> {
     this.rows.delete(`${actorId}:${projectId}`);
+  }
+}
+
+/**
+ * El tarro de cookies, en memoria.
+ *
+ * Guarda por la misma clave que la tabla —dominio, ruta y nombre— porque si no, una prueba en la
+ * que el servidor renueva la cookie de `/admin` machacaría la de `/` aquí y no en producción, y la
+ * prueba pasaría mintiendo.
+ */
+export class InMemoryCookieJarRepository implements CookieJarRepositoryPort {
+  readonly rows = new Map<string, Cookie>();
+
+  private key(actorId: string, projectId: string, cookie: Pick<Cookie, "domain" | "path" | "name">): string {
+    return [actorId, projectId, cookie.domain, cookie.path, cookie.name].join("|");
+  }
+
+  async list(actorId: string, projectId: string): Promise<Cookie[]> {
+    const prefix = `${actorId}|${projectId}|`;
+    return [...this.rows.entries()]
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([, cookie]) => ({ ...cookie }));
+  }
+  async save(actorId: string, projectId: string, jar: Cookie[]): Promise<void> {
+    for (const cookie of jar) this.rows.set(this.key(actorId, projectId, cookie), { ...cookie });
+  }
+  async remove(
+    actorId: string,
+    projectId: string,
+    keys: Pick<Cookie, "domain" | "path" | "name">[],
+  ): Promise<void> {
+    for (const key of keys) this.rows.delete(this.key(actorId, projectId, key));
+  }
+  async clear(actorId: string, projectId: string): Promise<void> {
+    const prefix = `${actorId}|${projectId}|`;
+    for (const key of [...this.rows.keys()]) if (key.startsWith(prefix)) this.rows.delete(key);
+  }
+  async purgeExpired(actorId: string, projectId: string, now: Date): Promise<void> {
+    const prefix = `${actorId}|${projectId}|`;
+    for (const [key, cookie] of [...this.rows.entries()]) {
+      if (key.startsWith(prefix) && cookie.expiresAt !== null && cookie.expiresAt <= now.getTime()) {
+        this.rows.delete(key);
+      }
+    }
   }
 }
 

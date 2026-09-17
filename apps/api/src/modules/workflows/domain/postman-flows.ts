@@ -285,6 +285,9 @@ export function fetchCallFrom(item: PostmanItem, expectedStatus: number | null):
       // The credential was dropped, so the run's own session is what this call presents — which is
       // the only way it can still reach an endpoint behind a login.
       ...(droppedCredential ? { useSession: true } : {}),
+      // Cómo entra, leído del bloque `auth` del fichero y ya heredado por el lector. `inherit` no
+      // se guarda: es lo que hace la llamada sin bloque, y escribirlo solo engorda el documento.
+      ...(item.request.auth.type !== "inherit" ? { auth: item.request.auth } : {}),
     },
     droppedCredential,
   };

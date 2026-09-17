@@ -10,7 +10,7 @@
  * una colección o un entorno. **Un volcado estalla en sus piezas**: «Export data» produce un
  * fichero con todas las colecciones y todos los entornos dentro, que es como se mueve un equipo
  * entero. Y **lo que no se puede leer se dice con algo que hacer**, porque «no se reconoce» no es
- * accionable y «es un .zip, descomprímelo» sí.
+ * accionable y «es un .zip, suéltalo como fichero» sí.
  *
  * Vive en un paquete aparte por una razón que también se prueba: el navegador necesita esta misma
  * respuesta antes de mandar nada, y dos copias de la función serían dos copias libres de no estar
@@ -154,10 +154,14 @@ describe("lo de dentro, contado", () => {
 });
 
 describe("lo que no se puede leer se dice con algo que hacer", () => {
-  test("un .zip manda a descomprimirlo, que es lo que baja «Export data»", () => {
-    // Por los bytes mágicos y por el nombre: el fichero puede llegar por cualquiera de los dos.
-    assert.match(detectImport("postman-data.zip", "cualquier cosa").reason ?? "", /descomprím/);
-    assert.match(detectImport("sin-nombre", "PKalgo").reason ?? "", /descomprím/);
+  test("un .zip llegado como texto manda a soltarlo como fichero, que es donde sí se abre", () => {
+    // Un `.zip` soltado o elegido no llega hasta aquí: `readZip` lo convierte antes en sus
+    // ficheros. Esto es el camino de la URL, donde lo que cruza la red es una cadena.
+    const magic = `PK${String.fromCharCode(3)}${String.fromCharCode(4)}`;
+    assert.match(detectImport("postman-data.zip", "cualquier cosa").reason ?? "", /suéltalo como fichero/);
+    assert.match(detectImport("sin-nombre", `${magic}algo`).reason ?? "", /suéltalo como fichero/);
+    // Y «PK» a secas no es un zip: es cualquier texto que empiece por esas dos letras.
+    assert.doesNotMatch(detectImport("notas.txt", "PKWare inventó el formato").reason ?? "", /zip/);
   });
 
   test("una colección v1 se reconoce y se manda a exportarla como v2.1", () => {

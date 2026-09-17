@@ -255,7 +255,7 @@ describe("enviar", () => {
     assert.ok("input" in read);
     if ("input" in read) {
       assert.equal(read.input.method, "GET");
-      assert.equal(read.input.auth.mode, "inherit");
+      assert.equal(read.input.auth.type, "inherit");
       assert.equal(read.input.environmentId, null);
     }
   });

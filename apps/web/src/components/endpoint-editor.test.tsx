@@ -20,6 +20,7 @@ const VIEW: EndpointView = {
   pathParameters: [{ name: "id", type: "string", description: "", value: "7" }],
   query: [],
   headers: [],
+  auth: { type: "inherit", params: {} },
   body: { mode: "none", text: "", contentType: "text/plain", fields: [] },
   requiresAuth: true,
   tags: [],
@@ -67,6 +68,7 @@ const SENT: SentRequestView = {
     },
   },
   sessionToken: null,
+  cookies: { sent: [], stored: [], rejected: [] },
 };
 
 function mount() {
@@ -120,7 +122,7 @@ describe("el editor de endpoints", () => {
     expect(request).toMatchObject({
       method: "GET",
       path: "/users/{id}",
-      auth: { mode: "inherit" },
+      auth: { type: "inherit", params: {} },
       environmentId: null,
       preRequestScript: "",
       postResponseScript: "",

@@ -15,7 +15,12 @@ import {
   type BundleFile,
 } from "@/lib/project-bundle";
 import { formatDate } from "@/lib/format";
-import type { ProjectBundleImportResultView, ProjectBundlePart, ProjectSummary } from "@/lib/types";
+import type {
+  PostmanExportResult,
+  ProjectBundleImportResultView,
+  ProjectBundlePart,
+  ProjectSummary,
+} from "@/lib/types";
 
 /**
  * Exporting the project to a JSON file and importing one.
@@ -45,6 +50,7 @@ export function ProjectTransferPage() {
   return (
     <div className="max-w-2xl space-y-4">
       <ExportCard base={base} projectName={project.data?.name ?? "proyecto"} />
+      <PostmanCard base={base} />
       <ImportCard base={base} archived={Boolean(project.data?.archivedAt)} />
     </div>
   );
@@ -69,6 +75,90 @@ function ExportCard({ base, projectName }: { base: string; projectName: string }
         {exporter.isPending ? "Preparando…" : "Descargar .json"}
       </Button>
       {exporter.error && <p className="mt-2 text-[11px] text-rose-700">{exporter.error.message}</p>}
+    </Card>
+  );
+}
+
+/** Qué fichero de Postman se quiere, con las palabras de su propio menú. */
+const POSTMAN_KINDS = [
+  [
+    "collection",
+    "Colección (los flujos)",
+    "Una carpeta por flujo, con sus `pm.test` y sus variables. Vuelve a entrar aquí igual.",
+  ],
+  [
+    "endpoints",
+    "Colección (el API entero)",
+    "Una petición por endpoint del contrato, para empezar a trabajar en Postman.",
+  ],
+  ["environments", "Entornos", "Las variables, con los secretos vacíos."],
+  ["dump", "Volcado («Export data»)", "La colección y los entornos en un fichero, como el que baja Postman."],
+] as const;
+
+/**
+ * El proyecto en formato Postman.
+ *
+ * Al lado de la exportación propia y no en su lugar, porque no son el mismo fichero con otro traje:
+ * el propio lo vuelve a leer este producto entero —roles, suites, planes de carga— y este solo
+ * puede llevar lo que Postman sabe expresar. Lo que se quede fuera se dice aquí mismo, porque un
+ * fichero que parece completo y ha perdido la mitad del grafo es peor que no poder exportar.
+ */
+function PostmanCard({ base }: { base: string }) {
+  const [kind, setKind] = useState<PostmanExportResult["kind"]>("collection");
+  const exporter = useMutation({
+    mutationFn: () => api<PostmanExportResult>(`${base}/export/postman?kind=${kind}`),
+    onSuccess: (result) => downloadJson(result.filename, result.file),
+  });
+  return (
+    <Card className="p-4">
+      <p className="text-sm font-semibold text-slate-900">Exportar para Postman</p>
+      <p className="mt-1 text-xs text-slate-500">
+        El mismo proyecto escrito como lo escribiría Postman, para abrirlo allí, pasarlo por `newman` en un pipeline o
+        dárselo a quien no use esto. Tampoco lleva credenciales: una cabecera con un token escrito a mano sale vacía, y
+        una variable sensible sale con su nombre y sin valor.
+      </p>
+      <div className="mt-3 space-y-1.5">
+        {POSTMAN_KINDS.map(([value, label, hint]) => (
+          <label key={value} className="flex cursor-pointer items-start gap-2">
+            <input
+              type="radio"
+              name="postman-kind"
+              className="mt-0.5"
+              checked={kind === value}
+              onChange={() => {
+                setKind(value);
+                exporter.reset();
+              }}
+            />
+            <span className="min-w-0">
+              <span className="text-xs font-medium text-slate-800">{label}</span>
+              <span className="block text-[11px] leading-4 text-slate-500">{hint}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+      <Button className="mt-3" disabled={exporter.isPending} onClick={() => exporter.mutate()}>
+        {exporter.isPending ? "Preparando…" : "Descargar .json"}
+      </Button>
+      {exporter.error && <p className="mt-2 text-[11px] text-rose-700">{exporter.error.message}</p>}
+      {exporter.data && (
+        <div className="mt-2 text-[11px] text-slate-600">
+          <p className="font-mono">{exporter.data.filename}</p>
+          {exporter.data.skipped.length > 0 && (
+            <>
+              {/* Lo que Postman no puede expresar, dicho por su nombre. Nunca un silencio. */}
+              <p className="mt-1 text-amber-800">Se quedó fuera del fichero:</p>
+              <ul className="mt-0.5 max-h-40 space-y-0.5 overflow-y-auto rounded bg-amber-50 p-1.5">
+                {exporter.data.skipped.map((entry, index) => (
+                  <li key={index} className="leading-4 text-amber-800">
+                    <span className="font-medium">{entry.what}</span> — {entry.detail}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
     </Card>
   );
 }

@@ -6,7 +6,7 @@
  * something outside this system — a stored credential for somebody's staging environment, and
  * the switch that lets a run write to a target — sit one rung above.
  */
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, UseGuards } from "@nestjs/common";
 import { CommandBus, QueryBus } from "@nestjs/cqrs";
 
 import {
@@ -24,12 +24,14 @@ import { DeleteCredentialCommand, UpsertCredentialCommand } from "../application
 import { ActivateEnvironmentCommand } from "../application/commands/active-environment";
 import { ImportPostmanEnvironmentCommand } from "../application/commands/import-postman-environment";
 import { ClearSessionTokenCommand, GetSessionTokenQuery } from "../application/commands/session-token";
+import { DeleteCookiesCommand, ListCookiesQuery, SetCookieCommand } from "../application/commands/cookies";
 import { ListEnvironmentsQuery } from "../application/queries/list-environments";
 import { RevealVariablesQuery } from "../application/queries/reveal-variables";
 import {
   CreateEnvironmentDto,
   CredentialDto,
   ImportPostmanEnvironmentDto,
+  SetCookieDto,
   UpdateEnvironmentDto,
 } from "./dto/environments.dto";
 import type { CredentialRole } from "../domain/model";
@@ -122,6 +124,55 @@ export class EnvironmentsController {
     @CurrentUser() principal: Principal,
   ): Promise<void> {
     await this.commandBus.execute(new ClearSessionTokenCommand(organizationId, projectId, actorId(principal)));
+  }
+
+  /**
+   * El tarro de cookies de quien pregunta.
+   *
+   * `reveal=true` para ver los valores. Por defecto salen con la máscara: una cookie de sesión es
+   * una credencial, y una lista que la enseña de serie la deja en cualquier captura de pantalla.
+   */
+  @Get("cookies")
+  @RequireRole("viewer")
+  async cookies(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @CurrentUser() principal: Principal,
+    @Query("reveal") reveal?: string,
+  ) {
+    return this.queryBus.execute(new ListCookiesQuery(organizationId, projectId, actorId(principal), reveal === "true"));
+  }
+
+  /** Una cookie a mano, en el formato en el que la manda un servidor: se copia y se pega. */
+  @Post("cookies")
+  @RequireRole("editor")
+  async setCookie(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @CurrentUser() principal: Principal,
+    @Body() body: SetCookieDto,
+  ) {
+    return this.commandBus.execute(
+      new SetCookieCommand(organizationId, projectId, actorId(principal), body.url, body.setCookie),
+    );
+  }
+
+  /** Vaciar el tarro, que es «ciérrame la sesión» y para lo que se usa la pantalla. */
+  @Delete("cookies")
+  @RequireRole("viewer")
+  @HttpCode(204)
+  async clearCookies(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @CurrentUser() principal: Principal,
+    @Query("domain") domain?: string,
+    @Query("path") path?: string,
+    @Query("name") name?: string,
+  ): Promise<void> {
+    // Los tres o ninguno: con dos de los tres no se identifica una cookie, y borrar «la que más se
+    // parezca» es borrar la de otra ruta.
+    const key = domain && path && name ? { domain, path, name } : null;
+    await this.commandBus.execute(new DeleteCookiesCommand(organizationId, projectId, actorId(principal), key));
   }
 
   @Patch("environments/:environmentId")

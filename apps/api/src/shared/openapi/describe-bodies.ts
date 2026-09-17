@@ -46,6 +46,7 @@ import {
   CreateEnvironmentDto,
   CredentialDto,
   ImportPostmanEnvironmentDto,
+  SetCookieDto,
   UpdateEnvironmentDto,
 } from "@/modules/environments/presentation/dto/environments.dto";
 import {
@@ -146,6 +147,7 @@ const DTOS = [
   CreateEnvironmentDto,
   UpdateEnvironmentDto,
   ImportPostmanEnvironmentDto,
+  SetCookieDto,
   CredentialDto,
   CreateRequestTemplateDto,
   ImportRequestTemplatesDto,

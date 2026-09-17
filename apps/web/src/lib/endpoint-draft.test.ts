@@ -86,10 +86,10 @@ describe("ficheros", () => {
     const chosen = { fields: { doc: file("a.txt") }, binary: null };
     expect(missingFiles(withFile.body, chosen)).toEqual([]);
 
-    const form = sendForm(withFile, "env-1", { mode: "none", token: "" }, chosen);
+    const form = sendForm({ ...withFile, auth: { type: "none", params: {} } }, "env-1", chosen);
     const request = JSON.parse(form.get("request") as string);
     expect(request.environmentId).toBe("env-1");
-    expect(request.auth).toEqual({ mode: "none", token: "" });
+    expect(request.auth).toEqual({ type: "none", params: {} });
     expect((form.get("file:doc") as File).name).toBe("a.txt");
     expect(form.get("file:off")).toBeNull();
     expect(missingFiles({ ...EMPTY_BODY, mode: "binary" }, NO_FILES)).toEqual(["cuerpo binario"]);
@@ -128,8 +128,10 @@ describe("variables y cURL", () => {
           { name: "off", type: "string", required: false, description: "", value: "x", enabled: false },
         ],
         body: { ...EMPTY_BODY, mode: "json", text: '{"a":"it\'s"}' },
+        // El auth se guarda con el endpoint, así que el cURL lo saca del borrador.
+        auth: { type: "bearer", params: { token: "{{token}}" } },
       }),
-      { baseUrl: "{{host}}/", variables, auth: { mode: "bearer", token: "{{token}}" }, files: NO_FILES },
+      { baseUrl: "{{host}}/", variables, files: NO_FILES },
     );
     expect(curl).toBe(
       [

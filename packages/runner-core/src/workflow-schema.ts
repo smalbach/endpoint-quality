@@ -11,6 +11,8 @@
  */
 import { z } from "zod";
 
+import { AUTH_TYPES } from "./auth.ts";
+
 import { scenarioCredentialSchema } from "./schema.ts";
 import type { WorkflowStep } from "./workflows.ts";
 import { VARIABLE_NAME } from "./variables.ts";
@@ -18,7 +20,15 @@ import { GRAPHQL_OPERATION_NAME, graphqlVariablesProblem } from "./graphql.ts";
 import { CHECK_OPERATORS, CHECK_SOURCES } from "./checks.ts";
 import { stepNotifySchema } from "./notify.ts";
 import { mockBodyProblem } from "./mock.ts";
-import { CAPTURE_SOURCES, FETCH_METHODS, STEP_ON_ERROR, STEP_WAITS, concurrentPairs, loopBody, rerunPath } from "./workflows.ts";
+import {
+  CAPTURE_SOURCES,
+  FETCH_METHODS,
+  STEP_ON_ERROR,
+  STEP_WAITS,
+  concurrentPairs,
+  loopBody,
+  rerunPath,
+} from "./workflows.ts";
 
 const jsonValue: z.ZodType<unknown> = z.lazy(() =>
   z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(jsonValue), z.record(z.string(), jsonValue)]),
@@ -26,6 +36,17 @@ const jsonValue: z.ZodType<unknown> = z.lazy(() =>
 const jsonObject = z.record(z.string(), jsonValue);
 
 /** RFC 9110's token, and a value with no control character in it. */
+/**
+ * La autenticación de una llamada escrita a mano.
+ *
+ * Un tope por parámetro porque esto vive en el documento del flujo, que es un `jsonb`: el payload
+ * de un JWT es lo más largo que cabe aquí legítimamente.
+ */
+const authSchema = z.object({
+  type: z.enum(AUTH_TYPES),
+  params: z.record(z.string().max(200), z.string().max(4_000)).default({}),
+});
+
 const headerName = z
   .string()
   .regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/, "nombre de cabecera inválido")
@@ -165,7 +186,8 @@ function customSchemaProblem(json: string | undefined): string | null {
   } catch {
     return "el esquema propio no es JSON válido";
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return "el esquema propio tiene que ser un objeto JSON";
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    return "el esquema propio tiene que ser un objeto JSON";
   const usesPattern = (node: unknown): boolean =>
     Array.isArray(node)
       ? node.some(usesPattern)
@@ -187,7 +209,25 @@ export const workflowStepSchema = z.object({
   // `request` and a `login` node must (checked below).
   requestTemplateId: z.string().uuid().optional(),
   kind: z
-    .enum(["request", "login", "branch", "wait", "merge", "validate", "fetch", "set", "script", "poll", "retry", "loop", "schema", "notify", "subflow", "graphql", "mock"])
+    .enum([
+      "request",
+      "login",
+      "branch",
+      "wait",
+      "merge",
+      "validate",
+      "fetch",
+      "set",
+      "script",
+      "poll",
+      "retry",
+      "loop",
+      "schema",
+      "notify",
+      "subflow",
+      "graphql",
+      "mock",
+    ])
     .optional(),
   // The `mock` node: the response it answers with, no network. Same ceilings as a fetch's call.
   mock: z
@@ -232,8 +272,15 @@ export const workflowStepSchema = z.object({
   // values themselves only exist at run time, where the engine parses the substituted text again.
   graphql: z
     .object({
-      url: z.string().min(1, "un nodo GraphQL necesita una URL").max(2000).regex(/^[^\r\n]*$/, "la URL no puede llevar un salto de línea"),
-      query: z.string().max(200_000).refine((query) => query.trim().length > 0, "un nodo GraphQL necesita su query"),
+      url: z
+        .string()
+        .min(1, "un nodo GraphQL necesita una URL")
+        .max(2000)
+        .regex(/^[^\r\n]*$/, "la URL no puede llevar un salto de línea"),
+      query: z
+        .string()
+        .max(200_000)
+        .refine((query) => query.trim().length > 0, "un nodo GraphQL necesita su query"),
       variables: z
         .string()
         .max(1_000_000)
@@ -242,7 +289,11 @@ export const workflowStepSchema = z.object({
           const problem = graphqlVariablesProblem(text);
           if (problem) context.addIssue({ code: "custom", message: problem });
         }),
-      operationName: z.string().max(200).regex(GRAPHQL_OPERATION_NAME, "operationName no es un nombre GraphQL válido").optional(),
+      operationName: z
+        .string()
+        .max(200)
+        .regex(GRAPHQL_OPERATION_NAME, "operationName no es un nombre GraphQL válido")
+        .optional(),
       headers: z.record(headerName, headerValue).optional(),
       disabledHeaders: z.record(headerName, headerValue).optional(),
       expectedStatus: z.number().int().min(100).max(599).optional(),
@@ -296,24 +347,28 @@ export const workflowStepSchema = z.object({
     .optional(),
   // The `script` node: code for the isolated sandbox, and the step whose response it reads.
   script: z.object({ code: z.string().max(20_000), from: z.string().min(1).max(60).optional() }).optional(),
+  // Cómo entra la llamada. Los secretos van como `{{variables}}`: esto es una columna `jsonb`.
   // The `fetch` node: a call written out by hand instead of a saved request.
   fetch: z
     .object({
       method: z.enum(FETCH_METHODS),
-      url: z.string().min(1, "un fetch necesita una URL").max(2000).regex(/^[^\r\n]*$/, "la URL no puede llevar un salto de línea"),
+      url: z
+        .string()
+        .min(1, "un fetch necesita una URL")
+        .max(2000)
+        .regex(/^[^\r\n]*$/, "la URL no puede llevar un salto de línea"),
       headers: z.record(headerName, headerValue).optional(),
       disabledHeaders: z.record(headerName, headerValue).optional(),
       body: z.string().max(1_000_000).optional(),
       expectedStatus: z.number().int().min(100).max(599).optional(),
       useSession: z.boolean().optional(),
+      auth: authSchema.optional(),
     })
     .optional(),
   // The `If`: the step it reads and the check that decides «sí» from «no».
   condition: stepConditionSchema.optional(),
   // The `validate` node: the step whose response it judges, and an optional sandbox script.
-  validate: z
-    .object({ from: z.string().min(1).max(60), script: z.string().max(20_000).optional() })
-    .optional(),
+  validate: z.object({ from: z.string().min(1).max(60), script: z.string().max(20_000).optional() }).optional(),
   // Which side of an `If` this node hangs off.
   branch: z.object({ of: z.string().min(1).max(60), take: z.enum(["then", "else"]) }).optional(),
   dependsOn: z.array(z.string()).optional(),
@@ -444,7 +499,8 @@ export const workflowDocumentSchema = z
       if (sendsRequest && !step.requestTemplateId) {
         context.addIssue({
           code: "custom",
-          message: kind === "login" ? "un nodo de login necesita una petición" : "un paso de petición necesita una petición",
+          message:
+            kind === "login" ? "un nodo de login necesita una petición" : "un paso de petición necesita una petición",
           path: ["steps", index, "requestTemplateId"],
         });
         broken = true;
@@ -452,7 +508,10 @@ export const workflowDocumentSchema = z
       if (!sendsRequest && step.requestTemplateId) {
         context.addIssue({
           code: "custom",
-          message: kind === "fetch" || kind === "graphql" ? `un nodo ${kind} lleva su petición escrita, no una guardada` : "un nodo de control no envía ninguna petición",
+          message:
+            kind === "fetch" || kind === "graphql"
+              ? `un nodo ${kind} lleva su petición escrita, no una guardada`
+              : "un nodo de control no envía ninguna petición",
           path: ["steps", index, "requestTemplateId"],
         });
       }
@@ -488,13 +547,25 @@ export const workflowDocumentSchema = z
         broken = true;
       }
       if (step.set && kind !== "set") {
-        context.addIssue({ code: "custom", message: "solo un nodo set lleva variables que asignar", path: ["steps", index, "set"] });
+        context.addIssue({
+          code: "custom",
+          message: "solo un nodo set lleva variables que asignar",
+          path: ["steps", index, "set"],
+        });
       }
       if (kind === "set" && !step.set) {
-        context.addIssue({ code: "custom", message: "un nodo set necesita al menos una variable", path: ["steps", index, "set"] });
+        context.addIssue({
+          code: "custom",
+          message: "un nodo set necesita al menos una variable",
+          path: ["steps", index, "set"],
+        });
       }
       if (step.notify && kind !== "notify") {
-        context.addIssue({ code: "custom", message: "solo un nodo notificar lleva su bloque notify", path: ["steps", index, "notify"] });
+        context.addIssue({
+          code: "custom",
+          message: "solo un nodo notificar lleva su bloque notify",
+          path: ["steps", index, "notify"],
+        });
       }
       if (kind === "notify" && !step.notify) {
         context.addIssue({
@@ -504,17 +575,33 @@ export const workflowDocumentSchema = z
         });
       }
       if (step.script && kind !== "script") {
-        context.addIssue({ code: "custom", message: "solo un nodo script lleva código", path: ["steps", index, "script"] });
+        context.addIssue({
+          code: "custom",
+          message: "solo un nodo script lleva código",
+          path: ["steps", index, "script"],
+        });
       }
       if (kind === "script" && !step.script?.code.trim()) {
         // An empty script asserts nothing and writes nothing: a green case that proves nothing ran.
-        context.addIssue({ code: "custom", message: "un nodo script necesita código", path: ["steps", index, "script", "code"] });
+        context.addIssue({
+          code: "custom",
+          message: "un nodo script necesita código",
+          path: ["steps", index, "script", "code"],
+        });
       }
       if (step.loop && kind !== "loop") {
-        context.addIssue({ code: "custom", message: "solo un nodo bucle lleva su lista", path: ["steps", index, "loop"] });
+        context.addIssue({
+          code: "custom",
+          message: "solo un nodo bucle lleva su lista",
+          path: ["steps", index, "loop"],
+        });
       }
       if (kind === "loop" && !step.loop) {
-        context.addIssue({ code: "custom", message: "un bucle necesita la lista que recorre", path: ["steps", index, "loop"] });
+        context.addIssue({
+          code: "custom",
+          message: "un bucle necesita la lista que recorre",
+          path: ["steps", index, "loop"],
+        });
         broken = true;
       }
       if (step.inLoop) {
@@ -529,11 +616,19 @@ export const workflowDocumentSchema = z
         }
       }
       if (step.schema && kind !== "schema") {
-        context.addIssue({ code: "custom", message: "solo un nodo esquema lleva su bloque schema", path: ["steps", index, "schema"] });
+        context.addIssue({
+          code: "custom",
+          message: "solo un nodo esquema lleva su bloque schema",
+          path: ["steps", index, "schema"],
+        });
       }
       if (kind === "schema") {
         if (!step.schema) {
-          context.addIssue({ code: "custom", message: "un nodo esquema necesita el paso que valida", path: ["steps", index, "schema"] });
+          context.addIssue({
+            code: "custom",
+            message: "un nodo esquema necesita el paso que valida",
+            path: ["steps", index, "schema"],
+          });
           broken = true;
         } else if (step.schema.source === "contract") {
           // The contract is looked up by operation, and only a saved request has one.
@@ -542,7 +637,8 @@ export const workflowDocumentSchema = z
           if (source && sourceKind !== "request" && sourceKind !== "login") {
             context.addIssue({
               code: "custom",
-              message: "el esquema del contrato solo se conoce para una petición guardada o un login; usa un esquema propio",
+              message:
+                "el esquema del contrato solo se conoce para una petición guardada o un login; usa un esquema propio",
               path: ["steps", index, "schema", "source"],
             });
           }
@@ -552,31 +648,59 @@ export const workflowDocumentSchema = z
         }
       }
       if (step.subflow && kind !== "subflow") {
-        context.addIssue({ code: "custom", message: "solo un nodo sub-flujo lleva su bloque subflow", path: ["steps", index, "subflow"] });
+        context.addIssue({
+          code: "custom",
+          message: "solo un nodo sub-flujo lleva su bloque subflow",
+          path: ["steps", index, "subflow"],
+        });
       }
       if (kind === "subflow") {
         if (!step.subflow) {
-          context.addIssue({ code: "custom", message: "un sub-flujo necesita el flujo que ejecuta", path: ["steps", index, "subflow"] });
+          context.addIssue({
+            code: "custom",
+            message: "un sub-flujo necesita el flujo que ejecuta",
+            path: ["steps", index, "subflow"],
+          });
           broken = true;
         }
         // Its child's cases are reserved once, when the run is prepared; a forEach would need them
         // once per element of a list nobody knows yet.
         if (step.forEach) {
-          context.addIssue({ code: "custom", message: "un sub-flujo no recorre una lista", path: ["steps", index, "forEach"] });
+          context.addIssue({
+            code: "custom",
+            message: "un sub-flujo no recorre una lista",
+            path: ["steps", index, "forEach"],
+          });
         }
       }
       if (step.graphql && kind !== "graphql") {
-        context.addIssue({ code: "custom", message: "solo un nodo GraphQL lleva su bloque graphql", path: ["steps", index, "graphql"] });
+        context.addIssue({
+          code: "custom",
+          message: "solo un nodo GraphQL lleva su bloque graphql",
+          path: ["steps", index, "graphql"],
+        });
       }
       if (kind === "graphql" && !step.graphql) {
-        context.addIssue({ code: "custom", message: "un nodo GraphQL necesita su URL y su query", path: ["steps", index, "graphql"] });
+        context.addIssue({
+          code: "custom",
+          message: "un nodo GraphQL necesita su URL y su query",
+          path: ["steps", index, "graphql"],
+        });
       }
       if (step.mock && kind !== "mock") {
-        context.addIssue({ code: "custom", message: "solo un nodo mock lleva una respuesta simulada", path: ["steps", index, "mock"] });
+        context.addIssue({
+          code: "custom",
+          message: "solo un nodo mock lleva una respuesta simulada",
+          path: ["steps", index, "mock"],
+        });
       }
       if (kind === "mock") {
         if (!step.mock) {
-          context.addIssue({ code: "custom", message: "un nodo mock necesita la respuesta que da", path: ["steps", index, "mock"] });
+          context.addIssue({
+            code: "custom",
+            message: "un nodo mock necesita la respuesta que da",
+            path: ["steps", index, "mock"],
+          });
         } else {
           const problem = mockBodyProblem(step.mock);
           if (problem) context.addIssue({ code: "custom", message: problem, path: ["steps", index, "mock", "body"] });
@@ -594,11 +718,19 @@ export const workflowDocumentSchema = z
         }
       }
       if (step.poll && kind !== "poll") {
-        context.addIssue({ code: "custom", message: "solo un nodo reintento lleva su bloque poll", path: ["steps", index, "poll"] });
+        context.addIssue({
+          code: "custom",
+          message: "solo un nodo reintento lleva su bloque poll",
+          path: ["steps", index, "poll"],
+        });
       }
       if (kind === "poll") {
         if (!step.poll) {
-          context.addIssue({ code: "custom", message: "un reintento necesita el paso que repite", path: ["steps", index, "poll"] });
+          context.addIssue({
+            code: "custom",
+            message: "un reintento necesita el paso que repite",
+            path: ["steps", index, "poll"],
+          });
           broken = true;
         } else {
           // What it repeats has to be one request it can send again as it is. A login would hand the
@@ -623,7 +755,11 @@ export const workflowDocumentSchema = z
         }
       }
       if (step.rerun && kind !== "retry") {
-        context.addIssue({ code: "custom", message: "solo un nodo reintento lleva su bloque rerun", path: ["steps", index, "rerun"] });
+        context.addIssue({
+          code: "custom",
+          message: "solo un nodo reintento lleva su bloque rerun",
+          path: ["steps", index, "rerun"],
+        });
       }
       if (kind === "retry") {
         if (!step.rerun) {
@@ -641,7 +777,8 @@ export const workflowDocumentSchema = z
           if (source && !RETRY_WATCHES.includes(source.kind ?? "request")) {
             context.addIssue({
               code: "custom",
-              message: "un reintento solo vigila una petición, un login, un fetch, GraphQL, una validación, un esquema o un script",
+              message:
+                "un reintento solo vigila una petición, un login, un fetch, GraphQL, una validación, un esquema o un script",
               path: ["steps", index, "rerun", "from"],
             });
           }
@@ -662,7 +799,9 @@ export const workflowDocumentSchema = z
               path: ["steps", index, "dependsOn"],
             });
           }
-          if (document.steps.some((other) => other.id !== step.id && other.kind === "retry" && other.rerun?.from === from)) {
+          if (
+            document.steps.some((other) => other.id !== step.id && other.kind === "retry" && other.rerun?.from === from)
+          ) {
             context.addIssue({
               code: "custom",
               message: `ya hay otro reintento vigilando «${from}»`,
@@ -766,12 +905,18 @@ export const workflowDocumentSchema = z
      * body, which the loop walks by itself.
      */
     const loopMembers = new Set(
-      document.steps.filter((step) => step.kind === "loop").flatMap((loop) => loopBody(document.steps as WorkflowStep[], loop.id)),
+      document.steps
+        .filter((step) => step.kind === "loop")
+        .flatMap((loop) => loopBody(document.steps as WorkflowStep[], loop.id)),
     );
     for (const [index, node] of document.steps.entries()) {
       if (node.kind !== "retry" || !node.rerun) continue;
       if (loopMembers.has(node.id)) {
-        context.addIssue({ code: "custom", message: "un reintento no puede ir dentro de un bucle", path: ["steps", index, "kind"] });
+        context.addIssue({
+          code: "custom",
+          message: "un reintento no puede ir dentro de un bucle",
+          path: ["steps", index, "kind"],
+        });
       }
       const path = rerunPath(document.steps as WorkflowStep[], node.rerun.target, node.rerun.from);
       if (!path) {
@@ -784,7 +929,11 @@ export const workflowDocumentSchema = z
       }
       for (const id of path) {
         const step = document.steps.find((other) => other.id === id)!;
-        if (["loop", "subflow", "poll", "retry"].includes(step.kind ?? "request") || step.forEach || loopMembers.has(id)) {
+        if (
+          ["loop", "subflow", "poll", "retry"].includes(step.kind ?? "request") ||
+          step.forEach ||
+          loopMembers.has(id)
+        ) {
           context.addIssue({
             code: "custom",
             message: `«${id}» no se puede repetir desde un reintento: bucles, sub-flujos, sondeos, forEach y lo que va dentro de un bucle no se vuelven a recorrer`,

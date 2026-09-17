@@ -47,6 +47,7 @@ import {
   unresolvedVariables,
 } from "@eq/runner-core";
 
+import { cookiesFrom, signAuth, withCookies, type Cookie } from "@eq/runner-core";
 import { SAFE_FETCH, BlockedTargetError, type RequestTiming, type SafeFetchPort } from "@/shared/http/safe-fetch";
 import { SECRET_CIPHER, type SecretCipherPort } from "@/shared/crypto/secret-cipher";
 import { credentialHeader, type Credential } from "@/modules/environments/domain/model";
@@ -80,6 +81,17 @@ export type ExecutionTarget = {
    * nothing.
    */
   session: { header: string; value: string } | null;
+  /**
+   * El tarro de cookies de **esta corrida**.
+   *
+   * Mutable con la misma vida que `variables` y `session`, y por lo mismo: un flujo cuyo primer
+   * paso entra y los ocho siguientes gastan la sesión es la forma normal de una API real, y si la
+   * cookie del login no llega al paso siguiente ninguno de esos ocho puede pasar.
+   *
+   * De la corrida y no del proyecto: dos corridas del mismo flujo no deben ver la sesión de la
+   * otra, igual que no ven sus variables.
+   */
+  cookies: Cookie[];
   /**
    * Values that must never be shown: the environment's sensitive variables, decrypted. A flow's
    * script node can `console.log` any variable, so its output is redacted against this list before
@@ -122,6 +134,9 @@ export type ExecutedStep = {
 export type ExecutedCase = { ok: boolean; steps: ExecutedStep[]; durationMs: number };
 
 const IDEMPOTENT = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/** Las credenciales que un caso presenta para que fallen. Ninguna sesión las rescata. */
+const WRONG_ON_PURPOSE = new Set<string>(["none", "insufficient"]);
 /** Header names whose value is a credential. Matched loosely on purpose: a target that calls its
  * key `X-Tenant-Token` must be masked too, and an allowlist of exact names would miss it. */
 const SECRET_HEADER = /authorization|api[-_]?key|token|secret|cookie/i;
@@ -204,7 +219,7 @@ export class CaseExecutor {
     const started = Date.now();
     const seed = computedSeed();
     const call = interpolateValue(input.call, input.target.variables, seed);
-    const url = fetchUrl(call.url, input.target.baseUrl);
+    let url = fetchUrl(call.url, input.target.baseUrl);
     const headers: Record<string, string> = { Accept: "application/json" };
     const own = call.headers ?? {};
     const hasContentType = Object.keys(own).some((name) => name.toLowerCase() === "content-type");
@@ -213,6 +228,11 @@ export class CaseExecutor {
     // somebody else's host.
     if (call.useSession && input.target.session) headers[input.target.session.header] = input.target.session.value;
     Object.assign(headers, own);
+
+    // La firma va después de las cabeceras y del `Content-Type`: AWS y Hawk lo firman, y OAuth 1
+    // mira si el cuerpo es un formulario para decidir si entra en la firma.
+    const signedWith = await this.signFetch(call, url, headers);
+    if (signedWith.query) url = signedWith.query;
 
     const expectedStatus = call.expectedStatus ?? 200;
     const request: StepRequest = {
@@ -226,6 +246,8 @@ export class CaseExecutor {
       headers,
       expectedStatus,
       expectedShape: "",
+      // `auth` de una caso dice *qué credencial del escenario* se usó, no de qué tipo era: un
+      // `fetch` no usa ninguna de ellas, y poner aquí «awsv4» cambiaría lo que significa la columna.
       auth: "none",
       samples: 1,
     };
@@ -236,6 +258,10 @@ export class CaseExecutor {
       body: call.body ? (looksLikeJson(call.body) ? JSON.parse(call.body) : call.body) : null,
     };
     const done = (step: ExecutedStep): ExecutedCase => ({ ok: step.ok, steps: [step], durationMs: Date.now() - started });
+
+    if (signedWith.failed) {
+      return done(blocked(request, sent, signedWith.failed, "Autenticación", "config"));
+    }
 
     const missingVariables = unresolvedVariables({ url: call.url, headers: call.headers, body: call.body });
     if (missingVariables.length) {
@@ -252,12 +278,15 @@ export class CaseExecutor {
       response = await this.http.request(url, {
         method: call.method,
         headers,
+        jar: input.target.cookies,
         ...(call.body && call.method !== "GET" && call.method !== "HEAD" ? { body: call.body } : {}),
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : "La petición falló";
       return done(blocked(request, sent, detail, "Conexión", "network"));
     }
+
+    absorbCookies(input.target, url, response.setCookie, Date.now());
 
     const actual = toActualResponse(response);
     const pass = call.expectedStatus ? actual.status === call.expectedStatus : actual.status >= 200 && actual.status < 300;
@@ -280,6 +309,60 @@ export class CaseExecutor {
       durationMs: response.durationMs,
       sent,
     });
+  }
+
+  /**
+   * La autenticación de una llamada escrita a mano, firmada sobre ella.
+   *
+   * Digest necesita el `nonce` del servidor, que solo llega en su 401, así que ahí se pide ese 401
+   * primero. Es una petición más y se hace únicamente cuando el nodo pide Digest: firmar sin reto no
+   * es posible, y mandar una cabecera a medias cambia un 401 claro por un 400 raro.
+   *
+   * Lo que no se hace aquí es pedir un token de OAuth 2: una corrida no debe ir a un servidor de
+   * identidad a por credenciales en medio de un flujo. El token se pone en una variable —que es
+   * donde vive cifrado— y el nodo la nombra.
+   */
+  private async signFetch(
+    call: StepFetch,
+    url: string,
+    headers: Record<string, string>,
+  ): Promise<{ label: string; query: string | null; failed: string | null }> {
+    const auth = call.auth;
+    if (!auth || auth.type === "inherit" || auth.type === "none") {
+      return { label: auth?.type === "none" ? "none" : "inherit", query: null, failed: null };
+    }
+    if (auth.type === "oauth2" && !auth.params.accessToken?.trim()) {
+      return {
+        label: auth.type,
+        query: null,
+        failed: "OAuth 2.0 sin token: ponlo en una variable del entorno y nómbrala aquí",
+      };
+    }
+
+    const request = { method: call.method, url, headers, body: call.body ?? null };
+    let signed = signAuth(auth, request);
+    if (signed.needsChallenge) {
+      let probe;
+      try {
+        probe = await this.http.request(url, { method: call.method, headers: { ...headers } });
+      } catch {
+        return { label: auth.type, query: null, failed: "No se pudo pedir el reto de Digest al servidor" };
+      }
+      const challenge = probe.headers["www-authenticate"] ?? probe.headers["WWW-Authenticate"] ?? "";
+      if (!challenge) {
+        return { label: auth.type, query: null, failed: "El servidor no pidió autenticación: no hay reto que firmar" };
+      }
+      signed = signAuth(auth, { ...request, challenge });
+    }
+    if (signed.unsupported) return { label: auth.type, query: null, failed: signed.unsupported };
+
+    for (const pair of signed.headers) headers[pair.name] = pair.value;
+    const query = signed.query.length
+      ? `${url}${url.includes("?") ? "&" : "?"}${signed.query
+          .map((pair: { name: string; value: string }) => `${encodeURIComponent(pair.name)}=${encodeURIComponent(pair.value)}`)
+          .join("&")}`
+      : null;
+    return { label: auth.type, query, failed: null };
   }
 
   /**
@@ -418,10 +501,18 @@ export class CaseExecutor {
       response = await this.http.request(url, {
         method: step.method,
         headers,
+        // El tarro solo cuando el caso presenta una credencial que debe funcionar. Un caso que
+        // manda `none` o `insufficient` está comprobando qué hace el objetivo con una credencial
+        // mala **a propósito**, y darle la cookie de la sesión convierte cada uno de esos en un 200
+        // verde que no prueba nada. Es la misma regla que ya tenía la sesión del login.
+        ...(WRONG_ON_PURPOSE.has(step.auth ?? "") ? {} : { jar: input.target.cookies }),
         ...(payload ? { body: payload.text } : {}),
       });
       samples.push(response.durationMs);
       timing = response.timing;
+      // Lo que ponga el objetivo se guarda igual: el login de un caso es un login, y quien decide
+      // si la cookie viaja es la petición siguiente, no esta.
+      absorbCookies(input.target, url, response.setCookie, Date.now());
     } catch (error) {
       const detail =
         error instanceof BlockedTargetError
@@ -558,6 +649,24 @@ function toActualResponse(response: { status: number; headers: Record<string, st
 
 /** An absolute URL as it is; a path hangs off the environment's base URL. SAFE_FETCH refuses
  * whatever this leaves that is not http(s). */
+/**
+ * Las cookies de una respuesta, metidas en el tarro de la corrida **en el sitio**.
+ *
+ * Se muta el array en vez de devolver uno nuevo porque el objetivo de la corrida es lo que viaja
+ * entre pasos: es el mismo mecanismo que `variables` y `session`, y cambiarlo por una copia haría
+ * que la cookie del login se perdiera justo donde hace falta.
+ *
+ * Lo rechazado no se cuenta aquí. En una corrida no hay nadie mirando una pantalla, y el paso
+ * siguiente fallará con su propio 401 y su propio motivo.
+ */
+export function absorbCookies(target: ExecutionTarget, url: string, lines: string[], now: number): void {
+  if (!lines.length) return;
+  const read = cookiesFrom(lines, url, now);
+  if (!read.cookies.length) return;
+  const merged = withCookies(target.cookies, read.cookies, now);
+  target.cookies.splice(0, target.cookies.length, ...merged);
+}
+
 export function fetchUrl(url: string, baseUrl: string): string {
   if (/^https?:\/\//i.test(url)) return url;
   const base = baseUrl.replace(/\/+$/, "");

@@ -1,13 +1,20 @@
 {
   "compilerOptions": {
     "target": "ES2023",
-    "lib": ["ES2023"],
+    // `DOM` por `DecompressionStream`, `ReadableStream` y `Response`, que es lo que abre un `.zip`
+    // sin dependencias: existen en el navegador y en Node, y sus tipos viven aquí.
+    "lib": ["ES2023", "DOM"],
     "module": "ES2022",
     "moduleResolution": "bundler",
+    // Las fuentes se importan con `.ts` para que `node --test` las lea sin compilar; al emitir,
+    // la extensión se reescribe a `.js`.
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
     "strict": true,
     "declaration": true,
     "removeComments": false,
     "outDir": "./dist/esm",
+    "rootDir": "./src",
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },

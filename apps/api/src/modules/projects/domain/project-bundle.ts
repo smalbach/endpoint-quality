@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  AUTH_TYPES,
   VARIABLE_NAME,
   isConfigSection,
   safeParseDatasetRows,
@@ -117,6 +118,14 @@ const bundleEndpoint = z.object({
     })
     .default({ mode: "none", text: "", contentType: "text/plain", fields: [] }),
   requiresAuth: z.boolean().default(false),
+  // Los secretos de un `auth` nunca son literales, así que el bundle los lleva tal cual: lo que
+  // hay dentro es un `{{variable}}` o está vacío, y el entorno es quien cifra el valor.
+  auth: z
+    .object({
+      type: z.enum(AUTH_TYPES),
+      params: z.record(z.string().max(200), z.string().max(4_000)).default({}),
+    })
+    .default({ type: "inherit", params: {} }),
   tags: z.array(z.string()).default([]),
   status: z.enum(ENDPOINT_STATUSES).default("active"),
   operationId: z.string().max(200).nullable().default(null),

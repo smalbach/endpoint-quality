@@ -243,10 +243,12 @@ export class StubTarget {
       // Un login de verdad suele contestar las dos cosas: el token en el cuerpo, para un cliente
       // que lo guarda, y la cookie, para un navegador. Con la fecha dentro, que lleva una coma y
       // es lo que parte una cookie mal leída.
-      response.setHeader(
-        "set-cookie",
-        `session=${SESSION_TOKEN}; Path=/; Expires=Wed, 09 Jun 2027 10:18:14 GMT; HttpOnly, theme=oscuro; Path=/`,
-      );
+      // Dos cabeceras, que es como las manda un servidor de verdad, y la primera con una fecha que
+      // lleva una coma dentro: leerlas como un solo valor guardaría media fecha por cookie.
+      response.setHeader("set-cookie", [
+        `session=${SESSION_TOKEN}; Path=/; Expires=Wed, 09 Jun 2027 10:18:14 GMT; HttpOnly`,
+        "theme=oscuro; Path=/",
+      ]);
       return send(201, { data: { token: SESSION_TOKEN } });
     }
 

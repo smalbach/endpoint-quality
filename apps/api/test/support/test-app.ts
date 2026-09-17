@@ -63,7 +63,7 @@ import {
   type SafeRequestOptions,
 } from "@/shared/http/safe-fetch";
 import { SECRET_CIPHER, AesGcmSecretCipher } from "@/shared/crypto/secret-cipher";
-import { ENVIRONMENT_REPOSITORY, SESSION_TOKEN_REPOSITORY } from "@/modules/environments/domain/ports";
+import { COOKIE_JAR_REPOSITORY, ENVIRONMENT_REPOSITORY, SESSION_TOKEN_REPOSITORY } from "@/modules/environments/domain/ports";
 import { SCRIPT_SANDBOX } from "@/shared/scripts/script-sandbox";
 import { ProcessScriptSandbox } from "@/shared/scripts/process-script-sandbox";
 import { EnvironmentsController } from "@/modules/environments/presentation/environments.controller";
@@ -124,6 +124,7 @@ import {
   InMemoryConfigRepository,
   InMemoryWorkflowRepository,
   InMemoryEnvironmentRepository,
+  InMemoryCookieJarRepository,
   InMemorySessionTokenRepository,
   InMemoryRoleRepository,
   InMemorySecurityRunRepository,
@@ -184,6 +185,7 @@ export class StubSafeFetch implements SafeFetchPort {
     if (stored) {
       const reply = {
         headers: { "content-type": "application/yaml" },
+        setCookie: [],
         finalUrl: url,
         durationMs: 1,
         timing: { dnsMs: 0, ttfbMs: 1, downloadMs: 0 },
@@ -221,6 +223,7 @@ export type TestContext = {
     specs: InMemorySpecRepository;
     environments: InMemoryEnvironmentRepository;
     sessionTokens: InMemorySessionTokenRepository;
+    cookieJar: InMemoryCookieJarRepository;
     roles: InMemoryRoleRepository;
     securityRuns: InMemorySecurityRunRepository;
     performancePlans: InMemoryPerformancePlanRepository;
@@ -255,6 +258,7 @@ export async function createTestApp(): Promise<TestContext> {
     specs: new InMemorySpecRepository(),
     environments: new InMemoryEnvironmentRepository(),
     sessionTokens: new InMemorySessionTokenRepository(),
+    cookieJar: new InMemoryCookieJarRepository(),
     roles: new InMemoryRoleRepository(),
     securityRuns: new InMemorySecurityRunRepository(),
     performancePlans: new InMemoryPerformancePlanRepository(),
@@ -325,6 +329,7 @@ export async function createTestApp(): Promise<TestContext> {
       ...RUN_PROJECTORS,
       { provide: ENVIRONMENT_REPOSITORY, useValue: repositories.environments },
       { provide: SESSION_TOKEN_REPOSITORY, useValue: repositories.sessionTokens },
+      { provide: COOKIE_JAR_REPOSITORY, useValue: repositories.cookieJar },
       // The real sandbox: what these tests assert about scripts is exactly what a separate process
       // does and a fake would not — the timeout, the missing environment, the refused escape.
       { provide: SCRIPT_SANDBOX, useClass: ProcessScriptSandbox },

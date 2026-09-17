@@ -532,3 +532,200 @@ describe("un proyecto exportado de aquí, por la misma puerta", () => {
     assert.ok(flows.body.workflows.length > 0, "los flujos del fichero tienen que haber entrado");
   });
 });
+
+describe("y de vuelta a Postman, que es lo que faltaba", () => {
+  /**
+   * La prueba que importa de verdad: exportar e importar son la misma afirmación leída en dos
+   * direcciones, y la única forma de saber que no se han separado es cerrar el círculo.
+   *
+   * Este producto leía una colección y no escribía ninguna, así que era una puerta de un solo
+   * sentido: traías tu trabajo de Postman y no podías llevártelo, ni pasarlo por `newman`, ni
+   * dárselo a alguien que no use esto.
+   */
+  test("un proyecto sale como colección y vuelve a entrar con sus flujos", async () => {
+    const source = await project(true);
+    const first = await api()
+      .post(`${source}/import`)
+      .set(as(owner))
+      .send({ sources: [{ name: "tienda.postman_collection.json", text: COLLECTION }] });
+    assert.equal(first.status, 201, JSON.stringify(first.body));
+    const before = await api().get(`${source}/workflows`).set(as(owner));
+    // Nombre, cuántos nodos y de qué clase: comparar solo los nombres deja pasar un fichero que
+    // da la vuelta y vuelve con las carpetas vacías.
+    const shape = (body: { workflows: { name: string; steps: { kind?: string }[] }[] }) =>
+      body.workflows
+        .map(
+          (flow) =>
+            `${flow.name}: ${flow.steps.length} nodos (${flow.steps
+              .map((step) => step.kind ?? "request")
+              .sort()
+              .join(", ")})`,
+        )
+        .sort();
+    const departed = shape(before.body);
+    assert.ok(departed.length > 0, "el proyecto de partida tiene que tener flujos");
+
+    const exported = await api().get(`${source}/export/postman?kind=collection`).set(as(owner));
+    assert.equal(exported.status, 200, JSON.stringify(exported.body));
+    assert.match(exported.body.filename, /\.postman_collection\.json$/);
+    assert.match(exported.body.file.info.schema, /v2\.1\.0/);
+
+    // Y el fichero entra por la misma puerta que cualquier colección, sin trato especial: se
+    // reconoce como una colección de Postman, no como algo de este producto.
+    const target = await project(true);
+    const back = await api()
+      .post(`${target}/import`)
+      .set(as(owner))
+      .send({ sources: [{ name: exported.body.filename, text: JSON.stringify(exported.body.file) }] });
+    assert.equal(back.status, 201, JSON.stringify(back.body));
+    assert.equal(back.body.items[0].kind, "postman-collection");
+
+    const after = await api().get(`${target}/workflows`).set(as(owner));
+    assert.deepEqual(shape(after.body), departed, "los mismos flujos, con los mismos nodos");
+  });
+
+  test("ningún secreto sale en el fichero", async () => {
+    // La colección de ejemplo trae `Authorization: Bearer un-token-de-verdad` escrito a mano. El
+    // import ya lo tira; esto comprueba que la exportación tampoco lo reinventa.
+    const base = await project(true);
+    await api()
+      .post(`${base}/import`)
+      .set(as(owner))
+      .send({
+        sources: [
+          { name: "tienda.postman_collection.json", text: COLLECTION },
+          {
+            name: "local.postman_environment.json",
+            text: JSON.stringify({
+              name: "secretos",
+              values: [
+                { key: "baseUrl", value: "http://localhost:9999", type: "default", enabled: true },
+                { key: "api_key", value: "clave-que-no-debe-salir", type: "secret", enabled: true },
+              ],
+            }),
+          },
+        ],
+      });
+
+    const exported = await api().get(`${base}/export/postman?kind=dump`).set(as(owner));
+    assert.equal(exported.status, 200, JSON.stringify(exported.body));
+    const text = JSON.stringify(exported.body.file);
+    assert.doesNotMatch(text, /un-token-de-verdad/, "la credencial escrita a mano no puede salir");
+    assert.doesNotMatch(text, /clave-que-no-debe-salir/, "el valor de una variable sensible no puede salir");
+    // Pero su nombre sí, marcado como secreto, que es como Postman escribe uno suyo.
+    const environment = exported.body.file.environments.find((entry: { name: string }) => entry.name === "secretos");
+    const secret = environment.values.find((value: { key: string }) => value.key === "api_key");
+    assert.deepEqual(secret, { key: "api_key", value: "", type: "secret", enabled: true });
+    assert.ok(
+      exported.body.skipped.some((entry: { detail: string }) => /sensible/.test(entry.detail)),
+      "y se dice que salió vacía, no se calla",
+    );
+  });
+
+  test("los entornos solos, y un formato que no existe es un 422", async () => {
+    const base = await project(true);
+    const environments = await api().get(`${base}/export/postman?kind=environments`).set(as(owner));
+    assert.equal(environments.status, 200, JSON.stringify(environments.body));
+    assert.equal(environments.body.counts.collections, 0);
+
+    const bad = await api().get(`${base}/export/postman?kind=novela`).set(as(owner));
+    assert.equal(bad.status, 422, JSON.stringify(bad.body));
+    assert.match(String(bad.body.type), /unknown-postman-kind$/);
+  });
+});
+
+/**
+ * La autenticación de la colección, que es la que de verdad llevan los ficheros de la gente.
+ *
+ * Antes se tiraba entera y en silencio: todas las peticiones importadas quedaban sin credencial y
+ * contestando 401 sin que nada en la pantalla dijera por qué. Estas pruebas fijan las tres cosas
+ * que tienen que pasar: que se lee, que se hereda hacia abajo, y que el secreto literal **no** se
+ * guarda —porque la columna es `jsonb`— pero se dice cuál se quedó fuera.
+ */
+const AUTHED_COLLECTION = JSON.stringify({
+  info: { name: "Con auth", schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+  auth: {
+    type: "bearer",
+    bearer: [{ key: "token", value: "{{authToken}}", type: "string" }],
+  },
+  item: [
+    {
+      name: "Heredan",
+      item: [
+        { name: "Listar", request: { method: "GET", header: [], url: { raw: "{{baseUrl}}/heredado" } } },
+        {
+          name: "Con la suya",
+          request: {
+            method: "GET",
+            header: [],
+            url: { raw: "{{baseUrl}}/propio" },
+            auth: {
+              type: "basic",
+              basic: [
+                { key: "username", value: "ana", type: "string" },
+                { key: "password", value: "hunter2", type: "string" },
+              ],
+            },
+          },
+        },
+        {
+          name: "Sin ninguna",
+          request: { method: "GET", header: [], url: { raw: "{{baseUrl}}/publico" }, auth: { type: "noauth" } },
+        },
+      ],
+    },
+  ],
+});
+
+describe("la autenticación de una colección, que antes se tiraba entera", () => {
+  test("se hereda hacia abajo, la propia gana, y el secreto literal no se guarda", async () => {
+    const base = await project(false);
+    const imported = await api()
+      .post(`${base}/endpoints/import/file`)
+      .set(as(owner))
+      .attach("file", Buffer.from(AUTHED_COLLECTION), "con-auth.postman_collection.json");
+    assert.equal(imported.status, 201, JSON.stringify(imported.body));
+
+    const listed = await api().get(`${base}/endpoints?limit=100`).set(as(owner));
+    assert.equal(listed.status, 200);
+    const byPath = new Map<string, { auth: { type: string; params: Record<string, string> }; requiresAuth: boolean }>(
+      listed.body.data.map((row: { path: string; auth: unknown; requiresAuth: boolean }) => [
+        row.path,
+        { auth: row.auth as { type: string; params: Record<string, string> }, requiresAuth: row.requiresAuth },
+      ]),
+    );
+
+    // Hereda la de la colección, con la variable tal cual: lo que hay ahí es el nombre del sitio
+    // donde está el token, no el token.
+    assert.deepEqual(byPath.get("/heredado")?.auth, { type: "bearer", params: { token: "{{authToken}}" } });
+    // La propia gana sobre la de arriba, y la contraseña escrita en el fichero se queda fuera.
+    assert.deepEqual(byPath.get("/propio")?.auth, { type: "basic", params: { username: "ana", password: "" } });
+    // `noauth` es una decisión y se respeta: no hereda el bearer de la colección.
+    assert.deepEqual(byPath.get("/publico")?.auth, { type: "none", params: {} });
+    // Y lo que necesita autenticación se marca, que es lo que leen los roles y la seguridad.
+    assert.equal(byPath.get("/heredado")?.requiresAuth, true);
+    assert.equal(byPath.get("/publico")?.requiresAuth, false);
+  });
+
+  test("y vuelve al fichero de Postman, con el secreto fuera y dicho", async () => {
+    const base = await project(false);
+    await api()
+      .post(`${base}/endpoints/import/file`)
+      .set(as(owner))
+      .attach("file", Buffer.from(AUTHED_COLLECTION), "con-auth.postman_collection.json");
+
+    const exported = await api().get(`${base}/export/postman?kind=endpoints`).set(as(owner));
+    assert.equal(exported.status, 200, JSON.stringify(exported.body));
+    const items = (exported.body.file as { item: { name: string; request: { auth?: { type: string } } }[] }).item;
+    const authOf = (path: string) => items.find((item) => item.name.endsWith(path))?.request.auth;
+
+    assert.equal(authOf("/heredado")?.type, "bearer");
+    assert.equal(authOf("/propio")?.type, "basic");
+    // `noauth` viaja: es lo que dice que esa petición no se autentica aunque las demás sí.
+    assert.equal(authOf("/publico")?.type, "noauth");
+    // El `{{authToken}}` sale entero —no es el secreto— y la contraseña vacía no se anuncia otra
+    // vez: se quedó fuera al importar, y lo que se exporta ya no la tiene.
+    const bearer = authOf("/heredado") as unknown as { bearer: { key: string; value: string; type: string }[] };
+    assert.deepEqual(bearer.bearer, [{ key: "token", value: "{{authToken}}", type: "string" }]);
+  });
+});

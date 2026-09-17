@@ -23,7 +23,14 @@ const item = (overrides: Partial<PostmanItem> = {}): PostmanItem => ({
   trail: [],
   name: "Crear pedido",
   label: "Crear pedido",
-  request: { name: "Crear pedido", method: "POST", url: "{{base}}/pedidos", headers: {}, body: { type: "none" } },
+  request: {
+    name: "Crear pedido",
+    method: "POST",
+    url: "{{base}}/pedidos",
+    headers: {},
+    body: { type: "none" },
+    auth: { type: "inherit", params: {} },
+  },
   prerequest: "",
   test: "",
   ...overrides,
@@ -369,5 +376,31 @@ describe("la llamada que se escribe en un nodo fetch", () => {
       null,
     );
     assert.equal(typeof call, "string");
+  });
+});
+
+describe("la autenticación de la llamada escrita a mano", () => {
+  test("el bloque `auth` de la petición viaja al nodo fetch", () => {
+    const call = fetchCallFrom(
+      item({
+        request: {
+          name: "x",
+          method: "GET",
+          url: "https://hooks.ejemplo.com/aviso",
+          headers: {},
+          body: { type: "none" },
+          auth: { type: "bearer", params: { token: "{{hookToken}}" } },
+        },
+      }),
+      null,
+    );
+    assert.ok(typeof call !== "string");
+    assert.deepEqual(call.fetch.auth, { type: "bearer", params: { token: "{{hookToken}}" } });
+  });
+
+  test("`inherit` no se guarda: es lo que hace una llamada sin bloque", () => {
+    const call = fetchCallFrom(item(), null);
+    assert.ok(typeof call !== "string");
+    assert.equal(call.fetch.auth, undefined);
   });
 });

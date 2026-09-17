@@ -2985,6 +2985,29 @@ describe("la credencial que consigue la propia corrida", () => {
     await flow.target.stop();
   });
 
+  /**
+   * El tarro de cookies de la corrida: el login deja la cookie y los pasos siguientes la llevan.
+   *
+   * Sin `authorizes` y sin capturas. Antes de que el tarro existiera esto no podía pasar: la
+   * cookie del login se perdía y los ocho pasos de detrás contestaban 401, así que la única forma
+   * de probar una API con sesión por cookie era escribir a mano de dónde sacarla.
+   */
+  test("una API con sesión por cookie funciona sin que nadie escriba de dónde sacarla", async () => {
+    const flow = await loginFlow((ids) => [
+      { id: "iniciar", requestTemplateId: ids.login },
+      { id: "listar", requestTemplateId: ids.list, dependsOn: ["iniciar"] },
+      // Y el caso que manda **a propósito** ninguna credencial sigue recibiendo su 401: la cookie
+      // de la sesión no lo rescata, porque entonces cada prueba negativa sería un 200 verde.
+      { id: "sin-credencial", requestTemplateId: ids.anonymous, dependsOn: ["iniciar"] },
+    ]);
+    const { run } = await runAndWait(flow.projectBase, {
+      environmentId: flow.environmentId,
+      workflowId: flow.workflowId,
+    });
+    assert.equal(run.status, "passed", JSON.stringify(run.totals));
+    await flow.target.stop();
+  });
+
   test("un login que contesta otra cosa se dice en el paso que inició sesión", async () => {
     const flow = await loginFlow((ids) => [
       { id: "iniciar", requestTemplateId: ids.login, authorizes: { from: "body", path: "data.accessToken" } },

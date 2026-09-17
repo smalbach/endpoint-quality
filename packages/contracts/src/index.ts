@@ -357,6 +357,8 @@ export type StepFetchView = {
   body?: string;
   expectedStatus?: number;
   useSession?: boolean;
+  /** Cómo entra la llamada. Los secretos van como `{{variables}}`: el documento no los cifra. */
+  auth?: RequestAuthView;
 };
 
 /** Which side of an `If` a node hangs off: the «sí» path (`then`) runs when the branch's condition
@@ -804,6 +806,38 @@ export type EndpointBodyView = {
   fields: EndpointFormFieldView[];
 };
 
+/**
+ * Los tipos de autenticación, con los mismos nombres que Postman.
+ *
+ * `inherit` usa la del proyecto, que es lo que hacía todo antes de que estos existieran; `none` es
+ * una decisión distinta —esta petición no se autentica aunque el proyecto sí—, y se guardan aparte.
+ */
+export const AUTH_TYPE_VIEWS = [
+  "none",
+  "inherit",
+  "basic",
+  "bearer",
+  "apikey",
+  "jwt",
+  "digest",
+  "oauth1",
+  "oauth2",
+  "hawk",
+  "awsv4",
+  "edgegrid",
+  "ntlm",
+] as const;
+export type AuthTypeView = (typeof AUTH_TYPE_VIEWS)[number];
+
+/**
+ * Cómo entra una petición. Los parámetros van por nombre, como en el fichero de Postman.
+ *
+ * **Ningún secreto literal viaja aquí.** Una contraseña, una clave o un token se guardan vacíos y
+ * su valor vive en una variable sensible del entorno, que es lo único cifrado: lo que se ve en este
+ * mapa es `{{nombre}}` o nada.
+ */
+export type RequestAuthView = { type: AuthTypeView; params: Record<string, string> };
+
 export type EndpointViewOf<T> = {
   id: string;
   method: EndpointMethod;
@@ -813,7 +847,10 @@ export type EndpointViewOf<T> = {
   query: EndpointQueryParameterView[];
   headers: EndpointHeaderView[];
   body: EndpointBodyView;
+  /** Si *necesita* autenticación, que es lo que leen las pruebas de seguridad y la matriz. */
   requiresAuth: boolean;
+  /** Cuál, que es lo que hace falta para enviarla. */
+  auth: RequestAuthView;
   tags: string[];
   status: EndpointStatus;
   origin: EndpointOrigin;
@@ -882,6 +919,24 @@ export type ImportedItemResult = {
     error: string | null;
     notes?: string[];
   }[];
+};
+
+/**
+ * Lo que contesta exportar el proyecto en formato Postman.
+ *
+ * El fichero va como `unknown` a propósito: es el formato de **otro** producto, y escribir su
+ * esquema aquí sería mantener la definición de Postman en este repositorio y quedarse detrás de
+ * ella. Lo que sí se tipa es lo de alrededor —cómo llamar al fichero, cuánto trae, y qué no pudo
+ * salir— que es lo que la pantalla necesita saber.
+ */
+export type PostmanExportResult = {
+  kind: "collection" | "endpoints" | "environments" | "dump";
+  /** Cómo se llama al bajarlo, con el sufijo que Postman reconoce al volver a leerlo. */
+  filename: string;
+  file: unknown;
+  counts: { collections: number; environments: number };
+  /** Un nodo o un valor que Postman no puede expresar, dicho por su nombre. Nunca un silencio. */
+  skipped: { what: string; detail: string }[];
 };
 
 export type ImportAnythingResult = {
@@ -960,6 +1015,26 @@ export type SentRequestView = {
   scripts: { pre: ScriptRunView | null; post: ScriptRunView | null };
   /** Set when this request captured a session token, and how. */
   sessionToken: "login" | "script" | null;
+  /**
+   * Qué cookies se presentaron, qué se guardó de la respuesta, y qué no se guardó y por qué.
+   *
+   * Lo rechazado se enseña. Una cookie que el servidor puso para otro dominio no se guarda, y sin
+   * decirlo el resultado es un 401 en la petición siguiente que no se puede explicar.
+   */
+  cookies: { sent: string[]; stored: string[]; rejected: { line: string; why: string }[] };
+};
+
+/** Una cookie del tarro, como sale de la API. El valor solo va si se pide ver. */
+export type CookieView = {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  expiresAt: string | null;
+  secure: boolean;
+  httpOnly: boolean;
+  sameSite: "strict" | "lax" | "none" | null;
+  hostOnly: boolean;
 };
 
 // ---------------------------------------------------------------------------------------------

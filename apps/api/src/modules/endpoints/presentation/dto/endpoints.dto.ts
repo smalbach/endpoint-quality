@@ -1,3 +1,4 @@
+import type { RequestAuth } from "@eq/runner-core";
 import { Type } from "class-transformer";
 import {
   ArrayMaxSize,
@@ -43,6 +44,7 @@ export class CreateEndpointDto {
   @IsOptional() @IsArray() @ArrayMaxSize(200) @IsObject({ each: true }) headers?: EndpointHeader[];
   @IsOptional() @IsObject() body?: EndpointBody;
   @IsOptional() @IsBoolean() requiresAuth?: boolean;
+  @IsOptional() @IsObject() auth?: RequestAuth;
   @IsOptional() @IsArray() @ArrayMaxSize(30) @IsString({ each: true }) tags?: string[];
   @IsOptional() @IsIn(ENDPOINT_STATUSES) status?: EndpointStatus;
   @IsOptional() @IsString() @MaxLength(MAX_SCRIPT) preRequestScript?: string;
@@ -58,6 +60,7 @@ export class UpdateEndpointDto {
   @IsOptional() @IsArray() @ArrayMaxSize(200) @IsObject({ each: true }) headers?: EndpointHeader[];
   @IsOptional() @IsObject() body?: EndpointBody;
   @IsOptional() @IsBoolean() requiresAuth?: boolean;
+  @IsOptional() @IsObject() auth?: RequestAuth;
   @IsOptional() @IsArray() @ArrayMaxSize(30) @IsString({ each: true }) tags?: string[];
   @IsOptional() @IsIn(ENDPOINT_STATUSES) status?: EndpointStatus;
   @IsOptional() @IsString() @MaxLength(MAX_SCRIPT) preRequestScript?: string;

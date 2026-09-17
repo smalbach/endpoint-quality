@@ -51,6 +51,9 @@ export type {
   EndpointQueryParameterView,
   EndpointStatus,
   EndpointView,
+  RequestAuthView,
+  AuthTypeView,
+  CookieView,
   SentRequestView,
   Member,
   MembersView,
@@ -135,6 +138,7 @@ export type {
   PostmanFlowsImportResult,
   PostmanEnvironmentImportResult,
   ImportAnythingResult,
+  PostmanExportResult,
   ImportedItemResult,
   ImportKindView,
 } from "@eq/contracts";

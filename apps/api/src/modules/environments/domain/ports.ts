@@ -1,3 +1,4 @@
+import type { Cookie } from "@eq/runner-core";
 import type { Credential, CredentialRole, Environment } from "./model";
 import type { SessionToken } from "./session-token";
 
@@ -22,4 +23,20 @@ export interface SessionTokenRepositoryPort {
   find(actorId: string, projectId: string): Promise<SessionToken | null>;
   save(token: SessionToken): Promise<void>;
   remove(actorId: string, projectId: string): Promise<void>;
+}
+
+export const COOKIE_JAR_REPOSITORY = Symbol("COOKIE_JAR_REPOSITORY");
+
+/**
+ * El tarro de cookies de una persona en un proyecto.
+ *
+ * Por persona, como el token de sesión: la cookie que consigue quien está probando es su sesión, y
+ * compartirla entre los miembros de una organización sería darles la sesión de otro.
+ */
+export interface CookieJarRepositoryPort {
+  list(actorId: string, projectId: string): Promise<Cookie[]>;
+  save(actorId: string, projectId: string, jar: Cookie[]): Promise<void>;
+  remove(actorId: string, projectId: string, keys: Pick<Cookie, "domain" | "path" | "name">[]): Promise<void>;
+  clear(actorId: string, projectId: string): Promise<void>;
+  purgeExpired(actorId: string, projectId: string, now: Date): Promise<void>;
 }

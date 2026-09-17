@@ -485,6 +485,8 @@ export class EndpointEntity {
   @Column({ type: "jsonb", default: () => "'[]'::jsonb" }) headers: unknown[];
   @Column({ type: "jsonb" }) body: unknown;
   @Column({ type: "boolean", default: false }) requiresAuth: boolean;
+  /** Cuál: los mismos tipos que Postman. Los secretos nunca literales — solo `{{variables}}`. */
+  @Column({ type: "jsonb", default: () => `'{"type":"inherit","params":{}}'::jsonb` }) auth: unknown;
   @Column({ type: "jsonb", default: () => "'[]'::jsonb" }) tags: string[];
   @Column({ type: "varchar", length: 20, default: "active" }) status: string;
   @Column({ type: "varchar", length: 20, default: "manual" }) origin: string;
@@ -511,6 +513,29 @@ export class SessionTokenEntity {
   @Column({ type: "timestamptz", nullable: true }) expiresAt: Date | null;
   @Column({ type: "timestamptz" }) capturedAt: Date;
   @Column({ type: "varchar", length: 20 }) source: string;
+}
+
+/**
+ * Una cookie que una persona tiene guardada de un proyecto.
+ *
+ * La clave es la que identifica una cookie en la RFC 6265: dominio, ruta y nombre. El valor va
+ * cifrado porque una cookie de sesión es una credencial.
+ */
+@Entity({ name: "request_cookies" })
+@Index("IDX_request_cookies_actor_project", ["actorId", "projectId"])
+export class RequestCookieEntity {
+  @PrimaryColumn("uuid") actorId: string;
+  @PrimaryColumn("uuid") projectId: string;
+  @PrimaryColumn({ type: "varchar", length: 255 }) domain: string;
+  @PrimaryColumn({ type: "varchar", length: 255 }) path: string;
+  @PrimaryColumn({ type: "varchar", length: 256 }) name: string;
+  @Column({ type: "text" }) valueCiphertext: string;
+  @Column({ type: "timestamptz", nullable: true }) expiresAt: Date | null;
+  @Column({ type: "boolean", default: false }) secure: boolean;
+  @Column({ type: "boolean", default: false }) httpOnly: boolean;
+  @Column({ type: "varchar", length: 10, nullable: true }) sameSite: string | null;
+  @Column({ type: "boolean", default: true }) hostOnly: boolean;
+  @Column({ type: "timestamptz" }) createdAt: Date;
 }
 
 /** A role of the API a project tests. The `access` section is derived from these rows. */
@@ -671,7 +696,7 @@ export const ENTITIES = [
   UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity,
   PasswordResetTokenEntity,
   ProjectEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity,
-  EnvironmentEntity, EnvironmentCredentialEntity, SessionTokenEntity, ProjectConfigEntity,
+  EnvironmentEntity, EnvironmentCredentialEntity, SessionTokenEntity, RequestCookieEntity, ProjectConfigEntity,
   RequestTemplateEntity, WorkflowEntity, WorkflowDatasetEntity, WorkflowSuiteEntity,
   RunEntity, RunCaseEntity, RunStepEntity,
   EndpointEntity,

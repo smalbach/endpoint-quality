@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { Button, Field, InfoTip, inputClass } from "@/components/ui";
+import { AuthEditor } from "@/components/auth-editor";
 import { RequestBodyEditor } from "@/components/request-body-editor";
 import { RequestFieldsEditor } from "@/components/request-fields-editor";
 import { RequestPreviewPanel } from "@/components/request-preview";
@@ -30,6 +31,7 @@ import { mockBodyProblem, mockSampleBody, type MockView } from "@/lib/mock-draft
 import type {
   CaptureSource,
   Environment,
+  RequestAuthView,
   RequestTemplateView,
   StepCheckView,
   StepConditionView,
@@ -1247,6 +1249,22 @@ function FetchInspector({
                   La credencial obtenida en el login viajará a esta URL. Úsalo solo con hosts de confianza.
                 </p>
               )}
+              <div className="mt-3 border-t border-slate-100 pt-3">
+                <Field
+                  label="Autenticación"
+                  info={
+                    "Los mismos tipos que Postman, firmados sobre esta llamada. Un secreto tiene que ser una {{variable}}: el documento del flujo no los cifra, el entorno sí. Heredar deja la llamada como está."
+                  }
+                >
+                  <AuthEditor
+                    auth={call.auth ?? { type: "inherit", params: {} }}
+                    onChange={(auth: RequestAuthView) => setCall({ auth: auth.type === "inherit" ? undefined : auth })}
+                    variables={variables}
+                    disabled={!canEdit}
+                    inheritHint="La llamada va como está: solo la sesión, si la has marcado arriba."
+                  />
+                </Field>
+              </div>
               <div className="mt-3 border-t border-slate-100 pt-1">
                 <RequestFieldsRows
                   label="Cabeceras" info={"Cabeceras de la llamada; aceptan {{variables}}. Para autenticar a mano: Authorization = Bearer {{token}}. Content-Type se deduce del body si no la pones."}

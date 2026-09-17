@@ -32,6 +32,7 @@ import {
   type EndpointBody,
   type EndpointInput,
   type EndpointMethod,
+  INHERIT_AUTH,
 } from "./model";
 
 export const IMPORT_FILE_FORMATS = ["openapi", "postman", "insomnia", "markdown"] as const;
@@ -181,7 +182,11 @@ function draftFromRequest(request: ParsedRequest): EndpointDraft | string {
     })),
     body: bodyFrom(request.body),
     // The credential itself is dropped with the header; that the request carried one is kept.
-    requiresAuth: lowered.some((name) => ["authorization", "x-api-key", "api-key", "apikey"].includes(name)),
+    requiresAuth:
+      lowered.some((name) => ["authorization", "x-api-key", "api-key", "apikey"].includes(name)) ||
+      (request.auth.type !== "inherit" && request.auth.type !== "none"),
+    // Cómo entra, leído del bloque `auth` del fichero. Sin secretos literales: los quitó el lector.
+    auth: request.auth,
     operationId: null,
   };
 }
@@ -258,6 +263,9 @@ export function draftFromOperation(
         ? EMPTY_BODY
         : { ...EMPTY_BODY, mode: "json", text: JSON.stringify(example, null, 2), contentType: "application/json" },
     requiresAuth: operation.security.length > 0,
+    // Un contrato dice que la operación necesita autenticación, no cuál de las suyas: eso lo
+    // decide el proyecto, y por eso hereda.
+    auth: INHERIT_AUTH,
     tags: operation.tag ? [operation.tag] : [],
     operationId: linked ? operation.id : null,
   };

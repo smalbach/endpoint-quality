@@ -18,6 +18,7 @@ import { ImportElementsHandler } from "./application/commands/import-elements";
 import { ImportProjectBundleHandler } from "./application/commands/import-project-bundle";
 import { ImportAnythingHandler } from "./application/commands/import-anything";
 import { ExportProjectHandler } from "./application/queries/export-project";
+import { ExportPostmanHandler } from "./application/queries/export-postman";
 import { RolesModule } from "@/modules/roles/roles.module";
 import { PerformanceModule } from "@/modules/performance/performance.module";
 import { GetImportPreviewHandler } from "./application/queries/import-preview";
@@ -37,7 +38,13 @@ export const PROJECT_COMMAND_HANDLERS = [
   ImportProjectBundleHandler,
   ImportAnythingHandler,
 ];
-export const PROJECT_QUERY_HANDLERS = [ListProjectsHandler, GetProjectHandler, GetImportPreviewHandler, ExportProjectHandler];
+export const PROJECT_QUERY_HANDLERS = [
+  ListProjectsHandler,
+  GetProjectHandler,
+  GetImportPreviewHandler,
+  ExportProjectHandler,
+  ExportPostmanHandler,
+];
 export const PROJECT_ADAPTERS = [{ provide: PROJECT_REPOSITORY, useClass: TypeOrmProjectRepository }];
 
 /**

@@ -23,6 +23,8 @@ import { EndpointRoleAccess } from "@/components/endpoint-role-access";
 import { Badge, Button, inputClass } from "@/components/ui";
 import { Modal } from "@/components/overlay";
 import { useToast } from "@/components/toast";
+import { AuthEditor } from "@/components/auth-editor";
+import { CookieManager, CookiePanel } from "@/components/cookie-manager";
 import { VariableSuggest } from "@/components/variable-suggest";
 import { cn, formatBytes, formatDuration, httpStatusStyle, methodStyle } from "@/lib/format";
 import {
@@ -125,10 +127,11 @@ export function EndpointEditor({
 
   const [draft, setDraft] = useState<EndpointDraft>(NEW_ENDPOINT);
   const [saved, setSaved] = useState<EndpointDraft | null>(null);
-  const [auth, setAuth] = useState<SendAuth>({ mode: "inherit", token: "" });
+
   const [files, setFiles] = useState<ChosenFiles>(NO_FILES);
   const [tab, setTab] = useState<Tab>("params");
   const [showCurl, setShowCurl] = useState(false);
+  const [showCookies, setShowCookies] = useState(false);
 
   // The loaded row becomes the draft once. Refetches after a save must not overwrite typing.
   const loaded = useRef(false);
@@ -166,7 +169,7 @@ export function EndpointEditor({
     mutationFn: () =>
       api<SentRequestView>(`${base}/endpoints/send`, {
         method: "POST",
-        body: sendForm(draft, environment?.id ?? null, auth, files),
+        body: sendForm(draft, environment?.id ?? null, files),
       }),
     onSuccess: async (result) => {
       // What the scripts wrote is already stored; the bar and the variable suggestions catch up.
@@ -340,12 +343,13 @@ export function EndpointEditor({
 
         {tab === "auth" && (
           <AuthTab
-            auth={auth}
-            setAuth={setAuth}
+            auth={draft.auth}
+            setAuth={(next) => setDraft({ ...draft, auth: next })}
             project={project.data}
             environment={environment}
             variables={variableNames}
             sessionToken={sessionToken.data ?? null}
+            disabled={!canEdit}
           />
         )}
 
@@ -496,6 +500,10 @@ export function EndpointEditor({
           <Button variant="ghost" className="h-9 px-3 text-xs" onClick={() => setShowCurl(true)}>
             cURL
           </Button>
+          {/* Como en Postman, al lado de «Enviar»: es donde se mira cuando algo contesta 401. */}
+          <Button variant="ghost" className="h-9 px-3 text-xs" onClick={() => setShowCookies(true)}>
+            Cookies
+          </Button>
           {canEdit && (
             <Button
               variant="ghost"
@@ -605,9 +613,12 @@ export function EndpointEditor({
 
       {showCurl && (
         <CurlModal
-          command={endpointCurl(draft, { baseUrl, variables, auth, files })}
+          command={endpointCurl(draft, { baseUrl, variables, files })}
           onClose={() => setShowCurl(false)}
         />
+      )}
+      {showCookies && (
+        <CookieManager projectId={projectId} baseUrl={baseUrl} onClose={() => setShowCookies(false)} />
       )}
     </div>
   );
@@ -994,6 +1005,13 @@ function BodyTab({
   );
 }
 
+/**
+ * La pestaña Auth: qué significa heredar aquí, y el editor con los trece tipos.
+ *
+ * «Heredar» se explica con lo que de verdad va a pasar —el token de sesión capturado si lo hay, y
+ * si no la autenticación del proyecto, y si no la credencial del entorno— porque es la única opción
+ * cuyo efecto no está escrito en la propia pantalla.
+ */
 function AuthTab({
   auth,
   setAuth,
@@ -1001,6 +1019,7 @@ function AuthTab({
   environment,
   variables,
   sessionToken,
+  disabled,
 }: {
   auth: SendAuth;
   setAuth: (auth: SendAuth) => void;
@@ -1008,6 +1027,7 @@ function AuthTab({
   environment: Environment | null;
   variables: string[];
   sessionToken: SessionTokenView | null;
+  disabled?: boolean;
 }) {
   const inherited = !project
     ? "…"
@@ -1023,57 +1043,19 @@ function AuthTab({
             ? `El proyecto no tiene autenticación: se usa la credencial primary de «${environment.name}» si la hay`
             : "El proyecto no tiene autenticación";
 
-  const options: { value: SendAuth["mode"]; label: string; hint: string }[] = [
-    {
-      value: "inherit",
-      label: "Heredar",
-      // The captured token goes first, as the API applies it: a person who just logged in from the
-      // editor expects the next request to carry that token, not the project's.
-      hint:
-        sessionToken && !sessionToken.expired
-          ? `Token de sesión capturado ${sessionToken.source === "login" ? "del login" : "por un script"}. Sin él: ${inherited}`
-          : inherited,
-    },
-    { value: "none", label: "Sin autenticación", hint: "No se añade ninguna credencial." },
-    { value: "bearer", label: "Bearer token", hint: "Solo para esta petición; no se guarda." },
-  ];
-
   return (
     <div className="space-y-2">
-      {options.map((option) => (
-        <label
-          key={option.value}
-          className={cn(
-            "flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2",
-            auth.mode === option.value ? "border-slate-900 bg-slate-50" : "border-slate-200 hover:bg-slate-50",
-          )}
-        >
-          <input
-            type="radio"
-            name="endpoint-auth"
-            className="mt-0.5"
-            checked={auth.mode === option.value}
-            onChange={() => setAuth({ ...auth, mode: option.value })}
-          />
-          <span>
-            <span className="block text-xs font-semibold text-slate-800">{option.label}</span>
-            <span className="block text-[11px] text-slate-500">{option.hint}</span>
-          </span>
-        </label>
-      ))}
-      {auth.mode === "bearer" && (
-        <VariableSuggest variables={variables} value={auth.token} onChange={(token) => setAuth({ ...auth, token })}>
-          {(suggest) => (
-            <input
-              {...suggest}
-              aria-label="Token"
-              className="h-8 w-full rounded-lg border border-slate-200 px-3 font-mono text-xs outline-none focus:border-slate-900"
-              placeholder="eyJ… o {{token}}"
-              spellCheck={false}
-            />
-          )}
-        </VariableSuggest>
-      )}
+      <AuthEditor
+        auth={auth}
+        onChange={setAuth}
+        variables={variables}
+        disabled={disabled}
+        inheritHint={
+          sessionToken && !sessionToken.expired
+            ? `Token de sesión capturado ${sessionToken.source === "login" ? "del login" : "por un script"}. Sin él: ${inherited}`
+            : inherited
+        }
+      />
       <p className="text-[11px] text-slate-400">Una cabecera Authorization escrita en Headers gana siempre.</p>
     </div>
   );
@@ -1188,6 +1170,7 @@ const RESPONSE_TABS = [
   { id: "body", label: "Cuerpo" },
   { id: "headers", label: "Cabeceras" },
   { id: "console", label: "Consola" },
+  { id: "cookies", label: "Cookies" },
   { id: "request", label: "Petición" },
 ] as const;
 
@@ -1205,6 +1188,7 @@ function ResponsePanel({ send }: { send: { data?: SentRequestView; error: Error 
     : [];
   const tests = runs.flatMap((run) => run.tests);
   const consoleCount = runs.reduce((total, run) => total + run.logs.length + run.tests.length + (run.error ? 1 : 0), 0);
+  const cookieCount = result ? result.cookies.sent.length + result.cookies.stored.length + result.cookies.rejected.length : 0;
   const headersText = result?.response
     ? Object.entries(result.response.headers)
         .map(([name, value]) => `${name}: ${value}`)
@@ -1295,9 +1279,11 @@ function ResponsePanel({ send }: { send: { data?: SentRequestView; error: Error 
                 {entry.id === "console" && consoleCount > 0 && (
                   <span className="ml-1 text-slate-400">{consoleCount}</span>
                 )}
+                {entry.id === "cookies" && cookieCount > 0 && <span className="ml-1 text-slate-400">{cookieCount}</span>}
               </button>
             ))}
-            {tab !== "console" && (
+            {tab === "cookies" && cookieCount > 0 && <span className="sr-only">{cookieCount}</span>}
+            {tab !== "console" && tab !== "cookies" && (
               <button
                 className="ml-auto px-2 py-1 text-[11px] text-slate-500 hover:text-slate-900"
                 onClick={() => void copy()}
@@ -1308,6 +1294,8 @@ function ResponsePanel({ send }: { send: { data?: SentRequestView; error: Error 
           </div>
           {tab === "console" ? (
             <ScriptConsole scripts={result.scripts} />
+          ) : tab === "cookies" ? (
+            <CookiePanel cookies={result.cookies} />
           ) : (
             <pre className="mt-2 max-h-96 min-h-24 overflow-auto rounded-xl bg-slate-950 p-3 font-mono text-[11px] leading-5 whitespace-pre-wrap text-slate-200">
               {shown || (tab === "body" ? "(sin cuerpo)" : "")}

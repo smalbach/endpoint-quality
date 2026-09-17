@@ -85,6 +85,8 @@ export class ExecutionContextFactory {
         .filter((value): value is string => Boolean(value)),
       // Nothing has logged in yet. A flow step may publish one while walking.
       session: null,
+      // Y el tarro empieza vacío: lo llena el primer `Set-Cookie` de la corrida.
+      cookies: [],
       ...(await this.loadSpec(environment.specUrl ?? `${environment.baseUrl}/openapi.json`)),
     };
 

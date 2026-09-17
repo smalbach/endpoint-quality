@@ -223,7 +223,17 @@ export type StepKind =
   | "mock";
 
 /** The control kinds — the nodes that record a decision instead of making a request. */
-export const CONTROL_KINDS: StepKind[] = ["branch", "wait", "merge", "validate", "set", "script", "schema", "subflow", "mock"];
+export const CONTROL_KINDS: StepKind[] = [
+  "branch",
+  "wait",
+  "merge",
+  "validate",
+  "set",
+  "script",
+  "schema",
+  "subflow",
+  "mock",
+];
 
 /**
  * A `mock` node: the response it gives instead of making a call.
@@ -353,7 +363,7 @@ export function rerunPath(steps: WorkflowStep[], target: string, from: string): 
   }
   if (!upstream.has(target)) return null;
   const between = new Set([target]);
-  for (let grew = true; grew; ) {
+  for (let grew = true; grew;) {
     grew = false;
     for (const step of steps) {
       if (between.has(step.id) || !upstream.has(step.id)) continue;
@@ -394,7 +404,7 @@ export function loopBody(steps: WorkflowStep[], loopId: string): string[] {
   const body = new Set(
     steps.filter((step) => step.inLoop === loopId && (step.dependsOn ?? []).includes(loopId)).map((step) => step.id),
   );
-  for (let grew = true; grew; ) {
+  for (let grew = true; grew;) {
     grew = false;
     for (const step of steps) {
       if (body.has(step.id) || step.id === loopId) continue;
@@ -421,6 +431,8 @@ export type StepBranch = { of: string; take: "then" | "else" };
  */
 export type StepValidate = { from: string; script?: string };
 
+import type { RequestAuth } from "./auth.ts";
+
 export const FETCH_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 export type FetchMethod = (typeof FETCH_METHODS)[number];
 
@@ -441,6 +453,14 @@ export type StepFetch = {
   body?: string;
   expectedStatus?: number;
   useSession?: boolean;
+  /**
+   * Cómo entra: los mismos tipos que Postman, firmados sobre esta petición.
+   *
+   * Ausente o `inherit` deja la llamada como estaba: la sesión si `useSession` lo dice, y nada más.
+   * Un secreto aquí es siempre una `{{variable}}` —el documento es una columna `jsonb`— así que lo
+   * que se guarda es el nombre del sitio donde está el valor, no el valor.
+   */
+  auth?: RequestAuth;
 };
 
 export type WorkflowStep = {

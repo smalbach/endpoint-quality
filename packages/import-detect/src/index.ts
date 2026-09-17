@@ -22,6 +22,8 @@
  * as the several things it is rather than refused as a shape nobody expected.
  */
 
+export { readZip, looksZipped, type ZipEntry } from "./zip.ts";
+
 /** What a source can turn out to be. `unknown` always carries a reason. */
 export const IMPORT_KINDS = [
   "postman-collection",
@@ -96,18 +98,26 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 /** The format string an exported project file carries. Kept in step with the api's own copy. */
 const EQ_BUNDLE_FORMAT = "endpoint-quality/project";
 
+/** Los cuatro bytes con los que empieza cualquier zip, armados en código y no escritos como
+ * literal: un `\u0003` dentro de una cadena sobrevive mal a cualquier edición automática, y
+ * quedarse en «PK» convierte la comprobación en «cualquier texto que empiece por PK».
+ */
+const ZIP_MAGIC = `PK${String.fromCharCode(3)}${String.fromCharCode(4)}`;
+
 export function detectImport(filename: string, text: string): Detected {
   const label = filename.trim() || "lo pegado";
   if (!text.trim()) return { kind: "unknown", name: label, pieces: [], reason: "está vacío" };
 
-  // A zip, by its magic bytes or by its name. Postman's «Export data» downloads one, so somebody
-  // dropping it here is doing the obvious thing and deserves better than «no es JSON».
-  if (text.startsWith("PK") || /\.zip$/i.test(label)) {
+  // A zip that arrived as *text*, which means it did not come through the reader that opens one.
+  // A dropped or picked `.zip` never reaches here — `readZip` turns it into its files first — so
+  // this is the URL path, where what crosses the wire is a string and the zip's bytes are gone by
+  // the time anybody could inflate them.
+  if (text.startsWith(ZIP_MAGIC) || /\.zip$/i.test(label)) {
     return {
       kind: "unknown",
       name: label,
       pieces: [],
-      reason: "es un .zip: descomprímelo y suelta los .json que hay dentro (se pueden soltar todos a la vez)",
+      reason: "es un .zip, y por URL no se puede abrir: bájalo y suéltalo como fichero, que ahí sí se abre solo",
     };
   }
 

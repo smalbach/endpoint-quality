@@ -71,3 +71,15 @@ export class CredentialDto {
   @IsString() @MinLength(1) @MaxLength(4000) secret: string;
   @IsOptional() scopes?: string[];
 }
+
+/**
+ * Una cookie escrita a mano.
+ *
+ * `setCookie` es la línea tal cual la manda un servidor, y `url` la dirección para la que vale:
+ * sin ella no se puede decidir qué dominio tiene derecho a declarar, que es la regla que impide
+ * que una cookie escrita aquí viaje a un host que no la puso.
+ */
+export class SetCookieDto {
+  @IsString() @MinLength(8) @MaxLength(2000) url: string;
+  @IsString() @MinLength(3) @MaxLength(5000) setCookie: string;
+}

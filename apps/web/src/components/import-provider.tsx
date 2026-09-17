@@ -16,7 +16,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { ImportDialog, type DroppedFile } from "@/components/import-dialog";
+import { ImportDialog, readDropped, type DroppedFile } from "@/components/import-dialog";
 
 type Opener = {
   /** Abre el diálogo. Con ficheros ya leídos cuando vienen de un arrastre. */
@@ -123,7 +123,8 @@ function DropTarget({ onFiles, children }: { onFiles: (files: DroppedFile[]) => 
       reset();
       const files = Array.from(event.dataTransfer?.files ?? []);
       if (!files.length) return;
-      void Promise.all(files.map(async (file) => ({ name: file.name, text: await file.text() }))).then(onFiles);
+      // El mismo lector que el diálogo, para que soltar el `.zip` aquí haga lo que hace ahí dentro.
+      void readDropped(files).then(onFiles);
     };
     window.addEventListener("dragenter", onEnter);
     window.addEventListener("dragleave", onLeave);

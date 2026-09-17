@@ -30,6 +30,7 @@ import { CopyFromProjectCommand } from "../application/commands/copy-from-projec
 import { ImportElementsCommand } from "../application/commands/import-elements";
 import { GetImportPreviewQuery } from "../application/queries/import-preview";
 import { ExportProjectQuery } from "../application/queries/export-project";
+import { ExportPostmanQuery } from "../application/queries/export-postman";
 import { ImportProjectBundleCommand } from "../application/commands/import-project-bundle";
 import { ImportAnythingCommand } from "../application/commands/import-anything";
 import { SetProjectArchivedCommand, UpdateProjectCommand } from "../application/commands/update-project";
@@ -296,6 +297,31 @@ export class ProjectsController {
   ) {
     return this.queryBus.execute(
       new ExportProjectQuery(organizationId, projectId, listParam(parts), listParam(workflowIds)),
+    );
+  }
+
+  /**
+   * El mismo proyecto, escrito como lo escribiría Postman: una colección, sus entornos, o el
+   * volcado con las dos cosas.
+   *
+   * Separada de la exportación propia y no un `?format=` de ella, porque no es el mismo fichero
+   * con otro traje: el propio lo vuelve a leer este producto entero —roles, suites, planes de
+   * carga— y este solo puede llevar lo que Postman sabe expresar. Dos ficheros que contestan
+   * preguntas distintas.
+   *
+   * `editor` como la otra, y por lo mismo: el fichero lleva scripts y cabeceras que un `viewer` no
+   * debería poder llevarse con un clic.
+   */
+  @Get(":projectId/export/postman")
+  @RequireRole("editor")
+  async exportPostman(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Query("kind") kind?: string,
+    @Query("workflowIds") workflowIds?: string,
+  ) {
+    return this.queryBus.execute(
+      new ExportPostmanQuery(organizationId, projectId, kind ?? "collection", listParam(workflowIds)),
     );
   }
 

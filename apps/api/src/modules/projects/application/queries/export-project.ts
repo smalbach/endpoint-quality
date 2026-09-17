@@ -113,6 +113,7 @@ export class ExportProjectHandler implements IQueryHandler<ExportProjectQuery, P
         query: endpoint.query,
         headers: endpoint.headers,
         body: endpoint.body,
+        auth: endpoint.auth,
         requiresAuth: endpoint.requiresAuth,
         tags: endpoint.tags,
         status: endpoint.status,

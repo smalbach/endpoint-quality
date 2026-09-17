@@ -1360,3 +1360,279 @@ cuatro manejadores y volvía como cuatro mensajes de Postgres dentro de un 201, 
 se lee como «el import funcionó pero todo falló». Un guardia antes de leer nada.
 
 Suites: paquete nuevo **19**, api **592**, web **339**.
+
+## Los dos huecos que quedaban: el `.zip` y la vuelta
+
+Contadas las diferencias con Postman, quedaban dos que pesaban.
+
+### El `.zip`, que es lo que de verdad baja «Export data»
+
+No baja un JSON: baja un zip con todas las colecciones y todos los entornos
+dentro. Decirle a alguien «descomprímelo y suéltalos» era mandarle a hacer a mano
+el trabajo que el formato existe para evitar.
+
+Se abre en el navegador, antes de que nada cruce la red, y por una razón que no es
+de gusto: lo que viaja es texto, y un zip metido en un JSON como si fuera texto
+llega con los bytes ya estropeados. Abrirlo antes deja además todo lo demás igual
+—el detector, el plan, el import siguen viendo ficheros sueltos— y el arrastre
+global usa el mismo lector, así que soltar el zip en cualquier parte de la ventana
+hace lo que hace elegirlo dentro del diálogo.
+
+**Sin dependencia nueva, y tampoco por ahorrar.** El detector es una función pura
+que corre en los dos lados; meterle un paquete de terceros lo mete en el bundle
+del navegador _y_ en el proceso que lee ficheros que sube un desconocido. Lo que
+hace falta está en la plataforma —`DecompressionStream("deflate-raw")`, en el
+navegador y en Node— y el resto son cuatro cabeceras con desplazamientos. Se lee
+por el **directorio central** y no recorriendo cabeceras locales de frente, que es
+lo que dice la especificación y lo único correcto: una cabecera local puede
+declarar tamaño cero y remitir a un descriptor que va después de los datos.
+
+De un zip no sale nada que no sea texto, nada fuera de su propio árbol —una entrada
+llamada `../../etc/algo` se enseña por su última parte— y nada por encima de los
+topes, que es lo que separa «este fichero no vale» de que se caiga el proceso.
+
+Probado contra dos zips: uno escrito en la propia prueba, para meterle a mano las
+entradas raras que traen los de verdad —carpetas, `__MACOSX`, una entrada sin
+comprimir— y otro hecho por el `zip` del sistema, que es lo único que descarta que
+el lector y el escritor de la prueba estén equivocados de la misma manera. Y sobre
+el zip real del catálogo: **61 peticiones · 6 carpetas y tres entornos**, abiertos
+y reconocidos sin tocar el servidor.
+
+### Y la vuelta, porque era una puerta de un solo sentido
+
+Se leía una colección y no se escribía ninguna. Un formato que se lee y no se
+escribe es un formato en el que nadie mete su trabajo: no podías llevártelo, ni
+pasarlo por `newman` en un pipeline, ni dárselo a quien no use esto.
+
+Es **el inverso exacto** del lector, y por eso vive a su lado: lo que el lector
+saca de un `event` de tipo `test` —las comprobaciones y las capturas— es lo que
+esto vuelve a escribir como `pm.test` y `pm.collectionVariables.set`. Un nodo
+script vuelve al sitio del que salió: con `from` puesto es el `test` de esa
+petición, sin él es el `prerequest` de la siguiente.
+
+No lee la base de datos. Pide la exportación propia —que ya existe, con sus
+permisos y sus reglas sobre qué secretos no viajan— y traduce lo que vuelve. Leerla
+otra vez aquí sería un segundo lector libre de discrepar del primero sobre qué sale
+de un proyecto, y esa discrepancia sería un secreto dentro de un fichero.
+
+**Ningún secreto sale**, con las mismas reglas que el import aplica al entrar: una
+variable sensible sale con su nombre, sin valor y marcada `secret`; una cabecera de
+credencial sale solo si su valor es enteramente `{{variables}}`, y si trae un token
+escrito a mano sale desactivada y vacía. **Y lo que Postman no puede expresar no se
+tira en silencio**: no hay ramas, ni esperas, ni bucles, así que esos nodos se
+cuentan y se enseñan. Un fichero que parece completo y ha perdido la mitad del
+grafo es peor que no poder exportar.
+
+#### Dos ficheros, no un ajuste
+
+Los flujos y los endpoints estaban en la misma colección, y la prueba de ida y
+vuelta lo cazó en el primer intento: **cada ciclo añadía un flujo llamado
+«Endpoints» que nadie había escrito**. No es un detalle de presentación — al volver
+a entrar, una colección _es_ un flujo, porque eso es lo que una colección
+significa aquí. Así que son dos exportaciones distintas: la de los flujos, que da
+la vuelta sobre sí misma, y la del API entero, que es lo que quiere quien pide
+«pásame esto a Postman» sin haber escrito un flujo todavía.
+
+Y un aviso que sobraba: los entornos se traducían siempre, así que una colección
+—que no lleva ninguna variable— salía llena de «la variable X es sensible y sale sin
+valor». Avisar de algo que no está pasando. Ahora solo los traduce el fichero que
+los lleva.
+
+#### Lo que cierra el círculo
+
+Sobre la colección real del catálogo, exportada y vuelta a importar en un proyecto
+nuevo: **8 flujos, 100 nodos, idénticos a la salida, 0 fuera del fichero**. Es la
+única prueba que dice que las dos mitades no se han separado, porque exportar e
+importar son la misma afirmación leída en dos direcciones.
+
+Suites: `@eq/import-detect` **25**, api **615**, web **339**.
+
+## Paridad con Postman, ola 1: la autenticación, que era el agujero más grande
+
+«Revisa toda la funcionalidad de Postman y clona todas las funcionalidades». La revisión primero,
+porque decidió el orden: repasar la superficie de Postman contra lo que hay aquí, comprobando en el
+código y no de memoria. Lo que salió, con lo que ya existía marcado como tal:
+
+| Postman                                                       | Aquí, antes de esta ola                         |
+| ------------------------------------------------------------- | ----------------------------------------------- |
+| Petición suelta con params/headers/body/scripts               | Sí: el editor de endpoints, con `Enviar`        |
+| Colecciones, carpetas, orden                                  | Sí: endpoints y flujos                          |
+| Entornos y variables, sensibles                               | Sí, y además cifradas en columna                |
+| Runner con iteraciones y ficheros de datos                    | Sí: datasets y suites                           |
+| Tests `pm.*` en un sandbox                                    | Sí, en un proceso aparte                        |
+| Import de colección/entorno/volcado/OpenAPI/Insomnia/cURL/HAR | Sí, por una puerta                              |
+| Export en formato Postman                                     | Sí (ola anterior)                               |
+| **13 tipos de autenticación**                                 | **No: heredar, ninguna, y un `Bearer` a mano**  |
+| Cookie jar por dominio                                        | No                                              |
+| Botón «Code»: la petición en 20 lenguajes                     | No: solo cURL                                   |
+| Ejemplos guardados de respuesta                               | No                                              |
+| Mock server sirviendo esos ejemplos                           | Parcial: nodo `mock` en un flujo                |
+| Monitores con horario                                         | No                                              |
+| Visualizer (`pm.visualizer.set`)                              | No                                              |
+| WebSocket, gRPC, MQTT, GraphQL                                | Solo GraphQL                                    |
+| Documentación publicable                                      | No                                              |
+| Workspaces, forks y merge                                     | Parcial: organizaciones y copia entre proyectos |
+| Proxy/Interceptor para capturar tráfico                       | No                                              |
+| Consola de peticiones                                         | Parcial: el eco de `Enviar`                     |
+
+El primero de la lista no era el más llamativo: era el que dejaba el resto sin servir. El bloque
+`auth` de un fichero de Postman **se tiraba entero y sin decirlo** — cero referencias en el lector —
+y una colección real no lleva su autenticación en cada petición, la lleva **en la colección** y las
+peticiones la heredan. Importar una colección así traía las URL y dejaba todas las peticiones
+contestando 401 sin que nada en la pantalla dijera por qué.
+
+### Las firmas, contra el vector publicado de cada especificación
+
+`packages/runner-core/src/auth.ts`: una función pura que recibe un descriptor y una petición y
+devuelve cabeceras y parámetros. Los trece tipos, con los algoritmos de verdad — Digest (RFC 7616,
+MD5/SHA-256/SHA-512-256 y sus variantes `-sess`), OAuth 1.0a (RFC 5849), AWS Signature v4, Hawk,
+Akamai EdgeGrid, JWT firmado en el momento (HS/RS/PS), OAuth 2.0, Basic, Bearer y clave de API.
+
+Cada uno se comprueba contra **el ejemplo de su propia documentación**, que es lo único que
+distingue firmar de producir una cadena con pinta de firma: la respuesta a una firma mal calculada
+es un 403 idéntico al de una credencial caducada, y nadie mira dentro de la cabecera. `get-vanilla`
+y `get-vanilla-query-order-key` de la suite de AWS, la respuesta `8ca523f5…` del RFC de Digest y su
+variante SHA-256, el mac `6R4rV5iE+NPoym+WwjeHzjAGXUtLNIxmo1vpMofpLAE=` del README de Hawk, el token
+canónico de HS256, y la cadena base del RFC 5849 byte a byte.
+
+Esa última hizo falta exportar (`oauth1BaseString`) en vez de comparar una firma: escribí la
+constante de memoria, no coincidió, y al calcularla aparte resultó que la cadena base **sí** era la
+publicada y la constante era mía. Lo comprobable desde fuera es la cadena; el HMAC lo calcula la
+plataforma.
+
+Dos cosas se dicen en vez de fingirse:
+
+- **NTLM** no es una firma, es un protocolo de tres vueltas negociando por `Authorization`. Se
+  reconoce y se explica.
+- **Digest** no se puede firmar a ciegas: el `nonce` lo pone el servidor en su 401. El firmante
+  devuelve `needsChallenge`, quien tiene la red pide ese 401 y se firma con su reto.
+
+### Dónde entra, y qué no se guarda
+
+El bloque se lee con su **herencia** resuelta —la petición manda sobre la carpeta, la carpeta sobre
+la colección, y `noauth` es «esta no, aunque las de arriba sí», que no es lo mismo que no tener
+bloque—, entra en el endpoint (columna nueva `auth`, `jsonb`, las filas de antes en `inherit`), en el
+nodo `fetch` de un flujo, en el botón de enviar, en el `curl` que se copia, y sale otra vez al
+fichero de Postman.
+
+**Ningún secreto literal se guarda.** La columna es `jsonb`, y una contraseña ahí es una contraseña
+en claro en la base de datos — lo que la tabla de credenciales y las variables sensibles existen
+para evitar. Un valor que es solo `{{variables}}` sí se queda: eso no es el secreto, es el nombre
+del sitio donde está, y ese sitio sí lo cifra. Lo que se cae se **nombra**, en el campo mientras se
+escribe y en la lista del import, con la frase que dice qué hacer.
+
+Un secreto vaciado conserva su clave vacía a propósito. Un campo de texto en blanco no: no es nada.
+Ese vacío del secreto es la marca de que la credencial existe y no está aquí, y es lo que hace que
+quien abra el fichero exportado vea qué le falta en vez de una petición que parece no necesitar
+nada.
+
+Y `-u usuario:clave` de un `curl` pegado ya no se tira: entra como `basic` con el usuario puesto y
+la contraseña fuera. Antes se perdían los dos.
+
+### Medido
+
+Sobre el stack desplegado, con una colección cuya autenticación está arriba:
+
+```
+GET /firmado :: awsv4 {"region":"eu-west-1","service":"execute-api","accessKey":"AKIDEXAMPLE","secretKey":"{{awsSecret}}"}
+GET /basico  :: basic {"password":"","username":"ana"}
+export: 200 · fuera: 0 · ambas vuelven con su bloque auth
+```
+
+Y en la petición enviada de verdad, vista en el destino: `AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/…`
+con `SignedHeaders=host;x-amz-date`, el `Basic` con su base64, la clave de API en la query y no en
+una cabecera, y NTLM diciendo que no sin mandar media negociación.
+
+`runner-core 284 · api 642 · web 347 · lint 0 errores · typecheck limpio`
+
+La UI de esta ola no se recorrió en un navegador: está cubierta por nueve pruebas del editor y por
+las de extremo a extremo contra la API. El resto de la tabla sigue pendiente, en ese orden.
+
+## Paridad con Postman, ola 2: el tarro de cookies
+
+El segundo de la lista, y como el primero: no era el más llamativo, era el que dejaba una clase
+entera de API sin poder probarse. Una API que autentica con cookie no se podía recorrer de punta a
+punta. El login contestaba su `Set-Cookie`, la petición siguiente salía sin él, y todo lo que iba
+detrás contestaba 401; la única salida era capturar la cookie con un script y volver a pegarla en
+una cabecera a mano, que es justo el trabajo que un cliente HTTP existe para no hacer.
+
+### Tres cosas que había que arreglar antes de poder guardar una cookie
+
+Ninguna se veía. Las tres se encontraron al escribir el lector, no al usarlo.
+
+1. **`Object.fromEntries(headers.entries())` se queda con la última `Set-Cookie`.** `entries()`
+   devuelve una entrada por cabecera, así que con dos cookies el mapa guardaba la segunda y perdía
+   la primera. Una captura `from: "cookie"` estaba leyendo una cookie que no era la que pedía. Se
+   veía solo con un servidor que manda dos cabeceras de verdad: el destino de las pruebas las unía
+   a mano con una coma, y esa coma tapaba el fallo. Ahora `setCookie` es la lista tal cual y
+   `headers["set-cookie"]` lleva todas unidas.
+2. **Un 302 tras un POST se rechazaba.** La regla era «no se reenvía una escritura», y para un 307
+   o un 308 es correcta: conservan método y cuerpo, así que seguirlas repite la escritura en una
+   dirección que nadie eligió. Pero un 301, 302 o 303 se sigue **como un GET sin cuerpo** —lo que
+   hace cualquier navegador y lo que la RFC 9110 exige para el 303— y eso no es repetir nada: es
+   leer en la dirección nueva. Sin esto, un login por cookie, que contesta 302 casi siempre, no
+   llegaba nunca a su destino.
+3. **Las cookies se calculan por salto, no una vez.** Una redirección puede ir a otro host o a otra
+   ruta, y las cookies que le tocan son otras.
+
+### Las reglas que dicen «no», que son casi todas
+
+`packages/runner-core/src/cookies.ts`, puro: entra una respuesta y sale una cookie, entra una URL y
+sale la cabecera. Lo que hay que acertar de la RFC 6265 es sobre todo seguridad, y ninguna de esas
+reglas rompe nada visible cuando está mal — la petición sigue saliendo:
+
+- **Un host no pone cookies para otro.** `Domain=ejemplo.com` desde `api.ejemplo.com` vale;
+  `Domain=otro.com` no, y `Domain=com` tampoco. Ahí está el robo de sesión de toda la web.
+- **Sin `Domain` la cookie es del host exacto**, no de sus subdominios. Es lo contrario de lo que
+  parece.
+- **`Secure` no viaja por http.** Con `localhost` como excepción, que es lo que hace el navegador.
+- **La ruta acota, y el corte cae en una barra.** `Path=/admin` no llega a `/administracion`.
+- **`Max-Age` manda sobre `Expires`** —no depende del reloj del cliente— y **cero borra**: así
+  cierra sesión un servidor, y tratarlo como una cookie más deja la sesión abierta aquí después de
+  haberla cerrado allí.
+
+Lo rechazado se **nombra**. Una cookie que no se guarda porque el servidor la puso para otro
+dominio es una explicación; el silencio es un 401 en la petición siguiente que nadie puede
+explicar.
+
+### Dónde vive
+
+Una tabla por persona y proyecto, con la clave que identifica una cookie en la RFC —dominio, ruta y
+nombre—, y el **valor cifrado**: una cookie de sesión es exactamente una credencial. Por persona
+como el token de sesión, y por lo mismo: compartirla entre los miembros de una organización sería
+darles la sesión de otro. Con `name` suelto por clave, renovar la cookie de `/admin` machacaría la
+de `/`.
+
+En la pantalla, al lado de «Enviar», donde Postman la pone: la lista con los valores tapados, «Ver»
+como una llamada aparte, borrar una o vaciar el tarro, y una casilla para escribir una a mano
+pegando la línea `Set-Cookie` tal cual —el formato que la gente ya tiene, copiado del inspector del
+navegador, y que pasa por el **mismo lector** que las del servidor, así que las reglas son las
+mismas y no una segunda versión que puede diferir—. Y en la respuesta, una pestaña que dice qué se
+envió, qué guardó el servidor y qué no se guardó y por qué.
+
+### En las corridas, con un límite deliberado
+
+El tarro de una corrida vive lo que vive la corrida, como sus variables: dos corridas del mismo
+flujo no ven la sesión de la otra. Con eso, un flujo cuyo primer paso entra y los ocho siguientes
+gastan la sesión funciona **sin que nadie escriba de dónde sacar la cookie**.
+
+Con una excepción que es la razón de ser de la mitad de las pruebas: un caso que presenta `none` o
+`insufficient` está comprobando qué hace el objetivo con una credencial mala **a propósito**, y
+darle la cookie de la sesión convertiría cada prueba negativa en un 200 verde que no prueba nada. Es
+la misma regla que ya tenía la sesión del login, y la escribió esta vez una prueba que se puso roja.
+
+### Medido
+
+```
+runner-core 311 · api 646 · web 354 · lint 0 errores · typecheck limpio
+```
+
+En una corrida de verdad: login sin `authorizes` y sin capturas, el paso siguiente pasa, y el caso
+sin credencial sigue recibiendo su 401. Y contra el repositorio real, en una base aparte: la fila
+sale cifrada (`v1.4+SRz3jQ…`), la lista tapa el valor, `reveal` lo enseña, y borrar la de `/admin`
+deja la de `/`.
+
+**Lo que se encontró de paso, y no es del cambio:** el `SECRETS_KEY` del `docker/.env` de esta
+máquina es de 48 bytes y no de 32, así que en ese stack **cualquier** cifrado contesta 500 — una
+variable sensible también. No hay nada cifrado guardado todavía (cero credenciales, cero sesiones),
+así que se arregla generando una clave de 32 bytes.

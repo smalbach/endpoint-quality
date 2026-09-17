@@ -9,7 +9,23 @@ import {
   type ComputedSeed,
 } from "@eq/runner-core";
 
+import {
+  cookieKey,
+  cookiesFrom,
+  liveCookies,
+  matchingCookies,
+  withCookies,
+  type Cookie,
+} from "@eq/runner-core";
 import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
+import {
+  AUTH_LABELS,
+  SECRET_PARAMS,
+  readTokenResponse,
+  signAuth,
+  tokenRequestFor,
+  type RequestAuth,
+} from "./auth-bridge";
 import { SAFE_FETCH, BlockedTargetError, type RequestTiming, type SafeFetchPort } from "@/shared/http/safe-fetch";
 import { SECRET_CIPHER, type SecretCipherPort } from "@/shared/crypto/secret-cipher";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
@@ -26,8 +42,10 @@ import { ownedProject } from "@/modules/projects/application/commands/update-pro
 import type { Project } from "@/modules/projects/domain/model";
 import {
   ENVIRONMENT_REPOSITORY,
+  COOKIE_JAR_REPOSITORY,
   SESSION_TOKEN_REPOSITORY,
   type EnvironmentRepositoryPort,
+  type CookieJarRepositoryPort,
   type SessionTokenRepositoryPort,
 } from "@/modules/environments/domain/ports";
 import {
@@ -88,6 +106,13 @@ export type SentRequestView = {
   environment: { id: string; name: string } | null;
   scripts: { pre: ScriptRunView | null; post: ScriptRunView | null };
   sessionToken: SessionTokenSource | null;
+  /**
+   * Qué cookies se presentaron, qué se guardó de la respuesta, y qué no se guardó y por qué.
+   *
+   * Lo rechazado se enseña: una cookie que el servidor puso para otro dominio no se guarda, y sin
+   * decirlo el resultado es un 401 en la petición siguiente que nadie puede explicar.
+   */
+  cookies: { sent: string[]; stored: string[]; rejected: { line: string; why: string }[] };
 };
 
 const IDEMPOTENT = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -116,6 +141,7 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(ENVIRONMENT_REPOSITORY) private readonly environments: EnvironmentRepositoryPort,
     @Inject(SESSION_TOKEN_REPOSITORY) private readonly sessionTokens: SessionTokenRepositoryPort,
+    @Inject(COOKIE_JAR_REPOSITORY) private readonly cookieJar: CookieJarRepositoryPort,
     @Inject(SECRET_CIPHER) private readonly cipher: SecretCipherPort,
     @Inject(SAFE_FETCH) private readonly http: SafeFetchPort,
     @Inject(SCRIPT_SANDBOX) private readonly sandbox: ScriptSandboxPort,
@@ -176,6 +202,8 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
           error: `El script previo falló y la petición no se envió: ${outcome.view.error}`,
           auth: "No se envió",
           environment: environmentView,
+          // Nada salió, así que ninguna cookie se presentó ni se guardó.
+          cookies: { sent: [], stored: [], rejected: [] },
           scripts,
           sessionToken: captured,
         };
@@ -235,6 +263,12 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
       );
     }
 
+    if (body.value?.contentType && !Object.keys(headers).some((name) => name.toLowerCase() === "content-type"))
+      headers["Content-Type"] = body.value.contentType;
+
+    // La firma va después del `Content-Type` y no antes: AWS y Hawk lo firman, y OAuth 1 decide si
+    // el formulario entra en la firma mirándolo. Firmar antes daba una firma de otra petición.
+    const sending = { url, headers, method: input.method, body: body.value?.preview ?? null };
     const hasAuthorization = Object.keys(headers).some((name) => name.toLowerCase() === "authorization");
     const auth = hasAuthorization
       ? "Cabecera Authorization escrita en la petición"
@@ -245,26 +279,31 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
           projectSecrets,
           environment,
           base,
-          headers,
+          sending,
           interpolate,
           run,
         );
 
-    if (body.value?.contentType && !Object.keys(headers).some((name) => name.toLowerCase() === "content-type"))
-      headers["Content-Type"] = body.value.contentType;
-
     const echo = {
       method: input.method,
-      url,
+      url: sending.url,
       headers: maskHeaders(headers),
       body: body.value?.preview ?? null,
     };
 
+    // El tarro de esta persona en este proyecto. Se presenta en la petición salvo que quien la
+    // escribió haya puesto su propia cabecera `Cookie`, que gana: está diciendo qué quiere mandar.
+    const now = this.clock.now();
+    const jar = liveCookies(await this.cookieJar.list(command.actorId, project.id), now.getTime());
+    const cookiesSent = matchingCookies(sending.url, jar, now.getTime());
+    for (const cookie of cookiesSent) run.secrets.push(cookie.value);
+
     let result;
     try {
-      result = await this.http.request(url, {
+      result = await this.http.request(sending.url, {
         method: input.method,
         headers,
+        jar,
         ...(body.value && input.method !== "GET" && input.method !== "HEAD" ? { body: body.value.payload } : {}),
       });
     } catch (error) {
@@ -277,6 +316,8 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
         environment: environmentView,
         scripts,
         sessionToken: captured,
+        // Nada llegó, así que nada se guardó; lo que se presentó sí se dice.
+        cookies: { sent: cookiesSent.map((cookie) => `${cookie.name}=${cookie.domain}${cookie.path}`), stored: [], rejected: [] },
       };
     }
 
@@ -288,6 +329,8 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
       durationMs: result.durationMs,
       timing: result.timing,
     };
+
+    const cookies = await this.storeCookies(command.actorId, project.id, result.setCookie, sending.url, jar, now);
 
     captured = (await this.captureFromLogin(command, project, base, url, response, interpolate)) ?? captured;
 
@@ -316,6 +359,55 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
       environment: environmentView,
       scripts,
       sessionToken: captured,
+      cookies: {
+        sent: cookiesSent.map((cookie) => `${cookie.name}=${cookie.domain}${cookie.path}`),
+        stored: cookies.stored,
+        rejected: cookies.rejected,
+      },
+    };
+  }
+
+  /**
+   * Las cookies de la respuesta, guardadas en el tarro de quien envió.
+   *
+   * De **todos** los saltos: un login suele contestar 302 con la cookie puesta, y la cookie de ese
+   * salto es justo la que hace falta para la petición siguiente.
+   *
+   * Lo rechazado se devuelve para poder decirlo. Una cookie que no se guarda porque el servidor la
+   * puso para otro dominio es una explicación; el silencio es un 401 que nadie entiende.
+   */
+  private async storeCookies(
+    actorId: string,
+    projectId: string,
+    lines: string[],
+    url: string,
+    jar: Cookie[],
+    now: Date,
+  ): Promise<{ stored: string[]; rejected: { line: string; why: string }[] }> {
+    if (!lines.length) return { stored: [], rejected: [] };
+    const read = cookiesFrom(lines, url, now.getTime());
+    const gone = read.cookies.filter((cookie) => cookie.expiresAt !== null && cookie.expiresAt <= now.getTime());
+    const kept = withCookies(jar, read.cookies, now.getTime());
+    // Una cookie con fecha pasada es un cierre de sesión: se borra de la tabla, no solo del tarro
+    // en memoria, porque si no vuelve a cargarse en el envío siguiente.
+    if (gone.length) await this.cookieJar.remove(actorId, projectId, gone);
+    const live = read.cookies.filter((cookie) => cookie.expiresAt === null || cookie.expiresAt > now.getTime());
+    if (live.length) {
+      // Se guardan con la fecha de creación que ya tenían, que es la que ordena la cabecera.
+      const byKey = new Map(kept.map((cookie) => [cookieKey(cookie), cookie]));
+      await this.cookieJar.save(
+        actorId,
+        projectId,
+        live.map((cookie) => byKey.get(cookieKey(cookie)) ?? cookie),
+      );
+    }
+    await this.cookieJar.purgeExpired(actorId, projectId, now);
+    return {
+      stored: [
+        ...live.map((cookie) => `${cookie.name}=${cookie.domain}${cookie.path}`),
+        ...gone.map((cookie) => `${cookie.name} (borrada)`),
+      ],
+      rejected: read.rejected,
     };
   }
 
@@ -383,17 +475,16 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
     secrets: Record<string, string | undefined>,
     environment: Environment | null,
     base: string,
-    headers: Record<string, string>,
+    sending: { url: string; headers: Record<string, string>; method: string; body: string | null },
     interpolate: (value: string) => string,
     run: ScriptSession,
   ): Promise<string> {
-    if (input.auth.mode === "none") return "Sin autenticación";
-    if (input.auth.mode === "bearer") {
-      const token = interpolate(input.auth.token).trim();
-      if (!token) return "Sin autenticación: el token de la petición está vacío";
-      headers.Authorization = `Bearer ${token}`;
-      run.secrets.push(token);
-      return "Token de esta petición";
+    const headers = sending.headers;
+    if (input.auth.type === "none") return "Sin autenticación";
+    // Un tipo escrito en la petición se firma aquí y no hereda nada: es la decisión de quien la
+    // escribió, y la cadena del proyecto es solo lo que pasa cuando no la hay.
+    if (input.auth.type !== "inherit") {
+      return this.signRequestAuth(input.auth, sending, interpolate, run);
     }
 
     const session = await this.sessionTokens.find(actorId, project.id);
@@ -438,6 +529,99 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
         return `Credencial «${primary.name}» del entorno${expiredNote}`;
       }
     }
+  }
+
+  /**
+   * La firma de un tipo escrito en la petición: cabeceras, query y —si hace falta— una vuelta más.
+   *
+   * Dos casos necesitan red antes de poder firmar, y los dos se hacen aquí porque el firmante es
+   * puro y no la tiene:
+   *
+   * - **Digest** firma con el `nonce` del servidor, que solo llega en su 401. Se pide ese 401, se
+   *   lee su `WWW-Authenticate` y se firma con él. Sin esto, Digest no es «no soportado»: es una
+   *   cabecera inventada que el servidor rechaza.
+   * - **OAuth 2.0 sin token**, con un flujo que no necesita navegador, se pide al servidor de token
+   *   —por la misma red guardada que todo lo demás— y se firma con lo que conteste.
+   *
+   * La query que añada la firma se mete en la URL aquí: `?access_token=` es parte de la petición,
+   * no de sus cabeceras.
+   */
+  private async signRequestAuth(
+    auth: RequestAuth,
+    request: { url: string; headers: Record<string, string>; method: string; body: string | null },
+    interpolate: (value: string) => string,
+    run: ScriptSession,
+  ): Promise<string> {
+    const resolved: RequestAuth = {
+      type: auth.type,
+      params: Object.fromEntries(Object.entries(auth.params).map(([key, value]) => [key, interpolate(value)])),
+    };
+    for (const [key, value] of Object.entries(resolved.params)) {
+      if (SECRET_PARAMS.has(key) && value) run.secrets.push(value);
+    }
+
+    let note = "";
+    if (resolved.type === "oauth2" && !resolved.params.accessToken?.trim()) {
+      const asked = await this.askForToken(resolved);
+      if (typeof asked !== "string") return asked.failed;
+      resolved.params.accessToken = asked;
+      run.secrets.push(asked);
+      note = " · token pedido ahora";
+    }
+
+    let signed = signAuth(resolved, { ...request, url: request.url });
+    if (signed.needsChallenge) {
+      // El 401 que trae el `nonce`. Va sin cuerpo: lo único que se le pide es la cabecera del reto.
+      let probe;
+      try {
+        probe = await this.http.request(request.url, { method: request.method, headers: { ...request.headers } });
+      } catch (error) {
+        if (error instanceof BlockedTargetError) throw error;
+        return `${AUTH_LABELS[resolved.type]}: no se pudo pedir el reto al servidor`;
+      }
+      const challenge = probe.headers["www-authenticate"] ?? probe.headers["WWW-Authenticate"] ?? "";
+      if (!challenge) return `${AUTH_LABELS[resolved.type]}: el servidor no pidió autenticación en su respuesta`;
+      signed = signAuth(resolved, { ...request, challenge });
+      note = " · con el reto del servidor";
+    }
+    if (signed.unsupported) return `${AUTH_LABELS[resolved.type]}: ${signed.unsupported}`;
+
+    for (const pair of signed.headers) request.headers[pair.name] = pair.value;
+    if (signed.query.length) {
+      const separator = request.url.includes("?") ? "&" : "?";
+      request.url += separator + signed.query.map((pair) => `${encodeURIComponent(pair.name)}=${encodeURIComponent(pair.value)}`).join("&");
+    }
+    // «de esta petición» porque es lo que la distingue de la del proyecto en la misma frase: quien
+    // lee el eco quiere saber de dónde salió la credencial, no solo de qué tipo era.
+    return `${AUTH_LABELS[resolved.type]} de esta petición${note}`;
+  }
+
+  /** El token de OAuth 2, pedido al servidor de token con el flujo que no necesita navegador. */
+  private async askForToken(auth: RequestAuth): Promise<string | { failed: string }> {
+    const made = tokenRequestFor(auth);
+    if ("unsupported" in made) return { failed: `OAuth 2.0: ${made.unsupported}` };
+    let result;
+    try {
+      result = await this.http.request(made.request.url, {
+        method: made.request.method,
+        headers: made.request.headers,
+        body: made.request.body,
+      });
+    } catch (error) {
+      if (error instanceof BlockedTargetError) throw error;
+      return { failed: "OAuth 2.0: el servidor de token no respondió" };
+    }
+    if (result.status < 200 || result.status >= 300) {
+      return { failed: `OAuth 2.0: el servidor de token contestó ${result.status}` };
+    }
+    let body: unknown;
+    try {
+      body = JSON.parse(result.body);
+    } catch {
+      return { failed: "OAuth 2.0: la respuesta del servidor de token no es JSON" };
+    }
+    const read = readTokenResponse(body);
+    return read ? read.accessToken : { failed: "OAuth 2.0: la respuesta no trae access_token" };
   }
 
   /** The project's login, performed now, and the token read out of its answer. */

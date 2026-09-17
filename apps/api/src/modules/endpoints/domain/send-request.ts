@@ -13,7 +13,9 @@
  *   literal text and came back as a 400 about a value the person never meant to send.
  * - **The request goes through the SSRF guard**, like every other address a customer types.
  */
-import { BODY_MODES, MAX_SCRIPT, type EndpointBody, type EndpointHeader, type EndpointMethod } from "./model";
+import { isAuthType, type RequestAuth } from "@eq/runner-core";
+
+import { BODY_MODES, MAX_AUTH_PARAM, MAX_SCRIPT, type EndpointBody, type EndpointHeader, type EndpointMethod } from "./model";
 
 export const MAX_UPLOAD_FILES = 10;
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
@@ -26,6 +28,13 @@ export type UploadedPart = { fieldname: string; originalname: string; mimetype: 
 export const filePartName = (field: string): string => `file:${field}`;
 export const BINARY_PART = "binary";
 
+/**
+ * Los modos que aceptaba el botón de enviar antes de que existieran los demás.
+ *
+ * Se siguen leyendo porque un cliente que no se haya recargado los manda: `{mode:"bearer",token}`
+ * se traduce a `{type:"bearer",params:{token}}` y sigue funcionando. Los tipos nuevos llegan ya con
+ * la forma de `RequestAuth`.
+ */
 export const SEND_AUTH_MODES = ["inherit", "none", "bearer"] as const;
 export type SendAuthMode = (typeof SEND_AUTH_MODES)[number];
 
@@ -37,7 +46,8 @@ export type SendInput = {
   query: { name: string; value: string; enabled: boolean }[];
   headers: EndpointHeader[];
   body: EndpointBody;
-  auth: { mode: SendAuthMode; token: string };
+  /** Cómo entra: los mismos tipos que Postman. `inherit` usa la cadena del proyecto. */
+  auth: RequestAuth;
   /** What is in the editor, saved or not: «Enviar» runs the scripts on screen. */
   preRequestScript: string;
   postResponseScript: string;
@@ -49,6 +59,32 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const text = (value: unknown): string => (typeof value === "string" ? value : "");
 const rows = (value: unknown): Record<string, unknown>[] => (Array.isArray(value) ? value.filter(isRecord) : []);
+
+/**
+ * El bloque de autenticación, en su forma nueva o en la vieja.
+ *
+ * La vieja es `{mode, token}` y llega de un navegador que no se ha recargado. Traducirla cuesta
+ * tres líneas y evita que enviar una petición falle mientras alguien tiene la pestaña abierta.
+ */
+function readAuth(value: unknown): { auth: RequestAuth } | { problem: Problem } {
+  const block = isRecord(value) ? value : {};
+  const mode = text(block.mode);
+  if (mode) {
+    if (!(SEND_AUTH_MODES as readonly string[]).includes(mode))
+      return { problem: { field: "auth.mode", detail: "inherit, none o bearer" } };
+    return { auth: { type: mode as SendAuthMode, params: { token: text(block.token) } } };
+  }
+  const type = text(block.type) || "inherit";
+  if (!isAuthType(type)) return { problem: { field: "auth.type", detail: "Tipo de autenticación no válido" } };
+  const params: Record<string, string> = {};
+  const given = isRecord(block.params) ? block.params : {};
+  for (const [key, item] of Object.entries(given)) {
+    const asText = text(item);
+    if (asText.length > MAX_AUTH_PARAM) return { problem: { field: `auth.params.${key}`, detail: "Demasiado largo" } };
+    params[key] = asText;
+  }
+  return { auth: { type, params } };
+}
 
 /**
  * The `request` part of the multipart form, read without trusting it.
@@ -78,10 +114,8 @@ export function readSendInput(raw: string | undefined): { input: SendInput } | {
   if (!(BODY_MODES as readonly string[]).includes(mode))
     problems.push({ field: "body.mode", detail: "Tipo de cuerpo no válido" });
 
-  const auth = isRecord(value.auth) ? value.auth : {};
-  const authMode = text(auth.mode) || "inherit";
-  if (!(SEND_AUTH_MODES as readonly string[]).includes(authMode))
-    problems.push({ field: "auth.mode", detail: "inherit, none o bearer" });
+  const authRead = readAuth(value.auth);
+  if ("problem" in authRead) problems.push(authRead.problem);
 
   const headers = rows(value.headers).map((row) => ({
     name: text(row.name).trim(),
@@ -121,7 +155,7 @@ export function readSendInput(raw: string | undefined): { input: SendInput } | {
           enabled: row.enabled !== false,
         })),
       },
-      auth: { mode: authMode as SendAuthMode, token: text(auth.token) },
+      auth: "auth" in authRead ? authRead.auth : { type: "inherit", params: {} },
       preRequestScript: text(value.preRequestScript),
       postResponseScript: text(value.postResponseScript),
     },

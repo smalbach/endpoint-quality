@@ -28,6 +28,7 @@
  */
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { cookieHeaderFor, type Cookie } from "@eq/runner-core";
 
 export type SafeFetchPolicy = {
   allowPrivateTargets: boolean;
@@ -60,6 +61,15 @@ export type RequestTiming = {
 export type SafeFetchResult = {
   status: number;
   headers: Record<string, string>;
+  /**
+   * Las cabeceras `Set-Cookie`, una por una y de **todos** los saltos.
+   *
+   * Aparte de `headers` porque ahí no caben: varias `Set-Cookie` leídas como un solo valor se unen
+   * con comas, y un `Expires=Wed, 09 Jun 2027 10:18:14 GMT` lleva una coma dentro. Partir esa
+   * cadena es adivinar. De todos los saltos porque un login suele contestar 302 con la cookie
+   * puesta, y la cookie de ese salto es justo la que hace falta.
+   */
+  setCookie: string[];
   body: string;
   finalUrl: string;
   /** Milliseconds for the request that produced this response, redirects excluded. */
@@ -170,6 +180,14 @@ export type SafeRequestOptions = {
   /** Bytes as well as text: a file sent from the endpoint editor is not a string, and decoding it
    * into one would corrupt anything that is not UTF-8. */
   body?: string | Uint8Array;
+  /**
+   * El tarro de cookies que presenta la petición, si lo hay.
+   *
+   * Se calcula **por salto** y no una vez: una redirección puede llevar a otro host o a otra ruta,
+   * y las cookies que le tocan son otras. Una cabecera `Cookie` escrita a mano gana: quien la
+   * escribe está diciendo exactamente qué quiere mandar.
+   */
+  jar?: Cookie[];
 };
 
 /**
@@ -189,9 +207,12 @@ export async function safeFetch(
   policy: SafeFetchPolicy,
   options: SafeRequestOptions = {},
 ): Promise<SafeFetchResult> {
-  const method = (options.method ?? "GET").toUpperCase();
+  let method = (options.method ?? "GET").toUpperCase();
   let current = rawUrl;
+  let body = options.body;
   const visited = new Set<string>();
+  const setCookie: string[] = [];
+  const wroteCookie = Object.keys(options.headers ?? {}).some((name) => name.toLowerCase() === "cookie");
 
   for (let hop = 0; hop <= policy.maxRedirects; hop += 1) {
     if (visited.has(current)) throw new BlockedTargetError(current, "bucle de redirecciones");
@@ -217,10 +238,13 @@ export async function safeFetch(
         ...options.headers,
         Host: url.host,
       };
+      // Las cookies de *este* salto: una redirección a otro host no lleva las del anterior.
+      const cookieHeader = options.jar && !wroteCookie ? cookieHeaderFor(url.toString(), options.jar, Date.now()) : "";
+      if (cookieHeader) headers.Cookie = cookieHeader;
       response = await fetch(direct, {
         method,
         headers,
-        ...(options.body === undefined ? {} : { body: options.body }),
+        ...(body === undefined ? {} : { body }),
         redirect: "manual",
         signal: controller.signal,
       });
@@ -231,16 +255,27 @@ export async function safeFetch(
       clearTimeout(timeout);
     }
 
+    setCookie.push(...response.headers.getSetCookie());
+
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get("location");
       if (!location) throw new BlockedTargetError(current, `redirección ${response.status} sin cabecera Location`);
-      if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
-        // Following it would repeat a write at an address the caller never chose. It is also
-        // indistinguishable, from here, from an attempt to have us delete something elsewhere.
+      // `307` y `308` conservan el método y el cuerpo, así que seguirlas sobre una escritura sería
+      // repetir esa escritura en una dirección que nadie eligió — indistinguible, desde aquí, de un
+      // intento de que borremos algo en otro sitio. Eso se sigue rechazando.
+      if (!["GET", "HEAD", "OPTIONS"].includes(method) && (response.status === 307 || response.status === 308)) {
         throw new BlockedTargetError(
           current,
           `redirección ${response.status} sobre un ${method}: no se reenvía una escritura`,
         );
+      }
+      // `301`, `302` y `303` sobre una escritura se siguen **como un GET sin cuerpo**, que es lo
+      // que hace cualquier navegador y lo que la RFC 9110 exige para el 303. No es repetir la
+      // escritura: es leer en la dirección nueva, y sin esto un login que contesta 302 —el caso
+      // normal de una API con cookies— no se puede seguir hasta el final.
+      if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+        method = "GET";
+        body = undefined;
       }
       current = new URL(location, url).toString();
       continue;
@@ -250,12 +285,20 @@ export async function safeFetch(
     // and the body having been read. Those are the two halves of a slow response and they have
     // different owners.
     const headersAt = Date.now();
-    const body = await readCapped(response, policy.maxResponseBytes, current);
+    const text = await readCapped(response, policy.maxResponseBytes, current);
     const readAt = Date.now();
     return {
       status: response.status,
-      headers: Object.fromEntries(response.headers.entries()),
-      body,
+      headers: {
+        ...Object.fromEntries(response.headers.entries()),
+        // `entries()` devuelve una entrada por cada `Set-Cookie`, así que `fromEntries` se queda
+        // **con la última** y pierde las demás: una captura que leyera `set-cookie` estaría
+        // leyendo una cookie que no es la que buscaba. Aquí van todas, unidas como las une la
+        // propia plataforma, y quien necesite precisión usa `setCookie`.
+        ...(setCookie.length ? { "set-cookie": setCookie.join(", ") } : {}),
+      },
+      setCookie,
+      body: text,
       finalUrl: url.toString(),
       durationMs: readAt - started,
       timing: { dnsMs, ttfbMs: headersAt - started, downloadMs: readAt - headersAt },

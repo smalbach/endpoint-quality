@@ -25,6 +25,7 @@ const endpoint = (
   headers: [],
   body: { mode: "none", text: "", contentType: "text/plain", fields: [] },
   requiresAuth: false,
+  auth: { type: "inherit", params: {} },
   tags: [],
   status: "active",
   origin: "manual",

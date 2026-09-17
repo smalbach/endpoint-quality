@@ -17,6 +17,7 @@ import type {
   EndpointStatus,
   EndpointView,
   Environment,
+  RequestAuthView,
 } from "@/lib/types";
 
 export const METHODS: EndpointMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
@@ -34,6 +35,8 @@ export type EndpointDraft = {
   headers: EndpointHeaderView[];
   body: EndpointBodyView;
   requiresAuth: boolean;
+  /** Cómo entra: se guarda con el endpoint, como Postman guarda el auth con la petición. */
+  auth: RequestAuthView;
   /** As typed: comma separated. */
   tags: string;
   status: EndpointStatus;
@@ -42,6 +45,40 @@ export type EndpointDraft = {
 };
 
 export const EMPTY_BODY: EndpointBodyView = { mode: "none", text: "", contentType: "text/plain", fields: [] };
+export const INHERIT_AUTH: RequestAuthView = { type: "inherit", params: {} };
+
+/** Los parámetros que van a la fila. Los secretos son los que el servidor vacía al guardar. */
+const SECRET_PARAMS = new Set([
+  "password",
+  "secret",
+  "secretKey",
+  "clientSecret",
+  "consumerSecret",
+  "tokenSecret",
+  "authKey",
+  "token",
+  "accessToken",
+  "apiKey",
+  "value",
+  "privateKey",
+]);
+
+/**
+ * Lo que se guarda de la autenticación.
+ *
+ * Un campo de texto en blanco no se guarda. Un **secreto** vacío sí: ese vacío dice que la
+ * credencial existe y que su valor no está aquí, que es lo que hace que el fichero exportado
+ * enseñe qué falta en vez de una petición que parece no necesitar nada. La misma regla vive en el
+ * servidor, que es quien decide de verdad; esta es para que la pantalla no se contradiga con él.
+ */
+export function storableParams(auth: RequestAuthView): Record<string, string> {
+  const params: Record<string, string> = {};
+  for (const [key, value] of Object.entries(auth.params)) {
+    const secret = SECRET_PARAMS.has(key) && (key !== "value" || auth.type === "apikey");
+    if (value !== "" || secret) params[key] = value;
+  }
+  return params;
+}
 
 export const NEW_ENDPOINT: EndpointDraft = {
   method: "GET",
@@ -52,6 +89,7 @@ export const NEW_ENDPOINT: EndpointDraft = {
   headers: [],
   body: EMPTY_BODY,
   requiresAuth: false,
+  auth: INHERIT_AUTH,
   tags: "",
   status: "active",
   preRequestScript: "",
@@ -68,6 +106,7 @@ export function draftFrom(view: EndpointView): EndpointDraft {
     headers: view.headers,
     body: view.body,
     requiresAuth: view.requiresAuth,
+    auth: view.auth ?? INHERIT_AUTH,
     tags: view.tags.join(", "),
     status: view.status,
     preRequestScript: view.preRequestScript,
@@ -114,6 +153,7 @@ export function savePayload(draft: EndpointDraft) {
       fields: named(draft.body.fields).map((field) => (field.kind === "file" ? { ...field, value: "" } : field)),
     },
     requiresAuth: draft.requiresAuth,
+    auth: { type: draft.auth.type, params: storableParams(draft.auth) },
     tags: parseTags(draft.tags),
     status: draft.status,
     preRequestScript: draft.preRequestScript,
@@ -126,7 +166,8 @@ export function isDirty(draft: EndpointDraft, saved: EndpointDraft | null): bool
   return JSON.stringify(savePayload(draft)) !== JSON.stringify(savePayload(saved));
 }
 
-export type SendAuth = { mode: "inherit" | "none" | "bearer"; token: string };
+/** Lo que el botón de enviar manda. Es el del borrador: se guarda con el endpoint. */
+export type SendAuth = RequestAuthView;
 
 /** The files chosen for this request, which never reach the saved row. */
 export type ChosenFiles = { fields: Record<string, File>; binary: File | null };
@@ -151,12 +192,7 @@ export function missingFiles(body: EndpointBodyView, files: ChosenFiles): string
 }
 
 /** The multipart form «Send» posts: the request as JSON, and one part per file. */
-export function sendForm(
-  draft: EndpointDraft,
-  environmentId: string | null,
-  auth: SendAuth,
-  files: ChosenFiles,
-): FormData {
+export function sendForm(draft: EndpointDraft, environmentId: string | null, files: ChosenFiles): FormData {
   const payload = savePayload(draft);
   const form = new FormData();
   form.append(
@@ -169,7 +205,7 @@ export function sendForm(
       query: payload.query,
       headers: payload.headers,
       body: payload.body,
-      auth,
+      auth: payload.auth,
       preRequestScript: payload.preRequestScript,
       postResponseScript: payload.postResponseScript,
     }),
@@ -221,9 +257,49 @@ export function resolvedParts(path: string, variables: Record<string, ResolvedVa
  * Non-sensitive variables are substituted, so the command runs as it is; a sensitive one stays as
  * `{{name}}`, because a command copied into a ticket is exactly where a token must not travel.
  */
+/**
+ * La autenticación como la escribiría `curl`, y lo que `curl` no puede escribir.
+ *
+ * `curl` sabe hacer Basic, Bearer, una clave en una cabecera y Digest —ese con `--digest`, que
+ * negocia el 401 él mismo—. Una firma de AWS o de Hawk no: se calculan sobre la petición y el
+ * comando no las lleva. Poner la cabecera sin firmar daría un comando que falla sin decir por qué,
+ * así que sale un comentario que dice qué le falta.
+ */
+function curlAuth(
+  auth: RequestAuthView,
+  hasAuthorization: boolean,
+  substitute: (text: string) => string,
+): string[] {
+  if (hasAuthorization || auth.type === "inherit" || auth.type === "none") return [];
+  const of = (name: string) => substitute(auth.params[name] ?? "");
+  switch (auth.type) {
+    case "bearer":
+      return of("token") ? [`  -H ${shellQuote(`Authorization: Bearer ${of("token")}`)}`] : [];
+    case "basic":
+      return [`  -u ${shellQuote(`${of("username")}:${of("password")}`)}`];
+    case "digest":
+      return [`  --digest -u ${shellQuote(`${of("username")}:${of("password")}`)}`];
+    case "apikey":
+      return of("key")
+        ? [
+            (auth.params.in ?? "header") === "query"
+              ? `  --url-query ${shellQuote(`${of("key")}=${of("value")}`)}`
+              : `  -H ${shellQuote(`${of("key")}: ${of("value")}`)}`,
+          ]
+        : [];
+    case "oauth2":
+    case "jwt":
+      return of("accessToken") || of("token")
+        ? [`  -H ${shellQuote(`Authorization: Bearer ${of("accessToken") || of("token")}`)}`]
+        : [`  # falta el token de ${auth.type === "jwt" ? "JWT" : "OAuth 2.0"}`];
+    default:
+      return [`  # ${auth.type}: la firma se calcula sobre la petición y curl no la lleva`];
+  }
+}
+
 export function endpointCurl(
   draft: EndpointDraft,
-  context: { baseUrl: string; variables: Record<string, ResolvedVariable>; auth: SendAuth; files: ChosenFiles },
+  context: { baseUrl: string; variables: Record<string, ResolvedVariable>; files: ChosenFiles },
 ): string {
   const substitute = (text: string) =>
     text.replace(/\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g, (token, name: string) => {
@@ -245,8 +321,7 @@ export function endpointCurl(
   const headers = payload.headers.filter((header) => header.enabled);
   for (const header of headers) lines.push(`  -H ${shellQuote(`${header.name}: ${substitute(header.value)}`)}`);
   const hasHeader = (name: string) => headers.some((header) => header.name.toLowerCase() === name);
-  if (context.auth.mode === "bearer" && context.auth.token && !hasHeader("authorization"))
-    lines.push(`  -H ${shellQuote(`Authorization: Bearer ${substitute(context.auth.token)}`)}`);
+  lines.push(...curlAuth(payload.auth, hasHeader("authorization"), substitute));
 
   const body = payload.body;
   if (body.mode === "json" || body.mode === "raw") {

@@ -38,6 +38,22 @@ before(async () => {
     const chunks: Buffer[] = [];
     incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
     incoming.on("end", () => {
+      // Un login como los de verdad: 302 a otra ruta y **dos** cabeceras `Set-Cookie`, una de
+      // ellas con una fecha que lleva una coma dentro. Las dos cosas juntas son lo que rompe un
+      // cliente que no sigue la redirección de un POST o que lee las cookies como una sola cadena.
+      if (incoming.url?.startsWith("/entrar")) {
+        response.writeHead(302, {
+          location: "/tras-entrar",
+          "set-cookie": [
+            "session=s3cr3t0; Path=/; Expires=Wed, 09 Jun 2027 10:18:14 GMT; HttpOnly",
+            "tema=oscuro; Path=/",
+            // Para otro dominio: el servidor la manda y el tarro tiene que rechazarla.
+            "ajena=1; Domain=otro.example.com; Path=/",
+          ],
+        });
+        response.end();
+        return;
+      }
       response.writeHead(incoming.url?.startsWith("/missing") ? 404 : 200, { "content-type": "application/json" });
       response.end(
         JSON.stringify({
@@ -297,7 +313,7 @@ describe("enviar", () => {
     assert.equal(response.body.response.status, 200);
     assert.equal(response.body.request.headers.Authorization, "••••••••");
     assert.equal(JSON.stringify(response.body.request).includes("tok-secreto"), false);
-    assert.equal(response.body.auth, "Token de esta petición");
+    assert.equal(response.body.auth, "Bearer de esta petición");
     assert.deepEqual(response.body.environment, { id: environmentId, name: "local" });
   });
 
@@ -356,6 +372,212 @@ describe("enviar", () => {
       .attach("file:doc", Buffer.from("MZ"), "setup.exe");
     assert.equal(blocked.status, 422);
     assert.match(blocked.body.type, /file-type-blocked$/);
+  });
+
+  /**
+   * Los tipos de autenticación de Postman, enviados de verdad y vistos en el destino.
+   *
+   * El destino devuelve las cabeceras que recibió, así que esto no comprueba que se calculó una
+   * firma: comprueba que la firma **llegó**. Es la diferencia entre un firmante con pruebas y un
+   * producto que autentica.
+   */
+  test("cada tipo llega al destino con la credencial que le toca", async () => {
+    const basic = await send({
+      method: "GET",
+      path: "/users",
+      body: { mode: "none" },
+      auth: { type: "basic", params: { username: "ana", password: "hunter2" } },
+    });
+    assert.equal(basic.status, 200, JSON.stringify(basic.body));
+    assert.equal(
+      JSON.parse(basic.body.response.body).headers.authorization,
+      `Basic ${Buffer.from("ana:hunter2").toString("base64")}`,
+    );
+    assert.equal(basic.body.auth, "Basic de esta petición");
+    // La contraseña no vuelve en el eco, como no vuelve ningún secreto.
+    assert.equal(JSON.stringify(basic.body.request).includes("hunter2"), false);
+
+    // Una clave en la query va en la URL y no en una cabecera.
+    const apikey = await send({
+      method: "GET",
+      path: "/users",
+      body: { mode: "none" },
+      auth: { type: "apikey", params: { key: "api_key", value: "abc123", in: "query" } },
+    });
+    assert.equal(apikey.status, 200, JSON.stringify(apikey.body));
+    assert.equal(JSON.parse(apikey.body.response.body).url, "/users?api_key=abc123");
+    assert.equal(JSON.parse(apikey.body.response.body).headers.api_key, undefined);
+
+    // La firma de AWS: el destino ve el esquema, el ámbito y las cabeceras firmadas.
+    const aws = await send({
+      method: "GET",
+      path: "/users",
+      body: { mode: "none" },
+      auth: {
+        type: "awsv4",
+        params: { accessKey: "AKIDEXAMPLE", secretKey: "secreta", region: "eu-west-1", service: "execute-api" },
+      },
+    });
+    assert.equal(aws.status, 200, JSON.stringify(aws.body));
+    const signed = JSON.parse(aws.body.response.body).headers;
+    assert.match(signed.authorization, /^AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE\/\d{8}\/eu-west-1\/execute-api\/aws4_request/);
+    assert.match(signed.authorization, /SignedHeaders=host;x-amz-date/);
+    assert.ok(signed["x-amz-date"]);
+    assert.equal(JSON.stringify(aws.body.request).includes("secreta"), false);
+
+    // Hawk firma el host y el puerto, así que su mac depende de la URL: basta ver que llegó.
+    const hawk = await send({
+      method: "GET",
+      path: "/users",
+      body: { mode: "none" },
+      auth: { type: "hawk", params: { authId: "dh37fgj492je", authKey: "clave", algorithm: "sha256" } },
+    });
+    assert.equal(hawk.status, 200, JSON.stringify(hawk.body));
+    assert.match(JSON.parse(hawk.body.response.body).headers.authorization, /^Hawk id="dh37fgj492je", ts="\d+", nonce=".+", mac=".+"$/);
+  });
+
+  test("NTLM se dice que no y no manda media negociación", async () => {
+    const response = await send({
+      method: "GET",
+      path: "/users",
+      body: { mode: "none" },
+      auth: { type: "ntlm", params: { username: "a", password: "b" } },
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.match(response.body.auth, /NTLM: .*tres vueltas/);
+    assert.equal(JSON.parse(response.body.response.body).headers.authorization, undefined);
+  });
+
+  test("Digest pide el 401 primero, y dice cuando el servidor no lo pide", async () => {
+    // El destino de estas pruebas no pide autenticación, así que no hay reto del que firmar. Eso
+    // se dice; antes de esto Digest no existía, y mandar una cabecera sin `nonce` da un 400 raro.
+    const response = await send({
+      method: "GET",
+      path: "/users",
+      body: { mode: "none" },
+      auth: { type: "digest", params: { username: "ana", password: "hunter2" } },
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.match(response.body.auth, /Digest: el servidor no pidió autenticación/);
+  });
+
+  test("el bloque viejo {mode, token} se sigue leyendo: una pestaña sin recargar no deja de enviar", async () => {
+    const response = await send({
+      environmentId,
+      method: "GET",
+      path: "/users",
+      body: { mode: "none" },
+      auth: { mode: "bearer", token: "{{token}}" },
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(JSON.parse(response.body.response.body).headers.authorization, "Bearer tok-secreto");
+  });
+
+  /**
+   * El tarro de cookies: una API que autentica con cookie, probada de principio a fin.
+   *
+   * Sin esto era imposible. El login contestaba su `Set-Cookie`, la petición siguiente salía sin
+   * él, y todo lo que iba detrás contestaba 401; la única salida era capturar la cookie con un
+   * script y pegarla a mano en una cabecera.
+   */
+  test("el login deja la cookie puesta y la petición siguiente la lleva", async () => {
+    // Un POST que contesta 302: se sigue como GET —como hace cualquier navegador— y la cookie de
+    // ese salto es justo la que hace falta. Antes esto se rechazaba por ser «una escritura».
+    const login = await send({
+      method: "POST",
+      path: "/entrar",
+      body: { mode: "json", text: '{"email":"a@b.c","password":"x"}' },
+      auth: { type: "none", params: {} },
+    });
+    assert.equal(login.status, 200, JSON.stringify(login.body));
+    assert.equal(login.body.response.status, 200);
+    // Llegó a la ruta de después de la redirección, y como GET sin cuerpo.
+    const landed = JSON.parse(login.body.response.body);
+    assert.equal(landed.url, "/tras-entrar");
+    assert.equal(landed.method, "GET");
+
+    // Las dos propias se guardaron; la de otro dominio no, y se dice por qué.
+    assert.deepEqual(login.body.cookies.stored.sort(), ["session=127.0.0.1/", "tema=127.0.0.1/"]);
+    assert.equal(login.body.cookies.rejected.length, 1);
+    assert.match(login.body.cookies.rejected[0].why, /no es el dominio de 127\.0\.0\.1/);
+    // El valor no vuelve en ninguna parte de la respuesta: es una credencial.
+    assert.equal(JSON.stringify(login.body.request).includes("s3cr3t0"), false);
+
+    // La petición siguiente la lleva, sin que nadie escriba una cabecera.
+    const after = await send({ method: "GET", path: "/privado", body: { mode: "none" }, auth: { type: "none", params: {} } });
+    assert.equal(after.status, 200, JSON.stringify(after.body));
+    const sent = JSON.parse(after.body.response.body).headers.cookie;
+    assert.match(sent, /session=s3cr3t0/);
+    assert.match(sent, /tema=oscuro/);
+    assert.deepEqual(after.body.cookies.sent.sort(), ["session=127.0.0.1/", "tema=127.0.0.1/"]);
+
+    // Y se puede mirar, con el valor tapado salvo que se pida.
+    const listed = await api().get(`${base()}/cookies`).set(as(owner));
+    assert.equal(listed.status, 200, JSON.stringify(listed.body));
+    const session = listed.body.cookies.find((cookie: { name: string }) => cookie.name === "session");
+    assert.equal(session.value, "\u2022".repeat(8));
+    assert.equal(session.httpOnly, true);
+    assert.equal(session.hostOnly, true);
+    const revealed = await api().get(`${base()}/cookies?reveal=true`).set(as(owner));
+    assert.equal(
+      revealed.body.cookies.find((cookie: { name: string }) => cookie.name === "session").value,
+      "s3cr3t0",
+    );
+
+    // Borrar una deja la otra, que es la diferencia entre la clave de la RFC y borrar por nombre.
+    const removed = await api()
+      .delete(`${base()}/cookies?domain=127.0.0.1&path=/&name=tema`)
+      .set(as(owner));
+    assert.equal(removed.status, 204);
+    const rest = await api().get(`${base()}/cookies`).set(as(owner));
+    assert.deepEqual(
+      rest.body.cookies.map((cookie: { name: string }) => cookie.name),
+      ["session"],
+    );
+
+    // Vaciarlo es cerrar sesión: la petición siguiente sale sin nada.
+    assert.equal((await api().delete(`${base()}/cookies`).set(as(owner))).status, 204);
+    const naked = await send({ method: "GET", path: "/privado", body: { mode: "none" }, auth: { type: "none", params: {} } });
+    assert.equal(JSON.parse(naked.body.response.body).headers.cookie, undefined);
+  });
+
+  test("una cookie escrita a mano pasa por las mismas reglas que las del servidor", async () => {
+    const written = await api()
+      .post(`${base()}/cookies`)
+      .set(as(owner))
+      .send({ url: `${origin}/algo`, setCookie: "manual=abc; Path=/" });
+    assert.equal(written.status, 201, JSON.stringify(written.body));
+    assert.equal(written.body.cookie.value, "abc");
+
+    const sent = await send({ method: "GET", path: "/privado", body: { mode: "none" }, auth: { type: "none", params: {} } });
+    assert.match(JSON.parse(sent.body.response.body).headers.cookie, /manual=abc/);
+
+    // Y las reglas son las mismas: un dominio ajeno se rechaza aquí también, con su motivo.
+    const refused = await api()
+      .post(`${base()}/cookies`)
+      .set(as(owner))
+      .send({ url: `${origin}/algo`, setCookie: "robada=1; Domain=otro.example.com" });
+    assert.equal(refused.status, 422, JSON.stringify(refused.body));
+    assert.match(refused.body.type, /cookie-rejected$/);
+    assert.match(JSON.stringify(refused.body), /no es el dominio/);
+
+    await api().delete(`${base()}/cookies`).set(as(owner));
+  });
+
+  test("una cabecera Cookie escrita a mano gana sobre el tarro", async () => {
+    await api()
+      .post(`${base()}/cookies`)
+      .set(as(owner))
+      .send({ url: `${origin}/algo`, setCookie: "delTarro=1; Path=/" });
+    const response = await send({
+      method: "GET",
+      path: "/privado",
+      headers: [{ name: "Cookie", value: "aMano=2", enabled: true }],
+      body: { mode: "none" },
+      auth: { type: "none", params: {} },
+    });
+    assert.equal(JSON.parse(response.body.response.body).headers.cookie, "aMano=2");
+    await api().delete(`${base()}/cookies`).set(as(owner));
   });
 
   test("un destino que no responde vuelve como error dentro de la respuesta, no como 500", async () => {

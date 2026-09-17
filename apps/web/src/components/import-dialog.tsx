@@ -21,7 +21,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { detectImport, targetsOf, type Detected, type ImportKind } from "@eq/import-detect";
+import { detectImport, looksZipped, readZip, targetsOf, type Detected, type ImportKind } from "@eq/import-detect";
 
 import { api, ApiError } from "@/lib/api";
 import { useOrganization } from "@/lib/auth";
@@ -31,7 +31,45 @@ import { cn } from "@/lib/format";
 import type { ImportAnythingResult, ImportedItemResult, ProjectSummary } from "@/lib/types";
 
 /** Un fichero ya leído: es lo que cruza desde el arrastre global hasta aquí. */
-export type DroppedFile = { name: string; text: string };
+export type DroppedFile = {
+  name: string;
+  text: string;
+  /** Por qué no se pudo leer, cuando no se pudo. Un `.zip` roto es lo único que llega así. */
+  reason?: string;
+};
+
+/**
+ * Los ficheros elegidos o soltados, leídos — y **los `.zip` abiertos**.
+ *
+ * Un zip se abre aquí y no en el servidor porque lo que cruza la red es texto, y un zip metido en
+ * un JSON como si fuera texto llega con los bytes ya estropeados. Abrirlo antes deja además el
+ * resto igual: el detector, el plan y el import siguen viendo ficheros sueltos.
+ *
+ * Vive fuera del diálogo porque el arrastre global lo necesita igual: soltar el zip en cualquier
+ * parte de la ventana tiene que hacer lo mismo que elegirlo aquí dentro.
+ */
+export async function readDropped(files: File[]): Promise<DroppedFile[]> {
+  const read = await Promise.all(
+    files.map(async (file): Promise<DroppedFile[]> => {
+      const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+      if (!looksZipped(file.name, head)) return [{ name: file.name, text: await file.text() }];
+      try {
+        const entries = await readZip(new Uint8Array(await file.arrayBuffer()));
+        if (entries.length) return entries;
+        return [{ name: file.name, text: "", reason: "es un .zip y no trae ningún fichero de texto dentro" }];
+      } catch (error) {
+        return [
+          {
+            name: file.name,
+            text: "",
+            reason: `no se pudo abrir el .zip: ${error instanceof Error ? error.message : "sin detalle"}`,
+          },
+        ];
+      }
+    }),
+  );
+  return read.flat();
+}
 
 type Tab = "files" | "text" | "url";
 
@@ -89,7 +127,12 @@ export function ImportDialog({
 
   /** Lo soltado, reconocido aquí mismo. Vacío en la pestaña de URL: eso lo lee el servidor. */
   const found = useMemo<Detected[]>(() => {
-    if (tab === "files") return files.map((file) => detectImport(file.name, file.text));
+    if (tab === "files")
+      return files.map((file) =>
+        file.reason
+          ? { kind: "unknown" as const, name: file.name, pieces: [], reason: file.reason }
+          : detectImport(file.name, file.text),
+      );
     if (tab === "text" && pasted.trim()) return [detectImport("", pasted)];
     return [];
   }, [tab, files, pasted]);
@@ -104,7 +147,9 @@ export function ImportDialog({
         body: {
           ...(tab === "url" ? { url: url.trim() } : {}),
           ...(tab === "text" && pasted.trim() ? { sources: [{ name: "", text: pasted }] } : {}),
-          ...(tab === "files" && files.length ? { sources: files } : {}),
+          ...(tab === "files" && files.length
+            ? { sources: files.filter((file) => !file.reason).map((file) => ({ name: file.name, text: file.text })) }
+            : {}),
           ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
         },
       }),
@@ -115,7 +160,7 @@ export function ImportDialog({
     Boolean(target) && (tab === "url" ? Boolean(url.trim()) : tab === "text" ? Boolean(pasted.trim()) : readable);
 
   const take = async (picked: FileList | File[]) => {
-    const read = await Promise.all([...picked].map(async (file) => ({ name: file.name, text: await file.text() })));
+    const read = await readDropped([...picked]);
     // Se acumulan: soltar tres y luego dos más es traerlos todos, no quedarse con los últimos.
     setFiles((current) => [...current, ...read.filter((entry) => !current.some((had) => had.name === entry.name))]);
     run.reset();
@@ -194,8 +239,8 @@ export function ImportDialog({
               Arrastra aquí la colección, sus entornos o el volcado completo de Postman.
             </p>
             <p className="mt-0.5 text-[11px] text-slate-400">
-              También un OpenAPI (JSON o YAML), una exportación de Insomnia, un fichero con comandos cURL o un proyecto
-              exportado de aquí.
+              El `.zip` de «Export data» se abre aquí mismo. También un OpenAPI (JSON o YAML), una exportación de
+              Insomnia, un fichero con comandos cURL o un proyecto exportado de aquí.
             </p>
             <input
               ref={filePicker}
