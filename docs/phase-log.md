@@ -2323,3 +2323,68 @@ instancia B: (0 rows)    ← la salta, no la espera
 > bytes y tiene que ser de 32. Crear una variable de entorno **sensible** contesta 500 con
 > `SECRETS_KEY debe ser una clave de 32 bytes en base64`, así que hoy un aviso no puede leer su URL
 > de una variable cifrada en esta instalación. No se ha tocado la clave.
+
+## Ola 8b: el canal correo de los avisos, y la decisión de guardar la dirección en claro
+
+Un monitor ya avisaba a Slack, a Teams o a un webhook. Faltaba el correo, que es a donde avisa quien
+no tiene un canal de chat con guardias — y es el único de los cuatro que va a una **persona** y no a
+un sitio.
+
+### La decisión: la dirección se guarda en claro, y la URL sigue sin guardarse
+
+Parecen el mismo problema y no lo son. Una URL de webhook entrante **es una credencial**: quien la
+tiene publica en ese canal, así que el monitor guarda el nombre de una variable y la URL vive en el
+entorno. Una dirección de correo no autoriza nada — cualquiera puede escribir a ese buzón ya—, y esa
+era la única razón por la que el webhook pasa por una variable.
+
+Guardarla en claro compra además lo que importa de un canal de avisos: **se ve a quién se está
+despertando**. Con la dirección detrás de un nombre de variable, saber quién recibe los avisos de un
+monitor obligaría a abrir el entorno y descifrar un valor, y el teléfono de la madrugada es justo el
+dato que hay que poder revisar de un vistazo. Por eso la tarjeta de la pantalla las enseña enteras:
+esconderlas ahí desmontaría el argumento para guardarlas así. Y los destinatarios tampoco son un
+atributo del entorno que se prueba —el mismo entorno lo comparten corridas a mano que no avisan a
+nadie—, así que meterlos allí ataría el aviso a una variable que cualquiera puede renombrar.
+
+Con los topes del resto del módulo: cinco destinatarios, porque una lista más larga es una lista de
+distribución y una lista de distribución se hace en el servidor de correo, donde alguien puede darse
+de baja. Y cada canal pide su campo y solo el suyo: un aviso por correo que arrastra el `urlVariable`
+de cuando era un webhook se lee como si saliera por los dos sitios, así que al guardar se suelta.
+
+### Lo que el correo no lleva
+
+Ni valores de variables, ni cabeceras, ni cuerpos. Cuenta el proyecto, el monitor, su horario,
+cuántos casos quedaron en rojo y el id de la corrida; el detalle se mira en la aplicación, donde hay
+sesión y permisos. Un correo se reenvía, se archiva en el buzón de alguien y se indexa: un token que
+acabe dentro ya no se puede recoger. Y lo dice dentro, para que quien lo recibe no lo busque.
+
+La redacción contra los secretos del entorno pasó a hacerse **dato por dato** antes de componer el
+mensaje, en vez de sobre el texto ya armado de un canal. Así los cuatro canales salen redactados del
+mismo sitio y el quinto no puede olvidarse. Es también el motivo por el que un aviso por correo
+necesita el entorno aunque no saque ninguna URL de él: de ahí sale la lista de secretos, y sin ella
+no mandar es mejor que mandar.
+
+Y las reglas de siempre: **el aviso no rompe la vuelta**. Un envío por destinatario, con su propio
+`try`, porque un buzón que ya no existe no puede llevarse por delante el aviso de los otros cuatro.
+La nota que queda en el historial dice cuántos salieron y no a quién: la ve todo el proyecto.
+
+### Sin migración
+
+`alert` ya era una columna `jsonb` que guarda el aviso entero, así que el canal nuevo cabe donde
+estaba. Una migración aquí habría sido una migración que no cambia nada.
+
+### Cómo se comprobó
+
+En memoria: que el correo pide direcciones y el webhook sigue pidiendo un nombre de variable, que una
+variable no cuela como buzón, que seis destinatarios no pasan, que la misma dirección dos veces no
+manda el aviso dos veces, y que el detalle del error no repite la dirección mal escrita.
+
+Por HTTP, contra el `RecordingMailer` del arnés —la suite no manda correo a ninguna parte—: que con
+«tras dos fallos» el primero calla, el segundo manda un correo por destinatario, y el tercero no
+repite; que la recuperación llega cuando el monitor vuelve al verde y **no** llega si la caída nunca
+se avisó; que un valor sensible del entorno metido en el nombre del monitor sale redactado del asunto
+y del cuerpo, y que no hay dentro ni cabeceras ni cuerpos de respuesta; y que un servidor de correo
+que rechaza deja la vuelta contando, con una nota que no cita la dirección.
+
+No se comprobó contra la pila desplegada: es un stack compartido y no se tocó.
+
+`api 905 pruebas (12 nuevas) · web 461 (3 nuevas) · lint 0 errores · typecheck limpio`

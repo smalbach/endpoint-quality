@@ -1,8 +1,26 @@
-import { IsBoolean, IsIn, IsObject, IsOptional, IsString, MaxLength, MinLength, ValidateNested } from "class-validator";
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsObject,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+  ValidateNested,
+} from "class-validator";
 import { Type } from "class-transformer";
-import { NOTIFY_CHANNELS, type NotifyChannel } from "@eq/runner-core";
 
-import { MAX_MONITOR_NAME, type MonitorAlert, type MonitorPlan } from "../../domain/model";
+import {
+  MAX_ALERT_RECIPIENTS,
+  MAX_MONITOR_NAME,
+  MAX_RECIPIENT_LENGTH,
+  MONITOR_ALERT_CHANNELS,
+  type MonitorAlert,
+  type MonitorAlertChannel,
+  type MonitorPlan,
+} from "../../domain/model";
 import type { MonitorSchedule } from "../../domain/schedule";
 
 /**
@@ -13,10 +31,24 @@ import type { MonitorSchedule } from "../../domain/schedule";
  * en `StartRunCommand`, que es donde se valida el de cualquier corrida. Repetir esas reglas en
  * decoradores sería tenerlas en dos sitios, y el que se olvidaría de actualizar es este.
  */
+/**
+ * El aviso. Aquí solo la **forma** del cuerpo: qué campo pide cada canal lo decide el dominio.
+ *
+ * `urlVariable` y `recipients` son los dos opcionales por eso: cuál de los dos hace falta depende
+ * de `channel`, y un decorador no sabe mirar otro campo. Poner los dos como obligatorios pediría
+ * un nombre de variable para un aviso por correo.
+ */
 export class MonitorAlertDto {
-  @IsIn(NOTIFY_CHANNELS) channel: NotifyChannel;
+  @IsIn(MONITOR_ALERT_CHANNELS) channel: MonitorAlertChannel;
   /** El **nombre** de la variable del entorno que contiene la URL. Nunca la URL. */
-  @IsString() @MinLength(1) @MaxLength(120) urlVariable: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(120) urlVariable?: string;
+  /** Las direcciones del aviso por correo, en claro: un destinatario no es una credencial. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_ALERT_RECIPIENTS)
+  @IsString({ each: true })
+  @MaxLength(MAX_RECIPIENT_LENGTH, { each: true })
+  recipients?: string[];
   @IsOptional() afterFailures?: number;
 }
 

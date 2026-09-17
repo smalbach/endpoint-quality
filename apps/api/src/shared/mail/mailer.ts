@@ -74,6 +74,64 @@ ${paragraphs.map((paragraph) => `<p style="font-size:14px;line-height:22px;color
 </div></body></html>`;
 }
 
+/**
+ * El aviso de un monitor, por correo.
+ *
+ * El asunto lleva el nombre del monitor y qué le pasa, en ese orden y con el color delante, porque
+ * se lee en una bandeja con cuarenta líneas: quien lo abre ya sabe cuál de sus monitores es y si
+ * tiene que levantarse. El proyecto va detrás, que es lo que se necesita cuando el mismo nombre de
+ * monitor existe en dos proyectos.
+ *
+ * **Lo que este correo no lleva**: ni valores de variables, ni cabeceras, ni cuerpos de petición o
+ * respuesta. Cuenta que una corrida se puso en rojo y dice cuál, y el detalle se mira en la
+ * aplicación, donde hay sesión y permisos. Un correo se reenvía, se archiva en el buzón de alguien
+ * y se indexa; un token que acabe dentro ya no se puede recoger. Quien lo llama redacta además el
+ * texto contra los secretos del entorno, por si el nombre de un monitor o la nota de una vuelta
+ * arrastraran uno.
+ */
+export function monitorAlertMail(input: {
+  monitorName: string;
+  projectName: string;
+  kind: "down" | "up";
+  schedule: string;
+  failures: number;
+  totals: { cases: number; passed: number; failed: number } | null;
+  note: string;
+  runId: string | null;
+  link: string;
+}): Omit<Mail, "to"> {
+  const where = `«${input.monitorName}», del proyecto «${input.projectName}» (${input.schedule}).`;
+  const lines =
+    input.kind === "up"
+      ? [
+          `✅ ${where}`,
+          `Vuelve a estar verde tras ${input.failures} vuelta(s) en rojo seguidas.`,
+          "No hace falta hacer nada: es el aviso que cierra el anterior.",
+        ]
+      : [
+          `🔴 ${where}`,
+          input.totals
+            ? `Su última vuelta dejó ${input.totals.failed} de ${input.totals.cases} casos en rojo.`
+            : `La corrida no llegó a ejecutarse${input.note ? `: ${input.note}` : "."}`,
+          `Van ${input.failures} vuelta(s) en rojo seguidas.`,
+        ];
+  if (input.runId) lines.push(`Corrida: ${input.runId}`);
+  // Dicho dentro del correo, y no solo en el código: quien lo recibe tiene que saber que el detalle
+  // no está aquí, para que no espere encontrarlo ni lo busque reenviándoselo a nadie.
+  lines.push("Este aviso no lleva valores de variables, cabeceras ni cuerpos: el detalle está en la corrida.");
+
+  const title = input.kind === "up" ? "El monitor vuelve a estar verde" : "Un monitor está en rojo";
+  const subject =
+    input.kind === "up"
+      ? `✅ «${input.monitorName}» vuelve a estar verde · ${input.projectName}`
+      : `🔴 «${input.monitorName}» está en rojo · ${input.projectName}`;
+  return {
+    subject,
+    html: layout(title, lines, { label: "Ver el monitor", href: input.link }),
+    text: `${lines.join("\n\n")}\n\n${input.link}`,
+  };
+}
+
 export function welcomeMail(input: { name: string; link: string }): Omit<Mail, "to"> {
   const lines = [
     `Hola, ${input.name}.`,

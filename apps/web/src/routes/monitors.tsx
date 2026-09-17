@@ -13,7 +13,9 @@
  * - **«Correr ahora» no reprograma.** El botón dice correr, así que el turno siguiente no se mueve.
  *   Y se puede saltar igual si la anterior no ha terminado: eso se dice en la vuelta.
  * - **El aviso pide el nombre de una variable, no una URL.** La pantalla no tiene ningún campo donde
- *   pegar una URL de webhook, y eso es a propósito: quien la tiene puede escribir en ese canal.
+ *   pegar una URL de webhook, y eso es a propósito: quien la tiene puede escribir en ese canal. El
+ *   correo sí se escribe aquí tal cual, y no es una excepción descuidada: una dirección no autoriza
+ *   nada, y verla es lo que permite saber a quién se está despertando.
  */
 import { useState } from "react";
 import { useParams } from "react-router-dom";
@@ -37,6 +39,11 @@ import type {
 } from "@/lib/types";
 
 const MIN_INTERVAL_MINUTES = 5;
+
+/** Las mismas dos expresiones y el mismo tope que valida la API, para decirlo antes de enviarlo. */
+const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
+const EMAIL_ADDRESS = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]{2,}$/;
+const MAX_ALERT_RECIPIENTS = 5;
 
 /** Los intervalos que la gente pide de verdad. Un campo libre invita a poner «1». */
 const INTERVALS: { minutes: number; label: string }[] = [
@@ -192,6 +199,7 @@ export function MonitorsPage() {
                   ? `Le toca el ${formatDate(monitor.nextRunAt)}.`
                   : "Pausado: no le toca nunca."}
                 {monitor.lastRunAt && ` Última vez, el ${formatDate(monitor.lastRunAt)}.`}
+                {monitor.alert && ` Avisa ${describeAlert(monitor.alert)}.`}
                 {!monitor.alert && monitor.consecutiveFailures > 0 && (
                   <span className="text-amber-700"> Este monitor no avisa a nadie: los fallos solo se ven aquí.</span>
                 )}
@@ -252,6 +260,20 @@ export function MonitorsPage() {
       )}
     </div>
   );
+}
+
+/**
+ * A quién avisa, en una línea de la tarjeta.
+ *
+ * Las direcciones se enseñan **enteras**, y eso no es un descuido: el argumento para guardar el
+ * correo en claro y no detrás de una variable es justo poder ver a quién se está despertando, y
+ * esconderlo aquí lo desmontaría. Del canal de webhook se enseña el nombre de la variable, que es
+ * lo único que hay — y es también la respuesta a «¿y este avisa a alguien?».
+ */
+function describeAlert(alert: MonitorAlertView): string {
+  const when = alert.afterFailures === 1 ? "al primer fallo" : `tras ${alert.afterFailures} fallos seguidos`;
+  if (alert.channel === "email") return `por correo a ${(alert.recipients ?? []).join(", ")} ${when}`;
+  return `por ${alert.channel}, con la URL de ${alert.urlVariable}, ${when}`;
 }
 
 /** Las últimas vueltas, en una fila. Lo que se lee de un golpe es la forma: verde, verde, rojo. */
@@ -318,7 +340,13 @@ function CreateMonitorModal({
   const [alerting, setAlerting] = useState(false);
   const [channel, setChannel] = useState<MonitorAlertView["channel"]>("slack");
   const [urlVariable, setUrlVariable] = useState("");
+  const [recipients, setRecipients] = useState("");
   const [afterFailures, setAfterFailures] = useState(1);
+
+  // Un solo campo de texto y no una lista de entradas: se pegan de un chat o de una libreta, y
+  // separadas por lo que sea —coma, punto y coma, o un salto de línea— es como vienen pegadas.
+  const addresses = recipients.split(/[\s,;]+/).filter(Boolean);
+  const byMail = channel === "email";
 
   const schedule = (): MonitorScheduleView => {
     if (kind === "interval") return { kind: "interval", minutes };
@@ -338,19 +366,33 @@ function CreateMonitorModal({
             ...(what === "flow" && targetId ? { workflowId: targetId } : {}),
             ...(what === "suite" && targetId ? { suiteId: targetId } : {}),
           },
-          ...(alerting ? { alert: { channel, urlVariable: urlVariable.trim(), afterFailures } } : {}),
+          // Cada canal manda su campo y no el otro, igual que lo valida la API: un aviso por correo
+          // con un nombre de variable dentro no se sabe por dónde sale.
+          ...(alerting
+            ? {
+                alert: byMail
+                  ? { channel, recipients: addresses, afterFailures }
+                  : { channel, urlVariable: urlVariable.trim(), afterFailures },
+              }
+            : {}),
         },
       }),
     onSuccess: () => onCreated(name.trim()),
   });
 
-  const badVariable = alerting && !/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(urlVariable.trim());
+  const badVariable = alerting && !byMail && !VARIABLE_NAME.test(urlVariable.trim());
+  const badRecipients = alerting && byMail && !addresses.every((address) => EMAIL_ADDRESS.test(address));
+  const tooManyRecipients = alerting && byMail && addresses.length > MAX_ALERT_RECIPIENTS;
   const incomplete =
     !name.trim() ||
     !environmentId ||
     (what !== "matrix" && !targetId) ||
     (kind === "weekly" && weekdays.length === 0) ||
-    badVariable;
+    badVariable ||
+    badRecipients ||
+    tooManyRecipients ||
+    // Un aviso por correo sin destinatarios es el botón de avisar sin nadie detrás.
+    (alerting && byMail && addresses.length === 0);
 
   return (
     <Modal
@@ -524,7 +566,7 @@ function CreateMonitorModal({
           <span>
             <span className="font-medium text-slate-800">Avisar cuando se ponga en rojo</span>
             <span className="block text-[11px] text-slate-500">
-              A Slack, Teams o un webhook. Sin esto, los fallos solo se ven en esta pantalla.
+              A Slack, Teams, un webhook o por correo. Sin esto, los fallos solo se ven en esta pantalla.
             </span>
           </span>
         </label>
@@ -541,20 +583,43 @@ function CreateMonitorModal({
                 <option value="slack">Slack</option>
                 <option value="teams">Teams</option>
                 <option value="webhook">Webhook</option>
+                <option value="email">Correo</option>
               </select>
             </Field>
-            <Field
-              label="Variable del entorno con la URL *"
-              hint="El nombre, no la URL. Quien tiene una URL de webhook puede escribir en ese canal, así que vive en el entorno y no aquí."
-              error={badVariable ? "Un nombre de variable, como SLACK_WEBHOOK" : undefined}
-            >
-              <input
-                className={inputClass}
-                value={urlVariable}
-                placeholder="SLACK_WEBHOOK"
-                onChange={(event) => setUrlVariable(event.target.value)}
-              />
-            </Field>
+            {byMail ? (
+              <Field
+                label="Destinatarios *"
+                hint={`Las direcciones, separadas por comas. Como mucho ${MAX_ALERT_RECIPIENTS}: para una lista más larga, una lista de distribución del servidor de correo. El aviso cuenta qué monitor falló y cuántos casos, y nada de lo que la corrida vio.`}
+                error={
+                  tooManyRecipients
+                    ? `Como mucho ${MAX_ALERT_RECIPIENTS} destinatarios`
+                    : badRecipients
+                      ? "Alguna no es una dirección de correo"
+                      : undefined
+                }
+              >
+                <textarea
+                  className={inputClass}
+                  rows={2}
+                  value={recipients}
+                  placeholder="guardia@ejemplo.com, equipo@ejemplo.com"
+                  onChange={(event) => setRecipients(event.target.value)}
+                />
+              </Field>
+            ) : (
+              <Field
+                label="Variable del entorno con la URL *"
+                hint="El nombre, no la URL. Quien tiene una URL de webhook puede escribir en ese canal, así que vive en el entorno y no aquí."
+                error={badVariable ? "Un nombre de variable, como SLACK_WEBHOOK" : undefined}
+              >
+                <input
+                  className={inputClass}
+                  value={urlVariable}
+                  placeholder="SLACK_WEBHOOK"
+                  onChange={(event) => setUrlVariable(event.target.value)}
+                />
+              </Field>
+            )}
             <Field
               label="Avisar tras"
               hint="Fallos seguidos. Avisa una vez al llegar a ese número, no en cada turno: un canal que avisa cada cinco minutos acaba silenciado."

@@ -9,6 +9,9 @@
  *   fallar.
  * - **El aviso pide el nombre de una variable.** Pegar una URL ahí no deja crear: quien tiene una
  *   URL de webhook puede escribir en ese canal.
+ * - **El correo, en cambio, pide direcciones y las manda tal cual.** Es la otra cara de lo mismo:
+ *   una dirección no autoriza nada. Se valida con la misma expresión y el mismo tope que la API,
+ *   para decirlo antes de enviar y no después.
  * - **El horario propone la zona del navegador**, que es la hora que quiere decir quien lo escribe.
  * - **Una vuelta saltada dice por qué**, porque «no corrió» y «corrió y falló» no son lo mismo.
  */
@@ -179,6 +182,79 @@ describe("la pantalla de monitores", () => {
 
     fireEvent.change(dialog.getByLabelText(/Variable del entorno/), { target: { value: "SLACK_WEBHOOK" } });
     expect(dialog.getByRole("button", { name: "Crear" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  test("la tarjeta dice a quién avisa, con las direcciones enteras", async () => {
+    answers({
+      monitors: [
+        monitor({
+          alert: { channel: "email", recipients: ["guardia@ejemplo.com", "jefa@ejemplo.com"], afterFailures: 2 },
+        }),
+      ],
+    });
+    draw();
+    // Esconder la dirección desmontaría el argumento para guardarla en claro: se guarda así
+    // precisamente para poder ver a quién se está despertando.
+    await waitFor(() => expect(screen.getByText(/guardia@ejemplo.com, jefa@ejemplo.com/)).toBeTruthy());
+    expect(screen.getByText(/tras 2 fallos seguidos/)).toBeTruthy();
+  });
+
+  test("el canal correo cambia el campo: direcciones en claro, y ningún nombre de variable", async () => {
+    answers({ monitors: [] });
+    draw();
+    await waitFor(() => expect(screen.getByText("Crear un monitor")).toBeTruthy());
+    fireEvent.click(screen.getByText("Crear un monitor"));
+    const dialog = within(await screen.findByRole("dialog"));
+
+    fireEvent.change(dialog.getByLabelText(/Nombre/), { target: { value: "por correo" } });
+    fireEvent.click(dialog.getByLabelText("Avisar cuando se ponga en rojo"));
+    fireEvent.change(dialog.getByLabelText("Canal"), { target: { value: "email" } });
+
+    // El campo del otro canal desaparece: pedir el nombre de una variable para un correo sería
+    // pedir algo que nadie va a leer.
+    expect(dialog.queryByLabelText(/Variable del entorno/)).toBeNull();
+    expect(dialog.getByRole("button", { name: "Crear" }).hasAttribute("disabled")).toBe(true);
+
+    fireEvent.change(dialog.getByLabelText(/Destinatarios/), { target: { value: "no-es-un-correo" } });
+    expect(dialog.getByText(/no es una dirección de correo/)).toBeTruthy();
+    expect(dialog.getByRole("button", { name: "Crear" }).hasAttribute("disabled")).toBe(true);
+
+    // Separadas por comas, que es como vienen pegadas de un chat.
+    fireEvent.change(dialog.getByLabelText(/Destinatarios/), {
+      target: { value: "guardia@ejemplo.com, jefa@ejemplo.com" },
+    });
+    expect(dialog.getByRole("button", { name: "Crear" }).hasAttribute("disabled")).toBe(false);
+
+    fireEvent.click(dialog.getByRole("button", { name: "Crear" }));
+    await waitFor(() => {
+      const post = call.mock.calls.find(([, options]) => options?.method === "POST");
+      expect(post).toBeTruthy();
+      expect(post![1].body.alert).toEqual({
+        channel: "email",
+        recipients: ["guardia@ejemplo.com", "jefa@ejemplo.com"],
+        afterFailures: 1,
+      });
+    });
+  });
+
+  test("seis destinatarios no son un aviso: son una lista de distribución", async () => {
+    answers({ monitors: [] });
+    draw();
+    await waitFor(() => expect(screen.getByText("Crear un monitor")).toBeTruthy());
+    fireEvent.click(screen.getByText("Crear un monitor"));
+    const dialog = within(await screen.findByRole("dialog"));
+
+    fireEvent.change(dialog.getByLabelText(/Nombre/), { target: { value: "demasiados" } });
+    fireEvent.click(dialog.getByLabelText("Avisar cuando se ponga en rojo"));
+    fireEvent.change(dialog.getByLabelText("Canal"), { target: { value: "email" } });
+    fireEvent.change(dialog.getByLabelText(/Destinatarios/), {
+      target: { value: Array.from({ length: 6 }, (_, index) => `p${index}@ejemplo.com`).join(", ") },
+    });
+
+    // El mismo tope que la API: una lista más larga se hace en el servidor de correo, donde
+    // alguien puede darse de baja.
+    expect(dialog.getByText(/Como mucho 5 destinatarios/)).toBeTruthy();
+    expect(dialog.getByRole("button", { name: "Crear" }).hasAttribute("disabled")).toBe(true);
   });
 
   test("elegir un flujo sin decir cuál no deja crear", async () => {

@@ -5,6 +5,10 @@
  * que el botón**, que la vuelta se cierra con el resultado que de verdad tuvo, y que el aviso sale
  * con la URL que vive en el entorno y no con una escrita en la fila del monitor.
  *
+ * El aviso por correo se comprueba contra el `RecordingMailer` del arnés, que es el único sitio por
+ * donde se puede leer un correo: la suite no manda correo a ninguna parte, y el driver por omisión
+ * de una instalación escribe en el log.
+ *
  * El turno se dispara a mano con `FireDueMonitorsCommand` en vez de esperar al reloj: lo que hay
  * que probar es lo que hace el turno, y esperar sesenta segundos por prueba sería una suite que
  * nadie ejecuta. El reloj en sí es un `setInterval` de doce líneas.
@@ -53,7 +57,7 @@ const as = (actor: Actor) => ({ Authorization: `Bearer ${actor.token}` });
 let owner: Actor;
 
 /** Un proyecto con contrato, entorno y objetivo: lo mínimo para que una corrida exista. */
-async function projectAgainst(faults: StubFaults = {}, variables: Record<string, string> = {}) {
+async function projectAgainst(faults: StubFaults = {}, variables: Record<string, unknown> = {}) {
   const target = new StubTarget(faults);
   await target.start();
   const project = await api()
@@ -94,6 +98,31 @@ async function projectAgainst(faults: StubFaults = {}, variables: Record<string,
   return { target, projectBase, environmentId: environment.body.environmentId as string };
 }
 
+/**
+ * Otro entorno del mismo proyecto, contra un objetivo que no falla.
+ *
+ * Es el camino al verde: un monitor se pone en rojo contra el objetivo roto, se le cambia el plan a
+ * este, y la vuelta siguiente pasa. Se hace así —por la API, cambiando el plan— y no tocando los
+ * fallos del objetivo por dentro, para que la recuperación que se prueba sea una corrida que de
+ * verdad salió bien.
+ */
+async function healthyEnvironmentIn(projectBase: string): Promise<string> {
+  const target = new StubTarget();
+  await target.start();
+  const environment = await api()
+    .post(`${projectBase}/environments`)
+    .set(as(owner))
+    .send({
+      name: `sano-${Math.random().toString(36).slice(2, 8)}`,
+      baseUrl: target.origin,
+      specUrl: `${target.origin}/openapi.json`,
+      writesAllowed: true,
+      authEnforced: false,
+    });
+  assert.equal(environment.status, 201, JSON.stringify(environment.body));
+  return environment.body.environmentId as string;
+}
+
 type MonitorRow = {
   id: string;
   name: string;
@@ -102,6 +131,7 @@ type MonitorRow = {
   lastOutcome: string | null;
   consecutiveFailures: number;
   scheduleLabel: string;
+  alert: Record<string, unknown> | null;
   recent: { outcome: string; runId: string | null; note: string; totals: unknown }[];
 };
 
@@ -156,6 +186,7 @@ afterEach(async () => {
   }
   context.repositories.monitors.executions.clear();
   context.http.calls.length = 0;
+  context.mailer.sent.length = 0;
 });
 
 describe("crear un monitor", () => {
@@ -214,6 +245,38 @@ describe("crear un monitor", () => {
       });
     assert.equal(malo.status, 422);
     assert.equal(malo.body.errors[0].field, "alert.urlVariable");
+  });
+
+  test("el aviso por correo pide direcciones, y no el nombre de una variable", async () => {
+    const { projectBase, environmentId } = await projectAgainst();
+    const base = { name: "por correo", schedule: { kind: "interval", minutes: 60 }, plan: { environmentId } };
+
+    // Un nombre de variable en un aviso por correo es el campo del otro canal, sin destinatarios.
+    const variable = await api()
+      .post(`${projectBase}/monitors`)
+      .set(as(owner))
+      .send({ ...base, alert: { channel: "email", urlVariable: "MAIL_GUARDIA", afterFailures: 1 } });
+    assert.equal(variable.status, 422);
+    assert.equal(variable.body.errors[0].field, "alert.recipients");
+
+    const mala = await api()
+      .post(`${projectBase}/monitors`)
+      .set(as(owner))
+      .send({ ...base, alert: { channel: "email", recipients: ["no-es-un-correo"], afterFailures: 1 } });
+    assert.equal(mala.status, 422);
+    assert.equal(mala.body.errors[0].field, "alert.recipients");
+    // El detalle no repite la dirección: un error de API se registra y se pega en un ticket.
+    assert.ok(!JSON.stringify(mala.body).includes("no-es-un-correo"), JSON.stringify(mala.body));
+
+    // Y la buena se guarda con la dirección en claro, que es la decisión de este canal: un
+    // destinatario no autoriza nada, y hay que poder ver a quién se despierta.
+    const buena = await createMonitor(projectBase, {
+      ...base,
+      alert: { channel: "email", recipients: [" guardia@ejemplo.test "], afterFailures: 1 },
+    });
+    const [row] = await list(projectBase);
+    assert.equal(row!.id, buena.id);
+    assert.deepEqual(row!.alert, { channel: "email", recipients: ["guardia@ejemplo.test"], afterFailures: 1 });
   });
 });
 
@@ -496,6 +559,149 @@ describe("la racha y el aviso", () => {
     assert.equal(row!.recent[0]!.outcome, "failed");
     assert.match(row!.recent[0]!.note, /no está definida/);
     assert.equal(row!.consecutiveFailures, 1);
+  });
+
+  test("el aviso por correo sale una vez por racha, y la recuperación cuando vuelve el verde", async () => {
+    const { projectBase, environmentId } = await projectAgainst({ brokenEnvelope: true });
+    const sano = await healthyEnvironmentIn(projectBase);
+    const monitor = await createMonitor(projectBase, {
+      name: "guardia de pagos",
+      schedule: { kind: "interval", minutes: 60 },
+      plan: { environmentId, operationIds: ["listThings"] },
+      alert: { channel: "email", recipients: ["guardia@ejemplo.test", "jefa@ejemplo.test"], afterFailures: 2 },
+    });
+
+    const fire = async () => {
+      advance(61);
+      await tick();
+      return context.mailer.sent.length;
+    };
+
+    assert.equal(await fire(), 0, "avisó al primer fallo, y el umbral eran dos");
+    // Dos correos y no uno: el puerto manda a una dirección, así que sale uno por destinatario y
+    // una que rebota no se lleva por delante el aviso de la otra.
+    assert.equal(await fire(), 2, "no avisó al llegar al umbral");
+    assert.deepEqual(context.mailer.sent.map((mail) => mail.to).sort(), ["guardia@ejemplo.test", "jefa@ejemplo.test"]);
+
+    const down = context.mailer.sent[0]!;
+    // El asunto se lee en una bandeja llena: el color, el monitor, y qué le pasa.
+    assert.match(down.subject, /🔴/);
+    assert.match(down.subject, /guardia de pagos/);
+    assert.match(down.subject, /en rojo/);
+    assert.match(down.text, /casos en rojo/);
+    // Y la vuelta anota que salió, sin decir a quién.
+    const [row] = await list(projectBase);
+    assert.match(row!.recent[0]!.note, /2 destinatarios/);
+    assert.ok(!row!.recent[0]!.note.includes("@"), row!.recent[0]!.note);
+
+    // Un servicio caído toda la noche no manda un correo por turno: el canal acabaría en una regla
+    // de filtrado, y entonces tampoco se vería el incendio siguiente.
+    assert.equal(await fire(), 2, "repitió el aviso en el turno siguiente");
+
+    // Al verde, cambiándole el plan a un entorno que no falla.
+    const moved = await api()
+      .patch(`${projectBase}/monitors/${monitor.id}`)
+      .set(as(owner))
+      .send({ plan: { environmentId: sano, operationIds: ["listThings"] } });
+    assert.equal(moved.status, 200, JSON.stringify(moved.body));
+
+    assert.equal(await fire(), 4, "no avisó de la recuperación");
+    const up = context.mailer.sent[3]!;
+    assert.match(up.subject, /✅/);
+    assert.match(up.subject, /verde/);
+  });
+
+  test("sin caída avisada no hay recuperación que contar", async () => {
+    const { projectBase, environmentId } = await projectAgainst({ brokenEnvelope: true });
+    const sano = await healthyEnvironmentIn(projectBase);
+    const monitor = await createMonitor(projectBase, {
+      name: "un rojo suelto",
+      schedule: { kind: "interval", minutes: 60 },
+      plan: { environmentId, operationIds: ["listThings"] },
+      alert: { channel: "email", recipients: ["guardia@ejemplo.test"], afterFailures: 2 },
+    });
+
+    // Un solo rojo, que no llegó al umbral y por tanto no avisó a nadie.
+    advance(61);
+    await tick();
+    assert.equal(context.mailer.sent.length, 0);
+
+    await api()
+      .patch(`${projectBase}/monitors/${monitor.id}`)
+      .set(as(owner))
+      .send({ plan: { environmentId: sano, operationIds: ["listThings"] } });
+    advance(61);
+    await tick();
+
+    const [row] = await list(projectBase);
+    assert.equal(row!.lastOutcome, "passed");
+    // «Ya está arreglado» de algo que nunca se dijo que estaba roto es un correo que no se entiende.
+    assert.equal(context.mailer.sent.length, 0, "avisó de una recuperación que nadie esperaba");
+  });
+
+  test("el correo no lleva valores de variables, ni cabeceras, ni cuerpos", async () => {
+    const secret = "s3cr3t-de-produccion";
+    const { projectBase, environmentId } = await projectAgainst(
+      { brokenEnvelope: true },
+      { TOKEN: { initial: secret, sensitive: true }, REGION: "eu-west-1" },
+    );
+    // El camino más corto para meter un valor del entorno en el texto es el nombre del monitor, y
+    // es el mismo camino que recorre la nota de una vuelta: los dos van redactados.
+    await createMonitor(projectBase, {
+      name: `pagos ${secret}`,
+      schedule: { kind: "interval", minutes: 60 },
+      plan: { environmentId, operationIds: ["listThings"] },
+      alert: { channel: "email", recipients: ["guardia@ejemplo.test"], afterFailures: 1 },
+    });
+
+    advance(61);
+    await tick();
+    const mail = context.mailer.sent[0]!;
+    assert.ok(mail, "no salió el correo");
+
+    const everything = `${mail.subject}\n${mail.text}\n${mail.html}`;
+    // Un correo se reenvía, se archiva en el buzón de alguien y se indexa: un token que acabe
+    // dentro ya no se puede recoger.
+    assert.ok(!everything.includes(secret), "el correo llevaba dentro un valor sensible del entorno");
+    assert.match(everything, /••••/, "el valor sensible no se redactó, simplemente no estaba");
+    assert.ok(!everything.includes("eu-west-1"), "el correo llevaba el valor de una variable");
+    assert.ok(!everything.toLowerCase().includes("authorization"), "el correo llevaba una cabecera");
+    assert.ok(!everything.includes('"data"'), "el correo llevaba un cuerpo de respuesta");
+
+    // Lo que sí lleva: qué monitor, cuántos casos y el id de la corrida, que es por donde se sigue.
+    const [row] = await list(projectBase);
+    assert.match(mail.text, /casos en rojo/);
+    assert.ok(mail.text.includes(row!.recent[0]!.runId!), "el correo no dice de qué corrida habla");
+  });
+
+  test("un correo que no sale no rompe la vuelta, y la nota no dice a quién iba", async () => {
+    const { projectBase, environmentId } = await projectAgainst({ brokenEnvelope: true });
+    await createMonitor(projectBase, {
+      name: "correo rechazado",
+      schedule: { kind: "interval", minutes: 60 },
+      plan: { environmentId, operationIds: ["listThings"] },
+      alert: { channel: "email", recipients: ["guardia@ejemplo.test"], afterFailures: 1 },
+    });
+
+    const real = context.mailer.send.bind(context.mailer);
+    // Un servidor de correo que rechaza, que es lo que pasa a las tres de la mañana.
+    context.mailer.send = async () => {
+      throw new Error("550 mailbox unavailable");
+    };
+    try {
+      advance(61);
+      await tick();
+    } finally {
+      context.mailer.send = real;
+    }
+
+    const [row] = await list(projectBase);
+    // Lo contrario —que un buzón que ya no existe apague la vigilancia— es el peor de los dos fallos.
+    assert.equal(row!.recent[0]!.outcome, "failed");
+    assert.equal(row!.consecutiveFailures, 1);
+    assert.match(row!.recent[0]!.note, /no se pudo entregar/);
+    // La nota va al historial, que ve todo el proyecto.
+    assert.ok(!row!.recent[0]!.note.includes("guardia@ejemplo.test"), row!.recent[0]!.note);
   });
 });
 

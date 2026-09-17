@@ -11,19 +11,25 @@
  *   — y entonces tampoco se vería el grave.
  * - **Una corrida cancelada no es un fallo.** La cancela una persona; contarla como rojo despierta
  *   a alguien por algo que otro acaba de hacer a mano.
+ * - **El correo guarda la dirección y el webhook no guarda la URL.** Son la misma decisión mirada
+ *   desde los dos lados: una URL de webhook autoriza a publicar en ese canal y una dirección no
+ *   autoriza nada.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  MAX_ALERT_RECIPIENTS,
   afterExecution,
   blankMonitor,
   monitorProblems,
+  normalizeAlert,
   outcomeOf,
   shouldAlert,
   viewMonitor,
   withChanges,
   type Monitor,
+  type MonitorAlert,
 } from "@/modules/monitors/domain/model";
 import type { MonitorSchedule } from "@/modules/monitors/domain/schedule";
 
@@ -82,6 +88,76 @@ describe("crear", () => {
   it("avisar «tras cero fallos» no significa nada", () => {
     const problems = monitorProblems({ alert: { channel: "slack", urlVariable: "W", afterFailures: 0 } });
     assert.ok(problems.some((problem) => problem.field === "alert.afterFailures"));
+  });
+});
+
+/**
+ * El canal correo, que es el único que guarda su destino en claro.
+ *
+ * La decisión está argumentada en `MonitorAlert` y lo que estas pruebas fijan es su consecuencia:
+ * una dirección **sí** se escribe en la fila del monitor —no autoriza nada, y hay que poder ver a
+ * quién se despierta—, pero se comprueba que lo es y no pasan cuarenta.
+ */
+describe("el aviso por correo", () => {
+  const email = (recipients: string[]) =>
+    monitorProblems({ alert: { channel: "email", recipients, afterFailures: 1 } });
+
+  it("pide direcciones y no un nombre de variable", () => {
+    assert.deepEqual(email(["guardia@ejemplo.com"]), []);
+    // Lo que el canal de webhook pide es justo lo que aquí no vale: una variable no es un buzón.
+    assert.ok(email(["MAIL_GUARDIA"]).some((problem) => problem.field === "alert.recipients"));
+    assert.ok(email([]).some((problem) => problem.field === "alert.recipients"));
+  });
+
+  it("no pide el nombre de variable que el correo no usa", () => {
+    // Y al contrario: un aviso por correo sin `urlVariable` es válido. Pedirlo obligaría a inventar
+    // el nombre de una variable que nadie va a leer.
+    assert.deepEqual(monitorProblems({ alert: { channel: "email", recipients: ["a@b.com"], afterFailures: 2 } }), []);
+  });
+
+  it("no acepta cuarenta destinatarios: eso es una lista de distribución", () => {
+    const many = Array.from({ length: MAX_ALERT_RECIPIENTS + 1 }, (_, index) => `persona${index}@ejemplo.com`);
+    const problems = email(many);
+    assert.equal(problems.length, 1);
+    assert.match(problems[0]!.detail, new RegExp(`${MAX_ALERT_RECIPIENTS}`));
+  });
+
+  it("la misma dirección dos veces no manda el aviso dos veces", () => {
+    assert.ok(email(["a@ejemplo.com", "A@ejemplo.com"]).some((problem) => problem.field === "alert.recipients"));
+  });
+
+  it("el detalle del error no repite la dirección mal escrita", () => {
+    // El mensaje de una API se registra y se pega en un ticket, y esto es el correo de alguien.
+    const [problem] = email(["no-es-un-correo", "b@ejemplo.com"]);
+    assert.ok(problem);
+    assert.ok(!problem.detail.includes("no-es-un-correo"), problem.detail);
+  });
+
+  it("un canal que no existe no es un canal", () => {
+    const problems = monitorProblems({
+      alert: { channel: "paloma" as MonitorAlert["channel"], recipients: ["a@b.com"], afterFailures: 1 },
+    });
+    assert.ok(problems.some((problem) => problem.field === "alert.channel"));
+  });
+
+  it("guardarlo limpia los espacios y suelta el campo del canal que no es", () => {
+    // La fila es lo que alguien audita: un aviso por correo que arrastra el `urlVariable` de cuando
+    // era un webhook se lee como si saliera por los dos sitios.
+    const stored = normalizeAlert({
+      channel: "email",
+      urlVariable: "SLACK_WEBHOOK",
+      recipients: [" guardia@ejemplo.com ", "  "],
+      afterFailures: 1,
+    });
+    assert.deepEqual(stored, { channel: "email", recipients: ["guardia@ejemplo.com"], afterFailures: 1 });
+
+    const webhook = normalizeAlert({
+      channel: "slack",
+      urlVariable: " SLACK_WEBHOOK ",
+      recipients: ["guardia@ejemplo.com"],
+      afterFailures: 1,
+    });
+    assert.deepEqual(webhook, { channel: "slack", urlVariable: "SLACK_WEBHOOK", afterFailures: 1 });
   });
 });
 

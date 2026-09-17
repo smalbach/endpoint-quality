@@ -48,21 +48,99 @@ export const MAX_ALERT_FAILURES = 10;
 export const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
 
 /**
+ * Los canales de un aviso de monitor: los del nodo `notify`, y el correo.
+ *
+ * `NOTIFY_CHANNELS` **no se toca**. Ese conjunto es parte del esquema de un flujo, que se exporta,
+ * se importa y se compara, y el motor de flujos no manda correo: un canal de más allí sería un
+ * documento que valida y un paso que no hace nada. El aviso de un monitor lo manda la API al
+ * cerrar una vuelta, no el motor, así que su lista es suya — y empieza por la del nodo para que
+ * Slack, Teams y el webhook sigan siendo el mismo canal en los dos sitios.
+ */
+export const MONITOR_ALERT_CHANNELS = [...NOTIFY_CHANNELS, "email"] as const;
+export type MonitorAlertChannel = (typeof MONITOR_ALERT_CHANNELS)[number];
+
+/**
+ * Cuántas direcciones caben en un aviso.
+ *
+ * Cinco, por lo mismo que hay un tope de monitores y un tope de fallos: un aviso de monitor va al
+ * puñado de personas que puede arreglarlo. Una lista más larga que eso es una lista de
+ * distribución, y una lista de distribución se hace en el servidor de correo —donde se puede dar de
+ * baja alguien— y no en la fila de un monitor, donde nadie sabría que está dentro.
+ */
+export const MAX_ALERT_RECIPIENTS = 5;
+/** 64 + «@» + 255: lo que mide una dirección como mucho, igual que en los DTO de cuentas. */
+export const MAX_RECIPIENT_LENGTH = 320;
+/**
+ * Una dirección de correo, comprobada por lo que la descalifica y no por la gramática entera.
+ *
+ * La gramática de verdad acepta comillas y comentarios que ningún equipo escribe, y una expresión
+ * que la imite rechaza direcciones válidas — que es el fallo caro: alguien que no recibe el aviso.
+ * Esto descarta lo que de verdad llega a este campo mal escrito: un hueco, una lista pegada con
+ * comas o punto y coma sin separar, un «Nombre <a@b.c>» copiado del cliente de correo, y un dominio
+ * sin punto.
+ */
+export const EMAIL_ADDRESS = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]{2,}$/;
+
+/**
  * A quién se avisa y cuándo.
  *
  * `urlVariable` es **un nombre**, y la URL vive en el entorno del monitor —cifrada si es sensible—
  * por lo mismo que en un nodo `notify`: quien tiene una URL de webhook entrante puede escribir en
  * ese canal, así que es una credencial y no se guarda aquí.
  *
+ * ## `recipients` sí va en claro, y es la decisión que no se parece a la de arriba
+ *
+ * Una dirección de correo **no es una credencial**: no autoriza nada. Quien lee
+ * `alert.recipients` no gana la capacidad de escribir a ese equipo — cualquiera puede escribirle
+ * ya—, mientras que quien lee una URL de webhook gana la de publicar en su canal. Esa es la única
+ * razón por la que el webhook pasa por una variable, así que el correo no tiene por qué.
+ *
+ * Y guardarlo en claro compra algo que importa: **se ve a quién se está despertando**. Con la
+ * dirección detrás de un nombre de variable, saber quién recibe los avisos de un monitor obligaría
+ * a abrir el entorno y descifrar un valor, y el número de teléfono de la madrugada es justo el dato
+ * que hay que poder revisar de un vistazo. Además, los destinatarios no son un atributo del entorno
+ * que se está probando —el mismo entorno lo comparten corridas a mano que no avisan a nadie—, y
+ * meterlos allí ataría el aviso a una variable que cualquiera puede renombrar.
+ *
+ * Lo que sí se mantiene es lo de siempre: el cuerpo va redactado contra los secretos del entorno, y
+ * la nota de un aviso que no salió no cita la dirección.
+ *
  * `afterFailures` existe por el monitor que parpadea. Avisar del primer fallo es lo que se espera y
  * es el valor por defecto; poder pedir dos o tres seguidos es lo que evita que el canal se llene de
  * avisos y alguien lo silencie — que es el fallo de verdad, porque entonces tampoco se ve el grave.
  */
 export type MonitorAlert = {
-  channel: NotifyChannel;
-  urlVariable: string;
+  channel: MonitorAlertChannel;
+  /** El nombre de la variable con la URL. Solo los canales de webhook; ausente en «email». */
+  urlVariable?: string;
+  /** Las direcciones, en claro. Solo «email»; ausente en los demás. */
+  recipients?: string[];
   afterFailures: number;
 };
+
+/** Si este canal sale por una URL de webhook en vez de por el correo. */
+export function isWebhookChannel(channel: MonitorAlertChannel): channel is NotifyChannel {
+  return channel !== "email";
+}
+
+/**
+ * El aviso como se guarda: sin espacios, y sin el campo del canal que no es.
+ *
+ * Se normaliza al guardar y no al enviar porque la fila es lo que alguien audita. Un aviso por
+ * correo que arrastra el `urlVariable` de cuando era un webhook se lee como si saliera por los dos
+ * sitios, y un destinatario con un espacio delante es una dirección que el servidor de correo
+ * rechaza a las tres de la mañana.
+ */
+export function normalizeAlert(alert: MonitorAlert): MonitorAlert {
+  const afterFailures = alert.afterFailures;
+  if (isWebhookChannel(alert.channel))
+    return { channel: alert.channel, urlVariable: alert.urlVariable?.trim() ?? "", afterFailures };
+  return {
+    channel: alert.channel,
+    recipients: (alert.recipients ?? []).map((address) => address.trim()).filter(Boolean),
+    afterFailures,
+  };
+}
 
 /** Qué corrida lanza. Es un plan de `StartRunCommand`, y se valida allí y no aquí. */
 export type MonitorPlan = {
@@ -144,18 +222,43 @@ export function outcomeOf(status: "queued" | "running" | "passed" | "failed" | "
 export function alertProblems(alert: MonitorAlert | null | undefined): Problem[] {
   if (!alert) return [];
   const problems: Problem[] = [];
-  if (!NOTIFY_CHANNELS.includes(alert.channel))
-    problems.push({ field: "alert.channel", detail: "Tiene que ser «slack», «teams» o «webhook»" });
-  if (!alert.urlVariable?.trim() || !VARIABLE_NAME.test(alert.urlVariable.trim())) {
-    problems.push({
-      field: "alert.urlVariable",
-      detail: "Escribe el nombre de la variable del entorno que contiene la URL, no la URL",
-    });
+  if (!MONITOR_ALERT_CHANNELS.includes(alert.channel))
+    problems.push({ field: "alert.channel", detail: "Tiene que ser «slack», «teams», «webhook» o «email»" });
+
+  // Cada canal pide su campo y **solo** el suyo: un aviso por correo con un nombre de variable
+  // dentro deja a quien lo lee sin saber por dónde sale, y el que sobra es siempre el que se
+  // olvidó de borrar al cambiar el canal.
+  if (isWebhookChannel(alert.channel)) {
+    if (!alert.urlVariable?.trim() || !VARIABLE_NAME.test(alert.urlVariable.trim())) {
+      problems.push({
+        field: "alert.urlVariable",
+        detail: "Escribe el nombre de la variable del entorno que contiene la URL, no la URL",
+      });
+    }
+  } else {
+    problems.push(...recipientProblems(alert.recipients));
   }
+
   if (!Number.isInteger(alert.afterFailures) || alert.afterFailures < 1 || alert.afterFailures > MAX_ALERT_FAILURES) {
     problems.push({ field: "alert.afterFailures", detail: `Un entero entre 1 y ${MAX_ALERT_FAILURES}` });
   }
   return problems;
+}
+
+/** Los destinatarios de un aviso por correo: al menos uno, como mucho el tope, y direcciones. */
+function recipientProblems(recipients: string[] | undefined): Problem[] {
+  const field = "alert.recipients";
+  const addresses = (recipients ?? []).map((address) => address.trim()).filter(Boolean);
+  if (!addresses.length) return [{ field, detail: "Escribe al menos una dirección de correo" }];
+  if (addresses.length > MAX_ALERT_RECIPIENTS)
+    return [{ field, detail: `Como mucho ${MAX_ALERT_RECIPIENTS} destinatarios` }];
+  // La dirección mal escrita no se dice de vuelta en el detalle: el mensaje de error de una API
+  // se registra y se pega en un ticket, y esto es el correo de una persona.
+  const bad = addresses.filter((address) => address.length > MAX_RECIPIENT_LENGTH || !EMAIL_ADDRESS.test(address));
+  if (bad.length) return [{ field, detail: `${bad.length} de ${addresses.length} no son direcciones de correo` }];
+  if (new Set(addresses.map((address) => address.toLowerCase())).size !== addresses.length)
+    return [{ field, detail: "Hay una dirección repetida: el aviso llegaría dos veces" }];
+  return [];
 }
 
 export function monitorProblems(input: MonitorInput, { requireAll = false } = {}): Problem[] {
@@ -200,7 +303,7 @@ export function blankMonitor(fields: {
     enabled: true,
     schedule: fields.schedule,
     plan: fields.plan,
-    alert: fields.alert ?? null,
+    alert: fields.alert ? normalizeAlert(fields.alert) : null,
     // El primer turno se calcula desde ahora, así que crear un monitor no dispara una corrida en
     // el mismo segundo: quien acaba de escribir el horario no ha pedido una corrida, ha pedido un
     // horario. Para lanzarla ya está «Correr ahora».
@@ -232,7 +335,7 @@ export function withChanges(monitor: Monitor, input: MonitorInput, now: Date): M
     enabled,
     schedule,
     plan: input.plan ?? monitor.plan,
-    alert: input.alert === undefined ? monitor.alert : input.alert,
+    alert: input.alert === undefined ? monitor.alert : input.alert && normalizeAlert(input.alert),
     nextRunAt: !enabled
       ? null
       : turnedOn || scheduleChanged || !monitor.nextRunAt

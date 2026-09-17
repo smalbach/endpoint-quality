@@ -1286,10 +1286,17 @@ export type MonitorPlanView = {
  * `urlVariable` es **un nombre**: la URL del webhook vive en el entorno del monitor, cifrada si es
  * sensible. Quien tiene una URL de webhook entrante puede escribir en ese canal, así que es una
  * credencial y no viaja por aquí.
+ *
+ * `recipients` sí viaja, en claro, y es a propósito: una dirección de correo no autoriza nada
+ * —cualquiera puede escribir a ese buzón ya—, y verla es lo que permite saber a quién se está
+ * despertando sin abrir el entorno y descifrar un valor.
+ *
+ * Cada canal trae el suyo y no el otro: los de webhook, `urlVariable`; «email», `recipients`.
  */
 export type MonitorAlertView = {
-  channel: "slack" | "teams" | "webhook";
-  urlVariable: string;
+  channel: "slack" | "teams" | "webhook" | "email";
+  urlVariable?: string;
+  recipients?: string[];
   /** Cuántos fallos seguidos hacen falta para avisar. Avisa una vez al llegar, no en cada turno. */
   afterFailures: number;
 };
