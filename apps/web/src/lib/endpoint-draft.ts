@@ -6,8 +6,8 @@
  * rejects it — a blank row, a file field with no file, a sensitive variable that must not end up in
  * a copied command — and all of them are assertions, not renders.
  */
-import { shellQuote } from "@/lib/curl";
 import { parseTags } from "@/lib/project-auth";
+import type { SnippetBody, SnippetRequest } from "@/lib/snippets";
 import type {
   EndpointBodyView,
   EndpointMethod,
@@ -252,55 +252,22 @@ export function resolvedParts(path: string, variables: Record<string, ResolvedVa
 }
 
 /**
- * The request as a `curl`.
+ * La petición del editor, resuelta y sin lenguaje: lo que los generadores de código escriben.
  *
- * Non-sensitive variables are substituted, so the command runs as it is; a sensitive one stays as
- * `{{name}}`, because a command copied into a ticket is exactly where a token must not travel.
- */
-/**
- * La autenticación como la escribiría `curl`, y lo que `curl` no puede escribir.
+ * Esto es lo que antes hacía el `curl` para él solo. Sacarlo aparte es lo que permite que haya
+ * dieciséis lenguajes y **un** sitio donde se resuelve la petición: sustituir variables, meter los
+ * parámetros en la ruta, montar la cadena de consulta y decidir qué cuerpo va. Si eso viviera
+ * dentro de cada generador habría dieciséis sitios donde equivocarse distinto, y quince de ellos
+ * sin una prueba que lo mire.
  *
- * `curl` sabe hacer Basic, Bearer, una clave en una cabecera y Digest —ese con `--digest`, que
- * negocia el 401 él mismo—. Una firma de AWS o de Hawk no: se calculan sobre la petición y el
- * comando no las lleva. Poner la cabecera sin firmar daría un comando que falla sin decir por qué,
- * así que sale un comentario que dice qué le falta.
+ * Las variables no sensibles se sustituyen, así que el fragmento corre tal cual; una sensible se
+ * queda como `{{nombre}}`, porque un fragmento de código se pega en un ticket y es exactamente
+ * donde un token no debe viajar.
  */
-function curlAuth(
-  auth: RequestAuthView,
-  hasAuthorization: boolean,
-  substitute: (text: string) => string,
-): string[] {
-  if (hasAuthorization || auth.type === "inherit" || auth.type === "none") return [];
-  const of = (name: string) => substitute(auth.params[name] ?? "");
-  switch (auth.type) {
-    case "bearer":
-      return of("token") ? [`  -H ${shellQuote(`Authorization: Bearer ${of("token")}`)}`] : [];
-    case "basic":
-      return [`  -u ${shellQuote(`${of("username")}:${of("password")}`)}`];
-    case "digest":
-      return [`  --digest -u ${shellQuote(`${of("username")}:${of("password")}`)}`];
-    case "apikey":
-      return of("key")
-        ? [
-            (auth.params.in ?? "header") === "query"
-              ? `  --url-query ${shellQuote(`${of("key")}=${of("value")}`)}`
-              : `  -H ${shellQuote(`${of("key")}: ${of("value")}`)}`,
-          ]
-        : [];
-    case "oauth2":
-    case "jwt":
-      return of("accessToken") || of("token")
-        ? [`  -H ${shellQuote(`Authorization: Bearer ${of("accessToken") || of("token")}`)}`]
-        : [`  # falta el token de ${auth.type === "jwt" ? "JWT" : "OAuth 2.0"}`];
-    default:
-      return [`  # ${auth.type}: la firma se calcula sobre la petición y curl no la lleva`];
-  }
-}
-
-export function endpointCurl(
+export function snapshotRequest(
   draft: EndpointDraft,
   context: { baseUrl: string; variables: Record<string, ResolvedVariable>; files: ChosenFiles },
-): string {
+): SnippetRequest {
   const substitute = (text: string) =>
     text.replace(/\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g, (token, name: string) => {
       const variable = context.variables[name] ?? context.variables[name.replace(/^env\./, "")];
@@ -317,32 +284,52 @@ export function endpointCurl(
   for (const row of payload.query) if (row.enabled) query.append(row.name, substitute(row.value));
   const url = `${/^https?:\/\//i.test(path) ? "" : base}${path}${query.size ? `?${query.toString()}` : ""}`;
 
-  const lines = [`curl ${payload.method === "GET" ? "" : `-X ${payload.method} `}${shellQuote(url)}`];
-  const headers = payload.headers.filter((header) => header.enabled);
-  for (const header of headers) lines.push(`  -H ${shellQuote(`${header.name}: ${substitute(header.value)}`)}`);
-  const hasHeader = (name: string) => headers.some((header) => header.name.toLowerCase() === name);
-  lines.push(...curlAuth(payload.auth, hasHeader("authorization"), substitute));
-
-  const body = payload.body;
-  if (body.mode === "json" || body.mode === "raw") {
-    if (!hasHeader("content-type"))
-      lines.push(`  -H ${shellQuote(`Content-Type: ${body.mode === "json" ? "application/json" : body.contentType}`)}`);
-    lines.push(`  --data ${shellQuote(substitute(body.text))}`);
-  } else if (body.mode === "x-www-form-urlencoded") {
-    for (const field of body.fields)
-      if (field.enabled && field.kind === "text")
-        lines.push(`  --data-urlencode ${shellQuote(`${field.name}=${substitute(field.value)}`)}`);
-  } else if (body.mode === "form-data") {
-    for (const field of body.fields) {
-      if (!field.enabled) continue;
-      const value =
-        field.kind === "file" ? `@${context.files.fields[field.name]?.name ?? "fichero"}` : substitute(field.value);
-      lines.push(`  -F ${shellQuote(`${field.name}=${value}`)}`);
-    }
-  } else if (body.mode === "binary") {
-    lines.push(`  --data-binary ${shellQuote(`@${context.files.binary?.name ?? "fichero"}`)}`);
+  const source = payload.body;
+  const enabled = source.fields.filter((field) => field.enabled);
+  let body: SnippetBody = { kind: "none" };
+  if (source.mode === "json" || source.mode === "raw") {
+    body = {
+      kind: "text",
+      text: substitute(source.text),
+      contentType: source.contentType,
+      json: source.mode === "json",
+    };
+  } else if (source.mode === "x-www-form-urlencoded") {
+    body = {
+      kind: "form",
+      fields: enabled
+        .filter((field) => field.kind === "text")
+        .map((field) => ({ name: field.name, value: substitute(field.value) })),
+    };
+  } else if (source.mode === "form-data") {
+    body = {
+      kind: "multipart",
+      fields: enabled.map((field) => ({
+        name: field.name,
+        // Un campo de fichero sale con el nombre del fichero elegido: el contenido no cabe en un
+        // fragmento de código, y quien lo pegue tiene el fichero en su disco, no aquí.
+        value: field.kind === "file" ? (context.files.fields[field.name]?.name ?? "fichero") : substitute(field.value),
+        file: field.kind === "file",
+      })),
+    };
+  } else if (source.mode === "binary") {
+    body = { kind: "binary", filename: context.files.binary?.name ?? "fichero" };
   }
-  return lines.join(" \\\n");
+
+  return {
+    method: payload.method,
+    url,
+    headers: payload.headers
+      .filter((header) => header.enabled)
+      .map((header) => ({ name: header.name, value: substitute(header.value) })),
+    body,
+    auth: {
+      type: payload.auth.type,
+      params: Object.fromEntries(
+        Object.entries(payload.auth.params).map(([name, value]) => [name, substitute(value)]),
+      ),
+    },
+  };
 }
 
 /** A response body as something readable: indented when it is JSON, as it came otherwise. */

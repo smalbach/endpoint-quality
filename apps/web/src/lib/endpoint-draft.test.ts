@@ -4,7 +4,6 @@ import {
   EMPTY_BODY,
   NEW_ENDPOINT,
   NO_FILES,
-  endpointCurl,
   fileProblem,
   isDirty,
   missingFiles,
@@ -12,10 +11,12 @@ import {
   resolvedParts,
   savePayload,
   sendForm,
+  snapshotRequest,
   variablesOf,
   withPath,
   type EndpointDraft,
 } from "./endpoint-draft";
+import { renderSnippet } from "./snippets";
 import type { Environment } from "./types";
 
 const draft = (patch: Partial<EndpointDraft> = {}): EndpointDraft => ({ ...NEW_ENDPOINT, ...patch });
@@ -118,20 +119,23 @@ describe("variables y cURL", () => {
   });
 
   test("el cURL sustituye lo que no es secreto y deja el token como variable", () => {
-    const curl = endpointCurl(
-      draft({
-        method: "POST",
-        path: "/users/{id}",
-        pathParameters: [{ name: "id", type: "string", description: "", value: "{{userId}}" }],
-        query: [
-          { name: "dry", type: "string", required: false, description: "", value: "1", enabled: true },
-          { name: "off", type: "string", required: false, description: "", value: "x", enabled: false },
-        ],
-        body: { ...EMPTY_BODY, mode: "json", text: '{"a":"it\'s"}' },
-        // El auth se guarda con el endpoint, así que el cURL lo saca del borrador.
-        auth: { type: "bearer", params: { token: "{{token}}" } },
-      }),
-      { baseUrl: "{{host}}/", variables, files: NO_FILES },
+    const curl = renderSnippet(
+      "curl",
+      snapshotRequest(
+        draft({
+          method: "POST",
+          path: "/users/{id}",
+          pathParameters: [{ name: "id", type: "string", description: "", value: "{{userId}}" }],
+          query: [
+            { name: "dry", type: "string", required: false, description: "", value: "1", enabled: true },
+            { name: "off", type: "string", required: false, description: "", value: "x", enabled: false },
+          ],
+          body: { ...EMPTY_BODY, mode: "json", text: '{"a":"it\'s"}' },
+          // El auth se guarda con el endpoint, así que el cURL lo saca del borrador.
+          auth: { type: "bearer", params: { token: "{{token}}" } },
+        }),
+        { baseUrl: "{{host}}/", variables, files: NO_FILES },
+      ),
     );
     expect(curl).toBe(
       [

@@ -1636,3 +1636,108 @@ deja la de `/`.
 máquina es de 48 bytes y no de 32, así que en ese stack **cualquier** cifrado contesta 500 — una
 variable sensible también. No hay nada cifrado guardado todavía (cero credenciales, cero sesiones),
 así que se arregla generando una clave de 32 bytes.
+
+## Paridad con Postman, ola 3: la petición como código, y un botón que sustituye a otro
+
+El trabajo de una herramienta de peticiones acaba cuando alguien se lleva la petición **a su
+servicio**. Hasta ahora la única salida era un `curl`, y de ahí a Go o a Python se pasaba
+reescribiéndolo a mano. Una petición reescrita a mano es una petición que ya no reproduce lo que se
+probó aquí, que es justo lo que este producto existe para evitar.
+
+Dieciséis lenguajes: cURL, HTTPie, HTTP crudo, `fetch`, `axios`, Python `requests`, Go `net/http`,
+Java `HttpClient`, C# `HttpClient`, PHP cURL, Ruby `Net::HTTP`, Rust `reqwest`, Swift `URLSession`,
+Kotlin OkHttp, Dart `http` y PowerShell `Invoke-RestMethod`. El criterio para que uno entre no es
+que exista, es que **sea la forma en la que la gente de ese lenguaje escribe de verdad una
+petición**: por eso `net/http` y no un envoltorio, `HttpClient` y no `RestSharp`.
+
+### El botón «cURL» ya no está
+
+No se añadió un botón al lado: el de cURL **se borró**. Es la misma decisión que en Postman y por el
+mismo motivo — cURL no es una función aparte, es _una entrada de la lista_. Dejar los dos habría
+dado dos puertas a lo mismo, y la vieja, que solo sabe hacer una de las dieciséis cosas, seguiría
+siendo la que se ve primero. El lenguaje elegido se recuerda: quien trabaja en Go lo va a pedir
+muchas veces al día.
+
+### Resolver la petición se hace una vez, no dieciséis
+
+Sustituir variables, meter los parámetros en la ruta, montar la cadena de consulta, decidir qué
+`Content-Type` lleva el cuerpo y qué aporta la autenticación es **donde están los errores
+silenciosos**. Hacerlo dentro de cada generador serían dieciséis sitios donde equivocarse distinto,
+y quince de ellos sin una prueba que lo mire. Así que hay un `SnippetRequest` —la petición ya
+resuelta, sin lenguaje— y cada lenguaje es una función pura de ahí al texto.
+
+El `curl` salió de ahí **idéntico byte a byte**: la prueba que ya existía compara la cadena
+completa, y pasó sin tocarla. Es la única forma de demostrar que mover el `curl` a una lista de
+dieciséis no le cambió nada. Después, `endpointCurl` se borró: sin llamadores, era una puerta
+muerta, y su prueba pasa ahora por el camino nuevo.
+
+### Las comillas, que es donde esto se rompe de verdad
+
+Un generador de fragmentos falla de dos maneras, y la segunda es la mala:
+
+1. El código no compila. Molesta, se ve en dos segundos, se arregla.
+2. El código compila y **manda otra cosa**. Un `$` sin escapar en una cadena de PHP se convierte en
+   una variable vacía. Un `#{` en Ruby ejecuta lo que haya dentro. El fragmento corre, contesta 200,
+   y prueba algo distinto de lo que se probó aquí. Eso no se ve nunca.
+
+Así que hay un escapador por familia y cada uno con su motivo: PHP y Kotlin y Dart escapan el `$`
+porque interpolan; Ruby escapa la almohadilla; Rust escribe los caracteres de control con la forma
+entre llaves y no con la de cuatro dígitos, que no compila; PowerShell dobla la comilla en vez de
+escaparla y no toca el `$`, porque dentro de comilla simple no interpola. La barra se escapa
+**antes** que nada, o se escapan las que se acaban de añadir.
+
+### Lo que un lenguaje no puede hacer, lo dice
+
+Una firma de AWS, de Hawk, de OAuth 1.0a o de EdgeGrid se calcula sobre la petición entera: no es
+una cabecera que se pueda escribir. Un fragmento que la ponga a medias da un 403 que no explica
+nada, así que sale un comentario que nombra lo que falta — y el aviso va **encima** del código, no
+debajo de treinta líneas de Rust que nadie baja a leer.
+
+Basic sí sale, y con lo que cada cliente trae de fábrica: `-u` en curl, `auth=` en requests,
+`SetBasicAuth` en Go, `Credentials.basic` en Kotlin, `CURLAUTH_BASIC` en PHP. Digest lo negocian
+solos únicamente curl y `requests`; los otros catorce se llevan el aviso en vez de una cabecera
+inventada que el servidor rechazaría.
+
+### Detalles que casi todos los generadores fallan
+
+- **Go no compila con un `import` de sobra.** La lista se monta con lo que el fragmento acaba
+  usando: sin cuerpo no entra `strings`, con multipart entran `bytes`, `os` y `mime/multipart`.
+- **`request.Headers.Add("Content-Type", …)` lanza en C#.** Es una cabecera de contenido y va en el
+  `HttpContent`. Y `using System.IO` entra solo cuando hay un fichero.
+- **Un `multipart` no declara `Content-Type`:** el `boundary` lo genera el cliente, y escribirlo a
+  mano rompe el cuerpo.
+- **HTTPie manda `application/json` de serie,** así que escribirlo sería ruido; lo nombra cuando el
+  tipo es otro.
+- **El crudo cuenta el `Content-Length` en bytes, no en caracteres.** Con una «á» de datos reales
+  son 108 bytes y 107 caracteres; declarar 107 corta el cuerpo.
+
+### Dos fallos que salieron probando, no escribiendo
+
+- **El `Basic` del crudo era un marcador.** Decía «base64 de usuario:clave», y esa entrada existe
+  precisamente para poder mandar la petición por un socket: una cabecera que _describe_ el base64 no
+  se puede mandar. Ahora se calcula, y el marcador queda solo para cuando hay un `{{variable}}` sin
+  sustituir, donde no hay nada que calcular.
+- **El aviso se colaba dentro del bloque de cabeceras del crudo.** Una línea que empieza por `#` no
+  es una cabecera HTTP: mandada por un socket rompe la petición entera. En los otros quince el
+  comentario viaja con el código copiado, que es lo que se quiere; aquí se queda solo en la lista
+  de arriba.
+
+### Cómo se comprobó
+
+Once de los dieciséis pasaron por el parser o el compilador de su lenguaje: `ast.parse` de Python,
+`node --check`, `php -l`, `ruby -c`, `bash -n`, `swiftc -parse` (cero errores), `rustc` (cero
+errores de sintaxis; solo los de crate ausente, que es lo que un parse sin las crates puede probar)
+y `javac` de verdad contra el JDK.
+
+Y seis se mandaron **de verdad** contra un servidor que devolvía los bytes recibidos, para comparar
+byte a byte: curl, `requests`, PHP, Ruby, `fetch` y el crudo por un socket con `nc`. El cuerpo de la
+prueba llevaba `$`, `#{`, comillas de los dos tipos, barras, un salto de línea y un acento; los seis
+entregaron el cuerpo idéntico, la cabecera con `"` y `\` intactos, y el `Basic` con el base64
+correcto.
+
+**Go, C#, Kotlin, Dart y PowerShell no se comprobaron con su toolchain:** no hay ninguno instalado
+en esta máquina y no se instaló nada. Sus reglas —los `import` calculados de Go, el `Content-Type`
+del contenido en C#— sí tienen prueba unitaria, pero eso no es lo mismo que un compilador y aquí se
+dice en vez de dejarlo implícito.
+
+`web 402 pruebas (48 nuevas) · api 646 · runner-core 311 · import-detect 25 · lint 0 errores · typecheck limpio`

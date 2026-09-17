@@ -21,9 +21,9 @@ import { resolveActive, useActiveEnvironment } from "@/lib/active-environment";
 import { useSessionToken } from "@/lib/session-token";
 import { EndpointRoleAccess } from "@/components/endpoint-role-access";
 import { Badge, Button, inputClass } from "@/components/ui";
-import { Modal } from "@/components/overlay";
 import { useToast } from "@/components/toast";
 import { AuthEditor } from "@/components/auth-editor";
+import { CodeModal } from "@/components/code-modal";
 import { CookieManager, CookiePanel } from "@/components/cookie-manager";
 import { VariableSuggest } from "@/components/variable-suggest";
 import { cn, formatBytes, formatDuration, httpStatusStyle, methodStyle } from "@/lib/format";
@@ -33,7 +33,7 @@ import {
   NEW_ENDPOINT,
   NO_FILES,
   draftFrom,
-  endpointCurl,
+  snapshotRequest,
   fileProblem,
   isDirty,
   missingFiles,
@@ -130,7 +130,7 @@ export function EndpointEditor({
 
   const [files, setFiles] = useState<ChosenFiles>(NO_FILES);
   const [tab, setTab] = useState<Tab>("params");
-  const [showCurl, setShowCurl] = useState(false);
+  const [showCode, setShowCode] = useState(false);
   const [showCookies, setShowCookies] = useState(false);
 
   // The loaded row becomes the draft once. Refetches after a save must not overwrite typing.
@@ -497,8 +497,9 @@ export function EndpointEditor({
           <Button className="h-9 px-4 text-xs" disabled={!canSend} onClick={() => send.mutate()} title="Ctrl+Enter">
             {send.isPending ? "Enviando…" : "Enviar"}
           </Button>
-          <Button variant="ghost" className="h-9 px-3 text-xs" onClick={() => setShowCurl(true)}>
-            cURL
+          {/* Como en Postman: un solo botón, y cURL es una de las dieciséis entradas de dentro. */}
+          <Button variant="ghost" className="h-9 px-3 text-xs" onClick={() => setShowCode(true)}>
+            Código
           </Button>
           {/* Como en Postman, al lado de «Enviar»: es donde se mira cuando algo contesta 401. */}
           <Button variant="ghost" className="h-9 px-3 text-xs" onClick={() => setShowCookies(true)}>
@@ -611,11 +612,8 @@ export function EndpointEditor({
         <div className={cn(layout === "inline" && "border-t border-slate-200 pt-3")}>{response}</div>
       </div>
 
-      {showCurl && (
-        <CurlModal
-          command={endpointCurl(draft, { baseUrl, variables, files })}
-          onClose={() => setShowCurl(false)}
-        />
+      {showCode && (
+        <CodeModal request={snapshotRequest(draft, { baseUrl, variables, files })} onClose={() => setShowCode(false)} />
       )}
       {showCookies && (
         <CookieManager projectId={projectId} baseUrl={baseUrl} onClose={() => setShowCookies(false)} />
@@ -1375,41 +1373,5 @@ function ScriptConsole({ scripts }: { scripts: SentRequestView["scripts"] }) {
         );
       })}
     </div>
-  );
-}
-
-function CurlModal({ command, onClose }: { command: string; onClose: () => void }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <Modal
-      title="cURL"
-      description="Las variables no secretas van sustituidas; las secretas se quedan como {{variable}}."
-      size="lg"
-      onClose={onClose}
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>
-            Cerrar
-          </Button>
-          <Button
-            onClick={async () => {
-              try {
-                await navigator.clipboard.writeText(command);
-                setCopied(true);
-                window.setTimeout(() => setCopied(false), 2000);
-              } catch {
-                setCopied(false);
-              }
-            }}
-          >
-            {copied ? "Copiado" : "Copiar"}
-          </Button>
-        </>
-      }
-    >
-      <pre className="overflow-x-auto rounded-lg bg-slate-950 p-3 font-mono text-[11px] leading-5 text-slate-100 select-all">
-        {command}
-      </pre>
-    </Modal>
   );
 }
