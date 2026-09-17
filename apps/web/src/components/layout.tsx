@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { useAuth, useOrganization } from "@/lib/auth";
+import { useAuth, useCan, useOrganization } from "@/lib/auth";
 import { cn } from "@/lib/format";
 import type { ProjectSummary } from "@/lib/types";
 import { Button } from "@/components/ui";
 import { HelpTooltip } from "@/components/overlay";
 import { useHelp } from "@/components/help-panel";
+import { ImportProvider, useImport } from "@/components/import-provider";
 import { EnvironmentButton } from "@/components/environment-button";
 
 /** The menu of the bar across the top, for a signed-in person. */
@@ -135,78 +136,109 @@ export function AppLayout() {
   const navigate = useNavigate();
   const { projectId } = useParams();
   const project = useProject(projectId);
+  const canEdit = useCan("editor");
 
   return (
-    <div className="min-h-dvh bg-slate-50">
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
-        <div className="flex items-center justify-between gap-4 px-6 py-2.5">
-          <div className="flex min-w-0 items-center gap-3">
-            <NavLink to="/projects" className="shrink-0 text-sm font-semibold text-slate-900">
-              Endpoint Quality
-            </NavLink>
-            <span className="h-4 w-px bg-slate-200" />
-            <nav className="flex items-center gap-0.5">
-              {GLOBAL_NAV.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  className={({ isActive }) =>
-                    cn(
-                      "rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
-                      isActive || (item.to === "/projects" && projectId)
-                        ? "bg-slate-100 text-slate-900"
-                        : "text-slate-500 hover:text-slate-900",
-                    )
-                  }
-                >
-                  {item.label}
-                </NavLink>
-              ))}
-            </nav>
-            {projectId && (
-              <div className="flex min-w-0 items-center gap-2 text-xs">
-                <span className="text-slate-300">/</span>
-                <Link to={`/p/${projectId}`} className="truncate font-medium text-slate-700" title={project.data?.name}>
-                  {project.data?.name ?? "…"}
-                </Link>
-              </div>
-            )}
-          </div>
-
-          <div className="flex shrink-0 items-center gap-3 text-xs text-slate-500">
-            {projectId && <EnvironmentButton projectId={projectId} />}
-            {/* A switcher only when there is something to switch to. Registering founds an
-                organization and accepting an invitation joins another, so two is common. */}
-            {user && user.organizations.length > 1 ? (
-              <select
-                className="h-7 rounded border border-slate-200 bg-white px-1 text-xs text-slate-600"
-                value={organization?.id ?? ""}
-                onChange={(event) => {
-                  selectOrganization(event.target.value);
-                  // Out of the project: its id belongs to the organization being left.
-                  void navigate("/projects", { replace: true });
-                }}
-              >
-                {user.organizations.map((entry) => (
-                  <option key={entry.id} value={entry.id}>
-                    {entry.name}
-                  </option>
+    // El provider envuelve **también la cabecera**, y no solo el `Outlet`: el botón «Importar»
+    // vive ahí arriba, y dejarlo fuera del contexto es un botón que no hace nada.
+    <ImportProvider projectId={projectId}>
+      <div className="min-h-dvh bg-slate-50">
+        <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
+          <div className="flex items-center justify-between gap-4 px-6 py-2.5">
+            <div className="flex min-w-0 items-center gap-3">
+              <NavLink to="/projects" className="shrink-0 text-sm font-semibold text-slate-900">
+                Endpoint Quality
+              </NavLink>
+              <span className="h-4 w-px bg-slate-200" />
+              <nav className="flex items-center gap-0.5">
+                {GLOBAL_NAV.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    className={({ isActive }) =>
+                      cn(
+                        "rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
+                        isActive || (item.to === "/projects" && projectId)
+                          ? "bg-slate-100 text-slate-900"
+                          : "text-slate-500 hover:text-slate-900",
+                      )
+                    }
+                  >
+                    {item.label}
+                  </NavLink>
                 ))}
-              </select>
-            ) : null}
-            <NavLink to="/settings/org" className="underline-offset-2 hover:underline">
-              {user && user.organizations.length > 1 ? "ajustes" : organization?.name}
-            </NavLink>
-            <span className="text-slate-300">·</span>
-            <span className="hidden sm:inline">{user?.email}</span>
-            <Button variant="ghost" className="h-7 px-2 text-xs" onClick={() => void signOut()}>
-              Salir
-            </Button>
+              </nav>
+              {/* «Importar» vive aquí por lo mismo que en Postman está junto a «New»: traer lo que
+                ya tienes es de las primeras cosas que se hacen, no pertenece a ninguna pantalla
+                concreta, y hasta ahora estaba en un botón fantasma dentro de la barra de un
+                proyecto — invisible, y además inexistente en la lista de proyectos. */}
+              {canEdit && <ImportButton />}
+              {projectId && (
+                <div className="flex min-w-0 items-center gap-2 text-xs">
+                  <span className="text-slate-300">/</span>
+                  <Link
+                    to={`/p/${projectId}`}
+                    className="truncate font-medium text-slate-700"
+                    title={project.data?.name}
+                  >
+                    {project.data?.name ?? "…"}
+                  </Link>
+                </div>
+              )}
+            </div>
+
+            {/* Sin `shrink-0`: era lo que hacía que este lado no cediera nunca y el izquierdo se
+              comiera el recorte — con «Importar» partido por la mitad en una ventana de 1024. */}
+            <div className="flex min-w-0 items-center gap-3 text-xs text-slate-500">
+              {projectId && <EnvironmentButton projectId={projectId} />}
+              {/* A switcher only when there is something to switch to. Registering founds an
+                organization and accepting an invitation joins another, so two is common. */}
+              {user && user.organizations.length > 1 ? (
+                <select
+                  className="h-7 rounded border border-slate-200 bg-white px-1 text-xs text-slate-600"
+                  value={organization?.id ?? ""}
+                  onChange={(event) => {
+                    selectOrganization(event.target.value);
+                    // Out of the project: its id belongs to the organization being left.
+                    void navigate("/projects", { replace: true });
+                  }}
+                >
+                  {user.organizations.map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.name}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+              <NavLink to="/settings/org" className="whitespace-nowrap underline-offset-2 hover:underline">
+                {user && user.organizations.length > 1 ? "ajustes" : organization?.name}
+              </NavLink>
+              <span className="text-slate-300">·</span>
+              <span className="hidden max-w-40 truncate sm:inline">{user?.email}</span>
+              <Button variant="ghost" className="h-7 px-2 text-xs" onClick={() => void signOut()}>
+                Salir
+              </Button>
+            </div>
           </div>
-        </div>
-      </header>
-      <Outlet />
-    </div>
+        </header>
+        <Outlet />
+      </div>
+    </ImportProvider>
+  );
+}
+
+/** El botón de la cabecera. Con borde y no fantasma, porque lo de antes se leía como un pie de foto. */
+function ImportButton() {
+  const { open } = useImport();
+  return (
+    <button
+      onClick={() => open()}
+      title="Importar una colección de Postman, un OpenAPI, un entorno o un proyecto exportado (Cmd+O)"
+      className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
+    >
+      <Icon path="M12 3v12M7 10l5 5 5-5M5 21h14" className="size-3.5" />
+      Importar
+    </button>
   );
 }
 

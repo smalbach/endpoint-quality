@@ -121,3 +121,30 @@ export class ImportProjectBundleDto {
   @IsObject() bundle: Record<string, unknown>;
   @IsOptional() @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) parts?: string[];
 }
+
+/** One thing handed to the import: a file's name and its text, or a paste with no name. */
+export class ImportSourceDto {
+  @IsOptional() @IsString() @MaxLength(260) name?: string;
+  @IsString() @MaxLength(MAX_SPEC_BYTES) text: string;
+}
+
+/**
+ * The one import: files, a paste, or a link — and it works out what each one is.
+ *
+ * Nothing here says what the things *are*: that is read off their content, which is the whole
+ * point (see `shared/import/detect.ts`). `dryRun` answers with the plan and writes nothing, which
+ * is what lets the dialog be read before it is confirmed.
+ */
+export class ImportAnythingDto {
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => ImportSourceDto)
+  sources?: ImportSourceDto[];
+  /** Read through the same SSRF guard as every other outbound request. */
+  @IsOptional() @IsString() @IsUrl({ require_tld: false }) @MaxLength(2000) url?: string;
+  @IsOptional() @IsBoolean() dryRun?: boolean;
+  /** The base URL every environment in the batch is stored with, overriding what its file says. */
+  @IsOptional() @IsString() @MaxLength(2000) baseUrl?: string;
+}

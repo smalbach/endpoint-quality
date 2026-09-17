@@ -1218,3 +1218,145 @@ recorren la lista con `.map()`, que es código y no una afirmación.
 - Un `{{id}}` en la ruta no se reconoce como parámetro de ruta, así que
   `GET /things/{{thingId}}` y `GET /things/{id}` entran como dos endpoints
   distintos hasta que alguien lo edite.
+
+## Una sola puerta, como la de Postman
+
+El panel de la tajada anterior pedía marcar casillas: «las URL como endpoints»,
+«los tests como flujos». Es pedirle a alguien que conteste una pregunta que el
+fichero ya contesta, y estaba enterrado en los ajustes del proyecto, que es donde
+nadie lo busca.
+
+Así que se miró cómo lo hace Postman —una puerta, `Import`, arriba de la barra— y
+se copió la forma, no la pantalla.
+
+### Lo que se reconoce, y por el contenido
+
+Nada pregunta qué es un fichero: se decide mirándolo. **Por contenido y nunca por
+el nombre**, porque lo que baja Postman se llama como le da la gana y
+`Catalog-API.json` es igual de probable que sea una colección o un entorno.
+
+| Se reconoce                         | Va a                  |
+| ----------------------------------- | --------------------- |
+| Colección de Postman v2.1           | endpoints y flujos    |
+| Entorno o globals de Postman        | un entorno            |
+| **Volcado** de Postman (todo junto) | cada pieza a su sitio |
+| OpenAPI 3.x, JSON o YAML            | el contrato           |
+| Exportación de Insomnia v4          | endpoints             |
+| Comandos cURL                       | endpoints             |
+
+Un **volcado estalla en sus piezas**: «Export data» produce un fichero con todas
+las colecciones y todos los entornos dentro, que es como se mueve un equipo
+entero, y se lee como las varias cosas que es. Se mira **antes que nada**, porque
+contiene las otras formas: buscar `item` primero leería el volcado como su
+primera colección y perdería el resto sin que nadie lo notara.
+
+Lo que no se puede leer se dice con algo que hacer, no con «no se reconoce». Una
+colección v1 contesta lo mismo que contesta Postman —«expórtala como v2.1»— y un
+HAR dice que todavía no. Y **un fallo no hunde el lote**: cuatro ficheros donde
+el segundo es una v1 importa los otros tres.
+
+### Primero el plan, luego el import
+
+La mitad que faltaba. Se pregunta al servidor **en seco** —`dryRun`, no escribe
+nada— y lo que vuelve es la lista: «esto es una colección → endpoints y flujos»,
+«esto es un entorno → un entorno», «esto es una v1 → expórtala como v2.1». Luego
+se confirma. Un import que se puede leer antes de confirmarlo es uno que nadie
+tiene que deshacer.
+
+Tres vías de entrada, las mismas tres que importan aquí: ficheros —arrastrando o
+eligiendo, varios a la vez— texto pegado, y una URL, que se lee por el mismo
+guard SSRF que cualquier otra petición saliente. La cuarta de Postman, un
+repositorio, ya es otra cosa en este producto: el Escáner.
+
+### El orden no es incidental
+
+El contrato entra **antes** que la colección aunque lleguen en el mismo lote.
+Tener contrato o no decide si las peticiones de la colección caen sobre sus
+operaciones o entran como llamadas sueltas, así que los mismos dos ficheros en el
+otro orden darían un flujo distinto. Después los entornos, que es lo que los
+flujos necesitarán para correr. Después las colecciones.
+
+Medido sobre la colección real del catálogo, con su contrato y su entorno en el
+mismo lote: **7 flujos, 63 nodos de petición guardada y 1 solo `fetch`**. Sin el
+orden, los 64 habrían sido llamadas sueltas.
+
+El router no lee ningún formato: cada uno lo entendía ya el módulo dueño de su
+destino —el contrato `specs`, los endpoints `endpoints`, los grafos `workflows`,
+las variables `environments`— y volver a leerlo aquí sería un segundo parser
+libre de discrepar del primero.
+
+Suites: api **+24** sobre la tajada anterior (10 del detector, 4 HTTP de la puerta
+única, 10 del lector de entornos).
+
+## Una puerta de verdad: contarlas, y bajar de seis a una
+
+La tajada anterior escribió la puerta única y no quitó las demás. Quedaban
+**seis**, y eso era el problema entero:
+
+| Dónde                    | Qué leía                      | Qué escribía                  |
+| ------------------------ | ----------------------------- | ----------------------------- |
+| Barra del proyecto       | todo                          | todo                          |
+| Página de Endpoints      | un fichero, o un cURL         | **sólo endpoints**            |
+| Cajón de flujos          | un proyecto exportado de aquí | **sólo los flujos de dentro** |
+| Biblioteca de peticiones | una colección de Postman      | **sólo peticiones**           |
+| Ajustes → contrato       | un OpenAPI, por URL o pegado  | el contrato                   |
+| Ajustes → por elementos  | otro proyecto                 | lo elegido                    |
+
+La de la barra era la buena y era la invisible: un botón fantasma de 11 píxeles
+debajo del nombre del proyecto, que además no existe en la lista de proyectos. La
+prominente era la de Endpoints, justo donde se mira — y soltarle la colección de
+Postman daba sus URL, **ningún flujo, ningún entorno, y ni una palabra sobre lo
+que había tirado**. «Los imports no funcionan como Postman» era literalmente eso.
+
+Ahora hay una, y está donde Postman la tiene: arriba en la cabecera, con borde y
+no fantasma, en todas las pantallas, dentro de un proyecto o fuera de él. Fuera
+pregunta a cuál va, que es lo que hace Postman con el workspace. Con **Cmd+O**, el
+mismo atajo. Y soltar un fichero en cualquier parte de la ventana la abre con él
+dentro, que es la diferencia entre «¿dónde se importa esto?» y soltarlo.
+
+Las tres puertas que leían un subconjunto se han borrado y sus botones llaman a
+la única. El formato que sólo leía el cajón de flujos —un proyecto exportado de
+aquí— lo reconoce ahora el detector, así que se puede soltar con el resto. Las dos
+de los ajustes se quedan: una es la _fuente_ del contrato, que se relee luego con
+su cabecera guardada, y la otra es copiar de otro proyecto, que no es un fichero.
+
+### El detector, en un paquete, porque la respuesta tiene que ser la misma
+
+`@eq/import-detect`. Puro, sin dependencias, ESM y CJS, importado por el
+navegador y por la API.
+
+Antes había que pulsar «Continuar», esperar un viaje de red y luego «Importar»,
+para que el servidor contestara lo que el fichero dice en su primera línea. Ahora
+la lista aparece **mientras sueltas** y el import es **un botón**. Dos copias de
+esa función serían dos copias libres de discrepar, y la discrepancia se vería como
+un diálogo prometiendo una cosa y un import haciendo otra; `targetsOf` se exporta
+por lo mismo, para que la línea «va a endpoints, flujos» y el enrutado del
+servidor sean la misma función y no dos tablas.
+
+De paso, lo que el detector no sabía y la gente tiene: un `.zip` —que es lo que
+baja «Export data» de Postman— se reconoce por sus bytes mágicos y manda a
+descomprimirlo; una lista en la raíz se dice como lista; y cada pieza se cuenta,
+porque «una colección» no dice si trae tres peticiones o sesenta y esa es justo la
+pregunta de quien está mirando.
+
+### Tres cosas que sólo aparecen al probarlo
+
+**Un proyecto exportado se leía como un volcado de Postman.** El volcado se mira
+antes que todo lo demás porque contiene las otras formas dentro; un proyecto
+exportado trae un `environments`, así que caía en esa trampa. Ahora el marcador
+explícito se mira primero. Lo encontró la prueba HTTP, no la lectura.
+
+**El botón de la cabecera no hacía nada.** El provider envolvía el `Outlet` y no
+la cabecera, así que el botón se montaba fuera del contexto y recibía el no-op por
+defecto: ni un error en la consola. Arreglado, y `useImport` revienta fuera del
+provider en vez de devolver un no-op, que es lo que escondió el fallo.
+
+**«46 sin importar».** Importar una colección sobre su propio contrato deja casi
+todo repetido, y ese número mandaba a buscar un problema que no existe. Ahora «ya
+estaban» y «sin importar» se cuentan aparte.
+
+Y un cuarto que no era del import: un id de proyecto inexistente llegaba a los
+cuatro manejadores y volvía como cuatro mensajes de Postgres dentro de un 201, que
+se lee como «el import funcionó pero todo falló». Un guardia antes de leer nada.
+
+Suites: paquete nuevo **19**, api **592**, web **339**.

@@ -133,4 +133,8 @@ export type {
   ProjectBundlePart,
   ProjectBundleImportResultView,
   PostmanFlowsImportResult,
+  PostmanEnvironmentImportResult,
+  ImportAnythingResult,
+  ImportedItemResult,
+  ImportKindView,
 } from "@eq/contracts";

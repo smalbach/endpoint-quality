@@ -7,7 +7,6 @@ import { Badge, Button, Card, Field, inputClass } from "@/components/ui";
 import { SECTION_EDITORS } from "@/components/config-editors";
 import { CopyFromProject } from "@/components/copy-from-project";
 import { ImportElements } from "@/components/import-elements";
-import { ImportPostman } from "@/components/import-postman";
 import { SECTION_GROUPS, SECTION_GUIDE } from "@/lib/config-sections";
 import { unchanged } from "@/lib/config-draft";
 import { formatDate } from "@/lib/format";
@@ -65,11 +64,6 @@ export function ConfigPage() {
         disabled={!canEdit}
         onImported={() => queryClient.invalidateQueries()}
       />
-
-      {/* Justo debajo del contrato, porque responde a la misma pregunta —«¿de dónde sale lo que
-          este proyecto prueba?»— y porque para la mayoría de los equipos la respuesta honesta no
-          es un OpenAPI: es la colección de Postman que ya usan. */}
-      <ImportPostman base={base} disabled={!canEdit} onImported={() => queryClient.invalidateQueries()} />
 
       {/* `access` is edited from Roles, its own section of the project: one place to change it. */}
       <p className="px-1 text-[11px] text-slate-500">

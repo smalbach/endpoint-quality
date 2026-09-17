@@ -301,7 +301,11 @@ export type StepNotifyView = {
  * the run's variables plus `inputs` (templates over the parent's); only the names in `outputs` come
  * back. Its steps get their own cases, `workflow:<flow>:<node>>child`, and the node passes when all do.
  * Not archived, no cycles, at most 3 levels, not inside a loop. */
-export type StepSubflowView = { workflowId: string; inputs?: { variable: string; value: string }[]; outputs?: string[] };
+export type StepSubflowView = {
+  workflowId: string;
+  inputs?: { variable: string; value: string }[];
+  outputs?: string[];
+};
 
 /** A `mock` node: the response it answers with, no network. `headers` and `body` accept templates
  * (an undefined variable fails the node); `body` is parsed when the content type says JSON.
@@ -838,6 +842,75 @@ export type EndpointImportResult = {
 };
 
 /**
+ * What one import answers, for the dialog that shows the plan before it runs.
+ *
+ * One entry per thing handed over, whatever it turned out to be, and inside it one result per
+ * destination it reached. A list and not a count, and a `reason` in words for what could not be
+ * read: «no se reconoce» is not something anybody can act on, and «es una colección v1, expórtala
+ * como v2.1» is.
+ */
+export type ImportKindView =
+  | "postman-collection"
+  | "postman-environment"
+  | "postman-dump"
+  | "openapi"
+  | "insomnia"
+  | "curl"
+  /** A project exported by this product, which used to have an import door of its very own. */
+  | "eq-bundle"
+  | "unknown";
+
+export type ImportedItemResult = {
+  /** What the thing is called: the file's name, or what the document calls itself. */
+  name: string;
+  kind: ImportKindView;
+  /** What is inside it. One piece for a file; several for a Postman data dump. */
+  pieces: {
+    kind: Exclude<ImportKindView, "postman-dump" | "unknown">;
+    name: string;
+    /** What is inside, counted — «53 peticiones · 6 carpetas» — or null when there is nothing to count. */
+    detail: string | null;
+  }[];
+  /** Why nothing could be read, or null. */
+  reason: string | null;
+  /** What each destination did. Empty on a dry run, and empty for an unreadable item. */
+  results: {
+    target: "contract" | "endpoints" | "flows" | "environment" | "project";
+    name: string;
+    /** What it did, in one line, or null when it failed. */
+    summary: string | null;
+    error: string | null;
+    notes?: string[];
+  }[];
+};
+
+export type ImportAnythingResult = {
+  items: ImportedItemResult[];
+  /** True when nothing was written: the answer is the plan, not what happened. */
+  dryRun: boolean;
+};
+
+/**
+ * What importing a Postman environment answers.
+ *
+ * Counts for what came in, and words for what needs a person: a secret with no value, a name that
+ * cannot be a variable here, a base URL taken from one of the variables.
+ */
+export type PostmanEnvironmentImportResult = {
+  id: string;
+  name: string;
+  /** Whether an environment of that name was already here. */
+  action: "created" | "updated";
+  baseUrl: string;
+  variables: number;
+  disabledVariables: number;
+  /** How many of them are stored encrypted. */
+  secrets: number;
+  skipped: { name: string; reason: string }[];
+  notes: string[];
+};
+
+/**
  * What importing a Postman collection as flows answers.
  *
  * A list and not a count, for the reason every import in this product answers with one: «3 flujos,
@@ -1358,14 +1431,7 @@ export type ImportElementsResultView = {
 
 /** The pieces a project file can carry. Exporting picks some; importing picks among those present. */
 export type ProjectBundlePart =
-  | "settings"
-  | "contract"
-  | "config"
-  | "endpoints"
-  | "roles"
-  | "flows"
-  | "environments"
-  | "performance";
+  "settings" | "contract" | "config" | "endpoints" | "roles" | "flows" | "environments" | "performance";
 
 /** What an import wrote, and what it deliberately left out (secrets, duplicates, missing targets). */
 export type ProjectBundleImportResultView = {

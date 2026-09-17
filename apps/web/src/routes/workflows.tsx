@@ -14,6 +14,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
+import { useImport } from "@/components/import-provider";
 import { Button, Card, Empty } from "@/components/ui";
 import { cn } from "@/lib/format";
 import { unchanged } from "@/lib/config-draft";
@@ -33,12 +34,9 @@ import {
 import { WorkflowCanvas } from "@/components/workflow-canvas";
 import { WorkflowInspector } from "@/components/workflow-inspector";
 import { TemplateLibrary, type NewTemplate } from "@/components/template-library";
-import { ImportRequests } from "@/components/import-requests";
 import { DatasetsPanel } from "@/components/datasets-panel";
 import { SuitesPanel } from "@/components/suites-panel";
-import { ImportOutcome, ImportProblems } from "@/components/project-transfer";
-import { bundleFileName, downloadJson, readBundle } from "@/lib/project-bundle";
-import type { ProjectBundleImportResultView } from "@/lib/types";
+import { bundleFileName, downloadJson } from "@/lib/project-bundle";
 import { RunSettingsDialog } from "@/components/run-settings-dialog";
 import {
   DEFAULT_RUN_SETTINGS,
@@ -73,6 +71,7 @@ export function WorkflowsPage() {
   const { projectId } = useParams();
   const organization = useOrganization();
   const canEdit = useCan("editor");
+  const { open: openImport } = useImport();
   const queryClient = useQueryClient();
   const base = `/orgs/${organization?.id}/projects/${projectId}`;
 
@@ -235,23 +234,6 @@ export function WorkflowsPage() {
     }),
     onSuccess: ({ bundle, name }) => downloadJson(bundleFileName(name), bundle),
   });
-  /** The flows of a file, even a whole-project one — and its contract only when this project has none
-   * yet: replacing the contract a project already runs against is a decision for the settings page. */
-  const importFlows = useMutation({
-    mutationFn: async (file: File) => {
-      const read = readBundle(await file.text());
-      if (!read.ok) throw new Error(read.error);
-      if (!read.file.parts.includes("flows")) throw new Error("El fichero no trae flujos.");
-      const project = await api<{ contract: unknown }>(base);
-      const withContract = !project.contract && read.file.parts.includes("contract");
-      return api<ProjectBundleImportResultView>(`${base}/import-bundle`, {
-        method: "POST",
-        body: { bundle: read.file.bundle, parts: withContract ? ["flows", "contract"] : ["flows"] },
-      });
-    },
-    onSuccess: () => void invalidate(),
-  });
-
   const duplicateWorkflow = useMutation({
     mutationFn: (workflowId: string) =>
       api<{ workflowId: string }>(`${base}/workflows/${workflowId}/duplicate`, { method: "POST" }),
@@ -752,25 +734,12 @@ export function WorkflowsPage() {
                   <p className="text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Flujos</p>
                   {canEdit && (
                     <span className="flex items-center gap-1">
-                      <label
-                        className={cn(
-                          "inline-flex h-7 cursor-pointer items-center rounded-md px-2 text-xs text-slate-600 hover:bg-slate-100",
-                          importFlows.isPending && "pointer-events-none opacity-50",
-                        )}
-                        title="Importar flujos desde un fichero exportado (.json)"
-                      >
+                      {/* El mismo «Importar» de la cabecera. Aquí había una puerta propia que sólo
+                          leía un proyecto exportado de este producto, así que una colección de
+                          Postman soltada en ella no se reconocía en absoluto. */}
+                      <Button variant="ghost" className="h-7 px-2 text-xs" onClick={() => openImport()}>
                         Importar
-                        <input
-                          type="file"
-                          accept=".json,application/json"
-                          className="sr-only"
-                          onChange={(event) => {
-                            const picked = event.target.files?.[0];
-                            event.target.value = "";
-                            if (picked) importFlows.mutate(picked);
-                          }}
-                        />
-                      </label>
+                      </Button>
                       <Button
                         variant="ghost"
                         className="h-7 px-2 text-xs"
@@ -858,8 +827,6 @@ export function WorkflowsPage() {
                 {message(exportWorkflow.error) && (
                   <p className="mt-2 text-[11px] text-rose-700">{message(exportWorkflow.error)}</p>
                 )}
-                {importFlows.error && <ImportProblems error={importFlows.error} />}
-                {importFlows.data && <ImportOutcome result={importFlows.data} />}
                 <div className="mt-4 border-t border-slate-100 pt-3">
                   <SuitesPanel
                     suites={workflows.data?.suites ?? []}
@@ -894,11 +861,6 @@ export function WorkflowsPage() {
                   onAdd={(template) => setSteps(addStep(steps, template))}
                   onAddOperation={addOperation}
                 />
-                {canEdit && (
-                  <div className="mt-4 border-t border-slate-100 pt-3">
-                    <ImportRequests base={base} onImported={() => void invalidate()} />
-                  </div>
-                )}
               </Drawer>
             )}
 

@@ -484,6 +484,12 @@ describe("un contrato detrás de autenticación", () => {
   });
 });
 
+/** La versión que declara el propio documento, para no tenerla escrita en dos repositorios. */
+function versionOf(raw: string): string | undefined {
+  const info = raw.slice(raw.indexOf("info:"));
+  return /^\s*version:\s*["']?([^"'\s]+)/m.exec(info)?.[1];
+}
+
 describe("el contrato real de Digital Catalog", { skip: HAS_REAL_SPEC ? false : `sin ${SPEC_PATH}` }, () => {
   test("se importa por la API y produce las 46 operaciones", async () => {
     // The criterion of this phase. The same document the coupled dashboard had compiled into
@@ -502,7 +508,9 @@ describe("el contrato real de Digital Catalog", { skip: HAS_REAL_SPEC ? false : 
       .get(`/orgs/${owner.organizationId}/projects/${project.body.projectId}/operations`)
       .set(as(owner));
     assert.equal(operations.body.operations.length, 46);
-    assert.equal(operations.body.contractVersion, "1.8.0");
+    // Del propio documento y no escrita aquí: el fichero vive en otro repositorio y le suben la
+    // versión sin avisar, y esta prueba es sobre las 46 operaciones, no sobre cuál es la versión.
+    assert.equal(operations.body.contractVersion, versionOf(readFileSync(SPEC_PATH, "utf8")));
     assert.deepEqual(operations.body.tags.sort(), [
       "Categories",
       "Health",

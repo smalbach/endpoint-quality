@@ -41,6 +41,20 @@ export class UpdateEnvironmentDto {
   @IsOptional() @IsBoolean() authEnforced?: boolean;
 }
 
+/**
+ * A Postman environment file, as text.
+ *
+ * Text and not a file upload, like every other paste-what-you-have route here: what people have is
+ * on a clipboard as often as on disk. `name` and `baseUrl` override what the file says — the second
+ * matters more than it looks, because a committed environment points at `http://localhost:8000` and
+ * this API rarely runs where that resolves.
+ */
+export class ImportPostmanEnvironmentDto {
+  @IsString() @MinLength(1) @MaxLength(4_000_000) text: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(80) name?: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(2000) baseUrl?: string;
+}
+
 export class CredentialDto {
   @IsString() @MaxLength(80) name: string;
   /** Not a closed list any more: besides the three reserved names, a role is whatever the

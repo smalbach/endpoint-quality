@@ -45,6 +45,7 @@ import {
 import {
   CreateEnvironmentDto,
   CredentialDto,
+  ImportPostmanEnvironmentDto,
   UpdateEnvironmentDto,
 } from "@/modules/environments/presentation/dto/environments.dto";
 import {
@@ -58,6 +59,8 @@ import {
   CopyFromProjectDto,
   ImportElementsDto,
   ImportProjectBundleDto,
+  ImportAnythingDto,
+  ImportSourceDto,
   CreateProjectDto,
   ImportSpecDto,
   ProjectAuthDto,
@@ -136,10 +139,13 @@ const DTOS = [
   CopyFromProjectDto,
   ImportElementsDto,
   ImportProjectBundleDto,
+  ImportAnythingDto,
+  ImportSourceDto,
   SpecSourceDto,
   ImportSpecDto,
   CreateEnvironmentDto,
   UpdateEnvironmentDto,
+  ImportPostmanEnvironmentDto,
   CredentialDto,
   CreateRequestTemplateDto,
   ImportRequestTemplatesDto,

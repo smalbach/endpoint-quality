@@ -31,6 +31,7 @@ import { ImportElementsCommand } from "../application/commands/import-elements";
 import { GetImportPreviewQuery } from "../application/queries/import-preview";
 import { ExportProjectQuery } from "../application/queries/export-project";
 import { ImportProjectBundleCommand } from "../application/commands/import-project-bundle";
+import { ImportAnythingCommand } from "../application/commands/import-anything";
 import { SetProjectArchivedCommand, UpdateProjectCommand } from "../application/commands/update-project";
 import { GetProjectQuery, ListProjectsQuery } from "../application/queries/list-projects";
 import {
@@ -44,6 +45,7 @@ import {
   CopyFromProjectDto,
   ImportElementsDto,
   ImportProjectBundleDto,
+  ImportAnythingDto,
   ArchiveProjectDto,
   CreateProjectDto,
   ImportSpecDto,
@@ -292,7 +294,9 @@ export class ProjectsController {
     @Query("parts") parts?: string,
     @Query("workflowIds") workflowIds?: string,
   ) {
-    return this.queryBus.execute(new ExportProjectQuery(organizationId, projectId, listParam(parts), listParam(workflowIds)));
+    return this.queryBus.execute(
+      new ExportProjectQuery(organizationId, projectId, listParam(parts), listParam(workflowIds)),
+    );
   }
 
   @Post(":projectId/import-bundle")
@@ -306,6 +310,26 @@ export class ProjectsController {
     return this.commandBus.execute(
       new ImportProjectBundleCommand(organizationId, projectId, body.bundle, body.parts ?? [], actorId(principal)),
     );
+  }
+
+  /**
+   * One import for everything, the way Postman's is: files, a paste or a link, and it detects what
+   * each one is instead of asking.
+   *
+   * `dryRun` answers with the plan and writes nothing — which is the half that makes an import
+   * readable before it happens. `editor`, like every other write: importing a contract, endpoints,
+   * flows and variables is the editor's daily work, and a secret in an environment file is
+   * encrypted on arrival by the command that stores it.
+   */
+  @Post(":projectId/import")
+  @RequireRole("editor")
+  async importAnything(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Body() body: ImportAnythingDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.commandBus.execute(new ImportAnythingCommand(organizationId, projectId, body, actorId(principal)));
   }
 
   @Get(":projectId/operations")

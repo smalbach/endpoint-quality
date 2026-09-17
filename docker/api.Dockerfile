@@ -17,6 +17,7 @@ COPY packages/runner-core/package.json packages/runner-core/
 COPY packages/security-rules/package.json packages/security-rules/
 COPY packages/spec-import/package.json packages/spec-import/
 COPY packages/contracts/package.json packages/contracts/
+COPY packages/import-detect/package.json packages/import-detect/
 RUN pnpm install --frozen-lockfile
 
 COPY . .
@@ -24,6 +25,7 @@ COPY . .
 # `@eq/contracts` no emite código: son las declaraciones que el navegador y la API comparten, y
 # `tsc` las necesita presentes para compilar la API aunque el `import type` se borre al salir.
 RUN pnpm --filter @eq/contracts build \
+ && pnpm --filter @eq/import-detect build \
  && pnpm --filter @eq/runner-core build \
  && pnpm --filter @eq/security-rules build \
  && pnpm --filter @eq/spec-import build \
@@ -50,6 +52,10 @@ COPY --from=build --chown=eq:eq /repo/packages/security-rules/dist ./packages/se
 # colgando es una forma de que algún día un `require` resuelva a la nada.
 COPY --from=build --chown=eq:eq /repo/packages/contracts/package.json ./packages/contracts/
 COPY --from=build --chown=eq:eq /repo/packages/contracts/dist ./packages/contracts/dist
+# Este sí se ejecuta: es la función que decide qué es un fichero soltado, y la importan el
+# navegador y la API para no dar dos respuestas distintas a la misma pregunta.
+COPY --from=build --chown=eq:eq /repo/packages/import-detect/package.json ./packages/import-detect/
+COPY --from=build --chown=eq:eq /repo/packages/import-detect/dist ./packages/import-detect/dist
 COPY --from=build --chown=eq:eq /repo/packages/spec-import/package.json ./packages/spec-import/
 COPY --from=build --chown=eq:eq /repo/packages/spec-import/dist ./packages/spec-import/dist
 COPY --from=build --chown=eq:eq /repo/packages/spec-import/node_modules ./packages/spec-import/node_modules

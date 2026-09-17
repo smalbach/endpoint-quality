@@ -22,10 +22,16 @@ import {
 } from "../application/commands/manage-environment";
 import { DeleteCredentialCommand, UpsertCredentialCommand } from "../application/commands/manage-credential";
 import { ActivateEnvironmentCommand } from "../application/commands/active-environment";
+import { ImportPostmanEnvironmentCommand } from "../application/commands/import-postman-environment";
 import { ClearSessionTokenCommand, GetSessionTokenQuery } from "../application/commands/session-token";
 import { ListEnvironmentsQuery } from "../application/queries/list-environments";
 import { RevealVariablesQuery } from "../application/queries/reveal-variables";
-import { CreateEnvironmentDto, CredentialDto, UpdateEnvironmentDto } from "./dto/environments.dto";
+import {
+  CreateEnvironmentDto,
+  CredentialDto,
+  ImportPostmanEnvironmentDto,
+  UpdateEnvironmentDto,
+} from "./dto/environments.dto";
 import type { CredentialRole } from "../domain/model";
 
 const actorId = (principal: Principal): string => (principal.kind === "user" ? principal.userId : principal.tokenId);
@@ -64,6 +70,24 @@ export class EnvironmentsController {
     @Body() body: CreateEnvironmentDto,
   ) {
     return this.commandBus.execute(new CreateEnvironmentCommand(organizationId, projectId, body));
+  }
+
+  /**
+   * A Postman environment file, as an environment of this project — created, or updated when one of
+   * that name is already here.
+   *
+   * `editor`, like creating one by hand. A secret in the file is encrypted on arrival and never
+   * comes back out, and a variable this project already holds a value for is not blanked by a file
+   * that ships its secrets empty.
+   */
+  @Post("environments/import/postman")
+  @RequireRole("editor")
+  async importPostman(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Body() body: ImportPostmanEnvironmentDto,
+  ) {
+    return this.commandBus.execute(new ImportPostmanEnvironmentCommand(organizationId, projectId, body));
   }
 
   /** Makes it the one every screen starts from. `editor`: it changes what everybody's «Enviar» uses. */

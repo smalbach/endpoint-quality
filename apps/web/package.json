@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@eq/contracts": "workspace:*",
+    "@eq/import-detect": "workspace:*",
     "@tanstack/react-query": "^5.90.2",
     "@xyflow/react": "^12.9.3",
     "clsx": "^2.1.1",

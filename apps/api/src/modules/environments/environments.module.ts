@@ -18,6 +18,7 @@ import {
   UpdateEnvironmentHandler,
 } from "./application/commands/manage-environment";
 import { DeleteCredentialHandler, UpsertCredentialHandler } from "./application/commands/manage-credential";
+import { ImportPostmanEnvironmentHandler } from "./application/commands/import-postman-environment";
 import { ListEnvironmentsHandler } from "./application/queries/list-environments";
 import { RevealVariablesHandler } from "./application/queries/reveal-variables";
 import { EnvironmentsController } from "./presentation/environments.controller";
@@ -26,6 +27,7 @@ export const ENVIRONMENT_COMMAND_HANDLERS = [
   CreateEnvironmentHandler,
   UpdateEnvironmentHandler,
   DeleteEnvironmentHandler,
+  ImportPostmanEnvironmentHandler,
   UpsertCredentialHandler,
   DeleteCredentialHandler,
   ActivateEnvironmentHandler,

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { EndpointList } from "@/components/endpoint-list";
 import { ToastProvider } from "@/components/toast";
+import { ImportProvider } from "@/components/import-provider";
 import type { EndpointPage, EndpointView } from "@/lib/types";
 
 const call = vi.hoisted(() => vi.fn());
@@ -57,21 +58,24 @@ function mount(props: Partial<Parameters<typeof EndpointList>[0]> = {}) {
   render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <EndpointList
-          base="/orgs/o/projects/p"
-          page={PAGE}
-          loading={false}
-          status="active"
-          search=""
-          pageNumber={1}
-          onPage={vi.fn()}
-          selectedId={null}
-          onNew={vi.fn()}
-          canEdit
-          onRemoved={vi.fn()}
-          {...handlers}
-          {...props}
-        />
+        {/* «Importar» de esta lista es el de la cabecera, y `useImport` revienta fuera de él. */}
+        <ImportProvider projectId="p">
+          <EndpointList
+            base="/orgs/o/projects/p"
+            page={PAGE}
+            loading={false}
+            status="active"
+            search=""
+            pageNumber={1}
+            onPage={vi.fn()}
+            selectedId={null}
+            onNew={vi.fn()}
+            canEdit
+            onRemoved={vi.fn()}
+            {...handlers}
+            {...props}
+          />
+        </ImportProvider>
       </ToastProvider>
     </QueryClientProvider>,
   );

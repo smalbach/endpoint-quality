@@ -1,17 +1,21 @@
 /**
- * The left half of Endpoints: the tree, its filters, the bulk bar and the import panel.
+ * The left half of Endpoints: the tree, its filters and the bulk bar.
  *
- * What differs from the analyzer, on purpose: the import says what came in and what did not, with
- * the reason, instead of a toast; the status buttons carry their counts; and a single endpoint can
- * be archived from its row, not only in bulk.
+ * «Importar» aquí abría un panel propio que leía un fichero y sólo escribía endpoints: soltarle
+ * una colección de Postman daba sus URL y ningún flujo, y nada lo decía. Ahora es el mismo
+ * «Importar» de la cabecera, que reconoce lo que le das y lo reparte por sus destinos.
+ *
+ * What differs from the analyzer, on purpose: the status buttons carry their counts, and a single
+ * endpoint can be archived from its row, not only in bulk.
  */
 import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 
-import { api, ApiError } from "@/lib/api";
+import { api } from "@/lib/api";
 import { Badge, Button, inputClass } from "@/components/ui";
 import { ConfirmDialog } from "@/components/overlay";
 import { useToast } from "@/components/toast";
+import { useImport } from "@/components/import-provider";
 import { cn, methodStyle } from "@/lib/format";
 import {
   buildEndpointTree,
@@ -20,7 +24,7 @@ import {
   toggleGroup,
   type EndpointFolder,
 } from "@/lib/endpoint-tree";
-import type { EndpointImportResult, EndpointPage, EndpointStatus, EndpointView } from "@/lib/types";
+import type { EndpointPage, EndpointStatus, EndpointView } from "@/lib/types";
 
 export type StatusFilter = EndpointStatus | "all";
 
@@ -71,8 +75,8 @@ export function EndpointList({
   onRemoved: (ids: string[]) => void;
 }) {
   const toast = useToast();
+  const { open: openImport } = useImport();
   const [typed, setTyped] = useState(search);
-  const [importing, setImporting] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState<{ ids: string[]; label: string } | null>(null);
@@ -284,15 +288,13 @@ export function EndpointList({
             <Button className="h-7 px-2.5 text-xs" onClick={onNew}>
               + Nuevo
             </Button>
-            <Button variant="ghost" className="h-7 px-2.5 text-xs" onClick={() => setImporting((open) => !open)}>
-              {importing ? "Ocultar" : "Importar"}
+            <Button variant="ghost" className="h-7 px-2.5 text-xs" onClick={() => openImport()}>
+              Importar
             </Button>
           </>
         )}
         <span className="ml-auto text-[11px] text-slate-500">{page ? `${page.meta.total} de ${total}` : ""}</span>
       </div>
-
-      {importing && canEdit && <ImportPanel base={base} onImported={onChanged} onSelect={onSelect} />}
 
       <div className="mt-2 flex flex-wrap gap-1">
         {STATUS_FILTERS.map((filter) => (
@@ -493,121 +495,5 @@ function IconButton({
         <path d={path} />
       </svg>
     </button>
-  );
-}
-
-/** «Importar»: a file of any of the four formats, or one cURL. The result is listed, not toasted. */
-function ImportPanel({
-  base,
-  onImported,
-  onSelect,
-}: {
-  base: string;
-  onImported: () => Promise<unknown>;
-  onSelect: (id: string) => void;
-}) {
-  const toast = useToast();
-  const [file, setFile] = useState<File | null>(null);
-  const [curl, setCurl] = useState("");
-  const input = useRef<HTMLInputElement>(null);
-
-  const importFile = useMutation({
-    mutationFn: () => {
-      const form = new FormData();
-      form.append("file", file!, file!.name);
-      return api<EndpointImportResult>(`${base}/endpoints/import/file`, { method: "POST", body: form });
-    },
-    onSuccess: async () => {
-      setFile(null);
-      if (input.current) input.current.value = "";
-      await onImported();
-    },
-  });
-
-  const importCurl = useMutation({
-    mutationFn: () => api<EndpointView>(`${base}/endpoints/import/curl`, { method: "POST", body: { curl } }),
-    onSuccess: async (endpoint) => {
-      setCurl("");
-      toast.success(`${endpoint.method} ${endpoint.path} añadido`);
-      await onImported();
-      onSelect(endpoint.id);
-    },
-  });
-
-  const result = importFile.data;
-  const fileError = importFile.error instanceof ApiError ? importFile.error : null;
-
-  return (
-    <div className="mt-2 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
-      <div>
-        <p className="text-[11px] font-medium text-slate-700">Fichero</p>
-        <p className="text-[10px] text-slate-500">
-          OpenAPI (JSON o YAML), Postman v2.1, Insomnia v4 o markdown con curls.
-        </p>
-        <div className="mt-1 flex items-center gap-1">
-          <input
-            ref={input}
-            type="file"
-            aria-label="Fichero a importar"
-            accept=".yaml,.yml,.json,.md,.markdown,.txt"
-            className="min-w-0 flex-1 text-[11px] file:mr-2 file:rounded file:border file:border-slate-200 file:bg-white file:px-2 file:py-0.5 file:text-[11px]"
-            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-          />
-          <Button
-            className="h-6 px-2 text-[11px]"
-            disabled={!file || importFile.isPending}
-            onClick={() => importFile.mutate()}
-          >
-            {importFile.isPending ? "…" : "Importar"}
-          </Button>
-        </div>
-        {fileError && (
-          <p className="mt-1 text-[11px] text-rose-600">
-            {fileError.message}
-            {fileError.fields[0] && `: ${fileError.fields[0].detail}`}
-          </p>
-        )}
-        {result && (
-          <div className="mt-1 rounded-md border border-slate-200 bg-white p-1.5 text-[11px]">
-            <p className="font-medium text-slate-700">
-              {result.imported.length} importados · {result.skipped.length} no · leído como {result.format}
-            </p>
-            {result.skipped.length > 0 && (
-              <ul className="mt-1 max-h-28 space-y-0.5 overflow-y-auto">
-                {result.skipped.map((entry, index) => (
-                  <li key={index} className="text-slate-500">
-                    <span className="font-mono">
-                      {entry.method} {entry.path || entry.name}
-                    </span>{" "}
-                    — {entry.reason}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
-      </div>
-      <div>
-        <p className="text-[11px] font-medium text-slate-700">cURL</p>
-        <div className="mt-1 flex items-start gap-1">
-          <textarea
-            aria-label="Comando cURL"
-            className="h-14 min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2 py-1 font-mono text-[10px] outline-none focus:border-slate-900"
-            placeholder="curl -X POST https://api.example.com/orders -d '{…}'"
-            value={curl}
-            spellCheck={false}
-            onChange={(event) => setCurl(event.target.value)}
-          />
-          <Button
-            className="h-6 px-2 text-[11px]"
-            disabled={!curl.trim() || importCurl.isPending}
-            onClick={() => importCurl.mutate()}
-          >
-            {importCurl.isPending ? "…" : "Añadir"}
-          </Button>
-        </div>
-        {importCurl.error && <p className="mt-1 text-[11px] text-rose-600">{importCurl.error.message}</p>}
-      </div>
-    </div>
   );
 }
