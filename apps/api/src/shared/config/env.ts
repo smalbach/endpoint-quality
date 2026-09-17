@@ -56,6 +56,16 @@ export const envSchema = z.object({
   RETENTION_SWEEP_HOURS: z.coerce.number().int().min(0).max(168).default(6),
 
   /**
+   * Cada cuánto se mira si algún monitor ha vencido. `0` apaga la vigilancia.
+   *
+   * Decide la precisión del horario y nada más: con el valor por defecto, un monitor de las 9:00
+   * dispara entre las 9:00 y las 9:01. Afinarlo sería consultar la tabla sesenta veces por minuto
+   * para adelantar un turno unos segundos. Que dos instancias hagan este turno a la vez es seguro:
+   * lo que reparte los monitores es un reclamo en la base de datos, no este intervalo.
+   */
+  MONITOR_TICK_SECONDS: z.coerce.number().int().min(0).max(3600).default(60),
+
+  /**
    * The most cases one run may produce.
    *
    * Every ceiling in this product is local — 500 rows in a dataset, 50 flows in a suite, 200

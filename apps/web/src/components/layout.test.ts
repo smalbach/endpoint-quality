@@ -30,6 +30,7 @@ describe("las secciones de un proyecto", () => {
       ["Escáner", `/p/${ID}/code-scan`],
       ["Mocks", `/p/${ID}/mocks`],
       ["Docs", `/p/${ID}/doc-sites`],
+      ["Monitores", `/p/${ID}/monitors`],
       ["Settings", `/p/${ID}/settings`],
     ]);
   });

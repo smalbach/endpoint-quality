@@ -23,6 +23,7 @@ import { SecurityRunDetailPage, SecurityRunsPage } from "@/routes/security-runs"
 import { RolesPage } from "@/routes/roles";
 import { MocksPage } from "@/routes/mocks";
 import { DocSitesPage } from "@/routes/doc-sites";
+import { MonitorsPage } from "@/routes/monitors";
 import { PublishedDocsPage } from "@/routes/published-docs";
 import { ProjectGeneralPage, ProjectSettingsLayout } from "@/routes/project-settings";
 import { ProjectTransferPage } from "@/routes/project-transfer";
@@ -150,6 +151,7 @@ createRoot(document.getElementById("root")!).render(
                     />
                     <Route path="mocks" element={<MocksPage />} />
                     <Route path="doc-sites" element={<DocSitesPage />} />
+                    <Route path="monitors" element={<MonitorsPage />} />
                     <Route path="settings" element={<ProjectSettingsLayout />}>
                       <Route index element={<ProjectGeneralPage />} />
                       <Route path="contract" element={<ConfigPage />} />

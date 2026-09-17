@@ -2181,3 +2181,145 @@ se lleva sus sitios por la cascada. En el navegador de verdad: la página privad
 acepta, y al recargar ya no la pide.
 
 `api 843 pruebas (41 nuevas) · web 448 (24 nuevas) · import-detect 25 · runner-core 311 · lint 0 errores · typecheck limpio`
+
+## Paridad con Postman, ola 8: los monitores, y el reclamo que lo hace posible
+
+Todo lo anterior contesta cuando alguien pregunta. Un monitor pregunta él, a las tres de la mañana,
+y dice que la API de producción lleva dos horas en rojo. Es el último gran hueco frente a Postman y
+el que convierte el producto en algo que se deja puesto.
+
+### Un monitor no es un tipo nuevo de corrida
+
+Lo que dispara es la misma `StartRunCommand` que el botón de la pantalla, con el mismo plan y el
+mismo entorno. Eso no es comodidad: significa que un monitor **no puede ejecutar nada que no se pueda
+ejecutar a mano**, y que las validaciones del plan —el flujo existe, el conjunto de datos es de ese
+flujo, la corrida no es gigantesca— están escritas una vez. Un planificador con su propio camino de
+ejecución acaba corriendo algo distinto de lo que se probó, y nadie se enteraría hasta que hiciera
+falta.
+
+Lo único que cambia es quién la pidió: `triggeredByKind: "monitor"`. Una corrida que nadie lanzó no
+la lanzó un usuario, y decir que sí sería mentir en el historial de quién tocó qué.
+
+### Lo que un planificador hace mal en silencio
+
+Son tres cosas y las tres viven en `schedule.ts`, que es una función pura de `(horario, instante)` al
+instante siguiente:
+
+- **No se acumula.** El turno se calcula desde el instante que se le da hacia delante, nunca sumando
+  al turno perdido. Un monitor cada hora en un proceso que estuvo ocho horas caído dispararía ocho
+  corridas seguidas nada más arrancar; así dispara una y vuelve a la cadencia.
+- **La hora es la de una persona.** «Todos los días a las 9:00» puesto por alguien en Madrid tiene
+  que seguir siendo a las 9:00 cuando cambie la hora, y un turno guardado en UTC se va una hora dos
+  veces al año. El horario lleva su zona IANA y se resuelve con `Intl`, que ya trae Node: cero
+  dependencias y la base de datos de zonas la mantiene otro.
+- **Los dos días raros del año, dichos.** No se puede restar «el desfase» sin más, porque el desfase
+  depende del instante y el instante es lo que se busca. Se prueban los dos desfases de alrededor y
+  se mira cuál de los dos candidatos recupera de verdad la hora pedida: la hora que **existe dos
+  veces** (otoño) da dos candidatos válidos y se coge el primero; la que **no existe** (primavera) no
+  da ninguno y se coge el primer instante después del salto. En los dos casos el monitor corre una
+  vez ese día, que es lo que se le pidió.
+
+Y un mínimo de cinco minutos, que no es gusto: cada turno es una corrida entera contra un servicio de
+alguien.
+
+### El reclamo, que es el motivo de que esto no sea trivial
+
+Dos instancias de la API con el mismo Postgres detrás ven los mismos monitores vencidos en el mismo
+segundo. Sin nada que lo impida, las dos lanzan la corrida — y no es una carrera rara que pase de vez
+en cuando: con dos instancias y un turno en punto, pasa **siempre**.
+
+Lo cierra la base de datos y no un candado nuestro: `SELECT … FOR UPDATE SKIP LOCKED` dentro de una
+transacción entrega cada fila a una sola instancia y hace que la otra la **salte** en vez de
+esperarla — esperarla sería lanzar la corrida dos veces, una detrás de otra. En la misma transacción
+se adelanta `nextRunAt`, porque hacerlo después deja una ventana en la que el monitor sigue vencido.
+
+`nextRunAt` lo calcula el dominio y no el SQL, y por eso el puerto recibe una función: el horario
+tiene zona, días de la semana y dos días raros, y eso no se escribe en una expresión de Postgres sin
+duplicar las reglas donde no se pueden probar.
+
+Por lo mismo, el planificador corre en **todas** las instancias y no en una «líder»: elegir una
+haría que un despliegue sin ella dejara de vigilar en silencio.
+
+### No se solapa, y una vuelta abierta no lo deja mudo
+
+Si la corrida anterior sigue viva, el turno se salta y se anota por qué: un monitor cada cinco
+minutos contra una API que tarda seis no es vigilancia, es una cola que crece hasta que alguien la ve.
+Y no se le pregunta a la fila de la vuelta anterior sino **a la corrida**: si un proceso se murió con
+una corrida a medias, su vuelta se quedó en «running» para siempre y el monitor no volvería a
+disparar nunca. Se cierra al pasar y se sigue.
+
+Una vuelta saltada no cuenta ni como fallo ni como acierto: no se midió nada. Y una corrida
+**cancelada** tampoco es un fallo — la cancela una persona, y contarla como rojo despierta a alguien
+por algo que otro acaba de hacer a mano.
+
+### El historial es una tabla, no una vista sobre `runs`
+
+Porque la retención **borra corridas viejas**, y un historial leído de `runs` se iría vaciando por
+detrás sin que nadie lo pidiera. La fila de la vuelta es pequeña —estado, cuándo, cuántos casos— y
+sobrevive al barrido, que es lo que un historial tiene que hacer. `runId` es una referencia suelta y
+sin clave ajena, por eso mismo.
+
+### El aviso: la URL es una credencial
+
+Las reglas son las del nodo `notify` de un flujo y se reutilizan tal cual, porque el problema es el
+mismo: quien tiene una URL de webhook entrante puede escribir en ese canal. El monitor guarda **el
+nombre de la variable** y la URL sale del entorno, descifrada si es sensible; sale por `SAFE_FETCH`,
+como toda llamada saliente; y el texto va redactado contra los secretos de ese entorno.
+
+Con una regla propia: **un aviso que falla no rompe el monitor.** Si el canal está caído o la
+variable no existe, se anota en la vuelta y la vigilancia sigue. Lo contrario —que un webhook mal
+escrito apague la vigilancia— es el peor de los dos fallos.
+
+Y se avisa **en el turno exacto**, no en todos los siguientes: con «al segundo fallo», un servicio
+caído toda la noche mandaría un aviso por turno hasta que alguien silenciara el canal, y un canal
+silenciado tampoco avisa del incendio siguiente. También se avisa de la recuperación, y solo si antes
+se había llegado a avisar de la caída.
+
+### Dos fallos, y los dos solo se ven en la pila desplegada
+
+- **El reclamo adelantaba el turno y el guardado posterior lo pisaba.** Al cerrar la vuelta se guarda
+  el monitor entero —la racha, el último resultado— y el objeto que venía del reclamo llevaba el
+  turno viejo: se restauraba, el monitor volvía a estar vencido y disparaba **en cada tic**. En la
+  suite no se veía porque el camino que guarda el monitor es el de las vueltas que _no_ lanzan
+  corrida, y las de la suite lanzaban. Se vio en la base de datos: tres vueltas en tres minutos con
+  un horario de cinco. Ahora el reclamo devuelve el monitor con el turno ya adelantado, y hay una
+  prueba del camino con error que se pone roja sin el arreglo.
+- **`SAFE_FETCH` no estaba en el módulo.** Lo exporta `SpecsModule`, y `MonitorsModule` no lo
+  importaba: la aplicación no arrancaba. La suite no lo vio porque la aplicación de prueba provee ese
+  token globalmente — una comodidad que esconde justo esta clase de fallo.
+
+### Cómo se comprobó
+
+El horario entero en memoria, con fechas concretas: las 9:00 de Madrid en invierno y en verano, la
+hora que no existe, la que existe dos veces, medianoche, media hora de desfase, y el día de la semana
+mirado en la zona del monitor y no en UTC.
+
+Contra la pila desplegada, con el reloj del contenedor:
+
+```
+horario: todos los días a las 09:00 (Europe/Madrid)
+turno:   2026-09-18T07:00:00Z            ← septiembre es CEST, así que 09:00 locales
+disparó en t+25s · 1 vuelta · failed 13/13 · lanzada por: monitor <id>
+turno después: 2026-09-18 07:00:00       ← y ahí se queda, no en cada tic
+```
+
+El aviso, también contra la pila: la fila del monitor guarda
+`{"channel":"slack","urlVariable":"SLACK_WEBHOOK","afterFailures":1}` y **ninguna URL** —cero
+coincidencias de `sample-api` en la fila—, la URL se resolvió del entorno, y `SAFE_FETCH` la rechazó
+por ser red privada. La vuelta quedó con la nota «El aviso no salió: el canal no respondió» y el
+monitor siguió contando: la nota no lleva la URL dentro, y el registro del servidor —que es de quien
+opera— sí dice cuál era.
+
+Y lo único que solo Postgres puede demostrar, con dos sesiones a la vez sobre la consulta del reclamo:
+
+```
+instancia A: a300b252-…  (transacción abierta, fila bloqueada)
+instancia B: (0 rows)    ← la salta, no la espera
+```
+
+`api 903 pruebas (60 nuevas) · web 458 (10 nuevas) · import-detect 25 · runner-core 311 · lint 0 errores · typecheck limpio`
+
+> **Nota del despliegue**, confirmada de paso: `SECRETS_KEY` de este `docker/.env` decodifica a 48
+> bytes y tiene que ser de 32. Crear una variable de entorno **sensible** contesta 500 con
+> `SECRETS_KEY debe ser una clave de 32 bytes en base64`, así que hoy un aviso no puede leer su URL
+> de una variable cifrada en esta instalación. No se ha tocado la clave.

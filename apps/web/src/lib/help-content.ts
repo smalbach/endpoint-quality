@@ -252,6 +252,36 @@ export const HELP_TOPICS: HelpTopic[] = [
     ],
   },
   {
+    id: "monitors",
+    title: "Monitores",
+    intro: "Una corrida guardada que se lanza sola cada tanto y avisa cuando se pone en rojo.",
+    steps: [
+      {
+        title: "Es la misma corrida que el botón",
+        body: "Un monitor guarda un plan y un entorno y ejecuta lo mismo que «Ejecutar»: la matriz del contrato, un flujo o una suite. Por eso no puede correr nada que no se pueda probar a mano antes.",
+        tip: "En el historial de corridas aparecen como lanzadas por el monitor, no por una persona.",
+      },
+      {
+        title: "El horario es en tu hora",
+        body: "«Todos los días a las 9:00» se guarda con tu zona, no en UTC: así sigue siendo a las 9:00 cuando cambie la hora. El mínimo son cinco minutos, porque cada turno es una corrida entera contra un servicio real.",
+        tip: "Crear el monitor no lanza nada: el primer turno es el siguiente del horario. Para lanzarla ya, «Correr ahora».",
+      },
+      {
+        title: "No se solapan ni se acumulan",
+        body: "Si la corrida anterior sigue en marcha, el turno se salta y lo dice. Y un proceso que estuvo horas parado no debe las corridas perdidas: al volver lanza una y sigue con su cadencia.",
+      },
+      {
+        title: "El aviso pide el nombre de una variable",
+        body: "La URL del webhook de Slack, Teams o el tuyo vive en una variable del entorno —cifrada si la marcas como sensible—, y el monitor guarda solo su nombre. Quien tiene esa URL puede escribir en ese canal: es una credencial.",
+        tip: "«Avisar tras dos fallos seguidos» avisa una vez al llegar a dos, no en cada turno. Un canal que avisa cada cinco minutos acaba silenciado, y entonces tampoco avisa de lo grave.",
+      },
+      {
+        title: "Cuando algo va mal",
+        body: "La racha de fallos seguidos sale en la pantalla aunque no haya ningún canal configurado, y cada vuelta dice cuántos casos fallaron de cuántos. Una vuelta saltada no cuenta como fallo: no se midió nada.",
+      },
+    ],
+  },
+  {
     id: "settings",
     title: "Settings",
     intro: "El proyecto, su contrato, su configuración y sus entornos.",

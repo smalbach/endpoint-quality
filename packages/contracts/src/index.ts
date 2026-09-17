@@ -1219,6 +1219,89 @@ export type DocEndpointView = {
 
 export type DocGroupView = { tag: string; endpoints: DocEndpointView[] };
 
+// ---------------------------------------------------------------------------------------------
+// Monitores
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * El horario de un monitor.
+ *
+ * `daily` y `weekly` llevan su zona IANA porque la hora es la de una persona: «a las 9:00» puesto
+ * por alguien en Madrid tiene que seguir siendo a las 9:00 cuando cambie la hora, y un turno
+ * guardado en UTC se va una hora dos veces al año.
+ */
+export type MonitorScheduleView =
+  | { kind: "interval"; minutes: number }
+  | { kind: "daily"; hour: number; minute: number; timeZone: string }
+  /** `weekdays` con 0 = domingo. */
+  | { kind: "weekly"; weekdays: number[]; hour: number; minute: number; timeZone: string };
+
+/** Qué corrida lanza el monitor: el mismo plan que el botón de «Ejecutar». */
+export type MonitorPlanView = {
+  environmentId: string;
+  workflowId?: string;
+  suiteId?: string;
+  datasetId?: string;
+  operationIds?: string[];
+  labels?: string[];
+  samples?: number;
+  delayMs?: number;
+  concurrency?: number;
+  stopOnFailure?: boolean;
+};
+
+/**
+ * A quién se avisa y cuándo.
+ *
+ * `urlVariable` es **un nombre**: la URL del webhook vive en el entorno del monitor, cifrada si es
+ * sensible. Quien tiene una URL de webhook entrante puede escribir en ese canal, así que es una
+ * credencial y no viaja por aquí.
+ */
+export type MonitorAlertView = {
+  channel: "slack" | "teams" | "webhook";
+  urlVariable: string;
+  /** Cuántos fallos seguidos hacen falta para avisar. Avisa una vez al llegar, no en cada turno. */
+  afterFailures: number;
+};
+
+export type MonitorOutcomeView = "running" | "passed" | "failed" | "error" | "skipped";
+
+/** Una vuelta del monitor. Sobrevive al barrido de retención de corridas: es el historial. */
+export type MonitorExecutionView = {
+  id: string;
+  monitorId: string;
+  runId: string | null;
+  outcome: MonitorOutcomeView;
+  startedAt: string;
+  finishedAt: string | null;
+  totals: { cases: number; passed: number; failed: number } | null;
+  note: string;
+};
+
+export type MonitorView = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  schedule: MonitorScheduleView;
+  plan: MonitorPlanView;
+  alert: MonitorAlertView | null;
+  /** Cuándo le toca. Nulo cuando está apagado, que es lo que lo apaga de verdad. */
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastOutcome: MonitorOutcomeView | null;
+  /** Fallos seguidos. Se pone a cero en el primer verde. */
+  consecutiveFailures: number;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+  /** Cómo se lee el horario, escrito por el servidor. */
+  scheduleLabel: string;
+};
+
+export type MonitorListView = { monitors: (MonitorView & { recent: MonitorExecutionView[] })[] };
+
+export type MonitorHistoryView = { monitor: MonitorView; executions: MonitorExecutionView[] };
+
 /** La página publicada, tal y como la lee quien abre la URL: sin sesión y sin cuenta aquí. */
 export type DocPageView = {
   title: string;

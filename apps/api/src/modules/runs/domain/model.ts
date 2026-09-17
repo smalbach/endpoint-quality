@@ -70,7 +70,12 @@ export type Run = {
   status: RunStatus;
   plan: RunPlan;
   totals: RunTotals;
-  triggeredByKind: "user" | "api-token";
+  /**
+   * Quién la pidió. `monitor` se añadió con los monitores, y `triggeredBy` es entonces el id del
+   * monitor: una corrida que nadie lanzó no la lanzó un usuario, y decir que sí sería mentir en el
+   * historial de quién tocó qué.
+   */
+  triggeredByKind: "user" | "api-token" | "monitor";
   triggeredBy: string;
   startedAt: Date;
   finishedAt: Date | null;

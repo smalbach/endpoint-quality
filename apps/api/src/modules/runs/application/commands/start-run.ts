@@ -19,7 +19,7 @@ export class StartRunCommand implements ICommand {
     readonly organizationId: string,
     readonly projectId: string,
     readonly input: StartRunInput,
-    readonly triggeredBy: { kind: "user" | "api-token"; id: string },
+    readonly triggeredBy: { kind: "user" | "api-token" | "monitor"; id: string },
   ) {}
 }
 

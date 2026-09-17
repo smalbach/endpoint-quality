@@ -609,6 +609,49 @@ export class DocSiteEntity {
   @Column("uuid") createdBy: string;
 }
 
+/**
+ * Un monitor: una corrida guardada que se lanza sola.
+ *
+ * `nextRunAt` es la columna que hace todo: por ella se busca lo vencido, ella se adelanta al
+ * reclamarlo, y nula es lo que apaga el monitor de verdad.
+ */
+@Entity({ name: "monitors" })
+export class MonitorEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Column({ type: "varchar", length: 120 }) name: string;
+  @Column({ type: "boolean", default: true }) enabled: boolean;
+  @Column({ type: "jsonb" }) schedule: unknown;
+  @Column({ type: "jsonb" }) plan: unknown;
+  @Column({ type: "jsonb", nullable: true }) alert: unknown;
+  @Column({ type: "timestamptz", nullable: true }) nextRunAt: Date | null;
+  @Column({ type: "timestamptz", nullable: true }) lastRunAt: Date | null;
+  @Column({ type: "varchar", length: 20, nullable: true }) lastOutcome: string | null;
+  @Column({ type: "int", default: 0 }) consecutiveFailures: number;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) updatedAt: Date;
+  @Column("uuid") createdBy: string;
+}
+
+/**
+ * Una vuelta de un monitor.
+ *
+ * `runId` no tiene clave ajena a propósito: la retención borra corridas viejas, y el historial del
+ * monitor tiene que sobrevivir a eso — es lo único que dice desde cuándo algo va mal.
+ */
+@Entity({ name: "monitor_executions" })
+export class MonitorExecutionEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") monitorId: string;
+  @Column("uuid") projectId: string;
+  @Index() @Column({ type: "uuid", nullable: true }) runId: string | null;
+  @Column({ type: "varchar", length: 20 }) outcome: string;
+  @Column({ type: "timestamptz" }) startedAt: Date;
+  @Column({ type: "timestamptz", nullable: true }) finishedAt: Date | null;
+  @Column({ type: "jsonb", nullable: true }) totals: unknown;
+  @Column({ type: "text", default: "" }) note: string;
+}
+
 /** A role of the API a project tests. The `access` section is derived from these rows. */
 @Entity({ name: "project_roles" })
 export class RoleEntity {
@@ -773,6 +816,7 @@ export const ENTITIES = [
   EndpointEntity, EndpointExampleEntity,
   MockServerEntity,
   DocSiteEntity,
+  MonitorEntity, MonitorExecutionEntity,
   RoleEntity, RolePermissionEntity, RoleRuleEntity,
   SecurityRunEntity,
   PerformancePlanEntity, PerformanceRunEntity,

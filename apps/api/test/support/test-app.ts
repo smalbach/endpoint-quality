@@ -41,6 +41,7 @@ import { InMemoryPasswordResetRepository } from "./in-memory-password-resets";
 import { InMemoryEndpointRepository, InMemoryExampleRepository } from "./in-memory-endpoints";
 import { InMemoryMockRepository } from "./in-memory-mocks";
 import { InMemoryDocSiteRepository } from "./in-memory-doc-sites";
+import { InMemoryMonitorRepository } from "./in-memory-monitors";
 import { ENDPOINT_REPOSITORY, EXAMPLE_REPOSITORY } from "@/modules/endpoints/domain/ports";
 import { EndpointsController } from "@/modules/endpoints/presentation/endpoints.controller";
 import { MOCK_REPOSITORY } from "@/modules/mocks/domain/ports";
@@ -51,6 +52,14 @@ import { DOC_SITE_REPOSITORY } from "@/modules/docs/domain/ports";
 import { DocSitesController } from "@/modules/docs/presentation/doc-sites.controller";
 import { PublishedDocsController } from "@/modules/docs/presentation/published-docs.controller";
 import { DOC_SITE_COMMAND_HANDLERS, DOC_SITE_QUERY_HANDLERS } from "@/modules/docs/docs.module";
+import { MONITOR_REPOSITORY } from "@/modules/monitors/domain/ports";
+import { MonitorsController } from "@/modules/monitors/presentation/monitors.controller";
+import {
+  MONITOR_ADAPTERS,
+  MONITOR_COMMAND_HANDLERS,
+  MONITOR_EVENT_HANDLERS,
+  MONITOR_QUERY_HANDLERS,
+} from "@/modules/monitors/monitors.module";
 import {
   ENDPOINT_COMMAND_HANDLERS,
   ENDPOINT_EVENT_HANDLERS,
@@ -166,9 +175,10 @@ export class StubSafeFetch implements SafeFetchPort {
     { status: number; body: string; requires?: { header: string; value: string } }
   >();
   readonly requested: string[] = [];
-  /** What was sent, headers included. `requested` keeps only the URLs, and a credential that
-   * travels in a header is invisible in a list of URLs. */
-  readonly calls: { url: string; headers: Record<string, string> }[] = [];
+  /** What was sent, headers and body included. `requested` keeps only the URLs, and a credential
+   * that travels in a header —or un aviso cuyo texto lleva dentro un token— is invisible in a list
+   * of URLs. */
+  readonly calls: { url: string; headers: Record<string, string>; body?: string }[] = [];
 
   constructor(private readonly policy: SafeFetchPolicy) {}
 
@@ -190,7 +200,12 @@ export class StubSafeFetch implements SafeFetchPort {
     const headers = Object.fromEntries(
       Object.entries(options.headers ?? {}).map(([name, value]) => [name.toLowerCase(), value]),
     );
-    this.calls.push({ url, headers });
+    this.calls.push({
+      url,
+      headers,
+      // Los bytes se dejan fuera: un cuerpo binario no es una cadena y decodificarlo lo estropea.
+      ...(typeof options.body === "string" ? { body: options.body } : {}),
+    });
     const stored = this.responses.get(url);
     if (stored) {
       const reply = {
@@ -248,6 +263,7 @@ export type TestContext = {
     examples: InMemoryExampleRepository;
     mocks: InMemoryMockRepository;
     docSites: InMemoryDocSiteRepository;
+    monitors: InMemoryMonitorRepository;
   };
   http: StubSafeFetch;
   /** Every mail the application sent. The reset link is only reachable through here. */
@@ -286,6 +302,7 @@ export async function createTestApp(): Promise<TestContext> {
     examples: new InMemoryExampleRepository(),
     mocks: new InMemoryMockRepository(),
     docSites: new InMemoryDocSiteRepository(),
+    monitors: new InMemoryMonitorRepository(),
   };
   const mailer = new RecordingMailer();
   // Loopback is allowed here because the run tests point the engine at a stub server on
@@ -314,6 +331,7 @@ export async function createTestApp(): Promise<TestContext> {
       MocksController,
       PublishedDocsController,
       DocSitesController,
+      MonitorsController,
       RolesController,
       SecurityRunsController,
       PerformanceController,
@@ -375,6 +393,7 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: EXAMPLE_REPOSITORY, useValue: repositories.examples },
       { provide: MOCK_REPOSITORY, useValue: repositories.mocks },
       { provide: DOC_SITE_REPOSITORY, useValue: repositories.docSites },
+      { provide: MONITOR_REPOSITORY, useValue: repositories.monitors },
       // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the
       // repository is ciphertext, and a pass-through would make that assertion meaningless.
       { provide: SECRET_CIPHER, useValue: new AesGcmSecretCipher(Buffer.alloc(32, 9).toString("base64")) },
@@ -402,6 +421,12 @@ export async function createTestApp(): Promise<TestContext> {
       ...MOCK_QUERY_HANDLERS,
       ...DOC_SITE_COMMAND_HANDLERS,
       ...DOC_SITE_QUERY_HANDLERS,
+      // El repositorio va sustituido arriba; del resto de adaptadores de monitores —el que avisa
+      // y el que dispara— se usan los de verdad, que es lo que hace que la prueba valga.
+      ...MONITOR_ADAPTERS.filter((adapter) => !("provide" in adapter)),
+      ...MONITOR_COMMAND_HANDLERS,
+      ...MONITOR_QUERY_HANDLERS,
+      ...MONITOR_EVENT_HANDLERS,
       ...ROLE_COMMAND_HANDLERS,
       ...ROLE_QUERY_HANDLERS,
       ...SECURITY_RUN_COMMAND_HANDLERS,
