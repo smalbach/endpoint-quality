@@ -81,6 +81,45 @@ after(async () => {
   await context.close();
 });
 
+describe("una petición con la forma equivocada se contesta, no revienta", () => {
+  /**
+   * El DTO declara `request` y `response` como objetos y nada más, así que dentro puede llegar
+   * cualquier cosa. Esto salió probando contra la pila desplegada con un `curl` escrito a mano:
+   * un `body` como objeto en vez de texto llegaba hasta `Buffer.byteLength` y el servidor
+   * contestaba **500** con una traza de Node. Un 500 por una petición mal escrita es una respuesta
+   * equivocada: quien la escribió no puede saber qué arreglar, y la traza sale en el log del
+   * servidor de otra persona.
+   */
+  test("el cuerpo de la respuesta como objeto es un 422 con el campo, no un 500", async () => {
+    const malformed = pair();
+    const response = await api()
+      .post(`${base()}/endpoints/${endpointId}/examples`)
+      .set(as(owner))
+      .send({ ...malformed, response: { ...malformed.response, body: { text: "{}" } } });
+    assert.equal(response.status, 422, JSON.stringify(response.body));
+    assert.deepEqual(
+      response.body.errors.map((problem: { field: string }) => problem.field),
+      ["response.body"],
+    );
+  });
+
+  test("y las cabeceras que no son una lista, y el cuerpo de la petición", async () => {
+    const malformed = pair();
+    const response = await api()
+      .post(`${base()}/endpoints/${endpointId}/examples`)
+      .set(as(owner))
+      .send({
+        ...malformed,
+        request: { ...malformed.request, headers: { Authorization: "Bearer x" }, body: "{}" },
+      });
+    assert.equal(response.status, 422, JSON.stringify(response.body));
+    assert.deepEqual(response.body.errors.map((problem: { field: string }) => problem.field).sort(), [
+      "request.body",
+      "request.headers",
+    ]);
+  });
+});
+
 describe("guardar una respuesta como ejemplo", () => {
   test("el nombre lo pone el código de estado cuando no se escribe uno", async () => {
     const saved = await api().post(`${base()}/endpoints/${endpointId}/examples`).set(as(owner)).send(pair());

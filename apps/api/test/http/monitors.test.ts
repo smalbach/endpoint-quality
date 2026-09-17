@@ -430,6 +430,37 @@ describe("el turno", () => {
     assert.equal(failed.consecutiveFailures, 1);
   });
 
+  test("y el plan roto avisa, que es cuando lo roto es la vigilancia", async () => {
+    // El fallo que esto pilla: el aviso lo mandaba sólo `CloseMonitorExecutionHandler`, al terminar
+    // la corrida. Una vuelta que muere **antes** de tener corrida no tiene final que escuchar, así
+    // que el monitor sumaba fallos en silencio justo en el caso en el que nadie va a notar nada:
+    // el entorno borrado, el contrato sin importar, el flujo que ya no está.
+    const { projectBase, environmentId } = await projectAgainst();
+    await createMonitor(projectBase, {
+      name: "roto y con guardia",
+      schedule: { kind: "interval", minutes: 60 },
+      plan: { environmentId, workflowId: "00000000-0000-4000-8000-000000000789" },
+      alert: { channel: "email", recipients: ["guardia@ejemplo.com"], afterFailures: 1 },
+    });
+
+    advance(61);
+    assert.equal((await tick()).failed, 1);
+
+    const [mail] = context.mailer.sent;
+    assert.ok(mail, "un monitor con el plan roto tiene que avisar");
+    assert.equal(mail.to, "guardia@ejemplo.com");
+    assert.match(mail.subject, /roto y con guardia/);
+
+    // Y una sola vez por racha: el segundo turno suma el fallo y no vuelve a escribir.
+    advance(61);
+    await tick();
+    assert.equal(context.mailer.sent.length, 1);
+
+    // La nota de la vuelta sigue explicando el fallo, que es lo que se lee en la pantalla.
+    const rows = await list(projectBase);
+    assert.match(rows.find((row) => row.name === "roto y con guardia")!.recent[0]!.note, /flujo/i);
+  });
+
   test("una vuelta con error también deja el turno adelantado", async () => {
     // El fallo que esto pilla: el reclamo adelanta el turno en la base de datos y el guardado que
     // cierra la vuelta —con la racha y el último resultado— lo pisa con el objeto que se recibió.

@@ -15,10 +15,17 @@
  * 2. **¿Se puede lanzar?** El plan se valida en `StartRunCommand`, que es donde se valida el de
  *    todo el mundo. Si el flujo que apuntaba ya no existe, esto no revienta el planificador: la
  *    vuelta queda en «error» con el motivo, que es lo que hay que leer en la pantalla.
+ * 3. **Y si esa vuelta no llega a lanzar corrida, el aviso sale de aquí.** El aviso normal lo
+ *    manda `CloseMonitorExecutionHandler` cuando la corrida termina, porque lo que se avisa es un
+ *    resultado. Pero una vuelta que muere antes de tener corrida no tiene final que escuchar: sin
+ *    esto, un monitor con el entorno borrado o el contrato sin importar sumaba fallos en silencio
+ *    y no avisaba a nadie **justo cuando lo roto es la vigilancia**. Salió probando contra la pila
+ *    y no en la suite: el caso feliz sí avisa, y es el que se prueba solo.
  */
 import { Inject, Logger } from "@nestjs/common";
 import { CommandBus } from "@nestjs/cqrs";
 
+import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { isFinished } from "@/modules/runs/domain/model";
 import { RUN_REPOSITORY, type RunRepositoryPort } from "@/modules/runs/domain/ports";
 import { StartRunCommand } from "@/modules/runs/application/commands/start-run";
@@ -27,10 +34,12 @@ import {
   afterExecution,
   blankExecution,
   outcomeOf,
+  shouldAlert,
   type Monitor,
   type MonitorExecution,
 } from "../../domain/model";
 import { MONITOR_REPOSITORY, type MonitorRepositoryPort } from "../../domain/ports";
+import { MonitorAlerter } from "../../infrastructure/monitor-alert";
 
 export type FireResult = { execution: MonitorExecution; runId: string | null };
 
@@ -41,6 +50,8 @@ export class MonitorFirer {
     private readonly commandBus: CommandBus,
     @Inject(MONITOR_REPOSITORY) private readonly monitors: MonitorRepositoryPort,
     @Inject(RUN_REPOSITORY) private readonly runs: RunRepositoryPort,
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    private readonly alerter: MonitorAlerter,
   ) {}
 
   async fire(monitor: Monitor, organizationId: string, now: Date): Promise<FireResult> {
@@ -125,10 +136,40 @@ export class MonitorFirer {
   }
 
   private async record(monitor: Monitor, execution: MonitorExecution, now: Date): Promise<void> {
+    // La fila primero, y antes de cualquier cosa que tarde. La vuelta que queda en «running» es
+    // la que `CloseMonitorExecutionHandler` busca por `runId` cuando la corrida termina: si el
+    // aviso o el proyecto se leyeran antes de guardarla, una corrida rápida podría acabar antes de
+    // que existiera la fila, y su final no se anotaría en ninguna parte.
     await this.monitors.saveExecution(execution);
+
+    // La racha **de antes** de esta vuelta: la que decide si este fallo es el que avisa.
+    const previousFailures = monitor.consecutiveFailures;
+    let note = execution.note;
+
     // Una vuelta saltada no toca el estado del monitor: no se midió nada, así que no es ni un
     // fallo ni un acierto. `afterExecution` lo sabe.
     if (execution.outcome !== "running") await this.monitors.save(afterExecution(monitor, execution.outcome, now));
+
+    // El aviso, sólo de las vueltas que **se cierran aquí**. Una que queda en «running» tiene su
+    // final —y su aviso— en `CloseMonitorExecutionHandler` cuando la corrida acabe; avisar ahora
+    // sería avisar de algo que todavía no ha pasado. `shouldAlert` decide el resto: una saltada no
+    // avisa porque no es un fallo, y la racha tiene que caer justo en el número configurado.
+    const kind = execution.outcome === "running" ? null : shouldAlert(monitor, execution.outcome, previousFailures);
+    if (kind) {
+      const project = await this.projects.findById(monitor.projectId);
+      const sent = await this.alerter.send(monitor, project?.name ?? "", kind, {
+        runId: execution.runId,
+        outcome: execution.outcome,
+        failures: kind === "down" ? previousFailures + 1 : previousFailures,
+        totals: execution.totals,
+        note: execution.note,
+      });
+      // El motivo de la vuelta primero: «el entorno ya no existe» explica el fallo, y la nota del
+      // aviso sólo explica el aviso. Se pierde antes la segunda que la primera.
+      if (sent) note = note ? `${note} · ${sent}` : sent;
+    }
+
+    if (note !== execution.note) await this.monitors.saveExecution({ ...execution, note });
     await this.monitors.trimExecutions(monitor.id, MONITOR_HISTORY);
   }
 }

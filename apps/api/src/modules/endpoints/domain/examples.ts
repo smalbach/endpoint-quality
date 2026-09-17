@@ -246,7 +246,51 @@ function headerBreakProblems(headers: EndpointHeader[], where: "request" | "resp
   );
 }
 
+/**
+ * Que lo que llegó tenga la forma que el tipo promete.
+ *
+ * El DTO de esta ruta declara `request` y `response` como `@IsObject()` y nada más, así que dentro
+ * puede venir cualquier cosa: el tipo de TypeScript describe lo que *debería* haber llegado, no lo
+ * que llegó. Sin esto, un `body` que es un objeto en vez de texto llegaba hasta
+ * `Buffer.byteLength` y salía un 500 con una traza de Node — un fallo del servidor por una
+ * peticion mal escrita, que es siempre una respuesta equivocada.
+ *
+ * Se comprueba aquí y no con un DTO anidado a propósito: esta función ya es la que contesta «qué
+ * tiene de malo lo que me mandaste», y tenerlo en un solo sitio evita que las dos listas de
+ * problemas se separen. Salió probando contra la pila desplegada, con una petición escrita a mano.
+ */
+function shapeProblems(input: ExampleInput): Problem[] {
+  const problems: Problem[] = [];
+  const text = (value: unknown, field: string, what: string) => {
+    if (typeof value !== "string") problems.push({ field, detail: what });
+  };
+  if (input.name !== undefined) text(input.name, "name", "El nombre es texto");
+  if (input.response !== undefined) {
+    const response = input.response as Partial<ExampleResponse>;
+    text(response.body, "response.body", "El cuerpo de la respuesta es texto");
+    text(response.contentType, "response.contentType", "El tipo de contenido es texto");
+    if (!Array.isArray(response.headers))
+      problems.push({ field: "response.headers", detail: "Las cabeceras son una lista" });
+  }
+  if (input.request !== undefined) {
+    const request = input.request as Partial<ExampleRequest>;
+    text(request.method, "request.method", "El método es texto");
+    text(request.url, "request.url", "La URL es texto");
+    if (!Array.isArray(request.headers))
+      problems.push({ field: "request.headers", detail: "Las cabeceras son una lista" });
+    if (typeof request.body !== "object" || request.body === null)
+      problems.push({ field: "request.body", detail: "El cuerpo lleva su texto y su tipo de contenido" });
+    else text(request.body.text, "request.body.text", "El cuerpo de la petición es texto");
+  }
+  return problems;
+}
+
 export function exampleProblems(input: ExampleInput): Problem[] {
+  // Si la forma no es la que dice el tipo, lo demás no se puede ni mirar: `Buffer.byteLength` de
+  // un objeto no es un problema de validación, es una excepción.
+  const shape = shapeProblems(input);
+  if (shape.length) return shape;
+
   const problems: Problem[] = [];
   if (input.name !== undefined) {
     const name = input.name.trim();
