@@ -42,6 +42,13 @@ export const PUBLIC_PATHS = new Set([
   // El enlace compartido de una corrida de seguridad: se lee sin sesión, protegido por el token.
   "/shared/security-runs/{shareToken}",
   "/shared/security-runs/{shareToken}/report",
+  // El mock: contesta con los ejemplos guardados del proyecto, y quien lo llama es el navegador de
+  // un front a medio hacer que no tiene sesión de este producto. Lo que hay entre la URL y los datos
+  // es que el `publicId` sea aleatorio, más la `x-api-key` cuando el mock se creó privado. Están en
+  // esta lista **a propósito**: es el inventario de lo que responde sin token, y algo que se sirve
+  // abierto tiene que poder leerse aquí.
+  "/mock/{publicId}",
+  "/mock/{publicId}/{rest}",
 ]);
 
 const PROBLEM_DETAILS = "ProblemDetails";

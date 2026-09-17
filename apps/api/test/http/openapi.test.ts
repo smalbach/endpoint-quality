@@ -117,6 +117,11 @@ describe("el contrato que publica esta API", () => {
       "/auth/refresh",
       "/auth/register",
       "/health",
+      // Las dos del mock: la URL que sirve los ejemplos del proyecto. La llama el navegador de un
+      // front que no tiene sesión de este producto, y lo que la protege es que el `publicId` sea
+      // aleatorio más la `x-api-key` cuando se creó privado.
+      "/mock/{publicId}",
+      "/mock/{publicId}/{rest}",
       "/shared/security-runs/{shareToken}",
       "/shared/security-runs/{shareToken}/report",
     ]);

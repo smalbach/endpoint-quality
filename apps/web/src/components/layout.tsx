@@ -80,6 +80,14 @@ export function projectSections(projectId: string | undefined) {
       tooltip: "Escanea el código NestJS (por GitHub o subida), compara con el proyecto e importa.",
     },
     {
+      to: `${base}/mocks`,
+      label: "Mocks",
+      help: "mocks",
+      end: false,
+      also: [] as string[],
+      tooltip: "Una URL que contesta con los ejemplos guardados, para montar el front sin la API.",
+    },
+    {
       to: `${base}/settings`,
       label: "Settings",
       help: "settings",
@@ -98,6 +106,8 @@ const SECTION_ICONS: Record<string, string> = {
   "Flow Testing": "M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6M18 9a9 9 0 0 1-9 9",
   Performance: "M3 3v18h18M7 15l4-6 4 3 5-8",
   Escáner: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35",
+  // Un servidor: lo que un mock imita.
+  Mocks: "M2 6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v3H2zM2 15a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2zM6 7h.01M6 17h.01",
   Settings:
     "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-2.82 1.17V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 7 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3.6 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 3.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6 1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.14.34.45.6.82.68H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
 };

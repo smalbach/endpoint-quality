@@ -21,6 +21,7 @@ import { ConfigPage } from "@/routes/config";
 import { RunDetailPage, RunsPage } from "@/routes/runs";
 import { SecurityRunDetailPage, SecurityRunsPage } from "@/routes/security-runs";
 import { RolesPage } from "@/routes/roles";
+import { MocksPage } from "@/routes/mocks";
 import { ProjectGeneralPage, ProjectSettingsLayout } from "@/routes/project-settings";
 import { ProjectTransferPage } from "@/routes/project-transfer";
 import { NotFoundPage } from "@/routes/not-found";
@@ -141,6 +142,7 @@ createRoot(document.getElementById("root")!).render(
                         </Suspense>
                       }
                     />
+                    <Route path="mocks" element={<MocksPage />} />
                     <Route path="settings" element={<ProjectSettingsLayout />}>
                       <Route index element={<ProjectGeneralPage />} />
                       <Route path="contract" element={<ConfigPage />} />

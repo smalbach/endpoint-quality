@@ -230,6 +230,22 @@ export function redactExample(
  * Validación y construcción
  * ------------------------------------------------------------------ */
 
+/**
+ * Una cabecera guardada con un salto de línea dentro.
+ *
+ * Es la misma regla que en `endpointProblems`, y aquí hace más falta: el valor de un ejemplo no lo
+ * escribió una persona, lo contestó otro servidor o lo trajo un HAR. Y un ejemplo se vuelve a
+ * servir —por el mock, por la exportación— así que un salto de línea guardado es una respuesta
+ * partida en dos esperando a que alguien la lea.
+ */
+function headerBreakProblems(headers: EndpointHeader[], where: "request" | "response"): Problem[] {
+  return headers.flatMap((header, index) =>
+    /[\r\n]/.test(header?.value ?? "") || /[\r\n]/.test(header?.name ?? "")
+      ? [{ field: `${where}.headers.${index}`, detail: "Una cabecera no lleva saltos de línea" }]
+      : [],
+  );
+}
+
 export function exampleProblems(input: ExampleInput): Problem[] {
   const problems: Problem[] = [];
   if (input.name !== undefined) {
@@ -249,8 +265,10 @@ export function exampleProblems(input: ExampleInput): Problem[] {
       });
     if (headers.length > MAX_EXAMPLE_HEADERS)
       problems.push({ field: "response.headers", detail: `Como mucho ${MAX_EXAMPLE_HEADERS} cabeceras` });
+    problems.push(...headerBreakProblems(headers, "response"));
   }
   if (input.request !== undefined) {
+    problems.push(...headerBreakProblems(input.request.headers, "request"));
     if (!input.request.method.trim()) problems.push({ field: "request.method", detail: "Falta el método" });
     if (!input.request.url.trim()) problems.push({ field: "request.url", detail: "Falta la URL" });
     if (Buffer.byteLength(input.request.body.text, "utf8") > MAX_EXAMPLE_BODY)

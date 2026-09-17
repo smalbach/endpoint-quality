@@ -39,8 +39,13 @@ import { PASSWORD_RESET_REPOSITORY } from "@/modules/auth/domain/password-reset"
 import { MAILER, RecordingMailer } from "@/shared/mail/mailer";
 import { InMemoryPasswordResetRepository } from "./in-memory-password-resets";
 import { InMemoryEndpointRepository, InMemoryExampleRepository } from "./in-memory-endpoints";
+import { InMemoryMockRepository } from "./in-memory-mocks";
 import { ENDPOINT_REPOSITORY, EXAMPLE_REPOSITORY } from "@/modules/endpoints/domain/ports";
 import { EndpointsController } from "@/modules/endpoints/presentation/endpoints.controller";
+import { MOCK_REPOSITORY } from "@/modules/mocks/domain/ports";
+import { MocksController } from "@/modules/mocks/presentation/mocks.controller";
+import { MockServeController } from "@/modules/mocks/presentation/mock-serve.controller";
+import { MOCK_COMMAND_HANDLERS, MOCK_QUERY_HANDLERS } from "@/modules/mocks/mocks.module";
 import {
   ENDPOINT_COMMAND_HANDLERS,
   ENDPOINT_EVENT_HANDLERS,
@@ -236,6 +241,7 @@ export type TestContext = {
     passwordResets: InMemoryPasswordResetRepository;
     endpoints: InMemoryEndpointRepository;
     examples: InMemoryExampleRepository;
+    mocks: InMemoryMockRepository;
   };
   http: StubSafeFetch;
   /** Every mail the application sent. The reset link is only reachable through here. */
@@ -272,6 +278,7 @@ export async function createTestApp(): Promise<TestContext> {
     passwordResets: new InMemoryPasswordResetRepository(),
     endpoints: new InMemoryEndpointRepository(),
     examples: new InMemoryExampleRepository(),
+    mocks: new InMemoryMockRepository(),
   };
   const mailer = new RecordingMailer();
   // Loopback is allowed here because the run tests point the engine at a stub server on
@@ -296,6 +303,8 @@ export async function createTestApp(): Promise<TestContext> {
       RunsController,
       RequestPreviewController,
       EndpointsController,
+      MockServeController,
+      MocksController,
       RolesController,
       SecurityRunsController,
       PerformanceController,
@@ -355,6 +364,7 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: WORKFLOW_REPOSITORY, useValue: repositories.workflows },
       { provide: ENDPOINT_REPOSITORY, useValue: repositories.endpoints },
       { provide: EXAMPLE_REPOSITORY, useValue: repositories.examples },
+      { provide: MOCK_REPOSITORY, useValue: repositories.mocks },
       // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the
       // repository is ciphertext, and a pass-through would make that assertion meaningless.
       { provide: SECRET_CIPHER, useValue: new AesGcmSecretCipher(Buffer.alloc(32, 9).toString("base64")) },
@@ -378,6 +388,8 @@ export async function createTestApp(): Promise<TestContext> {
       ...ENDPOINT_COMMAND_HANDLERS,
       ...ENDPOINT_QUERY_HANDLERS,
       ...ENDPOINT_EVENT_HANDLERS,
+      ...MOCK_COMMAND_HANDLERS,
+      ...MOCK_QUERY_HANDLERS,
       ...ROLE_COMMAND_HANDLERS,
       ...ROLE_QUERY_HANDLERS,
       ...SECURITY_RUN_COMMAND_HANDLERS,

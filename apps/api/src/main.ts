@@ -12,6 +12,8 @@ import { HttpStatus } from "@nestjs/common";
 import { MAX_JSON_BODY } from "./shared/http/body-limits";
 import { describeErrors } from "./shared/openapi/describe-errors";
 import { describeBodies } from "./shared/openapi/describe-bodies";
+import { MOCK_PATH_PREFIX } from "./modules/mocks/domain/model";
+import { mockCors } from "./modules/mocks/presentation/mock-cors";
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
@@ -22,6 +24,9 @@ async function bootstrap(): Promise<void> {
   // Express defaults to 100 KB, which is smaller than a real OpenAPI document: Digital
   // Catalog's is 118 KB. Raised to the figure the DTO validates against so the two agree.
   app.useBodyParser("json", { limit: MAX_JSON_BODY });
+  // Antes del CORS global, y solo bajo `/mock`: el de Nest contesta el preflight él mismo con la
+  // lista de orígenes de la API, que es lo contrario de lo que un mock necesita. Ver `mock-cors.ts`.
+  app.use(`/${MOCK_PATH_PREFIX}`, mockCors);
   app.enableCors({ origin: env.CORS_ORIGINS.split(",").map((origin) => origin.trim()), credentials: true });
 
   app.useGlobalPipes(

@@ -40,6 +40,16 @@ export type Session = { userId: string; accessToken: string; expiresIn: number }
 
 const BASE = import.meta.env.VITE_API_URL ?? "/api";
 
+/**
+ * Dónde vive la API, en absoluto.
+ *
+ * Hace falta para una sola cosa: enseñar la URL de un mock, que es una dirección que alguien pega en
+ * otro programa. `BASE` suele ser `/api` —nginx lo reescribe al servicio— así que el origen de la
+ * pestaña no es el de la API salvo por ese proxy, y componer la URL a mano en la pantalla acabaría
+ * dando una que no contesta.
+ */
+export const absoluteApiUrl = (path: string): string => new URL(`${BASE}${path}`, window.location.origin).toString();
+
 let accessToken: string | null = null;
 let refreshing: Promise<boolean> | null = null;
 const listeners = new Set<(token: string | null) => void>();

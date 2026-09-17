@@ -1936,3 +1936,128 @@ del mismo endpoint, el cuerpo que se mandó entra con el endpoint que lo mandaba
 cabecera, ni el del cuerpo, ni la cookie de sesión llegan a la base de datos.
 
 `api 720 pruebas (31 nuevas) · web 415 · import-detect 25 · runner-core 311 · lint 0 errores · typecheck limpio`
+
+## Paridad con Postman, ola 6: el servidor de mocks, y una URL pública de verdad
+
+Los ejemplos de la ola anterior eran documentación. Esto los vuelve **ejecutables**: una URL que
+contesta con lo que la API contestó una vez, sin tocar la API de verdad. Por eso venía después y no
+antes — un mock sin ejemplos no tiene con qué contestar, y hacerlo primero habría obligado a
+inventar un almacén de respuestas que luego habría que migrar.
+
+Es el primer sitio de este producto donde una ruta abierta devuelve datos de un proyecto, así que la
+mitad del trabajo está ahí.
+
+### Público o privado, pero **dicho**
+
+`visibility` no tiene valor por defecto, ni en el DTO ni en la pantalla: el botón de crear está
+apagado hasta que se elige. No es fricción por gusto. Los cuerpos de ejemplo ya van sin credenciales
+—eso lo hizo la redacción al guardarlos— pero siguen siendo datos reales de alguien, con sus
+nombres, sus correos y sus identificadores. Cuando la opción cómoda es la abierta, se publica sin
+decidirlo.
+
+Un mock privado pide `x-api-key`, y de la clave **se guarda el hash**, con el mismo criterio que los
+tokens de API: un volcado de la base de datos no entrega mocks. Se enseña una vez, en un aviso que
+hay que cerrar a mano — un _toast_ se iría antes de copiarla, y no hay ningún otro sitio donde
+mirarla.
+
+El `publicId` es aleatorio de 128 bits y **no** es el `id` de la fila. En un mock público la URL es
+la credencial, y separar los dos identificadores permite además rotarla sin tocar nada interno. Un
+`publicId` que no existe y uno que existió dan la misma respuesta: distinguirlos convertiría la ruta
+en un oráculo para adivinar URLs.
+
+Las dos rutas están en `PUBLIC_PATHS` **a propósito**. Esa lista es el inventario de lo que responde
+sin token, y hay una prueba que la compara contra lo que la aplicación de verdad contesta: algo que
+se sirve abierto tiene que poder leerse ahí.
+
+### Tres maneras de no contestar, y tres códigos
+
+Un mock que contesta 404 sin explicación es indistinguible de un mock roto, y quien lo usa se queda
+mirando la consola sin saber si escribió mal la ruta, si falta el ejemplo, o si el mock está apagado.
+
+- **La ruta no existe** — 404, con la que sí se parece. «Pediste `/user/42`, el mock sirve
+  `GET /users/{id}`» es lo único que hace falta saber casi siempre. Y tener el mismo número de
+  segmentos **no** es parecerse: «¿querías `/pedidos`?» ante un `/usuarios` es peor que callarse.
+- **La ruta existe con otro método** — 405 con `Allow`, que es lo que dice HTTP y lo que además
+  resuelve el caso: se olvidó el `method` en el `fetch`.
+- **La ruta existe y no tiene ejemplos** — 501, y no 404. El endpoint está declarado y nadie ha
+  guardado nunca lo que contesta.
+
+Y antes de todo eso, la pantalla dice «1 de 12 rutas tienen ejemplo». Un mock de un proyecto sin
+ejemplos es una URL que contesta 501 a todo, y descubrirlo cuando el front ya está apuntado es media
+tarde.
+
+### Elegir entre varios ejemplos
+
+Por orden: lo que pide quien llama (por nombre o por estado, que es lo que permite probar el camino
+de error sin tocar el mock), lo que encaja con la petición, y si no, **el 2xx más bajo**.
+
+No «el primero», que es lo que hace Postman: lo normal es guardar primero lo que sorprende —el
+error— y entonces el mock contestaría 500 a todo y no serviría para montar nada.
+
+Lo que encaja se puntúa sobre lo que el ejemplo **afirma**: un parámetro del que no dice nada no es
+evidencia en ningún sentido, y uno que dice otra cosa **resta**. Sin eso, un ejemplo con veinte
+campos ganaría siempre por tener más con los que coincidir.
+
+Un nombre pedido que no existe es un 400 y **no** otro ejemplo. Servir otro sería lo peor que puede
+hacer: la prueba que pidió el camino de error pasaría en verde contra el de éxito.
+
+### El CORS del mock es el contrario del de la API
+
+La API vive con una lista de orígenes y `credentials: true`, porque ahí hay una sesión que proteger.
+El caso normal de un mock es un front a medio hacer en un puerto que cambia cada día, y una lista de
+orígenes lo rompería en la primera hora. Así que abre a cualquier origen — y por eso mismo **no
+admite credenciales**, que además es la única combinación que el navegador acepta junto a `*`.
+
+`HEAD` lo contesta el ejemplo del `GET` sin cuerpo, porque quien pregunta por las cabeceras de un
+recurso no está pidiendo otro recurso. Y un `OPTIONS` de verdad —el que un proyecto declara— sí llega
+al motor: lo que lo separa del preflight es `Access-Control-Request-Method`.
+
+### Las cabeceras que no se reenvían
+
+No es higiene, es corrección. El cuerpo se guardó ya descomprimido, así que un `content-encoding:
+gzip` heredado hace fallar a todos los clientes; una `content-length` vieja desincroniza la
+respuesta; `date` guardada es una fecha falsa; y `strict-transport-security` es la política del
+dominio ajeno sobre sí mismo.
+
+Y el valor de una cabecera guardada **no lo escribió nadie**: lo contestó otro servidor o lo trajo un
+HAR. Un salto de línea dentro partiría la respuesta en dos. Eso ahora tiene dos puertas: la
+validación del ejemplo, que no lo deja entrar —**le faltaba**, y el importador construye ejemplos sin
+pasar por ella—, y el saneado de quien sirve.
+
+### Tres fallos míos, y dos solo se ven en la pila desplegada
+
+- **`Access-Control-Allow-Credentials: true`**, que escribe el CORS global de Nest **después** del
+  middleware del mock. Junto a `Allow-Origin: *` es justo la combinación que el navegador rechaza de
+  plano. Se quita en el último momento, que es el controlador. Las pruebas no lo veían porque la
+  aplicación de prueba no monta el CORS global: se encontró mirando los bytes de una respuesta real.
+- **`x-eq-mock-reason: el 2xx m?s bajo`**. El valor de una cabecera HTTP no lleva UTF-8: Node escribe
+  los bytes y el cliente los lee como latin-1. Los motivos pasaron a ser códigos ASCII
+  (`lowest-2xx`, `by-name`, `by-status`, `request-match`) —que además se pueden buscar en un registro
+  y comparar en una prueba— y el nombre del ejemplo, que es texto de alguien y va a llevar tildes, se
+  codifica en porcentaje.
+- **`nearestRoutes` proponía cualquier ruta con el mismo número de segmentos.** Lo pilló la prueba que
+  escribí para lo contrario.
+
+### Cómo se comprobó
+
+Además del motor entero en memoria, la pila desplegada con nginx delante: se creó una cuenta, un
+endpoint y dos ejemplos por HTTP, y después se llamó a la URL del mock **sin ninguna cabecera de
+autenticación**.
+
+```
+GET /api/mock/<publicId>/v1/pedidos/42
+HTTP/1.1 200 OK · x-eq-mock-endpoint: GET /v1/pedidos/{id}
+                  x-eq-mock-example: 200 con el pedido · x-eq-mock-reason: lowest-2xx
+{ "id": "42", "cliente": "Ana", "access_token": "••••••••" }
+```
+
+El `access_token` sale tapado: la redacción aguanta hasta la URL pública, que es donde importa. Y en
+la tabla, los tres secretos que se mandaron —cabecera, cuerpo y `Set-Cookie`— salen a cero.
+
+También contra la pila: el privado da 401 sin clave, 401 con otra y 200 con la suya; rotar deja fuera
+a la vieja en el mismo momento; apagarlo da 503 diciéndolo; el preflight sale 204 sin
+`allow-credentials`; y borrar la fila del proyecto se lleva sus mocks por la cascada.
+
+En el navegador, el botón de crear con el nombre puesto y sin elegir visibilidad: apagado.
+
+`api 802 pruebas (82 nuevas) · web 424 (9 nuevas) · import-detect 25 · runner-core 311 · lint 0 errores · typecheck limpio`

@@ -192,6 +192,36 @@ export const HELP_TOPICS: HelpTopic[] = [
     ],
   },
   {
+    id: "mocks",
+    title: "Mocks",
+    intro: "Una URL que contesta con los ejemplos guardados del proyecto, sin tocar la API de verdad.",
+    steps: [
+      {
+        title: "Antes: guarda ejemplos",
+        body: "Un mock no inventa nada: sirve lo que alguien guardó. Envía una petición desde el editor de un endpoint y pulsa «Guardar la respuesta». La pantalla de Mocks dice cuántas rutas tienen ya al menos un ejemplo.",
+        tip: "Una ruta sin ejemplo contesta 501 diciendo que falta, no un 404 que parecería un mock roto.",
+      },
+      {
+        title: "Crea el mock y elige quién lo llama",
+        body: "Privado pide la cabecera x-api-key, y la clave se enseña una sola vez. Público lo lee cualquiera que tenga la URL. No hay opción marcada de antemano: los ejemplos van sin credenciales dentro, pero siguen siendo datos reales.",
+        tip: "La URL no se adivina, y eso es todo lo que protege a un mock público. Una URL que ya circula sigue circulando aunque después se cambie a privada: para cortar, se borra el mock o se apaga.",
+      },
+      {
+        title: "Apúntale el front",
+        body: "La URL se pega tal cual donde iría la API. Abre CORS a cualquier origen —el caso normal es un front en un puerto que cambia cada día— y por eso mismo no admite cookies: lo que autoriza es la cabecera.",
+      },
+      {
+        title: "Pide el ejemplo que quieras",
+        body: "Por defecto contesta el 2xx más bajo de la ruta. La misma petición con «x-eq-mock-status: 404» o «x-eq-mock-example: nombre» devuelve otro, que es como se prueba el camino de error sin tocar nada. Las cabeceras de Postman valen igual.",
+        tip: "Si hay varios ejemplos de la misma ruta, la cadena de consulta y el cuerpo JSON deciden: «?page=2» contesta el ejemplo que se guardó con «?page=2».",
+      },
+      {
+        title: "Cuando conteste algo raro",
+        body: "Cada respuesta lleva x-eq-mock-endpoint, x-eq-mock-example y x-eq-mock-reason: qué ruta encajó, qué ejemplo salió y por qué. Un 405 trae Allow, y un 404 dice a qué ruta se parecía la que pediste.",
+      },
+    ],
+  },
+  {
     id: "settings",
     title: "Settings",
     intro: "El proyecto, su contrato, su configuración y sus entornos.",

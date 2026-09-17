@@ -1075,6 +1075,43 @@ export type SavedExampleView = {
   };
 };
 
+/**
+ * Un servidor de mocks del proyecto, como sale de la API.
+ *
+ * Sin `apiKeyHash`: no hace falta para nada en el navegador y es lo único secreto que hay. La clave
+ * en claro solo aparece en la respuesta de crearlo o de rotarla, y no vuelve a salir nunca.
+ */
+export type MockServerView = {
+  id: string;
+  name: string;
+  /** El segmento opaco de la URL: `<prefix>/<publicId>/...`. */
+  publicId: string;
+  visibility: "public" | "private";
+  /** Los primeros y últimos caracteres de la clave, para distinguir dos sin revelar ninguna. */
+  apiKeyPreview: string;
+  delay: { kind: "none" } | { kind: "fixed"; ms: number } | { kind: "random"; minMs: number; maxMs: number };
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+};
+
+/**
+ * La lista de mocks, con **cuántas rutas puede contestar**.
+ *
+ * El recuento no es adorno: un mock de un proyecto sin ejemplos es una URL que contesta 501 a todo,
+ * y eso se descubre cuando el front ya está apuntado. «4 de 12 rutas» lo dice antes.
+ */
+export type MockListView = {
+  mocks: MockServerView[];
+  coverage: { withExamples: number; endpoints: number };
+  /** El primer segmento de la URL servida, decidido por el servidor y no compuesto en el navegador. */
+  prefix: string;
+};
+
+/** Crear un mock privado, o rotar su clave: la clave en claro, esta vez y ninguna más. */
+export type IssuedMockView = { mock: MockServerView; apiKey: string | null };
+
 /** Una cookie del tarro, como sale de la API. El valor solo va si se pide ver. */
 export type CookieView = {
   name: string;

@@ -561,6 +561,28 @@ export class EndpointExampleEntity {
   @Column("uuid") createdBy: string;
 }
 
+/**
+ * Un servidor de mocks: una URL pública que contesta con los ejemplos guardados del proyecto.
+ *
+ * `publicId` es único en toda la instalación y no solo en el proyecto: es lo que llega en la URL, y
+ * se resuelve sin saber todavía de quién es. De la clave se guarda el hash, como en los tokens.
+ */
+@Entity({ name: "mock_servers" })
+export class MockServerEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Column({ type: "varchar", length: 120 }) name: string;
+  @Column({ type: "varchar", length: 64, unique: true }) publicId: string;
+  @Column({ type: "varchar", length: 20 }) visibility: string;
+  @Column({ type: "varchar", length: 64, nullable: true }) apiKeyHash: string | null;
+  @Column({ type: "varchar", length: 20, default: "" }) apiKeyPreview: string;
+  @Column({ type: "jsonb" }) delay: unknown;
+  @Column({ type: "boolean", default: true }) enabled: boolean;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) updatedAt: Date;
+  @Column("uuid") createdBy: string;
+}
+
 /** A role of the API a project tests. The `access` section is derived from these rows. */
 @Entity({ name: "project_roles" })
 export class RoleEntity {
@@ -723,6 +745,7 @@ export const ENTITIES = [
   RequestTemplateEntity, WorkflowEntity, WorkflowDatasetEntity, WorkflowSuiteEntity,
   RunEntity, RunCaseEntity, RunStepEntity,
   EndpointEntity, EndpointExampleEntity,
+  MockServerEntity,
   RoleEntity, RolePermissionEntity, RoleRuleEntity,
   SecurityRunEntity,
   PerformancePlanEntity, PerformanceRunEntity,
