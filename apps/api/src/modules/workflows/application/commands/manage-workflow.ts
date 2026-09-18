@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Inject } from "@nestjs/common";
+import { Inject, Optional } from "@nestjs/common";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 import { safeParseWorkflowDocument, subflowProblems, subflowSteps, type WorkflowDocument } from "@eq/runner-core";
 
@@ -10,6 +10,7 @@ import { ownedProject } from "@/modules/projects/application/commands/update-pro
 import type { WorkflowRow, WorkflowStatus } from "../../domain/model";
 import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "../../domain/ports";
 import { withoutLiteralSecrets } from "../../domain/postman-auth";
+import { CHANNEL_REPOSITORY, type ChannelRepositoryPort } from "@/modules/channels/domain/ports";
 
 export type WorkflowInput = {
   name?: string;
@@ -90,6 +91,7 @@ async function validatedDefinition(
   definition: WorkflowDocument,
   /** The flow being saved: its id closes a subflow cycle, its name says where one goes. */
   self: { id?: string; name?: string } = {},
+  channels: ChannelRepositoryPort | null = null,
 ): Promise<WorkflowDocument> {
   const parsed = safeParseWorkflowDocument(definition);
   if (!parsed.ok) throw new InvalidInputError("El flujo no es válido", parsed.issues, "workflow-invalid");
@@ -125,6 +127,25 @@ async function validatedDefinition(
       );
     }
   }
+  // A channel node names a channel row, so the same holds: one of this project's, not deleted. Checked
+  // here and not only at run time, where the same mistake would be a red case every night.
+  const channelSteps = definition.steps
+    .map((step, index) => ({ step, index }))
+    .filter(({ step }) => step.kind === "channel" && step.channel);
+  if (channelSteps.length && channels) {
+    const known = new Set((await channels.listByProject(projectId)).map((channel) => channel.id));
+    const unknown = channelSteps.filter(({ step }) => !known.has(step.channel!.channelId));
+    if (unknown.length) {
+      throw new InvalidInputError(
+        "El flujo no es válido",
+        unknown.map(({ index }) => ({
+          field: `definition.steps.${index}.channel.channelId`,
+          detail: "el canal no existe en este proyecto",
+        })),
+        "workflow-invalid",
+      );
+    }
+  }
   return withoutLiteralSecrets(definition);
 }
 
@@ -135,6 +156,8 @@ export class CreateWorkflowHandler implements ICommandHandler<CreateWorkflowComm
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
+    // Optional so a module without channels still saves flows; with it, a channel node is checked.
+    @Optional() @Inject(CHANNEL_REPOSITORY) private readonly channels: ChannelRepositoryPort | null = null,
   ) {}
 
   async execute(command: CreateWorkflowCommand): Promise<{ workflowId: string }> {
@@ -155,6 +178,7 @@ export class CreateWorkflowHandler implements ICommandHandler<CreateWorkflowComm
       command.projectId,
       command.input.definition ?? { steps: [] },
       { name },
+      this.channels,
     );
     const now = this.clock.now();
     const workflowId = randomUUID();
@@ -181,6 +205,8 @@ export class UpdateWorkflowHandler implements ICommandHandler<UpdateWorkflowComm
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
+    // Optional so a module without channels still saves flows; with it, a channel node is checked.
+    @Optional() @Inject(CHANNEL_REPOSITORY) private readonly channels: ChannelRepositoryPort | null = null,
   ) {}
 
   async execute(command: UpdateWorkflowCommand): Promise<void> {
@@ -199,7 +225,13 @@ export class UpdateWorkflowHandler implements ICommandHandler<UpdateWorkflowComm
     // The whole graph or nothing: a partial write of a document whose halves reference each other
     // is the state this shape exists to make impossible.
     const definition = command.input.definition
-      ? await validatedDefinition(this.workflows, command.projectId, command.input.definition, { id: previous.id, name })
+      ? await validatedDefinition(
+          this.workflows,
+          command.projectId,
+          command.input.definition,
+          { id: previous.id, name },
+          this.channels,
+        )
       : previous.definition;
     await this.workflows.saveWorkflow({
       ...previous,

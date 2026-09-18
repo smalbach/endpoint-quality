@@ -12,7 +12,7 @@
  * (`redactBody`), que es la segunda red y la misma que usan los ejemplos guardados.
  */
 import { createHmac, randomUUID } from "node:crypto";
-import { Inject } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 import {
   interpolateText,
@@ -44,8 +44,8 @@ import {
   type ChannelRepositoryPort,
   type ChannelSessionRepositoryPort,
 } from "../../domain/ports";
-import { isFinished, startSession } from "../../domain/session";
-import { ChannelSessionRegistry } from "../../infrastructure/session-registry";
+import { isFinished, startSession, type ChannelSession } from "../../domain/session";
+import { ChannelSessionRegistry, type SessionPlan } from "../../infrastructure/session-registry";
 import { viewSession, type ChannelSessionView } from "../views";
 import { GrpcSessionPlanner } from "../grpc";
 import { ceilingsOf } from "./manage-channels";
@@ -60,11 +60,22 @@ export class OpenChannelSessionCommand implements ICommand {
   ) {}
 }
 
-@CommandHandler(OpenChannelSessionCommand)
-export class OpenChannelSessionHandler implements ICommandHandler<OpenChannelSessionCommand, ChannelSessionView> {
+/**
+ * Abrir una sesión, venga de donde venga: del botón «Conectar» o de un nodo canal de un flujo.
+ *
+ * **Un solo camino** a propósito. Todo lo que protege una sesión se decide aquí o más abajo —la
+ * guarda de red en el transporte, los topes recortados al techo, la lista de secretos, la regla por
+ * nombre de campo, el entorno sin escrituras, los métodos gRPC sin efectos—, y una corrida que
+ * abriera sus sockets por su cuenta sería un segundo sitio donde cada una de esas reglas puede faltar
+ * sin que ninguna prueba se ponga roja.
+ *
+ * Lo único que cambia para una corrida entra por argumentos y solo puede **añadir** cautela o datos:
+ * sus variables encima del entorno (con sus secretos en la lista), una petición gRPC distinta de la
+ * guardada, una inactividad más corta, y la escucha de lo recibido para las capturas.
+ */
+@Injectable()
+export class ChannelSessionOpener {
   constructor(
-    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
-    @Inject(CHANNEL_REPOSITORY) private readonly channels: ChannelRepositoryPort,
     @Inject(ENVIRONMENT_REPOSITORY) private readonly environments: EnvironmentRepositoryPort,
     @Inject(SECRET_CIPHER) private readonly cipher: SecretCipherPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
@@ -73,18 +84,31 @@ export class OpenChannelSessionHandler implements ICommandHandler<OpenChannelSes
     private readonly grpc: GrpcSessionPlanner,
   ) {}
 
-  async execute(command: OpenChannelSessionCommand): Promise<ChannelSessionView> {
-    const project = await writableProject(this.projects, command.organizationId, command.projectId);
-    const channel = await this.channels.findById(project.id, command.channelId);
-    if (!channel) throw new NotFoundError("El canal no existe", "channel-not-found");
-
+  async open(input: {
+    projectId: string;
+    channel: Channel;
+    environmentId: string | null;
+    actorId: string;
+    overlay?: { variables: Record<string, string>; secrets: string[] };
+    /** Solo gRPC: la petición de la llamada en lugar de la guardada. */
+    grpcRequest?: string;
+    /** Solo puede bajar la del canal. */
+    idleMs?: number;
+    onReceived?: SessionPlan["onReceived"];
+  }): Promise<ChannelSession> {
+    const channel =
+      input.grpcRequest !== undefined && input.channel.grpc
+        ? { ...input.channel, grpc: { ...input.channel.grpc, message: input.grpcRequest } }
+        : input.channel;
     const { environment, url, headers, secrets, interpolate, variables, mqtt } = await resolveChannelTarget(
       { environments: this.environments, cipher: this.cipher },
-      project.id,
+      input.projectId,
       channel,
-      command.environmentId,
+      input.environmentId,
+      input.overlay,
     );
-    const limits = effectiveLimits(channel.limits, ceilingsOf(this.env));
+    const ceiling = effectiveLimits(channel.limits, ceilingsOf(this.env));
+    const limits = input.idleMs ? { ...ceiling, idleMs: Math.min(ceiling.idleMs, input.idleMs) } : ceiling;
     const readOnly = environment ? !environment.writesAllowed : false;
     // Un canal gRPC trae su propia apertura; el registro le pasa las mismas escuchas que a un socket.
     const open =
@@ -102,13 +126,13 @@ export class OpenChannelSessionHandler implements ICommandHandler<OpenChannelSes
     const session = startSession({
       id: randomUUID(),
       channelId: channel.id,
-      projectId: project.id,
+      projectId: input.projectId,
       environmentId: environment?.id ?? null,
       ownerInstance: this.registry.instance,
-      startedBy: command.actorId,
+      startedBy: input.actorId,
       now: this.clock.now(),
     });
-    const started = await this.registry.start(session, {
+    return this.registry.start(session, {
       url,
       headers,
       subprotocols: channel.subprotocols,
@@ -131,6 +155,29 @@ export class OpenChannelSessionHandler implements ICommandHandler<OpenChannelSes
       // `{{$uuid}}` en una trama es un id por mensaje y no uno por sesión.
       interpolate: (text) => interpolateText(text, variables, freshSeed(this.clock.now())),
       ...(mqtt ? { mqtt } : {}),
+      ...(input.onReceived ? { onReceived: input.onReceived } : {}),
+    });
+  }
+}
+
+@CommandHandler(OpenChannelSessionCommand)
+export class OpenChannelSessionHandler implements ICommandHandler<OpenChannelSessionCommand, ChannelSessionView> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(CHANNEL_REPOSITORY) private readonly channels: ChannelRepositoryPort,
+    private readonly registry: ChannelSessionRegistry,
+    private readonly opener: ChannelSessionOpener,
+  ) {}
+
+  async execute(command: OpenChannelSessionCommand): Promise<ChannelSessionView> {
+    const project = await writableProject(this.projects, command.organizationId, command.projectId);
+    const channel = await this.channels.findById(project.id, command.channelId);
+    if (!channel) throw new NotFoundError("El canal no existe", "channel-not-found");
+    const started = await this.opener.open({
+      projectId: project.id,
+      channel,
+      environmentId: command.environmentId,
+      actorId: command.actorId,
     });
     return viewSession(started, this.registry.owns(started.id));
   }
@@ -149,6 +196,12 @@ export async function resolveChannelTarget(
   projectId: string,
   channel: Channel,
   environmentId: string | null,
+  /**
+   * Lo que una corrida sabe además del entorno: sus variables (las capturadas por pasos anteriores,
+   * la sesión de un login) y los valores que hay que tapar con ellas. Encima del entorno, como en un
+   * paso HTTP de la misma corrida; sin esto, un nodo canal no podría gastar el token de un login.
+   */
+  overlay?: { variables: Record<string, string>; secrets: string[] },
 ): Promise<{
   environment: Environment | null;
   url: string;
@@ -163,7 +216,7 @@ export async function resolveChannelTarget(
     throw new NotFoundError("El entorno no existe", "environment-not-found");
 
   const values = environment ? resolveVariables(environment.variables, (payload) => deps.cipher.decrypt(payload)) : {};
-  const variables = withEnvironmentNamespace(values);
+  const variables = { ...withEnvironmentNamespace(values), ...overlay?.variables };
   const interpolate = (value: string) => interpolateText(value, variables);
 
   // Los valores de las variables sensibles: lo primero que se tapa en cada mensaje.
@@ -173,6 +226,7 @@ export async function resolveChannelTarget(
         .map(([name]) => values[name] ?? "")
         .filter(Boolean)
     : [];
+  for (const secret of overlay?.secrets ?? []) if (secret) secrets.push(secret);
 
   let url = interpolate(channel.url);
   const headers: Record<string, string> = {};

@@ -11,6 +11,7 @@ import { SpecsModule } from "@/modules/specs/specs.module";
 import { EnvironmentsModule } from "@/modules/environments/environments.module";
 import { ProjectConfigModule } from "@/modules/config/config.module";
 import { WorkflowsModule } from "@/modules/workflows/workflows.module";
+import { ChannelsModule } from "@/modules/channels/channels.module";
 import { REQUEST_PREVIEWER, RUN_QUEUE, RUN_REPOSITORY } from "./domain/ports";
 import { PROGRESS_RELAY } from "./domain/progress";
 import { TypeOrmRunRepository } from "./infrastructure/persistence/typeorm-run.repository";
@@ -104,6 +105,7 @@ export const PROGRESS_RELAY_PROVIDER = {
     forwardRef(() => EnvironmentsModule),
     forwardRef(() => ProjectConfigModule),
     forwardRef(() => WorkflowsModule),
+    forwardRef(() => ChannelsModule),
   ],
   controllers: [RunsController, RequestPreviewController],
   providers: [

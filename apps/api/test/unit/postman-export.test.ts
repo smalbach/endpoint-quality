@@ -253,6 +253,22 @@ describe("lo que Postman no puede expresar se cuenta, no se tira", () => {
     // Y la petición que sí se puede escribir sigue en el fichero: un nodo raro no hunde la carpeta.
     assert.equal(firstRequest(exported).name, "Crear pedido");
   });
+
+  test("un nodo canal sale en `skipped` diciendo por qué: una colección solo lleva HTTP", () => {
+    const exported = toPostmanExport(
+      bundle(
+        flows([
+          { id: "s1", requestTemplateId: "t1" },
+          { id: "socket", kind: "channel", channel: { channelId: "c1" }, dependsOn: ["s1"] },
+        ]) as never,
+      ),
+      IDS,
+    );
+    const entry = exported.skipped.find((skipped) => skipped.what.includes("socket"));
+    assert.match(entry!.detail, /es un canal \(WebSocket, MQTT o gRPC\)/);
+    const folder = exported.collection.item[0] as { item: unknown[] };
+    assert.equal(folder.item.length, 1);
+  });
 });
 
 describe("ningún secreto sale", () => {
