@@ -47,6 +47,11 @@ export class ImportElementsCommand implements ICommand {
  * sin ellos el nodo seguiría nombrando un canal **de otro proyecto**, que al guardar el flujo es un
  * 422 y al correrlo un rojo de «el canal ya no existe». Un flujo cuyo canal ya no está ni en el
  * origen no se copia y se dice por qué: no hay a qué remapearlo.
+ *
+ * Lo mismo con los sub-flujos: un nodo `subflow` nombra otro flujo **del mismo proyecto**, así que el
+ * flujo que ejecuta viene arrastrado —y los que ejecute ese, hasta el final— y el nodo pasa a nombrar
+ * la copia. Sin eso llegaría apuntando al flujo del origen: un 422 al guardarlo, y una corrida en
+ * error al lanzarlo. Un sub-flujo que ya no está en el origen deja fuera al flujo que lo usa, dicho.
  */
 @CommandHandler(ImportElementsCommand)
 export class ImportElementsHandler implements ICommandHandler<ImportElementsCommand, ImportElementsResultView> {
@@ -67,8 +72,11 @@ export class ImportElementsHandler implements ICommandHandler<ImportElementsComm
     const now = this.clock.now();
     const result: ImportElementsResultView = { endpoints: 0, workflows: 0, environments: 0, channels: 0, skipped: [] };
 
+    // Los flujos elegidos y los que ejecutan como sub-flujo, hasta el final: todo lo que sigue —canales,
+    // pruebas, conjuntos— se calcula sobre este conjunto y no sobre la selección.
+    const workflowIds = await this.withSubflows(source, command.input.workflowIds);
     // El tope de canales antes de escribir nada: a medias quedarían endpoints copiados y flujos no.
-    const channels = await this.channelsFor(source, new Set(command.input.workflowIds));
+    const channels = await this.channelsFor(source, workflowIds);
     if (channels.size && (await this.channels.countByProject(target.id)) + channels.size > MAX_CHANNELS_PER_PROJECT)
       throw new ConflictError(
         `Con los ${channels.size} canales de esos flujos, el proyecto pasaría de ${MAX_CHANNELS_PER_PROJECT}; no se ha importado nada`,
@@ -77,15 +85,7 @@ export class ImportElementsHandler implements ICommandHandler<ImportElementsComm
 
     await this.copyEndpoints(source, target.id, new Set(command.input.endpointIds), command.actorId, now, result);
     const channelIds = await this.copyChannels(channels, target.id, command.actorId, now, result);
-    await this.copyWorkflows(
-      source,
-      target.id,
-      new Set(command.input.workflowIds),
-      command.actorId,
-      now,
-      result,
-      channelIds,
-    );
+    await this.copyWorkflows(source, target.id, workflowIds, command.actorId, now, result, channelIds);
     await this.copyEnvironments(source, target.id, new Set(command.input.environmentIds), now, result);
     return result;
   }
@@ -129,6 +129,27 @@ export class ImportElementsHandler implements ICommandHandler<ImportElementsComm
       }));
     if (rows.length) await this.endpoints.saveMany(rows);
     result.endpoints = rows.length;
+  }
+
+  /**
+   * Los flujos elegidos más los que ejecutan sus nodos `subflow`, recorridos hasta el final. Un id que
+   * no es de un flujo del origen no entra: el flujo que lo nombra se queda fuera al copiar, dicho.
+   */
+  private async withSubflows(source: string, chosen: string[]): Promise<Set<string>> {
+    if (!chosen.length) return new Set();
+    const byId = new Map((await this.workflows.listWorkflows(source)).map((workflow) => [workflow.id, workflow]));
+    const ids = new Set<string>();
+    const pending = chosen.filter((id) => byId.has(id));
+    while (pending.length) {
+      const id = pending.pop()!;
+      if (ids.has(id)) continue;
+      ids.add(id);
+      for (const step of byId.get(id)!.definition.steps) {
+        const child = step.subflow?.workflowId;
+        if (child && byId.has(child) && !ids.has(child)) pending.push(child);
+      }
+    }
+    return ids;
   }
 
   /** Los canales del origen que abren los nodos de los flujos elegidos, por id. */
@@ -196,7 +217,9 @@ export class ImportElementsHandler implements ICommandHandler<ImportElementsComm
     if (!ids.size) return;
     const chosen = (await this.workflows.listWorkflows(source)).filter((workflow) => ids.has(workflow.id));
     // Un nodo canal cuyo canal ya no está en el origen no tiene a qué remapearse: el flujo no se copia.
-    const workflows = chosen.filter((workflow) => {
+    // Tampoco uno cuyo sub-flujo ya no está, ni —hacia arriba— el que ejecuta un flujo que se quedó
+    // fuera por eso: llegaría apuntando al origen.
+    let workflows = chosen.filter((workflow) => {
       const orphan = workflow.definition.steps.find(
         (step) => step.channel?.channelId && !channelIds.has(step.channel.channelId),
       );
@@ -207,7 +230,26 @@ export class ImportElementsHandler implements ICommandHandler<ImportElementsComm
         });
       return !orphan;
     });
+    for (let dropped = true; dropped;) {
+      const kept = new Set(workflows.map((workflow) => workflow.id));
+      const next = workflows.filter((workflow) => {
+        const orphan = workflow.definition.steps.find(
+          (step) => step.subflow?.workflowId && !kept.has(step.subflow.workflowId),
+        );
+        if (orphan)
+          result.skipped.push({
+            what: "flujo",
+            detail: `${workflow.name}: el sub-flujo «${orphan.id}» ejecuta un flujo que no se ha podido traer`,
+          });
+        return !orphan;
+      });
+      dropped = next.length !== workflows.length;
+      workflows = next;
+    }
     if (!workflows.length) return;
+    // Los ids nuevos antes de escribir ninguno: un nodo `subflow` tiene que nombrar la copia de su
+    // flujo aunque se escriba antes que ella.
+    const newIds = new Map(workflows.map((workflow) => [workflow.id, randomUUID()]));
 
     // The templates the chosen flows actually use, and no others.
     const neededTemplates = new Set(
@@ -246,10 +288,13 @@ export class ImportElementsHandler implements ICommandHandler<ImportElementsComm
               channel: { ...step.channel, channelId: channelIds.get(step.channel.channelId) ?? step.channel.channelId },
             }
           : {}),
+        ...(step.subflow?.workflowId
+          ? { subflow: { ...step.subflow, workflowId: newIds.get(step.subflow.workflowId)! } }
+          : {}),
       }));
       const name = uniqueName(workflow.name, existingWorkflows);
       existingWorkflows.add(name);
-      const workflowId = randomUUID();
+      const workflowId = newIds.get(workflow.id)!;
       await this.workflows.saveWorkflow({
         ...workflow,
         id: workflowId,
