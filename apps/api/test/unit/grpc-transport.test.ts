@@ -16,7 +16,15 @@ import { ServerCredentials } from "@grpc/grpc-js";
 
 import { loadEnv } from "@/shared/config/env";
 import { BlockedTargetError } from "@/shared/http/safe-fetch";
-import { GrpcChannelTransport, pinnedClient, type GrpcCall } from "@/modules/channels/infrastructure/grpc-transport";
+import {
+  GrpcChannelTransport,
+  flatMetadata,
+  pinnedClient,
+  toMetadata,
+  type GrpcCall,
+} from "@/modules/channels/infrastructure/grpc-transport";
+import { SECRET_METADATA, binaryMetadataProblem } from "@/modules/channels/domain/grpc";
+import { withBase64 } from "@/modules/channels/application/commands/manage-sessions";
 import { exampleOf, messageProblem, schemaFromFiles } from "@/modules/channels/domain/grpc-schema";
 import type { ChannelListeners } from "@/modules/channels/infrastructure/ws-transport";
 import { SHOP_FILES, startGrpcServer, type GrpcTestServer } from "../support/grpc-server";
@@ -189,5 +197,28 @@ describe("el esquema, sin red", () => {
     ]);
     const type = tree.method("t.Arbol", "Ver")!.requestType;
     assert.deepEqual(exampleOf(type), { nombre: "", texto: "", etiquetas: { clave: 0 }, activo: false });
+  });
+});
+
+describe("la metadata binaria, sin red", () => {
+  test("una clave -bin se escribe en base64 y viaja en bytes; lo que vuelve se enseña en base64", () => {
+    const metadata = toMetadata({ "X-Trace-Bin": "AAEC/w==", "x-url-bin": "AAEC_w", "x-texto": "hola" });
+    assert.deepEqual(metadata.get("x-trace-bin"), [Buffer.from([0, 1, 2, 255])]);
+    assert.deepEqual(metadata.get("x-url-bin"), [Buffer.from([0, 1, 2, 255])]);
+    assert.deepEqual(metadata.get("x-texto"), ["hola"]);
+    assert.deepEqual(flatMetadata(metadata), { "x-trace-bin": "AAEC/w==", "x-url-bin": "AAEC/w==", "x-texto": "hola" });
+  });
+
+  test("qué es base64, y qué nombres binarios son de credencial", () => {
+    assert.equal(binaryMetadataProblem("AAEC/w=="), null);
+    assert.equal(binaryMetadataProblem("{{firma}}"), null);
+    assert.match(binaryMetadataProblem("no es base64!") ?? "", /base64/);
+    assert.ok(SECRET_METADATA.test("x-api-key-bin"));
+    assert.ok(SECRET_METADATA.test("authorization"));
+    assert.ok(!SECRET_METADATA.test("x-trace-bin"));
+  });
+
+  test("cada secreto también en base64, con y sin relleno", () => {
+    assert.deepEqual(withBase64(["abcd"]), ["abcd", "YWJjZA==", "YWJjZA"]);
   });
 });

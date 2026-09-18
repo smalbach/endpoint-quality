@@ -815,7 +815,8 @@ function SessionHeader({
         >
           {Object.entries(session.trailers).map(([name, value]) => (
             <div key={name} className="contents">
-              <dt>{name}</dt>
+              {/* Lo binario llega en base64, y se dice: «AAEC» a secas podría ser texto. */}
+              <dt>{name.endsWith("-bin") ? `${name} (base64)` : name}</dt>
               <dd className="truncate">{value}</dd>
             </div>
           ))}
@@ -991,7 +992,7 @@ function ChannelSettings({
         label={grpc ? "Metadata" : "Cabeceras del upgrade"}
         hint={
           grpc
-            ? "Claves en minúsculas; las grpc-* y las de HTTP/2 las pone la llamada. Una credencial va como {{variable}}: escrita a mano no se guarda."
+            ? "Claves en minúsculas; las grpc-* y las de HTTP/2 las pone la llamada. Una clave que acaba en -bin lleva bytes: su valor se escribe en base64. Una credencial va como {{variable}}: escrita a mano no se guarda."
             : "Las del propio protocolo —Host, Upgrade, Sec-WebSocket-*— las pone la conexión."
         }
         rows={headers}

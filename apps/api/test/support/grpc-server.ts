@@ -97,8 +97,16 @@ export async function startGrpcServer(
   const Shop = ((loaded.demo as GrpcObject).v1 as GrpcObject).Shop as ServiceClientConstructor;
 
   const received: Record<string, string>[] = [];
+  // Lo binario (`-bin`) en base64, que es como se escribe en el canal.
   const remember = (metadata: Metadata) =>
-    received.push(Object.fromEntries(Object.entries(metadata.getMap()).map(([key, value]) => [key, String(value)])));
+    received.push(
+      Object.fromEntries(
+        Object.entries(metadata.getMap()).map(([key, value]) => [
+          key,
+          Buffer.isBuffer(value) ? value.toString("base64") : String(value),
+        ]),
+      ),
+    );
   const price = { units: 5, currency: "EUR" };
 
   const server = new Server();
@@ -115,6 +123,15 @@ export async function startGrpcServer(
       const trailers = new Metadata();
       trailers.set("x-session-token", "abc-del-servidor");
       trailers.set("x-region", "eu");
+      // Metadata binaria de vuelta: la `-bin` que llegó, tal cual; y lo que llegó en `x-eco`, en
+      // bytes —un servidor que devuelve la credencial que recibió, pero en binario—.
+      const trace = call.metadata.get("x-trace-bin")[0];
+      if (Buffer.isBuffer(trace)) trailers.set("x-trace-bin", trace);
+      const echo = call.metadata.get("x-eco")[0];
+      if (echo !== undefined) {
+        trailers.set("x-eco-bin", Buffer.from(String(echo)));
+        trailers.set("x-api-key-bin", Buffer.from("clave-binaria-del-servidor"));
+      }
       callback(null, { name: `item ${call.request.item_id}`, price }, trailers);
     },
     Buy: (call: ServerUnaryCall<Request, Item>, callback: sendUnaryData<Item>) => {

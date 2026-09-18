@@ -12,6 +12,8 @@
  */
 import type { StepCheck } from "@eq/runner-core";
 
+import { SECRET_HEADER } from "@/modules/endpoints/domain/examples";
+
 type Problem = { field: string; detail: string };
 
 /** De dónde sale la definición del servicio. */
@@ -97,11 +99,36 @@ export function isReservedMetadata(name: string): boolean {
 export function metadataKeyProblem(name: string): string | null {
   if (!METADATA_KEY.test(name)) return "Una clave de metadata lleva letras, dígitos y - _ .";
   if (isReservedMetadata(name)) return `${name} la pone el protocolo, no se escribe a mano`;
-  // Las `-bin` viajan como bytes, y aquí se escribe texto: aceptarlas sería mandar otra cosa que lo
-  // que se ve en la pantalla.
-  if (name.toLowerCase().endsWith("-bin")) return "La metadata binaria (-bin) no se admite: solo texto";
   return null;
 }
+
+/**
+ * Una clave `-bin` viaja como bytes: el protocolo la manda en base64 por el cable y grpc-js la
+ * entrega como `Buffer`. Aquí se escribe texto, así que el valor **se escribe en base64**, que es
+ * lo único que dice sin ambigüedad qué bytes salen; y lo que llega se enseña igual, en base64.
+ */
+export const isBinaryMetadata = (name: string): boolean => name.trim().toLowerCase().endsWith("-bin");
+
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}(?:==)?|[A-Za-z0-9+/]{3}=?)?$/;
+const BASE64_URL = /^[A-Za-z0-9_-]*$/;
+
+/**
+ * Por qué un valor no sirve para una clave `-bin`, o `null`. Con `{{variables}}` se mira al abrir,
+ * ya resuelto: el valor de la variable es el que tiene que ser base64.
+ */
+export function binaryMetadataProblem(value: string): string | null {
+  const text = value.trim();
+  if (text.includes("{{")) return null;
+  if (BASE64.test(text) || BASE64_URL.test(text)) return null;
+  return "Una clave -bin lleva bytes: escribe el valor en base64";
+}
+
+/**
+ * Los nombres de metadata cuyo valor se tapa entero: los de siempre (`SECRET_HEADER`), también con
+ * `-bin` detrás. `x-api-key-bin` es la misma credencial en bytes, y la regla por nombre no puede
+ * dejarla pasar por el sufijo.
+ */
+export const SECRET_METADATA = new RegExp(`^(?:${SECRET_HEADER.source.replace(/^\^|\$$/g, "")})(?:-bin)?$`, "i");
 
 /**
  * La URL de un canal gRPC: `grpc://` sin cifrar o `grpcs://` con TLS, y solo el anfitrión y el puerto.

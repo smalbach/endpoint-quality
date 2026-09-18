@@ -34,9 +34,9 @@ import { SECRET_PARAMS } from "@/modules/endpoints/application/commands/auth-bri
 import { redactBody } from "@/modules/endpoints/domain/examples";
 import { resolveVariables } from "@/modules/environments/domain/model";
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
-import { SECRET_HEADER } from "@/modules/endpoints/domain/examples";
 import type { Environment } from "@/modules/environments/domain/model";
 import { MAX_SAVED_MESSAGE_BYTES, effectiveLimits, type Channel } from "../../domain/model";
+import { SECRET_METADATA } from "../../domain/grpc";
 import {
   mqttSessionPlan,
   planProblems,
@@ -121,12 +121,15 @@ export class OpenChannelSessionHandler implements ICommandHandler<OpenChannelSes
       subprotocols: channel.subprotocols,
       limits,
       rules: {
-        secrets,
+        // En gRPC, cada secreto también en base64: la metadata `-bin` que vuelve se enseña así, y un
+        // servidor que devuelve en un trailer binario el token que recibió lo devuelve en base64.
+        secrets: channel.protocol === "grpc" ? withBase64(secrets) : secrets,
         // La segunda red: los campos que se llaman como una credencial y los JWT por su forma, que
         // es lo que tapa un token que el servidor inventa y que ninguna variable conocía.
         redact: redactMessage,
-        // Y en las cabeceras de la apertura y los trailers, por nombre: la lista de siempre.
-        secretHeader: SECRET_HEADER,
+        // Y en las cabeceras de la apertura y los trailers, por nombre: la lista de siempre, también
+        // con `-bin` detrás (`x-api-key-bin` es la misma credencial en bytes).
+        secretHeader: SECRET_METADATA,
       },
       expect: channel.expectations,
       readOnly,
@@ -297,6 +300,21 @@ export function redactMessage(text: string): string {
   } catch {
     return result.body;
   }
+}
+
+/**
+ * Los secretos, y cada uno también en base64 (estándar con y sin relleno, y URL). Con relleno se
+ * tapa entero un valor que es solo el secreto; sin él, el que sigue con más bytes detrás. Solo casa
+ * cuando el secreto empieza el valor binario —que es el caso de un eco—: en mitad de otros bytes, su
+ * base64 depende de lo que tenga delante.
+ */
+export function withBase64(secrets: string[]): string[] {
+  const encoded = secrets.flatMap((secret) => {
+    const bytes = Buffer.from(secret, "utf8");
+    const padded = bytes.toString("base64");
+    return [padded, padded.replace(/=+$/, ""), bytes.toString("base64url")];
+  });
+  return [...new Set([...secrets, ...encoded])];
 }
 
 /** Lo que resuelve `{{$uuid}}`, `{{$now}}` y compañía, igual que en «Enviar» de un endpoint. */

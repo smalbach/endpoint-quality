@@ -288,7 +288,7 @@ describe("un canal gRPC", () => {
         status: "closed",
         closeCode: 5,
         closeReason: "no existe",
-        trailers: { "x-region": "eu", "x-session-token": "••••••••" },
+        trailers: { "x-region": "eu", "x-session-token": "••••••••", "x-trace-bin": "AAEC/w==" },
         stopReason: "closed-by-peer",
         handshake: { status: 200, headers: {} },
       }),
@@ -298,6 +298,7 @@ describe("un canal gRPC", () => {
     expect(screen.queryByText(/upgrade 200/)).toBeNull();
     const trailers = within(screen.getByLabelText("Trailers"));
     expect(trailers.getByText("x-session-token")).toBeTruthy();
+    expect(trailers.getByText("x-trace-bin (base64)")).toBeTruthy();
     expect(trailers.getByText("••••••••")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Invocar" })).toBeTruthy();
   });
