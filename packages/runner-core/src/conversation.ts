@@ -78,6 +78,12 @@ export type Conversation = {
   closedAtMs: number | null;
   closeCode: number | null;
   closeReason: string;
+  /**
+   * Lo que llega **con** el cierre: los trailers de una llamada gRPC, donde viaja su estado y lo que
+   * el servidor quiera añadir. `null` en un WebSocket, que cierra con un código y una frase y nada
+   * más; `{}` en una llamada que terminó sin trailers propios.
+   */
+  trailers: Record<string, string> | null;
   stopped: StopReason | null;
   counters: { sent: number; received: number; bytesIn: number; bytesOut: number };
 };
@@ -112,6 +118,8 @@ export type RawFrame = {
   handshake?: { status: number; headers: Record<string, string> };
   closeCode?: number;
   closeReason?: string;
+  /** Los trailers de una llamada gRPC, crudos: se tapan aquí dentro, como el cuerpo. */
+  trailers?: Record<string, string>;
 };
 
 /**
@@ -121,7 +129,16 @@ export type RawFrame = {
  * regla por nombre que vive en la aplicación (los campos que suenan a credencial, los JWT por su
  * forma). Este paquete no conoce ninguna de las dos cosas y no debe: recibe las dos y las aplica.
  */
-export type RedactionRules = { secrets?: string[]; redact?: (text: string) => string };
+export type RedactionRules = {
+  secrets?: string[];
+  redact?: (text: string) => string;
+  /**
+   * Los nombres de cabecera cuyo valor se tapa entero, sea cual sea: `authorization`, `set-cookie`…
+   * Lo usan las cabeceras de la apertura y los trailers, que también son texto que el servidor
+   * escribe y que se guarda. La lista vive en la aplicación, como `redact`.
+   */
+  secretHeader?: RegExp;
+};
 
 /** Ocho puntos, los mismos que usa el resto del producto para decir «aquí había algo». */
 const MASK = "••••••••";
@@ -134,9 +151,27 @@ export function blankConversation(): Conversation {
     closedAtMs: null,
     closeCode: null,
     closeReason: "",
+    trailers: null,
     stopped: null,
     counters: { sent: 0, received: 0, bytesIn: 0, bytesOut: 0 },
   };
+}
+
+/**
+ * Unas cabeceras con lo que no se guarda tapado: por nombre —las que suenan a credencial— y por
+ * valor —los secretos conocidos—.
+ *
+ * Aparte del cuerpo y por la misma regla que él: las cabeceras de la apertura y los trailers de
+ * gRPC van a la fila y a la trama en vivo igual que un mensaje, y un `set-cookie` o un token que el
+ * servidor devuelve en un trailer es una credencial guardada en claro si solo se tapan los cuerpos.
+ */
+export function redactHeaders(headers: Record<string, string>, rules: RedactionRules = {}): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).map(([name, value]) => [
+      name,
+      rules.secretHeader?.test(name) && value ? MASK : maskSecrets(value, rules.secrets ?? []),
+    ]),
+  );
 }
 
 /** Los valores conocidos, fuera del texto. Se tapan los largos primero, o uno corto parte a otro. */
@@ -170,7 +205,9 @@ export function applyFrame(
     return {
       conversation: {
         ...conversation,
-        handshake: frame.handshake ?? conversation.handshake,
+        handshake: frame.handshake
+          ? { status: frame.handshake.status, headers: redactHeaders(frame.handshake.headers, rules) }
+          : conversation.handshake,
         openedAtMs: conversation.openedAtMs ?? frame.atMs,
       },
       stop: null,
@@ -183,7 +220,10 @@ export function applyFrame(
         ...conversation,
         closedAtMs: frame.atMs,
         closeCode: frame.closeCode ?? null,
-        closeReason: frame.closeReason ?? "",
+        // La frase del cierre también es texto del servidor: un `details` de gRPC que repite el
+        // token que no le gustó se tapa como un mensaje.
+        closeReason: maskSecrets(frame.closeReason ?? "", rules.secrets ?? []),
+        trailers: frame.trailers ? redactHeaders(frame.trailers, rules) : conversation.trailers,
         stopped: conversation.stopped ?? "closed-by-peer",
       },
       stop: "closed-by-peer",
@@ -249,6 +289,13 @@ export type ChannelExpectation = {
   minMessages?: number;
   /** El código de cierre esperado. 1000 contra 1006 es «se despidió» contra «se murió». */
   closeCode?: number;
+  /**
+   * El estado gRPC esperado al terminar la llamada: `0` es OK. Aparte de `closeCode` aunque los dos
+   * se comparan con el mismo número de la conversación, porque no significan lo mismo —un 0 no es
+   * un código de cierre de WebSocket, ni un 1000 un estado de gRPC— y la etiqueta tiene que decir
+   * cuál de las dos cosas se afirma.
+   */
+  status?: number;
   /** Cuánto puede tardar el primer mensaje. Propio, y no el presupuesto publicado del contrato. */
   firstMessageBudgetMs?: number;
   checks?: StepCheck[];
@@ -281,7 +328,7 @@ export function evaluateConversation(input: EvaluateConversationInput): Evaluati
     label: "Conexión",
     pass: connected,
     detail: connected
-      ? `abierta${conversation.handshake ? ` (${conversation.handshake.status} en el upgrade)` : ""}`
+      ? `abierta${conversation.handshake ? ` (${openedWith(conversation.handshake.status)})` : ""}`
       : handshakeDetail(input),
   });
 
@@ -302,6 +349,20 @@ export function evaluateConversation(input: EvaluateConversationInput): Evaluati
       label: `Cierre ${expect.closeCode}`,
       pass: conversation.closeCode === expect.closeCode,
       detail: conversation.closeCode === null ? "no llegó a cerrarse" : `cerró con ${conversation.closeCode}`,
+    });
+  }
+
+  // 3b. El estado de una llamada gRPC, solo si el canal declara uno. Con su nombre, porque «14» no
+  //     le dice nada a nadie y «UNAVAILABLE» sí.
+  if (expect.status !== undefined) {
+    const got = conversation.closeCode;
+    assertions.push({
+      label: `Estado ${grpcStatusName(expect.status)}`,
+      pass: got === expect.status,
+      detail:
+        got === null
+          ? "la llamada no llegó a terminar"
+          : `terminó con ${grpcStatusName(got)}${conversation.closeReason ? `: ${conversation.closeReason}` : ""}`,
     });
   }
 
@@ -346,6 +407,36 @@ function handshakeDetail(input: EvaluateConversationInput): string {
   const status = input.conversation.handshake?.status;
   return status ? `el upgrade contestó ${status}` : "no se pudo conectar";
 }
+
+/** 101 es el upgrade de un WebSocket; lo demás —el 200 de HTTP/2 en gRPC— es solo el estado. */
+const openedWith = (status: number): string => (status === 101 ? "101 en el upgrade" : `HTTP ${status}`);
+
+/**
+ * Los estados de gRPC por su nombre, en el orden del estándar: el número es la posición.
+ *
+ * Aquí y no en la API porque el veredicto los nombra, y el veredicto se decide en este paquete.
+ */
+export const GRPC_STATUS_NAMES = [
+  "OK",
+  "CANCELLED",
+  "UNKNOWN",
+  "INVALID_ARGUMENT",
+  "DEADLINE_EXCEEDED",
+  "NOT_FOUND",
+  "ALREADY_EXISTS",
+  "PERMISSION_DENIED",
+  "RESOURCE_EXHAUSTED",
+  "FAILED_PRECONDITION",
+  "ABORTED",
+  "OUT_OF_RANGE",
+  "UNIMPLEMENTED",
+  "INTERNAL",
+  "UNAVAILABLE",
+  "DATA_LOSS",
+  "UNAUTHENTICATED",
+] as const;
+
+export const grpcStatusName = (code: number): string => `${GRPC_STATUS_NAMES[code] ?? "desconocido"} (${code})`;
 
 const lastAt = (conversation: Conversation): number =>
   conversation.messages.length ? conversation.messages[conversation.messages.length - 1].atMs : 0;
