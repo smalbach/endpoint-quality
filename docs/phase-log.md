@@ -2554,3 +2554,72 @@ No comprobado: dos instancias de la API detrás de un balanceador. Esta pila cor
 segador están probados en la suite con una fila ajena, no con dos procesos.
 
 `api 1015 pruebas · web 483 · runner-core 336 · import-detect 29 · lint 0 errores · typecheck limpio`
+
+## Paridad con Postman, ola 10: GraphQL en el editor, y dos fallos que no eran de esta ola
+
+GraphQL solo existía como nodo de flujo. En Postman es un modo de cuerpo de cualquier petición, con
+el esquema cargado al lado. Y al importar, `mode: "graphql"` caía en el «no es raw» del lector: una
+colección de GraphQL entraba entera y **ninguna operación mandaba nada**, sin decirlo.
+
+### Un sexto modo de cuerpo, sin migración
+
+`graphql` guarda la operación en `text` —el campo que ya comparten JSON y raw— y las variables en
+`body.variables`, texto JSON con `{{plantillas}}`. Solo se guarda cuando trae algo, así que ningún
+cuerpo existente cambia de forma. Por `POST` viaja `{query, variables}`; por `GET`, en la query de
+la URL, como dice GraphQL sobre HTTP (antes un cuerpo en un `GET` se tiraba sin decirlo). Las
+variables se sustituyen y **después** se leen: un valor con una comilla que rompe el JSON es un 422
+con su código, no un 400 del servidor sobre un cuerpo que nadie escribió.
+
+El esquema se pide por introspección con el mismo «Enviar» —entorno, cabeceras, autenticación,
+script previo— o se lee de un fichero (SDL o introspección guardada), porque muchos servidores de
+producción la tienen apagada. Con él, la operación se valida mientras se escribe y el explorador
+lista consultas, mutaciones y suscripciones; elegir una la escribe con sus argumentos obligatorios
+como variables. **No se guarda**: pesa lo que la API y cambia con cada despliegue. `graphql-js` va
+en un trozo aparte (146 kB) que solo carga quien abre el modo.
+
+### Postman e Insomnia, de ida y de vuelta
+
+El lector guarda la operación aparte y además escribe el JSON que viaja, para quien no sabe de
+GraphQL. Como endpoint entra en el modo nuevo; como flujo, en un nodo `graphql` —el que lee `errors`
+en un 200—, que gana `auth` como el `fetch`: una colección de GraphQL lleva su autenticación como
+cualquier otra. Al exportar, endpoint y nodo salen como `mode: "graphql"`; antes el nodo se quedaba
+fuera «porque Postman no tiene nada equivalente».
+
+Un límite del modelo, dicho y no escondido: un endpoint es uno por método y ruta (índice único), y
+todas las operaciones comparten `POST /graphql`. La segunda operación de una colección no se importa
+como endpoint, y el motivo lo dice: entra como nodo del flujo. Por eso tampoco hay «un endpoint por
+operación del SDL»; el SDL alimenta el explorador.
+
+### Dos fallos anteriores, y los dos graves
+
+- **HTTPS no funcionaba contra ningún servidor con certificado normal.** La guarda de SSRF fijaba la
+  IP escribiéndola en la URL; TLS comparaba el certificado con `199.232.157.51` y fallaba como
+  «fetch failed». Enviar, corridas, monitores e import por URL, contra cualquier API HTTPS pública.
+  Todas las pruebas eran HTTP en loopback. Ahora la IP va en el `lookup` de un `Agent` de undici y
+  el nombre se queda en la URL, como ya hacía el WebSocket. Hay prueba contra un servidor HTTPS con
+  una CA de prueba, y falla con el código anterior.
+- **Una contraseña escrita a mano se guardaba en claro.** El registro de la ola 1 dice que el
+  servidor vacía los secretos literales al guardar; no lo hacía, solo el import de Postman.
+  `{"password": "hunter2"}` llegaba tal cual a la columna del endpoint y al documento del flujo.
+  Ahora se tapa en cada puerta que escribe una autenticación: endpoint, flujo (`fetch` y `graphql`),
+  import de proyecto y copia entre proyectos. En la base de esta pila no había ninguna fila antigua
+  con un literal, así que no hizo falta migración.
+
+Y uno de la propia ola, visto en la pila: los nodos exportados se llamaban todos
+`GQL {{baseUrl}}/graphql`. Ahora salen con su nombre.
+
+### Cómo se comprobó
+
+Contra la pila desplegada y una API GraphQL pública de verdad (`countries.trevorblades.com`, HTTPS):
+`POST` y `GET` con la variable del entorno dentro, 200 con `Madrid`; una operación con un campo
+inexistente, 200 con `errors`; introspección por «Enviar», 29 kB y 15 tipos. Una colección de
+Postman con dos operaciones y `bearer {{token}}`: 1 endpoint en modo graphql, la segunda omitida con
+su motivo, un flujo de 2 nodos `graphql` con su auth. Corrido: el bueno en verde, el roto en rojo
+por `errors` aunque el estado fue 200, la cabecera tapada en el informe y el token en **0** filas de
+`run_steps` y `run_cases`. Exportado de vuelta como `mode: "graphql"`. Un literal en la auth de un
+endpoint y de un flujo: vacío al leer, y **0** coincidencias en la base. Datos de la prueba borrados.
+
+No comprobado: la pantalla en el navegador (para entrar hace falta escribir una contraseña). El
+editor, el explorador y el modo por GET están cubiertos por pruebas de componente.
+
+`api 1035 pruebas · web 503 · runner-core 336 · import-detect 29 · lint 0 errores · typecheck limpio`
