@@ -420,6 +420,26 @@ export class RunStepEntity {
 }
 
 /**
+ * Un nodo webhook esperando la llamada de fuera. El token no está: solo su SHA-256 (`tokenHash`),
+ * que es por donde lo busca la ruta pública. El razonamiento entero está en `runs/domain/flow-hooks.ts`.
+ */
+@Entity({ name: "flow_hooks" })
+export class FlowHookEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Column({ type: "varchar", length: 64, unique: true }) tokenHash: string;
+  @Index() @Column("uuid") runId: string;
+  @Column("uuid") caseId: string;
+  @Column({ type: "varchar", length: 200 }) stepId: string;
+  @Column({ type: "varchar", length: 8 }) method: string;
+  /** `open`, `delivered`, `closed` (nadie llamó a tiempo) o `settled` (el flujo ya leyó lo que llegó). */
+  @Column({ type: "varchar", length: 12 }) status: string;
+  @Column({ type: "timestamptz" }) expiresAt: Date;
+  /** Lo que llegó, ya tapado, hasta que el flujo lo lee: entonces se borra. */
+  @Column({ type: "jsonb", nullable: true }) delivery: unknown;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+}
+
+/**
  * A reusable request: one operation, with the parameters, payload, credential and expected status
  * somebody decided are worth sending again.
  *
@@ -1022,7 +1042,7 @@ export const ENTITIES = [
   SpecSourceEntity, SpecVersionEntity, SpecOperationEntity,
   EnvironmentEntity, EnvironmentCredentialEntity, SessionTokenEntity, RequestCookieEntity, ProjectConfigEntity,
   RequestTemplateEntity, WorkflowEntity, WorkflowDatasetEntity, WorkflowSuiteEntity,
-  RunEntity, RunCaseEntity, RunStepEntity,
+  RunEntity, RunCaseEntity, RunStepEntity, FlowHookEntity,
   EndpointEntity, EndpointExampleEntity,
   MockServerEntity, MockCallEntity,
   DocSiteEntity,

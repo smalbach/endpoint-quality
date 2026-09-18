@@ -9,6 +9,8 @@ import { ownedProject } from "@/modules/projects/application/commands/update-pro
 import type { Run, RunCase, RunStep } from "../../domain/model";
 import { isFinished } from "../../domain/model";
 import { RUN_QUEUE, RUN_REPOSITORY, type RunQueuePort, type RunRepositoryPort } from "../../domain/ports";
+import { FLOW_HOOK_REPOSITORY, flowHookUrls, type FlowHookRepositoryPort } from "../../domain/flow-hooks";
+import { ENV, type Env } from "@/shared/config/env";
 import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
 import { CHANNEL_REPOSITORY, type ChannelRepositoryPort } from "@/modules/channels/domain/ports";
 import { describeSource, loadCatalog } from "./describe-source";
@@ -73,20 +75,37 @@ export class GetRunHandler implements IQueryHandler<GetRunQuery, RunView> {
     @Inject(RUN_REPOSITORY) private readonly runs: RunRepositoryPort,
     @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
     @Inject(RUN_QUEUE) private readonly queue: RunQueuePort,
+    @Inject(ENV) private readonly env: Env,
+    @Inject(FLOW_HOOK_REPOSITORY) private readonly hooks: FlowHookRepositoryPort,
     @Optional() @Inject(CHANNEL_REPOSITORY) private readonly channels: ChannelRepositoryPort | null = null,
   ) {}
   async execute(query: GetRunQuery): Promise<RunView> {
     const project = await ownedProject(this.projects, query.organizationId, query.projectId);
     const run = await this.runs.findById(query.runId);
     if (!run || run.projectId !== project.id) throw new NotFoundError("La corrida no existe", "run-not-found");
-    const [cases, catalog, paused] = await Promise.all([
+    const [cases, catalog, paused, hooks] = await Promise.all([
       this.runs.listCases(run.id),
       loadCatalog(this.workflows, project.id, this.channels),
       // Read from the queue because the pause lives there: a page opened while the run waits has to
       // show the «siguiente» button without having seen the event that announced it.
       isFinished(run.status) ? null : this.queue.pausedAt(run.id),
+      // Los webhooks que esperan, con su URL calculada aquí: el token no está guardado en ninguna
+      // parte, y esta respuesta solo la lee quien puede ver la corrida. Reloj de pared, como la espera.
+      isFinished(run.status) ? [] : this.hooks.openForRun(run.id, new Date()),
     ]);
-    return { ...run, source: describeSource(run, catalog), cases, paused };
+    return {
+      ...run,
+      source: describeSource(run, catalog),
+      cases,
+      paused,
+      hooks: hooks.map((hook) => ({
+        caseId: hook.caseId,
+        stepId: hook.stepId,
+        method: hook.method,
+        url: flowHookUrls(this.env, hook.id).url,
+        expiresAt: hook.expiresAt.toISOString(),
+      })),
+    };
   }
 }
 

@@ -269,6 +269,23 @@ describe("lo que Postman no puede expresar se cuenta, no se tira", () => {
     const folder = exported.collection.item[0] as { item: unknown[] };
     assert.equal(folder.item.length, 1);
   });
+
+  test("un nodo webhook sale en `skipped`: Postman no espera llamadas de fuera", () => {
+    const exported = toPostmanExport(
+      bundle(
+        flows([
+          { id: "s1", requestTemplateId: "t1" },
+          { id: "pago", kind: "webhook", webhook: { timeoutMs: 60_000 }, dependsOn: ["s1"] },
+        ]) as never,
+      ),
+      IDS,
+    );
+    const entry = exported.skipped.find((skipped) => skipped.what.includes("pago"));
+    assert.match(entry!.detail, /URL de un solo uso/);
+    assert.match(entry!.detail, /Postman no espera llamadas/);
+    const folder = exported.collection.item[0] as { item: unknown[] };
+    assert.equal(folder.item.length, 1);
+  });
 });
 
 describe("ningún secreto sale", () => {

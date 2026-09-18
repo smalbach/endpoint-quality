@@ -109,6 +109,7 @@ export type {
   Run,
   RunCase,
   RunCaseView,
+  RunHookWaitView,
   RunReport,
   RunSource,
   RunStatus,

@@ -14,6 +14,7 @@ import { describeErrors } from "./shared/openapi/describe-errors";
 import { describeBodies } from "./shared/openapi/describe-bodies";
 import { MOCK_PATH_PREFIX } from "./modules/mocks/domain/model";
 import { mockCors } from "./modules/mocks/presentation/mock-cors";
+import { FLOW_HOOK_PATH, flowHookBodyParser } from "./shared/http/hook-body";
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
@@ -21,6 +22,8 @@ async function bootstrap(): Promise<void> {
 
   app.use(helmet());
   app.use(cookieParser());
+  // La ruta pública del webhook lee su propio cuerpo —cualquier tipo, 1 MB— antes del JSON de abajo.
+  app.use(FLOW_HOOK_PATH, flowHookBodyParser());
   // Express defaults to 100 KB, which is smaller than a real OpenAPI document: Digital
   // Catalog's is 118 KB. Raised to the figure the DTO validates against so the two agree.
   app.useBodyParser("json", { limit: MAX_JSON_BODY });

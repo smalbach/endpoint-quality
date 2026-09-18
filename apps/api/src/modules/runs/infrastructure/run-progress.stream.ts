@@ -10,6 +10,7 @@ import {
   RunCaseRetryingEvent,
   RunCaseStartedEvent,
   RunFinishedEvent,
+  RunHookWaitingEvent,
   RunPausedEvent,
   RunResumedEvent,
   RunStartedEvent,
@@ -105,6 +106,15 @@ export class RunResumedProjector implements IEventHandler<RunResumedEvent> {
   constructor(private readonly stream: RunProgressStream) {}
   handle(event: RunResumedEvent): void {
     this.stream.publish({ runId: event.runId, type: "resumed", payload: { resumed: event.how } });
+  }
+}
+
+/** Un nodo webhook esperando: el seguidor vuelve a pedir la corrida, que trae la URL que copiar. */
+@EventsHandler(RunHookWaitingEvent)
+export class RunHookWaitingProjector implements IEventHandler<RunHookWaitingEvent> {
+  constructor(private readonly stream: RunProgressStream) {}
+  handle(event: RunHookWaitingEvent): void {
+    this.stream.publish({ runId: event.runId, type: "waiting", payload: { hook: event.hook } });
   }
 }
 

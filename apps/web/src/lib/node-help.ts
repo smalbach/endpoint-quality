@@ -287,4 +287,23 @@ export const NODE_HELP: Record<NodeKind, NodeHelp> = {
       "Sin mensajes esperados, un socket que no cierra dura hasta su tope de inactividad: baja la inactividad en el nodo o pon cuántos mensajes esperar.",
     ],
   },
+  webhook: {
+    title: "Esperar webhook",
+    summary:
+      "Detiene el flujo hasta que un sistema externo —una pasarela de pagos, un trabajo asíncrono— llame a una URL de un solo uso.",
+    how: [
+      "Al llegar la corrida al nodo se genera una URL nueva, que aparece en el progreso de la corrida con un botón para copiarla.",
+      "Espera la llamada con el método elegido (POST o PUT) hasta el tope, de 1 s a 10 min.",
+      "Lo que llega es la respuesta del nodo, con estado 200: el body (JSON o texto, hasta 1 MB) y las cabeceras, con las credenciales tapadas. Sus comprobaciones, sus capturas y los nodos siguientes la leen.",
+      "Si nadie llama a tiempo, el nodo falla y lo que depende de él no corre.",
+    ],
+    example:
+      'Crear un pago, darle la URL a la pasarela como callback, y esperar 2 min a que avise: comprobación status = "paid", captura order.id.',
+    pitfalls: [
+      "La URL sirve una sola vez: una llamada repetida, con otro método o fuera de tiempo recibe 404.",
+      "Sin PUBLIC_API_URL en la API, la URL apunta a localhost y solo la puede llamar alguien en la misma máquina.",
+      "Un campo con nombre de credencial (password, token…) llega tapado: no se puede capturar.",
+      "No puede ir dentro de un bucle, ni reintentarse.",
+    ],
+  },
 };

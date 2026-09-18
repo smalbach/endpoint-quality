@@ -2,7 +2,7 @@ import { Module, forwardRef, type OnApplicationBootstrap } from "@nestjs/common"
 import { CqrsModule } from "@nestjs/cqrs";
 import { TypeOrmModule } from "@nestjs/typeorm";
 
-import { RunCaseEntity, RunEntity, RunStepEntity } from "@/shared/database/entities";
+import { FlowHookEntity, RunCaseEntity, RunEntity, RunStepEntity } from "@/shared/database/entities";
 import { ENV, type Env } from "@/shared/config/env";
 import { INSTANCE_BUS, type InstanceBusPort } from "@/shared/bus/instance-bus";
 import { AuthModule } from "@/modules/auth/auth.module";
@@ -15,6 +15,9 @@ import { WorkflowsModule } from "@/modules/workflows/workflows.module";
 import { ChannelsModule } from "@/modules/channels/channels.module";
 import { REQUEST_PREVIEWER, RUN_QUEUE, RUN_REPOSITORY } from "./domain/ports";
 import { TypeOrmRunRepository } from "./infrastructure/persistence/typeorm-run.repository";
+import { TypeOrmFlowHookRepository } from "./infrastructure/persistence/typeorm-flow-hook.repository";
+import { FLOW_HOOK_REPOSITORY } from "./domain/flow-hooks";
+import { FlowHookWaiter } from "./infrastructure/flow-hook-waiter";
 import { InMemoryRunQueue } from "./infrastructure/queue/in-memory-queue";
 import { RedisRunQueue } from "./infrastructure/queue/redis-queue";
 import { CaseExecutor } from "./infrastructure/case-executor";
@@ -28,6 +31,7 @@ import {
   RunCaseRetryingProjector,
   RunCaseStartedProjector,
   RunFinishedProjector,
+  RunHookWaitingProjector,
   RunPausedProjector,
   RunProgressStream,
   RunResumedProjector,
@@ -39,9 +43,11 @@ import { PreviewRequestHandler } from "./application/commands/preview-request";
 import { CancelRunHandler } from "./application/commands/cancel-run";
 import { ResumeRunHandler } from "./application/commands/resume-run";
 import { PruneRunsHandler } from "./application/commands/prune-runs";
+import { DeliverFlowHookHandler } from "./application/commands/deliver-flow-hook";
 import { GetRunCaseHandler, GetRunHandler, GetRunReportHandler, ListRunsHandler } from "./application/queries/get-run";
 import { RunsController } from "./presentation/runs.controller";
 import { RequestPreviewController } from "./presentation/request-preview.controller";
+import { FlowHooksController } from "./presentation/flow-hooks.controller";
 
 export const RUN_COMMAND_HANDLERS = [
   StartRunHandler,
@@ -49,6 +55,7 @@ export const RUN_COMMAND_HANDLERS = [
   ResumeRunHandler,
   PruneRunsHandler,
   PreviewRequestHandler,
+  DeliverFlowHookHandler,
 ];
 export const RUN_QUERY_HANDLERS = [ListRunsHandler, GetRunHandler, GetRunCaseHandler, GetRunReportHandler];
 export const RUN_PROJECTORS = [
@@ -58,6 +65,7 @@ export const RUN_PROJECTORS = [
   RunCaseRetryingProjector,
   RunPausedProjector,
   RunResumedProjector,
+  RunHookWaitingProjector,
   RunFinishedProjector,
 ];
 
@@ -82,7 +90,7 @@ export const RUN_QUEUE_PROVIDER = {
     CqrsModule,
     AuthModule,
     IamModule,
-    TypeOrmModule.forFeature([RunEntity, RunCaseEntity, RunStepEntity]),
+    TypeOrmModule.forFeature([RunEntity, RunCaseEntity, RunStepEntity, FlowHookEntity]),
     forwardRef(() => ProjectsModule),
     forwardRef(() => SpecsModule),
     forwardRef(() => EnvironmentsModule),
@@ -90,9 +98,11 @@ export const RUN_QUEUE_PROVIDER = {
     forwardRef(() => WorkflowsModule),
     forwardRef(() => ChannelsModule),
   ],
-  controllers: [RunsController, RequestPreviewController],
+  controllers: [RunsController, RequestPreviewController, FlowHooksController],
   providers: [
     { provide: RUN_REPOSITORY, useClass: TypeOrmRunRepository },
+    { provide: FLOW_HOOK_REPOSITORY, useClass: TypeOrmFlowHookRepository },
+    FlowHookWaiter,
     RUN_QUEUE_PROVIDER,
     CaseExecutor,
     ExecutionContextFactory,

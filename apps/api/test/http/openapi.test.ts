@@ -117,6 +117,8 @@ describe("el contrato que publica esta API", () => {
       "/auth/refresh",
       "/auth/register",
       "/health",
+      // La URL de un nodo webhook: la llama un sistema externo, protegida por su token de un solo uso.
+      "/hooks/flows/{token}",
       // Las dos del mock: la URL que sirve los ejemplos del proyecto. La llama el navegador de un
       // front que no tiene sesión de este producto, y lo que la protege es que el `publicId` sea
       // aleatorio más la `x-api-key` cuando se creó privado.

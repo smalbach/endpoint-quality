@@ -142,6 +142,14 @@ export const envSchema = z.object({
   MAX_RUN_CASES: z.coerce.number().int().min(1).default(5_000),
 
   CORS_ORIGINS: z.string().default("http://localhost:5173"),
+  /**
+   * Where this API is reachable from outside — `https://api.example.com`, or with its path prefix
+   * `https://example.com/api` — for the one-time URLs a webhook node hands out. The worker that mints
+   * them has no request to take an origin from, and with several instances it is not the one the
+   * provider will reach. Unset, they point at `http://localhost:PORT`, which only a caller on the same
+   * machine can use.
+   */
+  PUBLIC_API_URL: z.string().url().optional(),
   COOKIE_DOMAIN: z.string().optional(),
 
   /** Where the interface lives, for the links a mail carries. */

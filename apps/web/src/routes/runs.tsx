@@ -6,6 +6,7 @@ import { useCan, useOrganization } from "@/lib/auth";
 import { AssertionRow, Badge, Button, Card, Empty, Json } from "@/components/ui";
 import { cn, formatDate, formatDuration, methodStyle, statusClass } from "@/lib/format";
 import { RunsTabs } from "@/components/runs-tabs";
+import { RunHookWait } from "@/components/run-hook-wait";
 import type { FailureKind, Run, RunCase, RunCaseView, RunSource, RunTotals, RunView } from "@/lib/types";
 import type { RetryNote } from "@/lib/workflow-draft";
 
@@ -231,6 +232,12 @@ export function useRunProgress(base: string, runId: string) {
         }
         if (event.type === "resumed") {
           setPausedLive(null);
+          return;
+        }
+        // Un nodo webhook se ha puesto a esperar. El evento no trae la URL —no viaja por el bus entre
+        // instancias—: se vuelve a pedir la corrida, que la trae en `hooks`.
+        if (event.type === "waiting") {
+          void queryClient.invalidateQueries({ queryKey: ["run", runId] });
           return;
         }
         // The opening snapshot says whether the run is waiting right now, which closes the gap
@@ -480,6 +487,8 @@ export function RunProgress({ base, runId }: { base: string; runId: string }) {
           )}
         </div>
       </Card>
+
+      {running && <RunHookWait hooks={run.data.hooks} cases={cases} />}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
         <Card className="max-h-[70vh] overflow-y-auto">

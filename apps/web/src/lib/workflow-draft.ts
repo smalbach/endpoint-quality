@@ -19,6 +19,7 @@ import { slugId } from "@/lib/config-draft";
 import { defaultNotify, notifyProblems } from "@/lib/workflow-notify";
 import { defaultMock, mockProblems } from "@/lib/mock-draft";
 import { PROTOCOL_LABEL, channelNodeProblems, defaultChannelNode } from "@/lib/channel-node-draft";
+import { WEBHOOK_TIMEOUT_MS, webhookTimeoutProblem } from "@/lib/workflow-webhook";
 
 export type OperationSummary = { id: string; method: string; path: string; summary: string };
 
@@ -261,6 +262,7 @@ export const CONTROL_PALETTE: { kind: ControlKind; glyph: string; label: string;
   { kind: "graphql", glyph: "◈", label: "GraphQL", hint: "Una operación GraphQL (query, variables, operationName): falla si la respuesta trae errors" },
   { kind: "mock", glyph: "◌", label: "Mock", hint: "Respuesta simulada sin red: estado, cabeceras y body escritos a mano, para lo que aún no existe" },
   { kind: "channel", glyph: "⇌", label: "Canal", hint: "Ejecuta un canal del proyecto (WebSocket, MQTT o gRPC): abre, manda un guion, espera y lo juzga con lo que el canal espera" },
+  { kind: "webhook", glyph: "⚓", label: "Webhook", hint: "Detiene el flujo hasta que un sistema externo llame a una URL de un solo uso (pagos, trabajos asíncronos)" },
 ];
 
 /** Why the JSON Schema written on a schema node cannot be used, or null. The server refuses the same
@@ -304,7 +306,8 @@ type ControlKind =
   | "subflow"
   | "graphql"
   | "mock"
-  | "channel";
+  | "channel"
+  | "webhook";
 
 /** A retry node's settings before anything is wired to it. */
 const DEFAULT_RERUN = { from: "", target: "", attempts: 3, delayMs: 1000 };
@@ -329,6 +332,7 @@ const CONTROL_BASE_ID: Record<ControlKind, string> = {
   graphql: "graphql",
   mock: "mock",
   channel: "canal",
+  webhook: "webhook",
 };
 
 /**
@@ -422,6 +426,7 @@ export function addControlStep(
   if (kind === "mock") node.mock = defaultMock();
   // No channel yet: the inspector's selector picks it, and flowProblems asks for it until then.
   if (kind === "channel") node.channel = defaultChannelNode();
+  if (kind === "webhook") node.webhook = { timeoutMs: WEBHOOK_TIMEOUT_MS.initial, method: "POST" };
   if (kind === "retry") node.rerun = { ...DEFAULT_RERUN, from: from ?? "", target: from ?? "" };
   if (kind === "poll") {
     node.poll = { from: from ?? "", attempts: 5, delayMs: 2000 };
@@ -723,6 +728,21 @@ export function toNodes(
           chosen: Boolean(step.channel?.channelId),
           ...channelLabel(step.channel?.channelId, channels),
           scripted: step.channel?.messages?.length ?? null,
+          captures: step.captures?.length ?? 0,
+          runStatus: runStatusFor,
+        },
+      };
+    }
+    if (kind === "webhook") {
+      return {
+        id: step.id,
+        type: "webhook",
+        position,
+        data: {
+          name: step.id,
+          timeoutMs: step.webhook?.timeoutMs ?? WEBHOOK_TIMEOUT_MS.initial,
+          method: step.webhook?.method ?? "POST",
+          checks: step.checks?.length ?? 0,
           captures: step.captures?.length ?? 0,
           runStatus: runStatusFor,
         },
@@ -1228,6 +1248,13 @@ export function flowProblems(steps: WorkflowStepView[]): FlowProblem[] {
     }
     if (kind === "mock") problems.push(...mockProblems(step).map((message) => ({ message, stepId: step.id })));
     if (kind === "channel") problems.push(...channelNodeProblems(step).map((message) => ({ message, stepId: step.id })));
+    if (kind === "webhook") {
+      const problem = webhookTimeoutProblem(step.webhook?.timeoutMs);
+      if (problem) problems.push({ message: `El webhook «${step.id}»: ${problem}`, stepId: step.id });
+      // Una URL por vuelta, repartida a mitad de corrida, no es algo que se le pueda dar a un proveedor.
+      if (steps.some((loop) => loop.kind === "loop" && loopBodyIds(steps, loop.id).includes(step.id)))
+        problems.push({ message: `El webhook «${step.id}» está dentro de un bucle: no puede esperar ahí.`, stepId: step.id });
+    }
     if (kind === "fetch" && !step.fetch?.url?.trim())
       problems.push({ message: `El fetch «${step.id}» no tiene URL.`, stepId: step.id });
     if (kind === "graphql") {

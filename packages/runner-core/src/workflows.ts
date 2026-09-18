@@ -201,8 +201,12 @@ export type StepWaits = (typeof STEP_WAITS)[number];
  * - `channel` runs a saved channel (WebSocket, MQTT or gRPC) as a bounded conversation: opens it,
  *   sends a script, waits, closes, and passes when the channel's own expectations hold. See
  *   {@link StepChannel}.
+ * - `webhook` stops the flow until an outside system calls a one-time URL the run hands out — the
+ *   payment provider, the async job that reports back. What arrives is that node's response. See
+ *   {@link StepWebhook}.
  *
- * The ones that send no request (`branch`, `wait`, `merge`, `validate`, `set`, `script`, `schema`, `mock`) are
+ * The ones that send no request (`branch`, `wait`, `merge`, `validate`, `set`, `script`, `schema`, `mock`,
+ * `webhook`) are
  * *control* nodes: they produce a case that records what the flow did, not one that made an HTTP
  * call. */
 export type StepKind =
@@ -225,7 +229,8 @@ export type StepKind =
   | "subflow"
   | "graphql"
   | "mock"
-  | "channel";
+  | "channel"
+  | "webhook";
 
 /** The control kinds — the nodes that record a decision instead of making a request. */
 export const CONTROL_KINDS: StepKind[] = [
@@ -238,7 +243,30 @@ export const CONTROL_KINDS: StepKind[] = [
   "schema",
   "subflow",
   "mock",
+  "webhook",
 ];
+
+export const WEBHOOK_METHODS = ["POST", "PUT"] as const;
+export type WebhookMethod = (typeof WEBHOOK_METHODS)[number];
+
+/**
+ * A `webhook` node: how long the flow waits for the call, and with which verb it must arrive.
+ *
+ * When the walk reaches it the run mints a one-time URL (shown on the run while it waits), and the
+ * flow does not go on until something outside calls it or `timeoutMs` passes — which fails the node.
+ * What the call carried becomes this node's response: status 200, its body and its headers with the
+ * credentials masked, so checks, captures and later nodes read it like any answer.
+ *
+ * Not allowed inside a loop body: one URL per iteration would be forty URLs somebody has to hand to
+ * a provider mid-run, and a loop does not wait for anyone.
+ */
+export type StepWebhook = {
+  /** 1 s to 10 min. The in-memory queue walks one run at a time, so this is also how long every
+   * run queued behind it may wait. */
+  timeoutMs: number;
+  /** POST when absent. A call with the other verb is answered as if the URL did not exist. */
+  method?: WebhookMethod;
+};
 
 /**
  * A `mock` node: the response it gives instead of making a call.
@@ -504,6 +532,8 @@ export type WorkflowStep = {
   mock?: StepMock;
   /** On a `channel` node: the channel it runs and, optionally, what it sends. */
   channel?: StepChannel;
+  /** On a `webhook` node: how long it waits for the outside call. */
+  webhook?: StepWebhook;
   /** On a node downstream of a branch: which path it sits on. */
   branch?: StepBranch;
   waits?: StepWaits;
