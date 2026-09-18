@@ -82,6 +82,7 @@ async function harness(
     projectId: "p1",
     expiresAt: new Date(clock.now.getTime() + limits.durationMs),
     limits,
+    decryptHttps: false,
   };
   const tokenHash = hashOpaqueToken(TOKEN);
   let ended: CaptureStopReason | null = null;

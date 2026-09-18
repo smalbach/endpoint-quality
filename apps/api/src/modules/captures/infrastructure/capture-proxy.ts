@@ -32,15 +32,18 @@
  * 8. **Túneles, solo a puertos web.** Un `CONNECT` va a 443, 80 u 8443 salvo que el despliegue diga
  *    otra lista (`CAPTURE_CONNECT_PORTS`). Otro puerto es un 403, grabado como rechazado.
  *
- * ## HTTPS: el túnel, sin mirar dentro
+ * ## HTTPS: el túnel, y descifrarlo solo si se pide
  *
- * Un `CONNECT` abre un túnel TCP y el proxy no ve más que `host:puerto`. Se graba así, marcado
- * «cifrado, sin detalle». Ver dentro exigiría hacer de intermediario (MITM) con una CA propia que el
- * dispositivo tendría que instalar como raíz de confianza: una CA así firma certificados para
- * **cualquier** dominio, y su clave privada es entonces la cosa más valiosa de la instalación. Eso
- * no se ha hecho. Ni siquiera como opción: generar la CA pide una dependencia de X.509 que el
- * proyecto no tiene, y hacerlo a medias —con la clave en disco o en una columna sin cifrar— sería
- * peor que no tenerlo.
+ * Por omisión un `CONNECT` abre un túnel TCP y el proxy no ve más que `host:puerto`. Se graba así,
+ * marcado «cifrado, sin detalle».
+ *
+ * Con `CAPTURE_MITM=true` en el despliegue **y** «Descifrar HTTPS» en la sesión, el proxy hace de
+ * intermediario (`intercept`): contesta al dispositivo con un certificado para el nombre pedido,
+ * firmado por la CA de la instalación (`capture-authority.ts`, con su clave guardada solo cifrada),
+ * y cada petición de dentro sigue el camino de una en claro —`forward`—: la guarda, la conexión a
+ * la IP comprobada, **la validación normal del certificado del servidor de verdad**, la redacción y
+ * el import. El destino es siempre el del `CONNECT`. Una app que fija su certificado no acepta el
+ * de la CA: su túnel falla y se graba con el motivo.
  *
  * ## Varias instancias
  *
@@ -54,6 +57,7 @@
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { connect as netConnect, type Socket } from "node:net";
+import { TLSSocket, type SecureContext } from "node:tls";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 
 import { BlockedTargetError, pinnedAgent, resolveTarget, type SafeFetchPolicy } from "@/shared/http/safe-fetch";
@@ -67,6 +71,8 @@ export type ProxySession = {
   projectId: string;
   expiresAt: Date;
   limits: CaptureLimits;
+  /** Si sus túneles se descifran. Sin `mitm` en las opciones, no cambia nada. */
+  decryptHttps: boolean;
 };
 
 /** Lo que la tabla dice de un hash: la sesión abierta, que terminó y por qué, o que no existe. */
@@ -104,6 +110,11 @@ export type CaptureProxyOptions = {
   authFailureLimit?: AuthFailureLimit;
   /** Cuánto se recuerda una credencial buena sin volver a la tabla. Como mucho 2 s; por omisión, 1 s. */
   authCacheMs?: number;
+  /**
+   * Descifrar HTTPS: el contexto TLS para contestar a un nombre, firmado por la CA de la
+   * instalación. Sin esto, ninguna sesión descifra, pida lo que pida.
+   */
+  mitm?: { contextFor: (hostname: string) => Promise<SecureContext> };
 };
 
 /** Cuánto se recuerda una credencial buena, por omisión. Es lo que tarda en llegar un «Parar» de otra instancia. */
@@ -144,12 +155,25 @@ export class CaptureProxy {
   private readonly failures: AuthFailureLimiter;
   private readonly authCacheMs: number;
   private starting: Promise<number> | null = null;
+  /**
+   * Donde se lee el HTTP que llega descifrado de un túnel. No escucha en ningún puerto: recibe los
+   * sockets TLS a mano, y cada uno trae su sesión y su destino en `decrypted`.
+   */
+  private readonly inner: Server;
+  private readonly decrypted = new WeakMap<object, { session: ProxySession; origin: string }>();
 
   constructor(private readonly options: CaptureProxyOptions) {
     this.failures = new AuthFailureLimiter(options.authFailureLimit ?? DEFAULT_AUTH_FAILURE_LIMIT, () =>
       options.now().getTime(),
     );
     this.authCacheMs = Math.min(2_000, Math.max(0, options.authCacheMs ?? AUTH_CACHE_MS));
+    this.inner = createServer({ requestTimeout: options.policy.timeoutMs * 2 });
+    this.inner.on("request", (request, response) => this.onDecrypted(request, response));
+    this.inner.on("upgrade", (_request, socket: Socket) => {
+      socket.on("error", () => undefined);
+      socket.end("HTTP/1.1 501 Not Implemented\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    });
+    this.inner.on("clientError", (_error, socket: Socket) => socket.destroy());
   }
 
   get listening(): boolean {
@@ -343,7 +367,21 @@ export class CaptureProxy {
         "Esto es el proxy de captura: configúralo como proxy HTTP en el navegador o el dispositivo en vez de abrirlo como página.",
       );
     }
+    return this.forward(session, request, response, target);
+  }
 
+  /**
+   * Reenvía una petición ya autenticada a `target` y la graba. Es el mismo camino para HTTP en
+   * claro y para lo que llega descifrado de un túnel: la misma guarda, el mismo `pinnedAgent` —que
+   * en `https://` valida el certificado del servidor de verdad contra su nombre— y la misma
+   * redacción al grabar.
+   */
+  private async forward(
+    session: ProxySession,
+    request: IncomingMessage,
+    response: ServerResponse,
+    target: string,
+  ): Promise<void> {
     const at = this.options.now();
     const started = Date.now();
     const method = (request.method ?? "GET").toUpperCase();
@@ -518,6 +556,8 @@ export class CaptureProxy {
       return refuse(client, "403 Forbidden", open ? undefined : () => this.stop(session.id));
     }
 
+    if (session.decryptHttps && this.options.mitm) return this.intercept(session, client, head, hostname, port, tunnel);
+
     const started = Date.now();
     const upstream = netConnect({ host: address, port });
     this.track(session, upstream);
@@ -554,6 +594,110 @@ export class CaptureProxy {
         client.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
       } else client.destroy();
     });
+  }
+
+  /* ---------------------------------------------------------------- *
+   * HTTPS descifrado: el proxy como intermediario
+   * ---------------------------------------------------------------- */
+
+  /**
+   * Abre el túnel hacia **el propio proxy**: al dispositivo se le contesta con un certificado para
+   * `hostname` firmado por la CA de la instalación, y lo que manda dentro se lee como HTTP y se
+   * reenvía con `forward`, que abre su propia conexión TLS con el servidor de verdad y valida su
+   * certificado con normalidad. El destino de cada petición es **el del `CONNECT`**, ya comprobado
+   * por la guarda, y no el `Host` de dentro: cambiarlo no sirve para llegar a otro sitio.
+   *
+   * Si el dispositivo no acepta el certificado —la CA no está instalada, o la app fija el de su
+   * servidor—, el apretón de manos falla y se graba el túnel con el motivo. No hay vuelta atrás a un
+   * túnel sin descifrar: la sesión pidió ver dentro, y un túnel opaco escondería el fallo.
+   */
+  private async intercept(
+    session: ProxySession,
+    client: Socket,
+    head: Buffer,
+    hostname: string,
+    port: number,
+    tunnel: (patch: Partial<RawExchange>) => RawExchange,
+  ): Promise<void> {
+    let context: SecureContext;
+    try {
+      context = await this.options.mitm!.contextFor(hostname);
+    } catch (error) {
+      const why = error instanceof Error ? error.message : "no se pudo firmar el certificado";
+      const open = await this.record(session, tunnel({ error: `no se pudo descifrar: ${why}` }));
+      return refuse(client, "502 Bad Gateway", open ? undefined : () => this.stop(session.id));
+    }
+    client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    if (head.length) client.unshift(head);
+    const secure = new TLSSocket(client, { isServer: true, secureContext: context, ALPNProtocols: ["http/1.1"] });
+    this.track(session, secure);
+    this.decrypted.set(secure, { session, origin: new URL(`https://${hostname}:${port}`).origin });
+    client.setTimeout(this.options.tunnelIdleMs);
+    client.on("timeout", () => secure.destroy());
+
+    let handshaken = false;
+    let reported = false;
+    const refused = (why: string) => {
+      if (handshaken || reported) return;
+      reported = true;
+      void this.record(session, tunnel({ error: why }));
+    };
+    // Un navegador que no se fía del certificado manda una alerta y llega como `error`. Otros
+    // clientes validan después del apretón de manos y cuelgan sin decir nada, y ese cierre no se ve
+    // mientras nadie lee del socket: el plazo es lo que acaba grabando esos túneles.
+    const handshake = setTimeout(
+      () => {
+        refused(
+          "el dispositivo no terminó el apretón de manos con el certificado de la CA de captura: ¿está instalada y " +
+            "marcada de confianza? Una app que fija el certificado de su servidor no se puede descifrar",
+        );
+        secure.destroy();
+      },
+      Math.min(this.options.policy.timeoutMs, 10_000),
+    );
+    handshake.unref();
+    secure.once("secure", () => {
+      handshaken = true;
+      clearTimeout(handshake);
+      this.inner.emit("connection", secure);
+    });
+    secure.once("close", () => clearTimeout(handshake));
+    secure.on("error", (error: Error) => {
+      refused(
+        `el dispositivo no aceptó el certificado de la CA de captura (${error.message}): ¿está instalada y marcada ` +
+          "de confianza? Una app que fija el certificado de su servidor no se puede descifrar",
+      );
+      secure.destroy();
+    });
+    secure.once("close", () => refused("el dispositivo cerró el túnel sin aceptar el certificado de la CA de captura"));
+  }
+
+  /** Una petición que llegó descifrada de un túnel: a su destino, con la sesión del túnel. */
+  private onDecrypted(request: IncomingMessage, response: ServerResponse): void {
+    response.on("error", () => undefined);
+    const context = this.decrypted.get(request.socket);
+    if (!context) {
+      request.resume();
+      return void response.destroy();
+    }
+    // La sesión pudo caducar con el túnel abierto: lo que viene después ya no se atiende.
+    if (context.session.expiresAt.getTime() <= this.options.now().getTime()) {
+      request.resume();
+      this.stop(context.session.id);
+      return;
+    }
+    const raw = request.url ?? "/";
+    // Solo la ruta: una URL absoluta dentro del túnel no cambia a dónde va.
+    let path = raw;
+    if (!raw.startsWith("/")) {
+      try {
+        const parsed = new URL(raw);
+        path = `${parsed.pathname}${parsed.search}`;
+      } catch {
+        path = "/";
+      }
+    }
+    void this.forward(context.session, request, response, `${context.origin}${path}`);
   }
 }
 

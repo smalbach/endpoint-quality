@@ -1,5 +1,9 @@
 import type { CaptureItem, CaptureSession, CaptureStopReason } from "@/modules/captures/domain/model";
-import type { CaptureRepositoryPort } from "@/modules/captures/domain/ports";
+import type {
+  CaptureAuthorityRepositoryPort,
+  CaptureRepositoryPort,
+  StoredCaptureAuthority,
+} from "@/modules/captures/domain/ports";
 
 export class InMemoryCaptureRepository implements CaptureRepositoryPort {
   readonly sessions = new Map<string, CaptureSession>();
@@ -90,5 +94,18 @@ export class InMemoryCaptureRepository implements CaptureRepositoryPort {
       .filter((item) => item.projectId === projectId && item.sessionId === sessionId)
       .sort((left, right) => left.seq - right.seq)
       .map((item) => structuredClone(item));
+  }
+}
+
+/** La CA de captura en memoria. Las pruebas miran `row` para comprobar que la clave va cifrada. */
+export class InMemoryCaptureAuthorityRepository implements CaptureAuthorityRepositoryPort {
+  row: StoredCaptureAuthority | null = null;
+
+  async find() {
+    return this.row ? structuredClone(this.row) : null;
+  }
+
+  async insertIfAbsent(authority: StoredCaptureAuthority) {
+    this.row ??= structuredClone(authority);
   }
 }

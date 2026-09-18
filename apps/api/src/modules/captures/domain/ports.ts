@@ -49,3 +49,25 @@ export interface CaptureRepositoryPort {
   listItems(projectId: string, sessionId: string, afterSeq: number, limit: number): Promise<CaptureItem[]>;
   findItems(projectId: string, sessionId: string, ids: string[]): Promise<CaptureItem[]>;
 }
+
+export const CAPTURE_AUTHORITY_REPOSITORY = Symbol("CAPTURE_AUTHORITY_REPOSITORY");
+
+/** La CA de captura tal como se guarda: el certificado en claro, la clave **solo cifrada**. */
+export type StoredCaptureAuthority = {
+  certificatePem: string;
+  /** La clave privada PKCS#8 cifrada con `SECRETS_KEY` (`v1.…`). Nunca hay otra forma de guardarla. */
+  privateKeyCiphertext: string;
+  createdAt: Date;
+};
+
+/**
+ * La CA de la instalación: una fila, o ninguna.
+ *
+ * `insertIfAbsent` y no `save`: dos instancias que arrancan a la vez generan cada una la suya, y
+ * solo una puede quedarse. La otra relee y usa la que ganó; si pudiera reescribirla, un dispositivo
+ * que ya instaló la primera dejaría de confiar en lo que firma el proxy.
+ */
+export interface CaptureAuthorityRepositoryPort {
+  find(): Promise<StoredCaptureAuthority | null>;
+  insertIfAbsent(authority: StoredCaptureAuthority): Promise<void>;
+}

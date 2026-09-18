@@ -35,6 +35,7 @@ import {
   type CaptureSession,
 } from "../../domain/model";
 import { CAPTURE_REPOSITORY, type CaptureRepositoryPort } from "../../domain/ports";
+import { CaptureAuthority } from "../../infrastructure/capture-authority";
 import { CAPTURE_PROXY_USERNAME, CaptureProxyService, disabled } from "../../infrastructure/capture-proxy.service";
 
 /** Cuántas peticiones se importan de una vez. Es el tope de una sesión por omisión. */
@@ -45,6 +46,7 @@ export class StartCaptureCommand implements ICommand {
     readonly organizationId: string,
     readonly projectId: string,
     readonly actorId: string,
+    readonly input: { decryptHttps?: boolean } = {},
   ) {}
 }
 
@@ -55,11 +57,16 @@ export class StartCaptureHandler implements ICommandHandler<StartCaptureCommand,
     @Inject(CAPTURE_REPOSITORY) private readonly captures: CaptureRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
     private readonly proxy: CaptureProxyService,
+    private readonly authority: CaptureAuthority,
   ) {}
 
   async execute(command: StartCaptureCommand): Promise<CaptureStartedView> {
     const project = await writableProject(this.projects, command.organizationId, command.projectId);
     if (!this.proxy.enabled) throw disabled();
+    const decryptHttps = command.input.decryptHttps === true;
+    // Antes de tocar nada: pedir descifrar sin que el despliegue lo permita, o sin una CA que se
+    // pueda usar, es un error con el motivo, y no una sesión que en silencio no descifra.
+    if (decryptHttps) await this.authority.ensure();
 
     // Una por proyecto: la que siguiera abierta se cierra antes de dar un token nuevo.
     for (const previous of await this.captures.listSessions(project.id, 20)) {
@@ -82,6 +89,7 @@ export class StartCaptureHandler implements ICommandHandler<StartCaptureCommand,
       stoppedAt: null,
       stopReason: null,
       startedBy: command.actorId,
+      decryptHttps,
     };
     await this.captures.saveSession(session);
     let port: number;

@@ -17,7 +17,7 @@
  * instancia corte las conexiones abiertas de una sesión parada; el token deja de valer antes, al
  * caducar su caché (ver `capture-proxy.ts`).
  */
-import { Inject, Injectable, type OnApplicationBootstrap, type OnModuleDestroy } from "@nestjs/common";
+import { Inject, Injectable, Logger, type OnApplicationBootstrap, type OnModuleDestroy } from "@nestjs/common";
 
 import { ENV, type Env } from "@/shared/config/env";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
@@ -25,6 +25,7 @@ import { ConflictError } from "@/shared/errors/domain-error";
 import { policyFromEnv } from "@/shared/http/safe-fetch.provider";
 import { captureItemFrom, type CaptureLimits, type CaptureSession, type CaptureStopReason } from "../domain/model";
 import { CAPTURE_REPOSITORY, type CaptureRepositoryPort } from "../domain/ports";
+import { CaptureAuthority } from "./capture-authority";
 import { CaptureProxy, type ProxySession, type SessionLookup } from "./capture-proxy";
 
 /** El usuario del `Basic`. Da igual cuál: lo que autentica es la contraseña, que es el token. */
@@ -47,6 +48,7 @@ export class CaptureProxyService implements OnApplicationBootstrap, OnModuleDest
     @Inject(ENV) private readonly env: Env,
     @Inject(CAPTURE_REPOSITORY) private readonly captures: CaptureRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
+    private readonly authority: CaptureAuthority,
   ) {
     this.proxy = new CaptureProxy({
       // La misma política que `SAFE_FETCH` y los sockets, leída del mismo sitio: es lo que impide
@@ -56,6 +58,8 @@ export class CaptureProxyService implements OnApplicationBootstrap, OnModuleDest
       maxForwardBodyBytes: env.MAX_RESPONSE_BYTES,
       tunnelIdleMs: TUNNEL_IDLE_MS,
       connectPorts: new Set(env.CAPTURE_CONNECT_PORTS),
+      // Solo con `CAPTURE_MITM=true`: sin esto, una sesión que pidiera descifrar no descifra.
+      ...(env.CAPTURE_MITM ? { mitm: { contextFor: (hostname: string) => authority.contextFor(hostname) } } : {}),
       store: {
         lookup: (tokenHash) => this.lookup(tokenHash),
         record: (session, exchange) =>
@@ -138,6 +142,14 @@ export class CaptureProxyService implements OnApplicationBootstrap, OnModuleDest
 
   async onApplicationBootstrap(): Promise<void> {
     if (!this.enabled) return;
+    if (this.authority.enabled) {
+      // Al arrancar y no a la primera sesión: quien despliega ve en el registro por qué no hay
+      // descifrado —sin `SECRETS_KEY`, por ejemplo— sin esperar a que alguien lo pida. El motivo no
+      // lleva nada secreto; la clave no pasa nunca por aquí.
+      await this.authority.ensure().catch((error: unknown) => {
+        new Logger("CaptureProxy").error(error instanceof Error ? error.message : "Descifrar HTTPS no pudo arrancar");
+      });
+    }
     await this.sync().catch(() => undefined);
     this.timer = setInterval(() => void this.sync().catch(() => undefined), CAPTURE_SYNC_MS);
     this.timer.unref();
@@ -185,6 +197,7 @@ export class CaptureProxyService implements OnApplicationBootstrap, OnModuleDest
       projectId: row.projectId,
       expiresAt: row.expiresAt,
       limits: row.limits,
+      decryptHttps: row.decryptHttps ?? false,
     };
     return { session };
   }

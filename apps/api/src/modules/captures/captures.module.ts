@@ -10,12 +10,14 @@ import { Module, forwardRef } from "@nestjs/common";
 import { CqrsModule } from "@nestjs/cqrs";
 import { TypeOrmModule } from "@nestjs/typeorm";
 
-import { CaptureItemEntity, CaptureSessionEntity } from "@/shared/database/entities";
+import { CaptureAuthorityEntity, CaptureItemEntity, CaptureSessionEntity } from "@/shared/database/entities";
 import { AuthModule } from "@/modules/auth/auth.module";
 import { IamModule } from "@/modules/iam/iam.module";
 import { ProjectsModule } from "@/modules/projects/projects.module";
-import { CAPTURE_REPOSITORY } from "./domain/ports";
+import { CAPTURE_AUTHORITY_REPOSITORY, CAPTURE_REPOSITORY } from "./domain/ports";
 import { TypeOrmCaptureRepository } from "./infrastructure/persistence/typeorm-capture.repository";
+import { TypeOrmCaptureAuthorityRepository } from "./infrastructure/persistence/typeorm-capture-authority.repository";
+import { CaptureAuthority } from "./infrastructure/capture-authority";
 import { CaptureProxyService } from "./infrastructure/capture-proxy.service";
 import { CAPTURE_COMMAND_HANDLERS } from "./application/commands/manage-captures";
 import { CAPTURE_QUERY_HANDLERS } from "./application/queries/read-captures";
@@ -24,6 +26,8 @@ import { CapturesController } from "./presentation/captures.controller";
 export { CAPTURE_COMMAND_HANDLERS, CAPTURE_QUERY_HANDLERS };
 export const CAPTURE_ADAPTERS = [
   { provide: CAPTURE_REPOSITORY, useClass: TypeOrmCaptureRepository },
+  { provide: CAPTURE_AUTHORITY_REPOSITORY, useClass: TypeOrmCaptureAuthorityRepository },
+  CaptureAuthority,
   CaptureProxyService,
 ];
 
@@ -32,7 +36,7 @@ export const CAPTURE_ADAPTERS = [
     CqrsModule,
     AuthModule,
     IamModule,
-    TypeOrmModule.forFeature([CaptureSessionEntity, CaptureItemEntity]),
+    TypeOrmModule.forFeature([CaptureSessionEntity, CaptureItemEntity, CaptureAuthorityEntity]),
     forwardRef(() => ProjectsModule),
   ],
   controllers: [CapturesController],

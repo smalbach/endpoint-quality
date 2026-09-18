@@ -1009,6 +1009,8 @@ export type CaptureSessionView = {
   startedAt: string;
   expiresAt: string;
   stoppedAt: string | null;
+  /** Si la sesión descifra HTTPS con la CA de la instalación (y el dispositivo confía en ella). */
+  decryptHttps: boolean;
 };
 
 /** Una petición grabada, en la lista en vivo: sin cuerpos, que son lo que pesa. */
@@ -1044,12 +1046,33 @@ export type CaptureItemView = CaptureItemSummaryView & {
 /** Dónde se configura el proxy en el dispositivo. `host` es `null` cuando lo decide la pantalla. */
 export type CaptureProxyView = { host: string | null; port: number; username: string };
 
+/**
+ * Descifrar HTTPS en este despliegue (`CAPTURE_MITM=true`). `null` en la vista cuando está apagado,
+ * y entonces la pantalla no ofrece la opción.
+ */
+export type CaptureMitmView = {
+  /** Lista para usarse: la CA existe y su clave se puede descifrar. */
+  ready: boolean;
+  /** Por qué no está lista, dicho para quien administra el servidor. */
+  problem: string | null;
+};
+
 /** La captura de un proyecto: si está activada en este despliegue, y sus sesiones recientes. */
 export type CaptureOverviewView = {
   enabled: boolean;
   /** Con el puerto configurado; `null` si la captura está apagada. */
   proxy: CaptureProxyView | null;
+  mitm: CaptureMitmView | null;
   sessions: CaptureSessionView[];
+};
+
+/** El certificado de la CA de captura: **solo la parte pública**, para instalarla en el dispositivo. */
+export type CaptureAuthorityView = {
+  pem: string;
+  fileName: string;
+  /** SHA-256 del certificado, para comprobar en el dispositivo que se instaló la buena. */
+  fingerprint: string;
+  notAfter: string;
 };
 
 /** Lo que contesta abrir una sesión: **la única vez** que sale el token. */

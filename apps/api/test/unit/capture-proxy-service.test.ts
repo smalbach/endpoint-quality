@@ -18,7 +18,9 @@ import type { CaptureSession } from "@/modules/captures/domain/model";
 import { SystemClock } from "@/shared/clock/clock.port";
 import { loadEnv } from "@/shared/config/env";
 import { generateOpaqueToken, hashOpaqueToken } from "@/shared/crypto/opaque-token";
-import { InMemoryCaptureRepository } from "../support/in-memory-captures";
+import { CaptureAuthority } from "@/modules/captures/infrastructure/capture-authority";
+import { AesGcmSecretCipher } from "@/shared/crypto/secret-cipher";
+import { InMemoryCaptureAuthorityRepository, InMemoryCaptureRepository } from "../support/in-memory-captures";
 import { TEST_ENV } from "../support/test-app";
 
 let target: Server;
@@ -43,6 +45,7 @@ after(async () => {
 
 // La red privada abierta: el destino de prueba está en loopback.
 const env = loadEnv({ ...TEST_ENV, ALLOW_PRIVATE_TARGETS: "true" });
+const cipher = new AesGcmSecretCipher(Buffer.alloc(32, 7).toString("base64"));
 let services: CaptureProxyService[] = [];
 
 afterEach(async () => {
@@ -51,10 +54,14 @@ afterEach(async () => {
 });
 
 function instances(repository: InMemoryCaptureRepository): [CaptureProxyService, CaptureProxyService] {
-  const pair: [CaptureProxyService, CaptureProxyService] = [
-    new CaptureProxyService(env, repository, new SystemClock()),
-    new CaptureProxyService(env, repository, new SystemClock()),
-  ];
+  const service = () =>
+    new CaptureProxyService(
+      env,
+      repository,
+      new SystemClock(),
+      new CaptureAuthority(env, cipher, new InMemoryCaptureAuthorityRepository()),
+    );
+  const pair: [CaptureProxyService, CaptureProxyService] = [service(), service()];
   services.push(...pair);
   return pair;
 }
@@ -77,6 +84,7 @@ async function openSession(
     stoppedAt: null,
     stopReason: null,
     startedBy: randomUUID(),
+    decryptHttps: false,
   };
   await repository.saveSession(session);
   return { session, token };

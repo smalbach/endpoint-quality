@@ -21,6 +21,7 @@ import { DataSource } from "typeorm";
 
 import { buildDataSourceOptions, MIGRATIONS } from "@/shared/database/data-source";
 import {
+  CaptureAuthorityEntity,
   CaptureItemEntity,
   CaptureSessionEntity,
   RunCaseEntity,
@@ -29,6 +30,7 @@ import {
 } from "@/shared/database/entities";
 import { TypeOrmRunRepository } from "@/modules/runs/infrastructure/persistence/typeorm-run.repository";
 import { TypeOrmCaptureRepository } from "@/modules/captures/infrastructure/persistence/typeorm-capture.repository";
+import { TypeOrmCaptureAuthorityRepository } from "@/modules/captures/infrastructure/persistence/typeorm-capture-authority.repository";
 
 const DATABASE_URL = process.env.EQ_TEST_DATABASE_URL;
 const REASON =
@@ -74,6 +76,7 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
     const tables = rows.map((row) => row.table_name).sort();
     assert.deepEqual(tables, [
       "api_tokens",
+      "capture_authorities",
       "capture_items",
       "capture_sessions",
       "channel_endpoints",
@@ -945,6 +948,7 @@ describe("la captura con varias instancias", { skip: DATABASE_URL ? false : REAS
       stoppedAt: null,
       stopReason: null,
       startedBy: user,
+      decryptHttps: false,
     });
     const item = () => ({
       id: randomUUID(),
@@ -985,5 +989,24 @@ describe("la captura con varias instancias", { skip: DATABASE_URL ? false : REAS
     assert.equal((await repository.findSession(project, session))!.stopReason, "manual");
     assert.equal(await repository.appendNext(item(), 100), null, "una sesión parada no admite más");
     await dataSource!.query(`DELETE FROM projects WHERE id = $1`, [project]);
+  });
+});
+
+describe("la CA de captura", { skip: DATABASE_URL ? false : REASON }, () => {
+  /**
+   * Dos instancias que arrancan a la vez generan cada una su CA: solo una puede quedarse, y la
+   * segunda escritura no puede reescribirla —un dispositivo que ya instaló la primera dejaría de
+   * confiar en el proxy—.
+   */
+  test("insertIfAbsent se queda con la primera, y la columna solo guarda texto cifrado", async () => {
+    const repository = new TypeOrmCaptureAuthorityRepository(dataSource!.getRepository(CaptureAuthorityEntity));
+    await dataSource!.query(`DELETE FROM capture_authorities`);
+    const first = { certificatePem: "PRIMERA", privateKeyCiphertext: "v1.a.b.c", createdAt: new Date() };
+    await repository.insertIfAbsent(first);
+    await repository.insertIfAbsent({ ...first, certificatePem: "SEGUNDA", privateKeyCiphertext: "v1.d.e.f" });
+    const stored = await repository.find();
+    assert.equal(stored?.certificatePem, "PRIMERA");
+    assert.equal(stored?.privateKeyCiphertext, "v1.a.b.c");
+    await dataSource!.query(`DELETE FROM capture_authorities`);
   });
 });

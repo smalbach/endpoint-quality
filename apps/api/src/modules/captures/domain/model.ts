@@ -72,6 +72,11 @@ export type CaptureSession = {
   stoppedAt: Date | null;
   stopReason: CaptureStopReason | null;
   startedBy: string;
+  /**
+   * Si esta sesión descifra HTTPS. Solo puede ser `true` con `CAPTURE_MITM=true` en el despliegue,
+   * y solo sirve si el dispositivo instaló la CA de la instalación (ver `capture-authority.ts`).
+   */
+  decryptHttps: boolean;
 };
 
 /** Una petición grabada, ya tapada. */
@@ -89,8 +94,8 @@ export type CaptureItem = {
   /**
    * Un `CONNECT`: un túnel HTTPS que el proxy abrió sin mirar dentro.
    *
-   * Solo se sabe a qué `host:puerto` iba. Descifrarlo pediría instalar una CA de este producto en
-   * el dispositivo, y eso no se hace por defecto (ver `capture-proxy.ts`).
+   * Solo se sabe a qué `host:puerto` iba. Una sesión que descifra HTTPS no graba el túnel así:
+   * graba cada petición de dentro como una más, con su URL `https://`, y esas sí se importan.
    */
   encrypted: boolean;
   requestHeaders: Record<string, string>;
@@ -395,6 +400,7 @@ export function viewCaptureSession(session: CaptureSession): CaptureSessionView 
     startedAt: session.startedAt.toISOString(),
     expiresAt: session.expiresAt.toISOString(),
     stoppedAt: session.stoppedAt?.toISOString() ?? null,
+    decryptHttps: session.decryptHttps ?? false,
   };
 }
 
