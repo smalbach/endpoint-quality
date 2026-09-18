@@ -44,7 +44,7 @@ export class CreateProjectHandler implements ICommandHandler<
       id: randomUUID(),
       organizationId: command.organizationId,
       name: command.name.trim(),
-      slug: await this.freeSlug(command.organizationId, slugifyProject(command.name)),
+      slug: await freeSlug(this.projects, command.organizationId, slugifyProject(command.name)),
       description: command.description.trim(),
       createdBy: command.createdBy,
       createdAt: this.clock.now(),
@@ -62,15 +62,15 @@ export class CreateProjectHandler implements ICommandHandler<
     await this.projects.save(project);
     return { projectId: project.id, slug: project.slug };
   }
+}
 
-  /** Uniqueness is per organization. The numeric suffix is sequential rather than random so the
-   * second "Catalog" is `catalog-2` and not `catalog-8f21`. */
-  private async freeSlug(organizationId: string, base: string): Promise<string> {
-    if (!(await this.projects.findBySlug(organizationId, base))) return base;
-    for (let suffix = 2; suffix < 1000; suffix += 1) {
-      const candidate = `${base}-${suffix}`;
-      if (!(await this.projects.findBySlug(organizationId, candidate))) return candidate;
-    }
-    return `${base}-${randomUUID().slice(0, 8)}`;
+/** Uniqueness is per organization. The numeric suffix is sequential rather than random so the
+ * second "Catalog" is `catalog-2` and not `catalog-8f21`. */
+export async function freeSlug(projects: ProjectRepositoryPort, organizationId: string, base: string): Promise<string> {
+  if (!(await projects.findBySlug(organizationId, base))) return base;
+  for (let suffix = 2; suffix < 1000; suffix += 1) {
+    const candidate = `${base}-${suffix}`;
+    if (!(await projects.findBySlug(organizationId, candidate))) return candidate;
   }
+  return `${base}-${randomUUID().slice(0, 8)}`;
 }

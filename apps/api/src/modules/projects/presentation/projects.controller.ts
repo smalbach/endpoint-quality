@@ -23,10 +23,10 @@ import {
   RequireRole,
   type Principal,
 } from "@/modules/auth/infrastructure/guards/auth.guard";
-import type { ConfigSection } from "@eq/runner-core";
 
 import { CreateProjectCommand } from "../application/commands/create-project";
-import { CopyFromProjectCommand } from "../application/commands/copy-from-project";
+import { ForkProjectCommand } from "../application/commands/fork-project";
+import { assertDirection, GetForkDiffQuery, SyncForkCommand } from "../application/commands/sync-fork";
 import { ImportElementsCommand } from "../application/commands/import-elements";
 import { GetImportPreviewQuery } from "../application/queries/import-preview";
 import { ExportProjectQuery } from "../application/queries/export-project";
@@ -43,7 +43,8 @@ import { ActivateSpecVersionCommand } from "@/modules/specs/application/commands
 import { CheckSpecDriftCommand } from "@/modules/specs/application/commands/check-spec-drift";
 import { GetOperationsQuery, ListSpecVersionsQuery } from "@/modules/specs/application/queries/get-operations";
 import {
-  CopyFromProjectDto,
+  ForkProjectDto,
+  SyncForkDto,
   ImportElementsDto,
   ImportProjectBundleDto,
   ImportAnythingDto,
@@ -219,31 +220,66 @@ export class ProjectsController {
   }
 
   /**
-   * Empezar un proyecto desde uno que ya funciona.
+   * Bifurcar: un proyecto nuevo con todo lo de este, que recuerda de dónde salió.
    *
-   * `admin`, and not `editor` like the other writes here. It replaces whole configuration sections
-   * of this project with another's in one call — there is no half of it to undo from the editor —
-   * and the source has to be one this person can already read, which is what makes the role the
-   * honest gate rather than a formality.
+   * `editor`, como crear un proyecto: es lo que hace. Sustituye a «copiar de otro proyecto», que
+   * pedía `admin` porque reemplazaba secciones enteras de un proyecto que ya existía; esto no toca
+   * nada que exista, crea.
    */
-  @Post(":projectId/copy-from-project")
-  @RequireRole("admin")
-  async copyFromProject(
+  @Post(":projectId/fork")
+  @RequireRole("editor")
+  async fork(
     @Param("organizationId") organizationId: string,
     @Param("projectId") projectId: string,
-    @Body() body: CopyFromProjectDto,
+    @Body() body: ForkProjectDto,
     @CurrentUser() principal: Principal,
   ) {
     return this.commandBus.execute(
-      new CopyFromProjectCommand(
+      new ForkProjectCommand(
         organizationId,
         projectId,
-        {
-          sourceProjectId: body.sourceProjectId,
-          sections: (body.sections ?? []) as ConfigSection[],
-          flows: body.flows ?? false,
-          environments: body.environments ?? false,
-        },
+        { name: body.name, description: body.description },
+        actorId(principal),
+      ),
+    );
+  }
+
+  /**
+   * La comparación a tres bandas de una bifurcación con su original, en un sentido: `pull` trae del
+   * original, `merge` lleva al original. `editor` y no `viewer`, como exportar: enseña scripts y
+   * cabeceras de los dos proyectos enteros.
+   */
+  @Get(":projectId/fork/:direction")
+  @RequireRole("editor")
+  async forkDiff(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("direction") direction: string,
+  ) {
+    return this.queryBus.execute(new GetForkDiffQuery(organizationId, projectId, assertDirection(direction)));
+  }
+
+  /**
+   * Aplicar la comparación. Al fusionar se escribe en el original, y el permiso es el de escribir en
+   * él: `editor` en esta organización, que es donde viven los dos, y el original sin archivar.
+   */
+  @Post(":projectId/fork/:direction")
+  @RequireRole("editor")
+  @HttpCode(200)
+  async syncFork(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("direction") direction: string,
+    @Body() body: SyncForkDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.commandBus.execute(
+      new SyncForkCommand(
+        organizationId,
+        projectId,
+        assertDirection(direction),
+        body.token,
+        body.resolutions ?? {},
         actorId(principal),
       ),
     );

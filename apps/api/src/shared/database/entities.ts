@@ -142,6 +142,26 @@ export class ProjectEntity {
   @Column({ type: "timestamptz", nullable: true }) deletedAt: Date | null;
 }
 
+/**
+ * Una bifurcación: su original, y la última foto que los dos tuvieron en común.
+ *
+ * Una fila por bifurcación, con la bifurcación como clave: un proyecto sale de un solo original.
+ * `base` y `lineage` son `jsonb` porque se escriben enteros en cada sincronización y solo se leen
+ * enteros para comparar. La foto no lleva secretos —ver `fork-snapshot.ts`—.
+ */
+@Entity({ name: "project_forks" })
+export class ProjectForkEntity {
+  @PrimaryColumn("uuid") forkProjectId: string;
+  @Index() @Column("uuid") parentProjectId: string;
+  @Index() @Column("uuid") organizationId: string;
+  @Column("uuid") createdBy: string;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) syncedAt: Date;
+  @Column({ type: "int", default: 1 }) version: number;
+  @Column({ type: "jsonb" }) base: Record<string, unknown>;
+  @Column({ type: "jsonb" }) lineage: Record<string, unknown>;
+}
+
 /** Where a contract comes from, so a re-import needs no arguments and a drift check can run on
  * a schedule. */
 @Entity({ name: "spec_sources" })
@@ -898,7 +918,7 @@ export class CodeScanEntity {
 export const ENTITIES = [
   UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity,
   PasswordResetTokenEntity,
-  ProjectEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity,
+  ProjectEntity, ProjectForkEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity,
   EnvironmentEntity, EnvironmentCredentialEntity, SessionTokenEntity, RequestCookieEntity, ProjectConfigEntity,
   RequestTemplateEntity, WorkflowEntity, WorkflowDatasetEntity, WorkflowSuiteEntity,
   RunEntity, RunCaseEntity, RunStepEntity,

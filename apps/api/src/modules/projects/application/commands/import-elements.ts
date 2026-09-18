@@ -11,7 +11,7 @@ import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "@/modules/work
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "../../domain/ports";
 import { ownedProject } from "./update-project";
-import { uniqueName, withoutSecrets } from "./copy-from-project";
+import { uniqueName, withoutSecrets } from "../../domain/copying";
 import { redactAuth, withoutLiteralSecrets } from "@/modules/workflows/domain/postman-auth";
 
 export type ImportElementsInput = {

@@ -68,7 +68,8 @@ import {
 } from "@/modules/iam/presentation/dto/iam.dto";
 import {
   ArchiveProjectDto,
-  CopyFromProjectDto,
+  ForkProjectDto,
+  SyncForkDto,
   ImportElementsDto,
   ImportProjectBundleDto,
   ImportAnythingDto,
@@ -149,7 +150,8 @@ const DTOS = [
   CreateProjectDto,
   UpdateProjectDto,
   ArchiveProjectDto,
-  CopyFromProjectDto,
+  ForkProjectDto,
+  SyncForkDto,
   ImportElementsDto,
   ImportProjectBundleDto,
   ImportAnythingDto,

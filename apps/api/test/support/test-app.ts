@@ -76,9 +76,10 @@ import {
 import { INVITATION_REPOSITORY, MEMBERSHIP_REPOSITORY, ORGANIZATION_REPOSITORY } from "@/modules/iam/domain/ports";
 import { OrganizationsController } from "@/modules/iam/presentation/organizations.controller";
 import { IAM_COMMAND_HANDLERS, IAM_QUERY_HANDLERS } from "@/modules/iam/iam.module";
-import { PROJECT_REPOSITORY } from "@/modules/projects/domain/ports";
+import { PROJECT_FORK_REPOSITORY, PROJECT_REPOSITORY } from "@/modules/projects/domain/ports";
+import { InMemoryProjectForkRepository } from "./in-memory-forks";
 import { ProjectsController } from "@/modules/projects/presentation/projects.controller";
-import { PROJECT_COMMAND_HANDLERS, PROJECT_QUERY_HANDLERS } from "@/modules/projects/projects.module";
+import { PROJECT_COMMAND_HANDLERS, PROJECT_QUERY_HANDLERS, PROJECT_SERVICES } from "@/modules/projects/projects.module";
 import { SPEC_REPOSITORY } from "@/modules/specs/domain/ports";
 import { SPEC_COMMAND_HANDLERS, SPEC_QUERY_HANDLERS } from "@/modules/specs/specs.module";
 import {
@@ -289,6 +290,7 @@ export type TestContext = {
     monitors: InMemoryMonitorRepository;
     channels: InMemoryChannelRepository;
     channelSessions: InMemoryChannelSessionRepository;
+    forks: InMemoryProjectForkRepository;
   };
   http: StubSafeFetch;
   /** Los sockets de los canales: guionizados por URL, y los que no, al transporte de verdad. */
@@ -333,6 +335,8 @@ export async function createTestApp(): Promise<TestContext> {
     channels: new InMemoryChannelRepository(),
     channelSessions: new InMemoryChannelSessionRepository(),
   };
+  const forks = new InMemoryProjectForkRepository(repositories);
+  const allRepositories = { ...repositories, forks };
   const mailer = new RecordingMailer();
   // Lo que no se guioniza sale por el transporte de verdad, con la misma política de red que el
   // resto de la aplicación de prueba: loopback permitido, porque las pruebas de socket de verdad
@@ -386,6 +390,7 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: MEMBERSHIP_REPOSITORY, useValue: repositories.memberships },
       { provide: INVITATION_REPOSITORY, useValue: repositories.invitations },
       { provide: PROJECT_REPOSITORY, useValue: repositories.projects },
+      { provide: PROJECT_FORK_REPOSITORY, useValue: forks },
       { provide: SPEC_REPOSITORY, useValue: repositories.specs },
       { provide: SAFE_FETCH, useValue: http },
       { provide: RUN_REPOSITORY, useValue: repositories.runs },
@@ -441,6 +446,7 @@ export async function createTestApp(): Promise<TestContext> {
       ...AUTH_EVENT_HANDLERS,
       ...IAM_COMMAND_HANDLERS,
       ...IAM_QUERY_HANDLERS,
+      ...PROJECT_SERVICES,
       ...PROJECT_COMMAND_HANDLERS,
       ...PROJECT_QUERY_HANDLERS,
       ...SPEC_COMMAND_HANDLERS,
@@ -529,7 +535,7 @@ export async function createTestApp(): Promise<TestContext> {
     app,
     clock,
     env,
-    repositories,
+    repositories: allRepositories,
     http,
     channels,
     mailer,
