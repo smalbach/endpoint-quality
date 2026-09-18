@@ -13,7 +13,7 @@
  *   literal text and came back as a 400 about a value the person never meant to send.
  * - **The request goes through the SSRF guard**, like every other address a customer types.
  */
-import { isAuthType, type RequestAuth } from "@eq/runner-core";
+import { graphqlBody, isAuthType, parseGraphqlVariables, type RequestAuth } from "@eq/runner-core";
 
 import { BODY_MODES, MAX_AUTH_PARAM, MAX_SCRIPT, type EndpointBody, type EndpointHeader, type EndpointMethod } from "./model";
 
@@ -154,6 +154,7 @@ export function readSendInput(raw: string | undefined): { input: SendInput } | {
           kind: row.kind === "file" ? "file" : "text",
           enabled: row.enabled !== false,
         })),
+        variables: text(body.variables),
       },
       auth: "auth" in authRead ? authRead.auth : { type: "inherit", params: {} },
       preRequestScript: text(value.preRequestScript),
@@ -195,6 +196,19 @@ export function buildUrl(
   return `${absolute}${absolute.includes("?") ? "&" : "?"}${search.toString()}`;
 }
 
+/**
+ * Una operación GraphQL mandada por `GET`: `query`, `variables` (JSON) y `operationName` en la
+ * query de la URL, como dice GraphQL sobre HTTP. `payload` es el cuerpo que {@link serializeBody}
+ * ya escribió, así que las dos formas mandan exactamente la misma operación.
+ */
+export function graphqlOverGet(url: string, payload: string): string {
+  const operation = JSON.parse(payload) as { query: string; variables?: unknown; operationName?: string };
+  const search = new URLSearchParams({ query: operation.query });
+  if (operation.variables !== undefined) search.set("variables", JSON.stringify(operation.variables));
+  if (operation.operationName) search.set("operationName", operation.operationName);
+  return `${url}${url.includes("?") ? "&" : "?"}${search.toString()}`;
+}
+
 /** Placeholders a path still has after filling, so the person is told instead of the target. */
 export const unfilledPlaceholders = (url: string): string[] =>
   [...new URL(url, "http://placeholder").pathname.matchAll(/%7B([^%]+)%7D|\{([^{}]+)\}/gi)].map(
@@ -202,6 +216,9 @@ export const unfilledPlaceholders = (url: string): string[] =>
   );
 
 export type SerializedPayload = { contentType: string | null; payload: string | Uint8Array; preview: string };
+
+/** Why a body could not be written: its 422, with the message and the code the handler throws. */
+export type BodyFailure = { ok: false; problem: Problem; message: string; code: string };
 
 /**
  * The body as it goes on the wire, or `null` for none.
@@ -213,7 +230,8 @@ export function serializeBody(
   body: EndpointBody,
   files: UploadedPart[],
   interpolate: (value: string) => string,
-): { ok: true; value: SerializedPayload | null } | { ok: false; problem: Problem } {
+): { ok: true; value: SerializedPayload | null } | BodyFailure {
+  const missingFile = (problem: Problem): BodyFailure => ({ ok: false, problem, message: "Falta un fichero", code: "file-missing" });
   switch (body.mode) {
     case "none":
       return { ok: true, value: null };
@@ -240,7 +258,7 @@ export function serializeBody(
     }
     case "binary": {
       const file = files.find((part) => part.fieldname === BINARY_PART);
-      if (!file) return { ok: false, problem: { field: "body", detail: "Elige el fichero que se envía como cuerpo" } };
+      if (!file) return missingFile({ field: "body", detail: "Elige el fichero que se envía como cuerpo" });
       return {
         ok: true,
         value: {
@@ -249,6 +267,34 @@ export function serializeBody(
           preview: `<${file.originalname}, ${file.size} bytes>`,
         },
       };
+    }
+    case "graphql": {
+      // La operación se sustituye como texto y las variables se sustituyen **y después** se leen:
+      // `{"first": {{count}}}` solo es JSON con el número dentro, y un valor con una comilla puede
+      // romperlo, que se dice aquí y no como un 400 del servidor sobre un cuerpo que nadie escribió.
+      const query = interpolate(body.text);
+      if (!query.trim())
+        return {
+          ok: false,
+          problem: { field: "body.text", detail: "Escribe la operación GraphQL" },
+          message: "Falta la operación GraphQL",
+          code: "graphql-query-missing",
+        };
+      const filled = interpolate(body.variables ?? "");
+      // Una `{{variable}}` sin valor no es «JSON roto»: la nombra quien comprueba las variables
+      // después, con el entorno en la frase. Se devuelve tal cual para que llegue hasta allí.
+      if (/\{\{[^{}]+\}\}/.test(filled))
+        return { ok: true, value: { contentType: "application/json", payload: filled, preview: `${query}\n${filled}` } };
+      const variables = parseGraphqlVariables(filled);
+      if (!variables.ok)
+        return {
+          ok: false,
+          problem: { field: "body.variables", detail: variables.problem },
+          message: "Las variables de GraphQL no son válidas",
+          code: "graphql-variables-invalid",
+        };
+      const textBody = graphqlBody({ query, variables: variables.value });
+      return { ok: true, value: { contentType: "application/json", payload: textBody, preview: textBody } };
     }
     case "form-data": {
       const parts: MultipartPart[] = [];
@@ -259,11 +305,7 @@ export function serializeBody(
           continue;
         }
         const file = files.find((part) => part.fieldname === filePartName(field.name));
-        if (!file)
-          return {
-            ok: false,
-            problem: { field: `body.fields.${field.name}`, detail: `Elige el fichero de «${field.name}»` },
-          };
+        if (!file) return missingFile({ field: `body.fields.${field.name}`, detail: `Elige el fichero de «${field.name}»` });
         parts.push({ name: field.name, data: file.buffer, filename: file.originalname, contentType: file.mimetype });
       }
       const encoded = multipart(parts);

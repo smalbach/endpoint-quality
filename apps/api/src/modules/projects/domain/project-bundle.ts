@@ -126,6 +126,9 @@ const bundleEndpoint = z.object({
         )
         .max(100)
         .default([]),
+      // Las variables de una operación GraphQL. Sin esta línea el esquema las tiraba al leer el
+      // fichero, y el endpoint volvía con la operación y sin sus variables.
+      variables: z.string().max(1_000_000).optional(),
     })
     .default({ mode: "none", text: "", contentType: "text/plain", fields: [] }),
   requiresAuth: z.boolean().default(false),

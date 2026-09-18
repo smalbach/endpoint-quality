@@ -59,6 +59,7 @@ import { captureSessionToken } from "@/modules/environments/application/commands
 import {
   blockedUpload,
   buildUrl,
+  graphqlOverGet,
   maskHeaders,
   readSendInput,
   serializeBody,
@@ -189,7 +190,12 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
           method: input.method,
           url: input.path,
           headers: headerMap(headerRows),
-          body: input.body.mode === "json" || input.body.mode === "raw" ? input.body.text : null,
+          // Una operación GraphQL se enseña como su texto: es lo que el script puede leer antes de
+          // que las variables tengan valor, y lo que un `pm.request.body` de Postman trae en `graphql.query`.
+          body:
+            input.body.mode === "json" || input.body.mode === "raw" || input.body.mode === "graphql"
+              ? input.body.text
+              : null,
         },
         response: null,
       });
@@ -230,7 +236,7 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
         "base-url-missing",
       );
     }
-    const url = buildUrl(
+    let url = buildUrl(
       base,
       path,
       input.pathParameters.map((parameter) => ({ ...parameter, value: interpolate(parameter.value) })),
@@ -240,8 +246,8 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
     for (const header of headerRows)
       if (header.enabled && header.name) headers[header.name] = interpolate(header.value);
 
-    const body = serializeBody(input.body, command.files, interpolate);
-    if (!body.ok) throw new InvalidInputError("Falta un fichero", [body.problem], "file-missing");
+    let body = serializeBody(input.body, command.files, interpolate);
+    if (!body.ok) throw new InvalidInputError(body.message, [body.problem], body.code);
 
     const unresolved = unresolvedVariables([url, headers, body.value?.preview ?? ""]);
     if (unresolved.length) {
@@ -261,6 +267,14 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
         placeholders.map((name) => ({ field: `pathParameters.${name}`, detail: "Falta el valor" })),
         "path-parameter-missing",
       );
+    }
+
+    // Un `GET` no lleva cuerpo —el cliente lo tiraría sin decirlo— y GraphQL sobre HTTP tiene su
+    // forma para eso: la operación y las variables van en la query. Es lo que un servidor con
+    // consultas cacheables espera, y lo único que hace que un `GET` mande algo.
+    if (body.ok && body.value && input.body.mode === "graphql" && (input.method === "GET" || input.method === "HEAD")) {
+      url = graphqlOverGet(url, body.value.payload as string);
+      body = { ok: true, value: null };
     }
 
     if (body.value?.contentType && !Object.keys(headers).some((name) => name.toLowerCase() === "content-type"))

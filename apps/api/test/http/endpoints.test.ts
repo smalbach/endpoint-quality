@@ -340,6 +340,60 @@ describe("enviar", () => {
     assert.match(placeholder.body.type, /path-parameter-missing$/);
   });
 
+  test("una operación GraphQL llega como {query, variables} con las variables del entorno dentro", async () => {
+    const operation = {
+      mode: "graphql",
+      text: "query ($id: ID!) { user(id: $id) { name } }",
+      variables: '{"id": "{{userId}}"}',
+    };
+    // Por `GET`, en la query: el entorno no deja escribir, y una consulta no escribe.
+    const response = await send({
+      environmentId,
+      method: "GET",
+      path: "/graphql",
+      body: operation,
+      auth: { type: "none", params: {} },
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    const answered = JSON.parse(response.body.response.body);
+    const search = new URL(answered.url, "http://x").searchParams;
+    assert.equal(search.get("query"), operation.text);
+    assert.deepEqual(JSON.parse(search.get("variables")!), { id: "42" });
+    assert.equal(answered.body, "");
+    assert.equal(answered.headers["content-type"], undefined);
+
+    // Por `POST`, en el cuerpo y como JSON.
+    const posted = await send({ method: "POST", path: "/graphql", body: operation, auth: { type: "none", params: {} } });
+    assert.equal(posted.status, 422, "sin entorno no hay userId");
+    const postedOk = await send({
+      method: "POST",
+      path: "/graphql",
+      body: { ...operation, variables: '{"id": "7"}' },
+      auth: { type: "none", params: {} },
+    });
+    assert.equal(postedOk.status, 200, JSON.stringify(postedOk.body));
+    const received = JSON.parse(postedOk.body.response.body);
+    assert.equal(received.headers["content-type"], "application/json");
+    assert.deepEqual(JSON.parse(received.body), { query: operation.text, variables: { id: "7" } });
+
+    const unresolved = await send({
+      environmentId,
+      method: "GET",
+      path: "/graphql",
+      body: { mode: "graphql", text: "{ a }", variables: '{"id": {{nadie}}}' },
+    });
+    assert.equal(unresolved.status, 422);
+    assert.match(unresolved.body.detail, /nadie/);
+
+    const broken = await send({
+      method: "GET",
+      path: "/graphql",
+      body: { mode: "graphql", text: "{ a }", variables: "[1, 2]" },
+    });
+    assert.equal(broken.status, 422);
+    assert.match(broken.body.type, /graphql-variables-invalid$/);
+  });
+
   test("form-data con un fichero llega entero; un .exe no sale", async () => {
     const request = {
       method: "POST",

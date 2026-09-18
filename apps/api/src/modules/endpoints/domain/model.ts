@@ -15,7 +15,7 @@
  * the exception — the bytes belong to whoever is at the keyboard, and only its field name is kept.
  */
 
-import { AUTH_TYPES, isAuthType, type RequestAuth } from "@eq/runner-core";
+import { AUTH_TYPES, graphqlVariablesProblem, isAuthType, type RequestAuth } from "@eq/runner-core";
 
 import { storableParams } from "@/modules/workflows/domain/postman-auth";
 
@@ -53,7 +53,7 @@ export type EndpointHeader = { name: string; value: string; enabled: boolean };
 
 export type EndpointFormField = { name: string; value: string; kind: "text" | "file"; enabled: boolean };
 
-export const BODY_MODES = ["none", "json", "raw", "form-data", "x-www-form-urlencoded", "binary"] as const;
+export const BODY_MODES = ["none", "json", "raw", "form-data", "x-www-form-urlencoded", "binary", "graphql"] as const;
 export type BodyMode = (typeof BODY_MODES)[number];
 
 /**
@@ -69,6 +69,15 @@ export type EndpointBody = {
   contentType: string;
   /** form-data and urlencoded share the rows; a urlencoded body sends only the text ones. */
   fields: EndpointFormField[];
+  /**
+   * Las variables de una operación GraphQL, como texto JSON con `{{plantillas}}`. La operación va en
+   * `text`, el mismo campo que ya comparten JSON y raw: pasar de un modo de texto a otro lleva el
+   * texto consigo, como pasaba entre esos dos.
+   *
+   * Opcional porque las filas de antes no la tienen, y una migración para escribir `""` en cada una
+   * no diría nada que `?? ""` no diga ya. Se guarda solo cuando trae algo.
+   */
+  variables?: string;
 };
 
 export const EMPTY_BODY: EndpointBody = { mode: "none", text: "", contentType: "text/plain", fields: [] };
@@ -260,6 +269,12 @@ export function endpointProblems(input: EndpointInput): Problem[] {
     input.body?.fields?.forEach((field, index) => {
       if (field && field.kind !== "text" && field.kind !== "file") problem(`body.fields.${index}.kind`, "text o file");
     });
+    if (input.body?.variables !== undefined && typeof input.body.variables !== "string")
+      problem("body.variables", "Las variables de GraphQL son texto JSON");
+    else if (input.body?.mode === "graphql") {
+      const variables = graphqlVariablesProblem(input.body.variables);
+      if (variables) problem("body.variables", variables);
+    }
   }
   if (input.tags !== undefined) {
     if (input.tags.length > 30) problem("tags", "Como mucho 30 etiquetas");
@@ -324,6 +339,8 @@ export function applyEndpointInput(current: Endpoint, input: EndpointInput): End
             kind: field.kind,
             enabled: field.enabled !== false,
           })),
+          // Solo cuando hay algo: una clave vacía en cada cuerpo JSON de la tabla no dice nada.
+          ...(input.body.variables?.trim() ? { variables: input.body.variables } : {}),
         }
       : current.body,
     requiresAuth: input.requiresAuth ?? current.requiresAuth,

@@ -35,7 +35,7 @@ import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projec
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
 import { credentialHeader } from "@/modules/environments/domain/model";
 import { ENDPOINT_REPOSITORY, type EndpointRepositoryPort } from "@/modules/endpoints/domain/ports";
-import { pathParameterNames } from "@/modules/endpoints/domain/model";
+import { pathParameterNames, type EndpointBody } from "@/modules/endpoints/domain/model";
 import { ROLE_REPOSITORY, type RoleRepositoryPort } from "@/modules/roles/domain/ports";
 import type { SecurityRun } from "../domain/model";
 import { statusFromFindings } from "../domain/model";
@@ -106,7 +106,7 @@ export class SecurityRunExecutor {
       requiresAuth: endpoint.requiresAuth,
       operationId: endpoint.operationId,
       pathParameters: pathParameterNames(endpoint.path),
-      body: endpoint.body.mode === "json" && endpoint.body.text ? safeObject(endpoint.body.text) : null,
+      body: bodyObject(endpoint.body),
     }));
 
     // Each declared role's Authorization, decrypted here and nowhere else.
@@ -303,6 +303,17 @@ const prog = (phase: string, percentage: number, detail: string, endpointsTested
   endpointsTested,
   endpointsTotal,
 });
+
+/**
+ * El cuerpo que las pruebas mutan. Una operación GraphQL es el `{query, variables}` que viaja: la
+ * inyección en un argumento de la operación es justo lo que hay que probar en esa API.
+ */
+function bodyObject(body: EndpointBody): Record<string, unknown> | null {
+  if (body.mode === "json" && body.text) return safeObject(body.text);
+  if (body.mode !== "graphql" || !body.text.trim()) return null;
+  const variables = body.variables?.trim() ? safeObject(body.variables) : null;
+  return { query: body.text, ...(variables ? { variables } : {}) };
+}
 
 function safeObject(text: string): Record<string, unknown> | null {
   try {

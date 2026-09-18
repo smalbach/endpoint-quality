@@ -304,6 +304,67 @@ describe("enviar", () => {
     assert.ok(json.ok && json.value?.contentType === "application/json");
   });
 
+  test("graphql manda {query, variables} como JSON, con las variables leídas después de sustituir", () => {
+    const interpolate = (value: string) => value.replace("{{count}}", "3").replace("{{name}}", 'Ana "la" Co');
+    const sent = serializeBody(
+      {
+        ...EMPTY_BODY,
+        mode: "graphql",
+        text: "query ($n: Int) { users(first: $n) { id } }",
+        variables: '{"n": {{count}}}',
+      },
+      [],
+      interpolate,
+    );
+    assert.ok(sent.ok && sent.value);
+    if (sent.ok && sent.value) {
+      assert.equal(sent.value.contentType, "application/json");
+      assert.deepEqual(JSON.parse(sent.value.payload as string), {
+        query: "query ($n: Int) { users(first: $n) { id } }",
+        variables: { n: 3 },
+      });
+    }
+    // Sin variables no se manda la clave: `variables: null` es otra petición para algunos servidores.
+    const bare = serializeBody({ ...EMPTY_BODY, mode: "graphql", text: "{ __typename }" }, [], same);
+    assert.ok(bare.ok && bare.value);
+    if (bare.ok && bare.value) assert.deepEqual(JSON.parse(bare.value.payload as string), { query: "{ __typename }" });
+
+    // Un valor con comillas dentro de una cadena rompe el JSON, y se dice como tal.
+    const broken = serializeBody(
+      { ...EMPTY_BODY, mode: "graphql", text: "{ a }", variables: '{"name": "{{name}}"}' },
+      [],
+      interpolate,
+    );
+    assert.equal(broken.ok, false);
+    if (!broken.ok) assert.equal(broken.code, "graphql-variables-invalid");
+
+    const empty = serializeBody({ ...EMPTY_BODY, mode: "graphql", text: "  " }, [], same);
+    assert.equal(empty.ok, false);
+    if (!empty.ok) assert.equal(empty.code, "graphql-query-missing");
+
+    // Una variable sin valor sigue en el texto, para que la comprobación de después la nombre.
+    const unresolved = serializeBody(
+      { ...EMPTY_BODY, mode: "graphql", text: "{ a }", variables: '{"id": {{nadie}}}' },
+      [],
+      same,
+    );
+    assert.ok(unresolved.ok && unresolved.value?.preview.includes("{{nadie}}"));
+  });
+
+  test("las variables de graphql se validan al guardar, con las plantillas como valores", () => {
+    const ok = endpointProblems({
+      body: { ...EMPTY_BODY, mode: "graphql", text: "{ a }", variables: '{"id": {{id}}}' },
+    });
+    assert.deepEqual(ok, []);
+    const broken = endpointProblems({ body: { ...EMPTY_BODY, mode: "graphql", text: "{ a }", variables: '{"id": ' } });
+    assert.deepEqual(
+      broken.map((problem) => problem.field),
+      ["body.variables"],
+    );
+    const list = endpointProblems({ body: { ...EMPTY_BODY, mode: "graphql", text: "{ a }", variables: "[1]" } });
+    assert.equal(list.length, 1);
+  });
+
   test("form-data lleva texto y ficheros en bytes; falta un fichero y se dice cuál", () => {
     const body = {
       ...EMPTY_BODY,

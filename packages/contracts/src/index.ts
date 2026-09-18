@@ -284,6 +284,8 @@ export type StepGraphqlView = {
   useSession?: boolean;
   expectedStatus?: number;
   allowErrors?: boolean;
+  /** Cómo entra, como en un `fetch`. Ausente es heredar: la llamada va como está. */
+  auth?: RequestAuthView;
 };
 
 /** A `notify` node: posts `message` (a template) to the webhook URL held in the environment variable
@@ -798,12 +800,15 @@ export type EndpointQueryParameterView = {
 };
 export type EndpointHeaderView = { name: string; value: string; enabled: boolean };
 export type EndpointFormFieldView = { name: string; value: string; kind: "text" | "file"; enabled: boolean };
-export type EndpointBodyMode = "none" | "json" | "raw" | "form-data" | "x-www-form-urlencoded" | "binary";
+export type EndpointBodyMode = "none" | "json" | "raw" | "form-data" | "x-www-form-urlencoded" | "binary" | "graphql";
 export type EndpointBodyView = {
   mode: EndpointBodyMode;
+  /** JSON y raw; en `graphql`, la operación. */
   text: string;
   contentType: string;
   fields: EndpointFormFieldView[];
+  /** Las variables de una operación GraphQL, texto JSON con `{{plantillas}}`. Solo si hay. */
+  variables?: string;
 };
 
 /**
@@ -1209,12 +1214,15 @@ export type DocParameterView = {
 };
 
 export type DocBodyView = {
-  mode: "none" | "json" | "raw" | "form-data" | "x-www-form-urlencoded" | "binary";
+  mode: "none" | "json" | "raw" | "form-data" | "x-www-form-urlencoded" | "binary" | "graphql";
   contentType: string;
+  /** En `graphql`, la operación. */
   text: string;
   fields: { name: string; value: string; file: boolean }[];
   /** Qué campos se taparon, para decirlo en vez de que los ocho puntos parezcan el valor. */
   masked: string[];
+  /** Las variables de una operación GraphQL, tapadas como un cuerpo JSON. Solo si hay. */
+  variables?: string;
 };
 
 /**

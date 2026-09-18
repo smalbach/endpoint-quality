@@ -62,6 +62,8 @@ export type DocBody = {
   fields: { name: string; value: string; file: boolean }[];
   /** Qué campos se taparon, para decirlo en la página en vez de que parezca el valor de verdad. */
   masked: string[];
+  /** Las variables de una operación GraphQL, tapadas como cualquier cuerpo JSON. */
+  variables?: string;
 };
 
 /**
@@ -207,6 +209,19 @@ export function docBody(body: EndpointBody): DocBody | null {
     // Un cuerpo binario nunca se guardó: del fichero solo queda el nombre del campo. Decir «va un
     // fichero» es toda la documentación que hay, y es la correcta.
     return { mode: "binary", contentType: "application/octet-stream", text: "", fields: [], masked: [] };
+  }
+  if (body.mode === "graphql") {
+    // La operación sale tal cual —es la forma de la API, lo que se documenta— y las variables pasan
+    // por la misma redacción que un cuerpo JSON: ahí es donde alguien deja un token de prueba.
+    const variables = body.variables?.trim() ? redactBody(body.variables, "application/json") : null;
+    return {
+      mode: "graphql",
+      contentType: "application/json",
+      text: body.text,
+      fields: [],
+      masked: variables?.masked ?? [],
+      ...(variables ? { variables: variables.body } : {}),
+    };
   }
   const contentType = body.mode === "json" ? "application/json" : body.contentType || "text/plain";
   const redacted = redactBody(body.text, contentType);
