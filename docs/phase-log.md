@@ -2720,7 +2720,7 @@ por `ImportAnythingCommand`. El proxy está apagado sin `CAPTURE_PROXY_PORT` y c
 token de 256 bits por sesión en `Proxy-Authorization` (se guarda su SHA-256), caducidad de 30 min,
 tope de peticiones, y cada petición y cada túnel pasan por `resolveTarget` hacia la IP comprobada.
 HTTPS va en túnel sin interceptar: se graba `host:puerto`. MITM no se hizo: no hay biblioteca X.509 y
-la clave de la CA sería lo más valioso de la instalación (`captures1700000032000`).
+la clave de la CA sería lo más valioso de la instalación (`CaptureSessions1700000032000`).
 
 **Un fallo que salió en la pila, no en la suite.** La redacción tapaba por nombre de campo, y httpbin
 devuelve la URL de la petición en un campo `"url"`: `?api_key=…` se guardaba en claro en la fila.
