@@ -334,7 +334,18 @@ export type StepMockView = {
 /** One action of a `channel` node's script: send a text (MQTT: to `topic` with `qos`/`retain`), after
  * `delayMs`; wait until `messages` more arrive, at most `timeoutMs`; or `end` a gRPC client stream. */
 export type ChannelScriptStepView =
-  | { action: "send"; body: string; topic?: string; qos?: 0 | 1 | 2; retain?: boolean; delayMs?: number }
+  | {
+      action: "send";
+      body: string;
+      topic?: string;
+      qos?: 0 | 1 | 2;
+      retain?: boolean;
+      /** Solo Socket.IO, y ahí obligatorio: el evento que se emite. */
+      event?: string;
+      /** Solo Socket.IO: esperar el acuse del servidor. */
+      ack?: boolean;
+      delayMs?: number;
+    }
   | { action: "wait"; messages: number; timeoutMs: number }
   | { action: "end" };
 
@@ -1477,7 +1488,13 @@ export type ChannelCheckView = {
   value?: unknown;
   severity?: "error" | "warning";
   /** `topic`: solo los mensajes de ese tema MQTT (con `+` y `#`) antes de elegir cuál. */
-  match?: { at: "first" | "last" | "any" | "all"; index?: number; topic?: string };
+  match?: {
+    at: "first" | "last" | "any" | "all";
+    index?: number;
+    topic?: string;
+    /** `event`: solo los mensajes de ese evento de Socket.IO, por su nombre exacto. */
+    event?: string;
+  };
 };
 
 export type ChannelExpectationView = {
@@ -1514,9 +1531,26 @@ export type GrpcSettingsView = {
   deadlineMs: number | null;
 };
 
+/**
+ * Lo propio de un canal Socket.IO. La carga de `auth` es JSON con `{{variables}}`: el valor escrito a
+ * mano de un campo que se llama como una credencial se guarda vacío.
+ */
+export type SocketIoSettingsView = {
+  /** 3 y 4 hablan el mismo protocolo desde el cliente: los dos usan el cliente 4. */
+  version: 3 | 4;
+  path: string;
+  namespace: string;
+  auth: string;
+  query: { name: string; value: string; enabled: boolean }[];
+  /** Oír todos los eventos, o solo los de `events`. */
+  listenAll: boolean;
+  events: string[];
+  transports: ("websocket" | "polling")[];
+};
+
 export type ChannelView = {
   id: string;
-  protocol: "ws" | "mqtt" | "grpc";
+  protocol: "ws" | "mqtt" | "grpc" | "socketio";
   name: string;
   /** Con `{{variables}}` si hace falta: se resuelve contra el entorno al abrir. */
   url: string;
@@ -1526,11 +1560,13 @@ export type ChannelView = {
   limits: ChannelLimitsView;
   expectations: ChannelExpectationView;
   /** Tramas guardadas, para no reteclear la de auth en cada sesión. En MQTT, con su tema. */
-  messages: { name: string; body: string; topic?: string; qos?: 0 | 1 | 2; retain?: boolean }[];
+  messages: { name: string; body: string; topic?: string; qos?: 0 | 1 | 2; retain?: boolean; event?: string }[];
   /** Solo en un canal MQTT. */
   mqtt: MqttSettingsView | null;
   /** Solo en un canal gRPC; `null` en los demás. */
   grpc: GrpcSettingsView | null;
+  /** Solo en un canal Socket.IO; `null` (o ausente, en un servidor de antes) en los demás. */
+  socketio?: SocketIoSettingsView | null;
   orderIndex: number;
   createdAt: string;
   updatedAt: string;
@@ -1559,6 +1595,10 @@ export type ChannelMessageView = {
     correlationData?: string;
     correlationEncoding?: "text" | "hex";
   };
+  /** Solo Socket.IO: el evento (ya tapado). */
+  event?: string;
+  /** Solo Socket.IO: enviado pidiendo acuse, o recibido que **es** el acuse. */
+  ack?: boolean;
 };
 
 export type ChannelSessionView = {

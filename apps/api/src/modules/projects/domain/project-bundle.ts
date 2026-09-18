@@ -253,6 +253,7 @@ const bundleChannel = z.object({
   messages: z.array(z.unknown()).optional(),
   mqtt: z.unknown().optional(),
   grpc: z.unknown().optional(),
+  socketio: z.unknown().optional(),
   protos: z.array(z.object({ path: z.string(), content: z.string() })).default([]),
 });
 export type BundleChannel = z.infer<typeof bundleChannel>;
@@ -271,6 +272,7 @@ export const channelInputOf = (channel: BundleChannel): ChannelInput & { name: s
     ...(channel.messages !== undefined ? { messages: channel.messages } : {}),
     ...(channel.mqtt ? { mqtt: channel.mqtt } : {}),
     ...(channel.grpc ? { grpc: channel.grpc } : {}),
+    ...(channel.socketio ? { socketio: channel.socketio } : {}),
   }) as ChannelInput & { name: string; url: string };
 
 const bundleSuite = z.object({

@@ -752,6 +752,8 @@ export class ChannelEndpointEntity {
   @Column({ type: "jsonb", nullable: true }) mqtt: unknown;
   /** Servicio, método, mensaje y plazo de un canal gRPC. `null` en los demás protocolos. */
   @Column({ type: "jsonb", nullable: true }) grpc: unknown;
+  /** Ruta, espacio de nombres, carga de `auth` y eventos de un canal Socket.IO. `null` en los demás. */
+  @Column({ type: "jsonb", nullable: true }) socketio: unknown;
   @Column({ type: "int", default: 0 }) orderIndex: number;
   @Column({ type: "timestamptz" }) createdAt: Date;
   @Column({ type: "timestamptz" }) updatedAt: Date;
@@ -801,6 +803,9 @@ export class ChannelMessageEntity {
   @Column({ type: "boolean", nullable: true }) retain: boolean | null;
   /** Solo MQTT 5: las propiedades del mensaje (ya tapadas). Nulas en todo lo demás. */
   @Column({ type: "jsonb", nullable: true }) properties: Record<string, unknown> | null;
+  /** Solo Socket.IO: el evento (ya tapado) y si se pidió o es un acuse. Nulos en todo lo demás. */
+  @Column({ type: "text", nullable: true }) event: string | null;
+  @Column({ type: "boolean", nullable: true }) ack: boolean | null;
 }
 
 /**

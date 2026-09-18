@@ -41,6 +41,7 @@ const PROTOCOL: Record<Channel["protocol"], { method: string; name: string }> = 
   ws: { method: "WS", name: "WebSocket" },
   mqtt: { method: "MQTT", name: "MQTT" },
   grpc: { method: "GRPC", name: "gRPC" },
+  socketio: { method: "SOCKETIO", name: "Socket.IO" },
 };
 
 const STOP_TEXT: Record<string, string> = {

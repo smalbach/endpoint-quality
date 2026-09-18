@@ -10,7 +10,7 @@
  *
  * Lo que sí es propio de no tener a nadie:
  *
- * - **El guion.** Sin él, los mensajes guardados del canal en su orden (WebSocket y MQTT); un canal
+ * - **El guion.** Sin él, los mensajes guardados del canal en su orden (WebSocket, MQTT y Socket.IO); un canal
  *   gRPC ya manda su petición con la llamada.
  * - **Cuándo se acaba.** Cuando llegan los mensajes que se esperan (`untilMessages`, o el
  *   `minMessages` del canal), cuando el otro lado cierra o cuando salta un tope del canal. Nunca más
@@ -26,6 +26,7 @@ import type { ChannelScriptStep, ReceivedMessage, StepChannel } from "@eq/runner
 import { DomainError } from "@/shared/errors/domain-error";
 import { MAX_SAVED_MESSAGE_BYTES, type Channel } from "../domain/model";
 import type { MqttPublish } from "../domain/mqtt";
+import type { SocketIoEmit } from "../domain/socketio";
 import {
   CHANNEL_REPOSITORY,
   CHANNEL_SESSION_REPOSITORY,
@@ -96,7 +97,11 @@ export class HeadlessChannelRunner {
         ...(input.node.request !== undefined ? { grpcRequest: input.node.request } : {}),
         ...(input.node.idleMs ? { idleMs: input.node.idleMs } : {}),
         onReceived: (frame) =>
-          received.push({ body: frame.body ?? "", ...(frame.topic !== undefined ? { topic: frame.topic } : {}) }),
+          received.push({
+            body: frame.body ?? "",
+            ...(frame.topic !== undefined ? { topic: frame.topic } : {}),
+            ...(frame.event !== undefined ? { event: frame.event } : {}),
+          }),
       });
     } catch (error) {
       if (error instanceof DomainError) return { kind: "refused", detail: describe(error), channel };
@@ -126,7 +131,7 @@ export class HeadlessChannelRunner {
         if (step.action === "send") {
           if (step.delayMs) await sleep(Math.min(step.delayMs, Math.max(0, deadline - Date.now())));
           if (!this.registry.current(sessionId)) return;
-          await this.registry.send(sessionId, step.body, publishOf(step, channel));
+          await this.registry.send(sessionId, step.body, publishOf(step, channel), undefined, emitOf(step, channel));
         } else if (step.action === "wait") {
           const until = Math.min(Date.now() + step.timeoutMs, deadline);
           const target = this.received(sessionId) + step.messages;
@@ -199,6 +204,7 @@ export function defaultScript(channel: Channel): ChannelScriptStep[] {
     ...(message.topic !== undefined ? { topic: message.topic } : {}),
     ...(message.qos !== undefined ? { qos: message.qos } : {}),
     ...(message.retain !== undefined ? { retain: message.retain } : {}),
+    ...(message.event !== undefined ? { event: message.event } : {}),
   }));
 }
 
@@ -210,6 +216,10 @@ function problemOf(script: ChannelScriptStep[], channel: Channel): string | null
       return `Acción ${index + 1}: un mensaje tiene como mucho ${MAX_SAVED_MESSAGE_BYTES / 1024} KB`;
     if (channel.protocol === "mqtt" && !step.topic) return `Acción ${index + 1}: en MQTT se publica en un tema`;
     if (channel.protocol !== "mqtt" && step.topic) return `Acción ${index + 1}: solo MQTT publica en un tema`;
+    if (channel.protocol === "socketio" && !step.event)
+      return `Acción ${index + 1}: en Socket.IO se emite un evento: falta su nombre`;
+    if (channel.protocol !== "socketio" && (step.event !== undefined || step.ack !== undefined))
+      return `Acción ${index + 1}: solo Socket.IO emite eventos`;
   }
   return null;
 }
@@ -217,6 +227,12 @@ function problemOf(script: ChannelScriptStep[], channel: Channel): string | null
 function publishOf(step: Extract<ChannelScriptStep, { action: "send" }>, channel: Channel): MqttPublish | undefined {
   if (channel.protocol !== "mqtt" || !step.topic) return undefined;
   return { topic: step.topic, qos: step.qos ?? 0, retain: step.retain ?? false };
+}
+
+/** Un envío de Socket.IO: el cuerpo es el único argumento, y el acuse, si el guion lo pide. */
+function emitOf(step: Extract<ChannelScriptStep, { action: "send" }>, channel: Channel): SocketIoEmit | undefined {
+  if (channel.protocol !== "socketio" || !step.event) return undefined;
+  return { event: step.event, ack: step.ack ?? false };
 }
 
 /** El texto de un rechazo, con el detalle de sus campos cuando lo trae y el mensaje no lo dice ya. */

@@ -107,6 +107,10 @@ export class ChannelsController {
         body.text,
         publish,
         body.encoding === "base64" || body.encoding === "hex" ? body.encoding : undefined,
+        // El evento solo existe en Socket.IO; en los demás no se manda y la sesión lo rechaza si llega.
+        body.event !== undefined
+          ? { event: body.event, ack: body.ack ?? false, ...(body.args !== undefined ? { args: body.args } : {}) }
+          : undefined,
       ),
     );
     return { accepted: true };

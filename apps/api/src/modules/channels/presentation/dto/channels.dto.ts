@@ -19,6 +19,7 @@ import {
 } from "../../domain/model";
 import type { GrpcSettings } from "../../domain/grpc";
 import type { MqttQos, MqttSettings, MqttUserProperty } from "../../domain/mqtt";
+import type { SocketIoSettings } from "../../domain/socketio";
 
 export class CreateChannelDto {
   /** Ausente es `ws`, que es lo que eran todos los canales antes de MQTT y gRPC. */
@@ -33,6 +34,7 @@ export class CreateChannelDto {
   @IsOptional() @IsArray() messages?: SavedMessage[];
   @IsOptional() @IsObject() mqtt?: Partial<MqttSettings>;
   @IsOptional() @IsObject() grpc?: Partial<GrpcSettings>;
+  @IsOptional() @IsObject() socketio?: Partial<SocketIoSettings>;
 }
 
 export class UpdateChannelDto {
@@ -47,6 +49,7 @@ export class UpdateChannelDto {
   @IsOptional() @IsArray() messages?: SavedMessage[];
   @IsOptional() @IsObject() mqtt?: Partial<MqttSettings>;
   @IsOptional() @IsObject() grpc?: Partial<GrpcSettings>;
+  @IsOptional() @IsObject() socketio?: Partial<SocketIoSettings>;
 }
 
 export class OpenChannelSessionDto {
@@ -67,6 +70,12 @@ export class SendChannelMessageDto {
   @IsOptional() @IsIn(["text", "base64", "hex"]) encoding?: "text" | "base64" | "hex";
   /** Solo en MQTT 5: propiedades de usuario del `PUBLISH`, con `{{variables}}`. */
   @IsOptional() @IsArray() userProperties?: MqttUserProperty[];
+  /** Solo en Socket.IO, y ahí obligatorio: el evento que se emite. */
+  @IsOptional() @IsString() @MaxLength(200) event?: string;
+  /** Solo en Socket.IO: los argumentos, si son más de uno. Sin ellos, `text` es el único. */
+  @IsOptional() @IsArray() args?: string[];
+  /** Solo en Socket.IO: esperar el acuse del servidor. */
+  @IsOptional() @IsBoolean() ack?: boolean;
 }
 
 /** Un filtro al que suscribirse, o del que darse de baja, a mitad de una sesión MQTT. */

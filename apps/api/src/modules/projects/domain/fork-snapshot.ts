@@ -276,6 +276,8 @@ export function channelContent(channel: Channel, contents: ProjectContents): Jso
     messages: clean.messages,
     mqtt: clean.mqtt,
     grpc: clean.grpc,
+    // Solo si lo hay: la huella de un canal de antes de Socket.IO no cambia por una clave nueva.
+    ...(clean.socketio ? { socketio: clean.socketio } : {}),
     protos: [...(contents.channelProtos[channel.id] ?? [])].sort((a, b) => a.path.localeCompare(b.path)),
   });
 }

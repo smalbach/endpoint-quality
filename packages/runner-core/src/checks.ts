@@ -60,6 +60,14 @@ export type MessageMatch = {
    * filtro, `first`, `last`, la posición, `any`, `all` y `messageCount` cuentan **dentro** del tema.
    */
   topic?: string;
+  /**
+   * Solo los mensajes de este evento de Socket.IO, por su nombre exacto, antes de elegir cuál.
+   *
+   * Por lo mismo que `topic`: un servidor Socket.IO emite varios eventos en la misma sesión, y «el
+   * último mensaje» sería el del evento que llegara último. Un acuse cuenta como del evento que lo
+   * pidió.
+   */
+  event?: string;
 };
 
 /**
@@ -68,7 +76,7 @@ export type MessageMatch = {
  * Estructural a propósito: `ChannelMessage` encaja sin que este fichero lo importe, así que la
  * dependencia va en una sola dirección —la conversación usa este motor, no al revés—.
  */
-export type CheckMessage = { seq: number; body: string; topic?: string };
+export type CheckMessage = { seq: number; body: string; topic?: string; event?: string };
 
 export const CHECK_OPERATORS = [
   "equals",
@@ -145,7 +153,7 @@ function evaluateCheck(check: StepCheck, given: CheckContext): Assertion {
 }
 
 /**
- * Los mensajes del tema que pide la comprobación, y solo esos.
+ * Los mensajes del tema —o del evento de Socket.IO— que pide la comprobación, y solo esos.
  *
  * Un mensaje sin tema —el de un WebSocket— no casa con ningún filtro: una comprobación con tema en
  * un canal que no tiene temas no mira nada, y sale en rojo por «no llegó ningún mensaje», que es la
@@ -153,11 +161,16 @@ function evaluateCheck(check: StepCheck, given: CheckContext): Assertion {
  */
 function withinTopic(check: StepCheck, context: CheckContext): CheckContext {
   const filter = check.match?.topic;
-  if (!filter || (check.source !== "message" && check.source !== "messageCount")) return context;
+  const event = check.match?.event;
+  if ((!filter && !event) || (check.source !== "message" && check.source !== "messageCount")) return context;
   return {
     ...context,
+    // Los dos filtros se suman: un mensaje sin evento —el de un WebSocket— no casa con ninguno, como
+    // uno sin tema no casa con un filtro de tema.
     messages: (context.messages ?? []).filter(
-      (message) => message.topic !== undefined && topicMatches(filter, message.topic),
+      (message) =>
+        (!filter || (message.topic !== undefined && topicMatches(filter, message.topic))) &&
+        (!event || message.event === event),
     ),
   };
 }
@@ -218,7 +231,9 @@ function pickMessage(messages: CheckMessage[], match: MessageMatch | undefined):
 function where(check: StepCheck): string {
   if (check.source === "status") return "status";
   if (check.source === "durationMs") return "duración";
-  const topic = check.match?.topic ? ` en ${check.match.topic}` : "";
+  const topic =
+    (check.match?.topic ? ` en ${check.match.topic}` : "") +
+    (check.match?.event ? ` del evento ${check.match.event}` : "");
   if (check.source === "messageCount") return `mensajes recibidos${topic}`;
   if (check.source === "message") {
     const which =

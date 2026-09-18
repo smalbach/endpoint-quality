@@ -8,6 +8,7 @@
  * loopback.
  */
 import { Inject, Injectable } from "@nestjs/common";
+import type { RawFrame } from "@eq/runner-core";
 
 import { ENV, type Env } from "@/shared/config/env";
 import { policyFromEnv } from "@/shared/http/safe-fetch.provider";
@@ -44,6 +45,11 @@ export type OpenChannel = {
   unsubscribe?(topic: string): Promise<void>;
   /** Mandar bytes en una trama binaria. Solo lo trae un WebSocket; quien no lo tiene, no lo trae. */
   sendBinary?(data: Buffer): void;
+  /**
+   * Solo Socket.IO: emitir un evento con sus argumentos y, si se pide, esperar el acuse. Su presencia
+   * es lo que hace que la sesión exija un nombre de evento para mandar.
+   */
+  emit?(event: string, args: unknown[], ack: boolean): void;
 };
 
 /**
@@ -58,6 +64,11 @@ export type ChannelListeners = Omit<SocketListeners, "onClose" | "onOpen"> & {
   onOpen?: (handshake?: { status: number; headers: Record<string, string>; via?: string }) => void;
   onClose: (code: number, reason: string, trailers?: Record<string, string>) => void;
   onSent?: (text: string) => void;
+  /**
+   * Una trama ya traducida por quien sabe el protocolo —un evento de Socket.IO con su nombre, un
+   * acuse—, sin la hora: se la pone la sesión, con su reloj, como a las demás.
+   */
+  onFrame?: (frame: Omit<RawFrame, "atMs">) => void;
 };
 
 export interface ChannelTransportPort {

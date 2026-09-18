@@ -43,10 +43,17 @@ import {
   metadataKeyProblem,
   type GrpcSettings,
 } from "./grpc";
+import {
+  DEFAULT_SOCKETIO,
+  mergedSocketIo,
+  socketIoProblems,
+  socketIoUrlProblems,
+  type SocketIoSettings,
+} from "./socketio";
 
 type Problem = { field: string; detail: string };
 
-export const CHANNEL_PROTOCOLS = ["ws", "mqtt", "grpc"] as const;
+export const CHANNEL_PROTOCOLS = ["ws", "mqtt", "grpc", "socketio"] as const;
 export type ChannelProtocol = (typeof CHANNEL_PROTOCOLS)[number];
 
 export const MAX_CHANNEL_NAME = 120;
@@ -89,9 +96,17 @@ const RESERVED_HEADERS = new Set([
 /**
  * Una trama guardada, con nombre, para no reteclear la de auth en cada sesión.
  *
- * En MQTT lleva además a dónde se publica: una trama sin tema no se puede mandar.
+ * En MQTT lleva además a dónde se publica: una trama sin tema no se puede mandar. En Socket.IO, el
+ * evento que emite.
  */
-export type SavedMessage = { name: string; body: string; topic?: string; qos?: MqttQos; retain?: boolean };
+export type SavedMessage = {
+  name: string;
+  body: string;
+  topic?: string;
+  qos?: MqttQos;
+  retain?: boolean;
+  event?: string;
+};
 
 export type Channel = {
   id: string;
@@ -110,6 +125,8 @@ export type Channel = {
   mqtt: MqttSettings | null;
   /** Solo en un canal gRPC: servicio, método, mensaje y plazo. `null` en los demás. */
   grpc: GrpcSettings | null;
+  /** Solo en un canal Socket.IO: ruta, espacio de nombres, carga de `auth` y eventos. `null` en los demás. */
+  socketio: SocketIoSettings | null;
   orderIndex: number;
   createdAt: Date;
   updatedAt: Date;
@@ -165,6 +182,7 @@ export type ChannelInput = {
   messages?: SavedMessage[];
   mqtt?: Partial<MqttSettings> | null;
   grpc?: Partial<GrpcSettings>;
+  socketio?: Partial<SocketIoSettings> | null;
 };
 
 const LIMIT_TEXT: Record<keyof ChannelLimits, string> = {
@@ -196,6 +214,7 @@ export function channelProblems(
   if (input.url !== undefined)
     problems.push(...(protocol === "mqtt" ? brokerUrlProblems(input.url) : urlProblems(input.url, protocol)));
   problems.push(...protocolProblems({ ...input, protocol }));
+  problems.push(...socketIoProblems({ ...input, protocol }));
 
   if (grpc && input.subprotocols?.length) problem("subprotocols", "Los subprotocolos son de WebSocket");
   if (input.grpc !== undefined) {
@@ -282,6 +301,7 @@ function urlProblems(value: unknown, protocol: ChannelProtocol): Problem[] {
   if (url.length > MAX_CHANNEL_URL) return [{ field: "url", detail: `Como mucho ${MAX_CHANNEL_URL} caracteres` }];
   if (/\s/.test(url)) return [{ field: "url", detail: "Una URL no lleva espacios" }];
   if (protocol === "grpc") return grpcUrlProblems(url);
+  if (protocol === "socketio") return socketIoUrlProblems(url);
   if (url.includes("{{")) return [];
   let parsed: URL;
   try {
@@ -344,6 +364,8 @@ function expectationProblems(expect: ChannelExpectation, grpc = false): Problem[
           const topicProblem = topicFilterProblem(check.match.topic);
           if (topicProblem) problem(`${field}.match.topic`, topicProblem);
         }
+        if (check?.match?.event !== undefined && (typeof check.match.event !== "string" || !check.match.event.trim()))
+          problem(`${field}.match.event`, "El nombre del evento, tal cual lo emite el servidor");
       });
     }
   }
@@ -376,6 +398,7 @@ export function blankChannel(fields: {
     messages: [],
     mqtt: protocol === "mqtt" ? { ...DEFAULT_MQTT } : null,
     grpc: protocol === "grpc" ? { ...DEFAULT_GRPC_SETTINGS } : null,
+    socketio: protocol === "socketio" ? { ...DEFAULT_SOCKETIO } : null,
     orderIndex: 0,
     createdAt: fields.now,
     updatedAt: fields.now,
@@ -406,6 +429,10 @@ export function withChanges(channel: Channel, input: ChannelInput, now: Date, by
     ...(input.messages !== undefined ? { messages: input.messages } : {}),
     ...(input.mqtt && channel.protocol === "mqtt" ? { mqtt: mergedSettings(channel.mqtt, input.mqtt) } : {}),
     ...(input.grpc !== undefined && channel.grpc ? { grpc: { ...channel.grpc, ...input.grpc } } : {}),
+    // Sin literales de credencial en la query ni en la carga de `auth`: ver `storableSocketIo`.
+    ...(input.socketio && channel.protocol === "socketio"
+      ? { socketio: mergedSocketIo(channel.socketio, input.socketio) }
+      : {}),
     updatedAt: now,
     updatedBy: by,
   };

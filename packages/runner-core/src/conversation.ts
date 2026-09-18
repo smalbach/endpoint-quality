@@ -71,6 +71,18 @@ export type MessageRouting = {
   retain?: boolean;
   /** Las propiedades de MQTT 5 que traía el mensaje, **ya tapadas**. Ausente si no traía ninguna. */
   properties?: MessageProperties;
+  /**
+   * Solo Socket.IO: el nombre del evento, en los dos sentidos. Un servidor Socket.IO no habla en
+   * mensajes sino en eventos con nombre, y «llegó un mensaje» sin decir cuál es tan poco útil como un
+   * MQTT sin tema. Se tapa por valor, como el tema.
+   */
+  event?: string;
+  /**
+   * Solo Socket.IO: en un mensaje enviado, que se pidió acuse; en uno recibido, que **es** el acuse
+   * —lo que el servidor devolvió al callback del evento `event`—. Cuenta como recibido, porque es la
+   * respuesta del servidor y lo que la mayoría de las APIs Socket.IO contestan.
+   */
+  ack?: boolean;
 };
 
 /**
@@ -350,7 +362,7 @@ export function applyFrame(
 }
 
 /**
- * El tema, la QoS y el `retain`, solo los que la trama trae.
+ * El tema, la QoS y el `retain` (y el evento de Socket.IO), solo los que la trama trae.
  *
  * El tema se tapa **solo por valor**, con la lista de secretos: la regla por nombre de campo parsea
  * JSON y un tema no lo es. Y no se recorta: la especificación ya lo limita a 64 KB.
@@ -362,6 +374,8 @@ function routingOf(frame: RawFrame, rules: RedactionRules): MessageRouting {
     ...(frame.qos !== undefined ? { qos: frame.qos } : {}),
     ...(frame.retain !== undefined ? { retain: frame.retain } : {}),
     ...(properties ? { properties } : {}),
+    ...(frame.event !== undefined ? { event: maskSecrets(frame.event, rules.secrets ?? []) } : {}),
+    ...(frame.ack !== undefined ? { ack: frame.ack } : {}),
   };
 }
 
