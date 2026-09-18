@@ -235,6 +235,26 @@ describe("la pantalla de canales", () => {
     );
   });
 
+  test("una trama binaria se escribe en hexadecimal o base64, y se manda diciendo cuál", async () => {
+    can.edit = true;
+    answers({ session: session() });
+    stream.mockImplementation(async () => {});
+    show("/p/p1/channels?c=c1&s=s1");
+    fireEvent.change(await screen.findByLabelText("Tipo de trama"), { target: { value: "hex" } });
+    fireEvent.change(screen.getByLabelText("Mensaje"), { target: { value: "00 0g" } });
+    expect(screen.getByText(/pares de 0-9 y a-f/)).toBeTruthy();
+    const enviar = screen.getByRole("button", { name: "Enviar" });
+    expect(enviar.hasAttribute("disabled")).toBe(true);
+    fireEvent.change(screen.getByLabelText("Mensaje"), { target: { value: "00 ff" } });
+    fireEvent.click(enviar);
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/channels/sessions/s1/messages", {
+        method: "POST",
+        body: { text: "00 ff", encoding: "hex" },
+      }),
+    );
+  });
+
   test("quien solo lee no conecta ni crea", async () => {
     can.edit = false;
     answers();

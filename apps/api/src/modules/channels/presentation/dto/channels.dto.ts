@@ -60,6 +60,11 @@ export class SendChannelMessageDto {
   @IsOptional() @IsString() topic?: string;
   @IsOptional() @IsIn([0, 1, 2]) qos?: MqttQos;
   @IsOptional() @IsBoolean() retain?: boolean;
+  /**
+   * Solo en un WebSocket: el texto son bytes escritos en base64 o en hexadecimal, y sale como una
+   * trama binaria. Ausente o `text`: una trama de texto, como siempre.
+   */
+  @IsOptional() @IsIn(["text", "base64", "hex"]) encoding?: "text" | "base64" | "hex";
   /** Solo en MQTT 5: propiedades de usuario del `PUBLISH`, con `{{variables}}`. */
   @IsOptional() @IsArray() userProperties?: MqttUserProperty[];
 }

@@ -42,6 +42,8 @@ export type OpenChannel = {
   subscribe?(topic: string, qos: MqttQos): Promise<number>;
   /** Solo MQTT: dejar de oír un filtro. */
   unsubscribe?(topic: string): Promise<void>;
+  /** Mandar bytes en una trama binaria. Solo lo trae un WebSocket; quien no lo tiene, no lo trae. */
+  sendBinary?(data: Buffer): void;
 };
 
 /**
@@ -71,6 +73,7 @@ export class WsChannelTransport implements ChannelTransportPort {
     return {
       handshake,
       send: (text) => socket.send(text),
+      sendBinary: (data) => socket.send(data, { binary: true }),
       // `close` y no `terminate`: un cierre con código es lo que el otro lado ve como una despedida,
       // y el código que se manda es parte de lo que la sesión cuenta.
       close: (code, reason) => socket.close(code, reason),

@@ -45,6 +45,34 @@ import { ChannelProgressStream } from "./channel-progress.stream";
 import { MQTT_TRANSPORT, type MqttTransportPort } from "./mqtt-transport";
 import { CHANNEL_TRANSPORT, type ChannelListeners, type ChannelTransportPort, type OpenChannel } from "./ws-transport";
 
+/** Cómo viene escrito un mensaje binario: base64 (estándar o URL) o hexadecimal. */
+export type BinaryEncoding = "base64" | "hex";
+
+/**
+ * Los bytes de un mensaje binario, o un 422 que dice por qué no lo son.
+ *
+ * Estricto a propósito: `Buffer.from` se salta en silencio lo que no entiende, y un hexadecimal con
+ * una letra de más mandaría otros bytes que los que se ven escritos.
+ */
+export function decodeBinary(text: string, encoding: BinaryEncoding): Buffer {
+  const compact = text.replace(/\s+/g, "");
+  const valid =
+    encoding === "hex"
+      ? /^(?:[0-9a-fA-F]{2})+$/.test(compact)
+      : /^[A-Za-z0-9+/_-]+={0,2}$/.test(compact) && compact.replace(/=+$/, "").length % 4 !== 1;
+  if (!valid)
+    throw new InvalidInputError("El mensaje no es válido", [
+      {
+        field: "text",
+        detail:
+          encoding === "hex"
+            ? "Hexadecimal: pares de 0-9 y a-f, sin nada más (se ignoran los espacios)"
+            : "Base64: A-Z, a-z, 0-9, + y / (o - y _), con = al final si hace falta",
+      },
+    ]);
+  return Buffer.from(compact, encoding === "hex" ? "hex" : "base64");
+}
+
 /** Lo que contesta una suscripción a mitad de sesión: la QoS concedida, o `null` y el motivo. */
 export type MqttSubscriptionResult = { topic: string; granted: number | null; detail: string };
 
@@ -233,9 +261,11 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
    * Mandar un mensaje. Se anota **antes** de mandarlo, y anotado ya tapado: lo que sale en vivo y lo
    * que se guarda es el mensaje redactado; el texto crudo solo lo ve el socket.
    */
-  async send(sessionId: string, text: string, publish?: MqttPublish): Promise<void> {
+  async send(sessionId: string, text: string, publish?: MqttPublish, binary?: BinaryEncoding): Promise<void> {
     const entry = this.live.get(sessionId);
     if (!entry?.channel) throw this.notHere(sessionId);
+    if (binary && !entry.channel.sendBinary)
+      throw new ConflictError("Este canal no manda tramas binarias: solo un WebSocket", "channel-no-binary");
     // Antes que la escritura: un mensaje sin tema en MQTT, o con tema en un WebSocket, no se anota.
     if (Boolean(entry.plan.mqtt) !== Boolean(publish)) {
       throw new InvalidInputError("El mensaje no es válido", [
@@ -274,6 +304,22 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
         })),
         "unresolved-variables",
       );
+    }
+    if (binary && entry.channel.sendBinary) {
+      // Los bytes, decodificados **después** de interpolar: una `{{variable}}` puede llevar la parte
+      // en base64 o en hexadecimal. Se anotan como lo binario que llega —hexadecimal de lo que quepa y
+      // el tamaño real—, así que la redacción de `applyFrame` busca los secretos también en su volcado.
+      const bytes = decodeBinary(wire, binary);
+      this.frame(sessionId, {
+        direction: "out",
+        atMs: this.at(entry),
+        kind: "binary",
+        body: bytes.subarray(0, 256).toString("hex"),
+        bytes: bytes.byteLength,
+      });
+      entry.channel.sendBinary(bytes);
+      await entry.writes;
+      return;
     }
     // Lo que el protocolo no puede mandar —un JSON que no encaja con el tipo gRPC— se dice antes de
     // anotarlo: la transcripción no puede tener un «enviado» que nunca salió.

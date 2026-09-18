@@ -100,7 +100,14 @@ export class ChannelsController {
           }
         : undefined;
     await this.commandBus.execute(
-      new SendChannelMessageCommand(organizationId, projectId, sessionId, body.text, publish),
+      new SendChannelMessageCommand(
+        organizationId,
+        projectId,
+        sessionId,
+        body.text,
+        publish,
+        body.encoding === "base64" || body.encoding === "hex" ? body.encoding : undefined,
+      ),
     );
     return { accepted: true };
   }

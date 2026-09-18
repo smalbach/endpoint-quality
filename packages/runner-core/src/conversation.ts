@@ -226,6 +226,14 @@ export function redactHeaders(headers: Record<string, string>, rules: RedactionR
   );
 }
 
+/** Cada secreto, y también su UTF-8 en hexadecimal (en minúsculas, que es como se vuelca). */
+function withHex(secrets: string[]): string[] {
+  return [...secrets, ...secrets.map((secret) => hexOf(secret))];
+}
+
+const hexOf = (text: string): string =>
+  [...new TextEncoder().encode(text)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+
 /** Los valores conocidos, fuera del texto. Se tapan los largos primero, o uno corto parte a otro. */
 export function maskSecrets(text: string, secrets: string[]): string {
   return [...secrets]
@@ -290,7 +298,11 @@ export function applyFrame(
   // y se guarda media credencial en claro. Y un JSON cortado no se parsea, así que la redacción
   // por nombre de campo —que lo parsea— no tapa nada y no avisa. Recortar lo ya tapado no puede
   // destapar nada.
-  const redacted = maskSecrets(rules.redact ? rules.redact(raw) : raw, rules.secrets ?? []);
+  // Un mensaje binario se guarda como hexadecimal de sus bytes: un secreto que viajó dentro no se
+  // parece a sí mismo ahí, así que se busca también su volcado. Sin esto, un token mandado o devuelto
+  // en una trama binaria quedaba en la fila en claro, solo que en hexadecimal.
+  const secrets = frame.kind === "binary" ? withHex(rules.secrets ?? []) : (rules.secrets ?? []);
+  const redacted = maskSecrets(rules.redact ? rules.redact(raw) : raw, secrets);
   const body = truncated ? redacted.slice(0, limits.maxMessageBytes) : redacted;
 
   const message: ChannelMessage = {

@@ -391,3 +391,30 @@ describe("una llamada gRPC, que cierra con un estado y unos trailers", () => {
     assert.equal(grpcStatusName(99), "desconocido (99)");
   });
 });
+
+describe("un mensaje binario y los secretos", () => {
+  test("un secreto dentro de los bytes se tapa también en su volcado hexadecimal", () => {
+    const secret = "tk-binario-3f9a";
+    const hex = Buffer.from(`id:${secret}`).toString("hex");
+    const { conversation } = applyFrame(
+      blankConversation(),
+      { direction: "out", atMs: 1, kind: "binary", body: hex, bytes: 3 + secret.length },
+      LIMITS,
+      { secrets: [secret] },
+    );
+    assert.equal(conversation.messages[0].body, `${Buffer.from("id:").toString("hex")}••••••••`);
+    assert.equal(conversation.counters.bytesOut, 3 + secret.length);
+  });
+
+  test("en un mensaje de texto, el volcado de un secreto no se busca: sería tapar texto que no lo es", () => {
+    const secret = "abcd";
+    const hexOfSecret = Buffer.from(secret).toString("hex");
+    const { conversation } = applyFrame(
+      blankConversation(),
+      { direction: "in", atMs: 1, body: `color ${hexOfSecret}` },
+      LIMITS,
+      { secrets: [secret] },
+    );
+    assert.equal(conversation.messages[0].body, `color ${hexOfSecret}`);
+  });
+});

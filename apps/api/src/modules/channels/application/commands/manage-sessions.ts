@@ -52,7 +52,11 @@ import {
   type ChannelSessionRepositoryPort,
 } from "../../domain/ports";
 import { isFinished, startSession } from "../../domain/session";
-import { ChannelSessionRegistry, type MqttSubscriptionResult } from "../../infrastructure/session-registry";
+import {
+  ChannelSessionRegistry,
+  type BinaryEncoding,
+  type MqttSubscriptionResult,
+} from "../../infrastructure/session-registry";
 import { viewSession, type ChannelSessionView } from "../views";
 import { GrpcSessionPlanner } from "../grpc";
 import { ceilingsOf } from "./manage-channels";
@@ -333,6 +337,8 @@ export class SendChannelMessageCommand implements ICommand {
     readonly text: string,
     /** Solo en MQTT: a qué tema, con qué QoS y si se retiene. */
     readonly publish?: MqttPublish,
+    /** Solo en un WebSocket: el texto son bytes en base64 o hexadecimal, y sale como trama binaria. */
+    readonly binary?: BinaryEncoding,
   ) {}
 }
 
@@ -362,7 +368,7 @@ export class SendChannelMessageHandler implements ICommandHandler<SendChannelMes
         ? userPropertiesProblems(command.publish.userProperties, "userProperties")
         : [];
     if (propertyProblems.length) throw new InvalidInputError("El mensaje no es válido", propertyProblems);
-    await this.registry.send(session.id, command.text, command.publish);
+    await this.registry.send(session.id, command.text, command.publish, command.binary);
   }
 }
 
