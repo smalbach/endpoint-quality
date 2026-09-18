@@ -126,7 +126,7 @@ export function ImportElements({
       {importer.data && (
         <p className="mt-2 text-[11px] text-emerald-700">
           Importado: {importer.data.endpoints} endpoints, {importer.data.workflows} flujos, {importer.data.environments}{" "}
-          entornos.
+          entornos{importer.data.channels ? `, ${importer.data.channels} canales` : ""}.
           {importer.data.skipped.length > 0 && ` ${importer.data.skipped.length} avisos.`}
         </p>
       )}

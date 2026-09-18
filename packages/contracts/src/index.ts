@@ -2104,6 +2104,8 @@ export type ImportElementsResultView = {
   endpoints: number;
   workflows: number;
   environments: number;
+  /** Los canales que abren los nodos de los flujos copiados, que viajan con ellos. */
+  channels: number;
   skipped: { what: string; detail: string }[];
 };
 
