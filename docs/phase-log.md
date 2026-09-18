@@ -2670,3 +2670,103 @@ secreta: crear una devuelve 500 porque `SECRETS_KEY` de `docker/.env` no mide 32
 de configuración ya conocido, y no se tocó.
 
 `api 1040 pruebas · web 509 · runner-core 336 · lint 0 errores · typecheck limpio`
+
+## Paridad con Postman, ola 12: MQTT, gRPC, bifurcaciones, captura por proxy y lo pendiente
+
+Siete agentes en paralelo, cada uno en su worktree, integrados uno a uno en `main` y probados juntos
+en la pila. MQTT y gRPC tocaban el mismo módulo de canales: el segundo se integró con un merge hecho
+por el propio agente de gRPC sobre `main`, que conocía su código.
+
+### MQTT como canal
+
+Una fila más de `channel_endpoints` (`protocol: "mqtt"`), con una columna `mqtt` (versión 3.1.1 o 5,
+id de cliente, keepalive, sesión limpia, suscripciones) y tema, QoS y retain por mensaje
+(`ChannelMqtt1700000029000`). Usuario y contraseña van en `auth` como `basic`: la misma puerta de
+`redactAuth`. La guarda es la de siempre —`resolveTarget` con los esquemas del broker y el socket
+abierto contra la IP comprobada, el nombre en SNI y certificado—, sin reconexión. `PacketSizeGuard`
+lee la cabecera fija y corta antes de que un `PUBLISH` gigante entre en memoria: `mqtt-packet` no
+tiene tope. Un `CONNACK` o `SUBACK` rechazado es un rojo con su código y su nombre. Las
+comprobaciones aceptan `match.topic` con `+` y `#`.
+
+### gRPC como canal
+
+`.proto` subidos (tabla `channel_proto_files`, aparte para no cargarlos al listar) o reflexión v1 con
+v1alpha de reserva; las cuatro formas de llamada, plazo, estado y trailers
+(`ChannelGrpc1700000030000`). La conexión va a la IP comprobada con `default_authority` y
+`ssl_target_name_override` en el nombre, así que TLS valida contra el nombre; sin proxy, sin
+reintentos, tope de mensaje dentro de grpc-js. runner-core gana los trailers en la conversación, las
+cabeceras tapadas dentro de `applyFrame` y la expectativa `status` («Estado OK (0)»); un canal gRPC
+nace afirmándolo. En un entorno sin escrituras solo se llaman métodos `NO_SIDE_EFFECTS`.
+
+Los dos agentes encontraron el mismo fallo de la ola 10 por su lado: **la autenticación de un canal
+WebSocket guardaba el secreto escrito a mano en claro**, porque el arreglo de los secretos literales
+no cubría los canales. Ahora pasa por `redactAuth` y `storableHeader` en los tres protocolos.
+
+### Bifurcar, traer y fusionar
+
+Bifurcar **sustituye** a «copiar de otro proyecto», que se borra: ruta, DTO, handler y pantalla. La
+entrada nueva está en el menú «⋯» del proyecto. La tabla `project_forks` (`1700000031000`) guarda el
+original, la foto común sin secretos y el linaje de ids. La comparación es a tres bandas y pura: el
+endpoint por método y ruta; pruebas, flujos y entornos por par de ids o por nombre. Estados
+`incoming`, `kept`, `same`, `conflict`; un conflicto sin decidir es 422, una vista previa vieja es
+409, y el plan se escribe en una transacción. La foto común nueva es siempre la del origen, así que lo
+que gana el destino no se pierde ni vuelve en silencio. Un entorno fusionado conserva los secretos
+que el destino ya tenía.
+
+### Captura de tráfico por proxy
+
+Cuarta pestaña del diálogo de importar, no una puerta nueva: lo elegido se escribe como HAR y entra
+por `ImportAnythingCommand`. El proxy está apagado sin `CAPTURE_PROXY_PORT` y cerrado sin sesiones;
+token de 256 bits por sesión en `Proxy-Authorization` (se guarda su SHA-256), caducidad de 30 min,
+tope de peticiones, y cada petición y cada túnel pasan por `resolveTarget` hacia la IP comprobada.
+HTTPS va en túnel sin interceptar: se graba `host:puerto`. MITM no se hizo: no hay biblioteca X.509 y
+la clave de la CA sería lo más valioso de la instalación (`captures1700000032000`).
+
+**Un fallo que salió en la pila, no en la suite.** La redacción tapaba por nombre de campo, y httpbin
+devuelve la URL de la petición en un campo `"url"`: `?api_key=…` se guardaba en claro en la fila.
+Ahora los valores de las credenciales que viajaron —`Authorization` sin esquema, cookies, cabeceras
+de clave, query y campos de credencial de petición y respuesta— se tapan **por su valor** en toda la
+fila, también codificados en URL o escapados en JSON. Del `Set-Cookie` solo cuenta el primer par: el
+`Domain` no es un secreto.
+
+### Lo pequeño
+
+- **Export a Postman con formularios**: `form-data` y `urlencoded` salían sin cuerpo, y un nodo de
+  flujo con formulario como texto. Un fichero sale sin `src` y avisado; un campo con nombre de
+  credencial y valor literal, vacío y desactivado.
+- **Autocompletado GraphQL** con `graphql-language-service`: campos, argumentos, tipos, variables,
+  directivas y enums. Convive con la lista de `{{variables}}`. El trozo de GraphQL pasa a 204 kB; el
+  principal no cambia.
+- **Editar un monitor** con el mismo formulario de crear; el horario solo se manda si cambió.
+- **Zip64** en `readZip`, con los mismos topes.
+- **Canales WebSocket**: buscar en la conversación, guardar el borrador en la biblioteca, y los
+  mensajes resuelven `{{variables}}` (antes viajaban con las llaves).
+- **La invitación a una organización sale por correo**, deuda de P1.
+
+### Cómo se comprobó
+
+Suite entera sobre `main` integrado: `api 1139 · web 558 · runner-core 353 · import-detect 35 · lint
+0 errores · typecheck limpio`. En la pila, con las cuatro migraciones aplicadas por el servicio
+`migrate` contra Postgres (hubo que reconstruir su imagen, que es aparte de la de la API):
+
+- **gRPC** contra `grpcb.in` por TLS: la reflexión lista seis servicios; `SayHello` con `{{tema}}`
+  en el mensaje contesta `hello eq-probe-…`, estado 0.
+- **MQTT** contra `broker.hivemq.com`, 3.1.1 y 5: suscribe `{{tema}}/#`, publica, recibe el eco y el
+  veredicto sale verde. `test.mosquitto.org` cierra sin `CONNACK` a ratos también con la biblioteca
+  sola, sin nuestro código: es el broker, no el canal.
+- **Bifurcación**: dos endpoints, un token literal en uno, bifurcar, cambiar los dos lados. Traer da
+  `GET /orders=incoming` y `GET /users=conflict` con el campo que choca; sin decidir, 422; con
+  decisión, se aplica; fusionar lleva el cambio al original. El token literal en **0** filas de
+  `endpoints` y de `project_forks`.
+- **Captura**: sin token o con uno malo, 407; http público, 200 y grabado; túnel HTTPS, 200 y grabado
+  sin contenido; `postgres:5432` y `169.254.169.254`, 403; tras parar, el token deja de valer. Import
+  por el camino del HAR. Tras el arreglo, **0** filas con los cuatro secretos de la prueba.
+
+Datos de la prueba borrados; la API vuelve a arrancar sin el puerto del proxy.
+
+No comprobado: las pantallas nuevas en el navegador (entrar pide escribir una contraseña).
+Pendiente: solicitudes de fusión con revisión, sincronizar suites y roles entre bifurcaciones,
+añadir temas MQTT a mitad de sesión, will y propiedades de MQTT 5, metadata gRPC binaria, que corridas
+y monitores invoquen canales, reconectar un WebSocket, y el reimport de un campo de fichero de
+Postman. Y sigue `SECRETS_KEY`: 48 bytes en `docker/.env`, sin tocar; con ella, crear una variable
+secreta es un 500.
