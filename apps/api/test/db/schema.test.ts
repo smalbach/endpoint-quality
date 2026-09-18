@@ -67,13 +67,22 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
     const tables = rows.map((row) => row.table_name).sort();
     assert.deepEqual(tables, [
       "api_tokens",
+      "channel_endpoints",
+      "channel_messages",
+      "channel_sessions",
       "code_connectors",
       "code_scans",
+      "doc_sites",
+      "endpoint_examples",
       "endpoints",
       "environment_credentials",
       "environments",
       "invitations",
       "memberships",
+      "mock_calls",
+      "mock_servers",
+      "monitor_executions",
+      "monitors",
       "organizations",
       "password_reset_tokens",
       "performance_plans",
@@ -82,6 +91,7 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
       "project_roles",
       "projects",
       "refresh_tokens",
+      "request_cookies",
       "request_templates",
       "role_endpoint_permissions",
       "role_rules",
@@ -836,5 +846,54 @@ describe("roles", { skip: DATABASE_URL ? false : REASON }, () => {
       roles[0].id,
     ]);
     assert.equal(left.length, 0);
+  });
+});
+
+describe("los canales", { skip: DATABASE_URL ? false : REASON }, () => {
+  /**
+   * Lo que la migración de los canales promete y solo una base de verdad puede comprobar: que borrar
+   * un proyecto se lleva sus canales, sus sesiones y sus mensajes —la transcripción de una sesión
+   * de un proyecto que ya no existe no es historial, es datos de tráfico sueltos— y que la clave de
+   * un mensaje es `(sessionId, seq)` y no admite dos mensajes en el mismo sitio de la conversación.
+   */
+  test("un proyecto borrado se lleva canales, sesiones y mensajes; y un seq no se repite", async () => {
+    const user = randomUUID();
+    const organization = randomUUID();
+    const project = randomUUID();
+    const channel = randomUUID();
+    const session = randomUUID();
+    await insertUser(user, `canales-${user}@example.test`);
+    await insertOrganization(organization, `canales-${organization.slice(0, 8)}`);
+    await dataSource!.query(
+      `INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`,
+      [project, organization, `p-${project.slice(0, 8)}`, user],
+    );
+    await dataSource!.query(
+      `INSERT INTO channel_endpoints (id, "projectId", protocol, name, url, limits, "createdAt", "updatedAt")
+       VALUES ($1, $2, 'ws', 'eco', 'wss://eco.example.test', '{}', now(), now())`,
+      [channel, project],
+    );
+    await dataSource!.query(
+      `INSERT INTO channel_sessions (id, "channelId", "projectId", status, counters, "ownerInstance", "heartbeatAt", "openedAt", "startedBy")
+       VALUES ($1, $2, $3, 'closed', '{}', 'a', now(), now(), $4)`,
+      [session, channel, project, user],
+    );
+    const message = (seq: number) =>
+      dataSource!.query(
+        `INSERT INTO channel_messages ("sessionId", seq, direction, kind, "atMs", bytes) VALUES ($1, $2, 'in', 'text', 0, 0)`,
+        [session, seq],
+      );
+    await message(0);
+    await message(1);
+    await assert.rejects(message(1), /duplicate key/);
+
+    await dataSource!.query(`DELETE FROM projects WHERE id = $1`, [project]);
+    const [left] = await dataSource!.query(
+      `SELECT (SELECT count(*) FROM channel_endpoints WHERE id = $1)::int AS channels,
+              (SELECT count(*) FROM channel_sessions WHERE id = $2)::int AS sessions,
+              (SELECT count(*) FROM channel_messages WHERE "sessionId" = $2)::int AS messages`,
+      [channel, session],
+    );
+    assert.deepEqual(left, { channels: 0, sessions: 0, messages: 0 });
   });
 });

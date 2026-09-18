@@ -675,6 +675,72 @@ export class MonitorExecutionEntity {
   @Column({ type: "text", default: "" }) note: string;
 }
 
+/**
+ * Un canal: lo que un proyecto prueba cuando no es una petición. Hoy un WebSocket.
+ *
+ * Tabla hermana de `endpoints` y no una columna en ella. El motivo entero está en la migración
+ * `1700000028000-Channels`: los siete lectores de `endpoints` fallan abiertos, y aparte siguen
+ * significando lo que significan sin que nadie tenga que acordarse de filtrar.
+ */
+@Entity({ name: "channel_endpoints" })
+export class ChannelEndpointEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Column({ type: "varchar", length: 10 }) protocol: string;
+  @Column({ type: "varchar", length: 120 }) name: string;
+  @Column({ type: "varchar", length: 2000 }) url: string;
+  @Column({ type: "jsonb", default: () => "'[]'" }) subprotocols: unknown;
+  @Column({ type: "jsonb", default: () => "'[]'" }) headers: unknown;
+  @Column({ type: "jsonb", nullable: true }) auth: unknown;
+  @Column({ type: "jsonb" }) limits: unknown;
+  @Column({ type: "jsonb", default: () => "'{}'" }) expectations: unknown;
+  /** Las tramas guardadas para no reteclear la de auth en cada sesión. */
+  @Column({ type: "jsonb", default: () => "'[]'" }) messages: unknown;
+  @Column({ type: "int", default: 0 }) orderIndex: number;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) updatedAt: Date;
+  @Column({ type: "uuid", nullable: true }) updatedBy: string | null;
+  @Column({ type: "timestamptz", nullable: true }) deletedAt: Date | null;
+}
+
+/**
+ * Una conversación con un canal. Una fila y no un objeto en memoria, porque cerrar la pestaña no
+ * puede matarla: quien recarga vuelve a esta fila. `ownerInstance` y `heartbeatAt` son lo que dice
+ * si el proceso que tiene el socket sigue vivo.
+ */
+@Entity({ name: "channel_sessions" })
+export class ChannelSessionEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") channelId: string;
+  @Column("uuid") projectId: string;
+  @Column({ type: "uuid", nullable: true }) environmentId: string | null;
+  @Column({ type: "varchar", length: 20 }) status: string;
+  @Column({ type: "jsonb", nullable: true }) handshake: unknown;
+  @Column({ type: "jsonb" }) counters: unknown;
+  @Column({ type: "jsonb", nullable: true }) verdict: unknown;
+  @Column({ type: "varchar", length: 30, nullable: true }) stopReason: string | null;
+  @Column({ type: "int", nullable: true }) closeCode: number | null;
+  @Column({ type: "varchar", length: 64 }) ownerInstance: string;
+  @Column({ type: "timestamptz" }) heartbeatAt: Date;
+  @Column({ type: "timestamptz" }) openedAt: Date;
+  @Column({ type: "timestamptz", nullable: true }) closedAt: Date | null;
+  @Column("uuid") startedBy: string;
+  @Column({ type: "timestamptz", nullable: true }) prunedAt: Date | null;
+}
+
+/** Un mensaje de una conversación, ya redactado. La clave es `(sessionId, seq)`: ver la migración. */
+@Entity({ name: "channel_messages" })
+export class ChannelMessageEntity {
+  @PrimaryColumn("uuid") sessionId: string;
+  @PrimaryColumn("int") seq: number;
+  @Column({ type: "varchar", length: 10 }) direction: string;
+  @Column({ type: "varchar", length: 10 }) kind: string;
+  @Column({ type: "int" }) atMs: number;
+  @Column({ type: "int" }) bytes: number;
+  @Column({ type: "boolean", default: false }) truncated: boolean;
+  @Column({ type: "text", default: "" }) body: string;
+}
+
 /** A role of the API a project tests. The `access` section is derived from these rows. */
 @Entity({ name: "project_roles" })
 export class RoleEntity {
@@ -840,6 +906,7 @@ export const ENTITIES = [
   MockServerEntity, MockCallEntity,
   DocSiteEntity,
   MonitorEntity, MonitorExecutionEntity,
+  ChannelEndpointEntity, ChannelSessionEntity, ChannelMessageEntity,
   RoleEntity, RolePermissionEntity, RoleRuleEntity,
   SecurityRunEntity,
   PerformancePlanEntity, PerformanceRunEntity,

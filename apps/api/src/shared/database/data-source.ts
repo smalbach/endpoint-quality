@@ -34,6 +34,7 @@ import { MockServers1700000024000 } from "./migrations/1700000024000-MockServers
 import { DocSites1700000025000 } from "./migrations/1700000025000-DocSites";
 import { Monitors1700000026000 } from "./migrations/1700000026000-Monitors";
 import { MockCalls1700000027000 } from "./migrations/1700000027000-MockCalls";
+import { Channels1700000028000 } from "./migrations/1700000028000-Channels";
 
 // Ordered. TypeORM runs them by the timestamp in the class name, and the second one adds a
 // foreign key into a table the first creates.
@@ -66,6 +67,7 @@ export const MIGRATIONS = [
   DocSites1700000025000,
   Monitors1700000026000,
   MockCalls1700000027000,
+  Channels1700000028000,
 ];
 
 export function buildDataSourceOptions(databaseUrl: string) {
