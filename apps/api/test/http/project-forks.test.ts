@@ -415,6 +415,66 @@ describe("suites, roles y secciones", () => {
     assert.deepEqual((await api().get(`${forkBase}/fork/merge`).set(as(owner))).body.entries, []);
   });
 
+  test("un rol que choca por nombre con otro del destino llega numerado, con sus permisos", async () => {
+    const parent = await parentProject();
+    const lector = await api().post(`${parent.base}/roles`).set(as(owner)).send({ name: "lector" });
+    assert.equal(lector.status, 201, JSON.stringify(lector.body));
+    const forked = (await fork(parent.id)).body.projectId as string;
+    const forkBase = `${org()}/${forked}`;
+
+    // La bifurcación renombra el suyo a «auditor» y el original crea otro «auditor» distinto.
+    const [forkRole] = await context.repositories.roles.list(forked);
+    const renamed = await api().patch(`${forkBase}/roles/${forkRole!.id}`).set(as(owner)).send({ name: "auditor" });
+    assert.equal(renamed.status, 200, JSON.stringify(renamed.body));
+    const auditor = await api().post(`${parent.base}/roles`).set(as(owner)).send({ name: "auditor" });
+    assert.equal(auditor.status, 201, JSON.stringify(auditor.body));
+    const allowed = await api()
+      .put(`${parent.base}/roles/${auditor.body.id}/permissions`)
+      .set(as(owner))
+      .send({ permissions: [{ endpointId: await endpointId(parent.base, "/users"), access: "allow" }] });
+    assert.equal(allowed.status, 200, JSON.stringify(allowed.body));
+
+    const diff = (await api().get(`${forkBase}/fork/pull`).set(as(owner))).body;
+    const pulled = await api().post(`${forkBase}/fork/pull`).set(as(owner)).send({ token: diff.token });
+    assert.equal(pulled.status, 200, JSON.stringify(pulled.body));
+    assert.ok(
+      pulled.body.skipped.some((skip: { detail: string }) => skip.detail.includes("se llama auditor-2")),
+      JSON.stringify(pulled.body.skipped),
+    );
+
+    const roles = await context.repositories.roles.list(forked);
+    assert.deepEqual(roles.map((row) => row.name).sort(), ["auditor", "auditor-2"]);
+    const numbered = roles.find((row) => row.name === "auditor-2")!;
+    const permissions = await context.repositories.roles.listPermissions(forked);
+    assert.deepEqual(
+      permissions.filter((cell) => cell.roleId === numbered.id).map((cell) => [cell.endpointId, cell.access]),
+      [[await endpointId(forkBase, "/users"), "allow"]],
+    );
+  });
+
+  test("dos elementos emparejados solo por el nombre se marcan en la comparación", async () => {
+    const parent = await parentProject();
+    const forked = (await fork(parent.id)).body.projectId as string;
+    const forkBase = `${org()}/${forked}`;
+    // Cada lado crea su «auditor»: no hay linaje entre ellos, solo el nombre.
+    assert.equal((await api().post(`${parent.base}/roles`).set(as(owner)).send({ name: "auditor" })).status, 201);
+    const own = await api().post(`${forkBase}/roles`).set(as(owner)).send({ name: "auditor", color: "#10b981" });
+    assert.equal(own.status, 201, JSON.stringify(own.body));
+    // Y un cambio con linaje, que no lleva la marca.
+    const renamedFlow = await api()
+      .put(`${parent.base}/workflows/${parent.workflowId}`)
+      .set(as(owner))
+      .send({ name: "Pedidos nuevos" });
+    assert.ok(renamedFlow.status < 300, JSON.stringify(renamedFlow.body));
+
+    const diff = (await api().get(`${forkBase}/fork/pull`).set(as(owner))).body;
+    const role = diff.entries.find((entry: { kind: string }) => entry.kind === "role");
+    assert.equal(role?.pairedByName, true, JSON.stringify(diff.entries));
+    const flow = diff.entries.find((entry: { kind: string }) => entry.kind === "workflow");
+    assert.ok(flow, JSON.stringify(diff.entries));
+    assert.equal(flow.pairedByName, undefined);
+  });
+
   test("una suite que llega trae el flujo que el destino había borrado", async () => {
     const parent = await parentProject();
     const suite = await api()

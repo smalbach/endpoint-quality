@@ -306,6 +306,18 @@ describe("un nodo canal WebSocket", () => {
     assert.equal(saved.body.errors[0].field, "definition.steps.0.channel.channelId");
   });
 
+  test("duplicar un flujo cuyo canal se borró es el mismo 422 que guardarlo", async () => {
+    const socket = await channel({ url: "{{wsBase}}/socket" });
+    const workflowId = await flow([{ id: "socket", kind: "channel", channel: { channelId: socket.id } }]);
+    const copy = await api().post(`${projectBase}/workflows/${workflowId}/duplicate`).set(as(owner)).send({});
+    assert.ok(copy.status < 300, JSON.stringify(copy.body));
+
+    assert.equal((await api().delete(`${projectBase}/channels/${socket.id}`).set(as(owner))).status, 204);
+    const refused = await api().post(`${projectBase}/workflows/${workflowId}/duplicate`).set(as(owner)).send({});
+    assert.equal(refused.status, 422, JSON.stringify(refused.body));
+    assert.equal(refused.body.errors[0].field, "definition.steps.0.channel.channelId");
+  });
+
   test("un canal que ya no existe es un rojo de configuración, no un error de la corrida", async () => {
     const socket = await channel({ url: "{{wsBase}}/socket" });
     const workflowId = await flow([{ id: "socket", kind: "channel", channel: { channelId: socket.id } }]);
@@ -354,6 +366,40 @@ describe("un nodo canal MQTT", () => {
     const topics = (detail.actual!.body.topics as (string | null)[]).filter(Boolean);
     assert.deepEqual(topics, ["casa/salon/temp"]);
     assert.ok(!everythingStored().includes(PASSWORD), "la contraseña del broker no aparece en nada guardado");
+  });
+
+  test("el tema del guion lleva {{variables}} de la corrida, y una sin valor no publica", async () => {
+    const mqtt = await channel({
+      protocol: "mqtt",
+      url: "{{broker}}",
+      auth: { type: "basic", params: { username: BROKER_USER, password: "{{mqttPass}}" } },
+      mqtt: { version: 4, subscriptions: [{ topic: "casa/+/temp", qos: 0 }] },
+      expectations: { minMessages: 1 },
+    });
+    const workflowId = await flow([
+      { id: "sala", kind: "set", set: { assignments: [{ variable: "sala", value: "cocina" }] } },
+      {
+        id: "broker",
+        kind: "channel",
+        dependsOn: ["sala"],
+        channel: { channelId: mqtt.id, messages: [{ action: "send", body: "22", topic: "casa/{{sala}}/temp" }] },
+      },
+    ]);
+    const result = await run(workflowId, await environment());
+    assert.equal(result.caseOf("broker").status, "passed");
+    const detail = await result.detailOf("broker");
+    assert.deepEqual((detail.actual!.body.topics as (string | null)[]).filter(Boolean), ["casa/cocina/temp"]);
+
+    const missing = await flow([
+      {
+        id: "broker",
+        kind: "channel",
+        channel: { channelId: mqtt.id, messages: [{ action: "send", body: "22", topic: "casa/{{nadie}}/temp" }] },
+      },
+    ]);
+    const failed = await run(missing, await environment());
+    assert.equal(failed.caseOf("broker").status, "failed");
+    assert.match(JSON.stringify((await failed.detailOf("broker")).assertions), /Variables sin valor: nadie/);
   });
 
   test("un mensaje sin tema en MQTT no abre nada: es un rojo de configuración", async () => {

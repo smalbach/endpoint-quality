@@ -27,7 +27,11 @@ import { Badge, Button, Card, Empty, Field, inputClass } from "@/components/ui";
 import { ConfirmDialog, Modal } from "@/components/overlay";
 import { useToast } from "@/components/toast";
 import { formatDate } from "@/lib/format";
+import { ChannelScriptEditor } from "@/components/channel-script-editor";
+import { PROTOCOL_LABEL, type ScriptStepView } from "@/lib/channel-node-draft";
 import type {
+  ChannelListView,
+  ChannelView,
   Environment,
   MonitorAlertView,
   MonitorExecutionView,
@@ -103,6 +107,12 @@ export function MonitorsPage() {
     queryKey: ["workflows", projectId],
     enabled,
     queryFn: () => api<WorkflowsView>(`${base}/workflows`),
+  });
+  // La misma clave que la pantalla de canales y el nodo del lienzo: un canal recién creado sale aquí.
+  const channels = useQuery({
+    queryKey: ["channels", projectId],
+    enabled,
+    queryFn: () => api<ChannelListView>(`${base}/channels`),
   });
 
   const refresh = () => client.invalidateQueries({ queryKey: ["monitors", projectId] });
@@ -244,6 +254,7 @@ export function MonitorsPage() {
           base={base}
           environments={environments.data ?? []}
           flows={flows.data}
+          channels={channels.data?.channels ?? []}
           onClose={() => setCreating(false)}
           onSaved={async (name) => {
             setCreating(false);
@@ -259,6 +270,7 @@ export function MonitorsPage() {
           base={base}
           environments={environments.data ?? []}
           flows={flows.data}
+          channels={channels.data?.channels ?? []}
           editing={editing}
           onClose={() => setEditing(null)}
           onSaved={async (name) => {
@@ -337,6 +349,7 @@ function MonitorModal({
   base,
   environments,
   flows,
+  channels,
   editing,
   onClose,
   onSaved,
@@ -344,6 +357,7 @@ function MonitorModal({
   base: string;
   environments: Environment[];
   flows: WorkflowsView | undefined;
+  channels: ChannelView[];
   /** El monitor que se edita; sin él, se crea uno. */
   editing?: MonitorView;
   onClose: () => void;
@@ -370,10 +384,18 @@ function MonitorModal({
     }
   });
   const [environmentId, setEnvironmentId] = useState(editing?.plan.environmentId ?? environments[0]?.id ?? "");
-  const [what, setWhat] = useState<"matrix" | "flow" | "suite">(
-    editing?.plan.workflowId ? "flow" : editing?.plan.suiteId ? "suite" : "matrix",
+  const [what, setWhat] = useState<"matrix" | "flow" | "suite" | "channel">(
+    editing?.plan.channel ? "channel" : editing?.plan.workflowId ? "flow" : editing?.plan.suiteId ? "suite" : "matrix",
   );
-  const [targetId, setTargetId] = useState(editing?.plan.workflowId ?? editing?.plan.suiteId ?? "");
+  const [targetId, setTargetId] = useState(
+    editing?.plan.channel?.channelId ?? editing?.plan.workflowId ?? editing?.plan.suiteId ?? "",
+  );
+  // Ausente es «los mensajes guardados del canal», como en el nodo del flujo; una lista, el guion propio.
+  const [script, setScript] = useState<ScriptStepView[] | undefined>(editing?.plan.channel?.messages);
+  const pickedChannel = what === "channel" ? channels.find((entry) => entry.id === targetId) : undefined;
+  const environmentVariables = Object.keys(
+    environments.find((environment) => environment.id === environmentId)?.variables ?? {},
+  );
   const [alerting, setAlerting] = useState(Boolean(initialAlert));
   const [channel, setChannel] = useState<MonitorAlertView["channel"]>(initialAlert?.channel ?? "slack");
   const [urlVariable, setUrlVariable] = useState(initialAlert?.urlVariable ?? "");
@@ -409,6 +431,17 @@ function MonitorModal({
     environmentId,
     ...(what === "flow" && targetId ? { workflowId: targetId } : {}),
     ...(what === "suite" && targetId ? { suiteId: targetId } : {}),
+    // Lo que el nodo sabe además del guion —la petición gRPC, el final, la inactividad— se conserva si
+    // el canal es el mismo: este formulario no lo enseña y guardar el nombre no debe tirarlo.
+    ...(what === "channel" && targetId
+      ? {
+          channel: {
+            ...(editing?.plan.channel?.channelId === targetId ? editing.plan.channel : {}),
+            channelId: targetId,
+            messages: script,
+          },
+        }
+      : {}),
   });
 
   const save = useMutation({
@@ -594,10 +627,57 @@ function MonitorModal({
             <option value="matrix">La matriz del contrato</option>
             <option value="flow">Un flujo</option>
             <option value="suite">Una suite</option>
+            <option value="channel">Un canal</option>
           </select>
         </Field>
 
-        {what !== "matrix" && (
+        {what === "channel" && (
+          <>
+            <Field label="Canal *">
+              <select
+                aria-label="Canal"
+                className={inputClass}
+                value={targetId}
+                onChange={(event) => {
+                  setTargetId(event.target.value);
+                  setScript(undefined);
+                }}
+              >
+                <option value="">Elige uno</option>
+                {channels.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.name} · {PROTOCOL_LABEL[entry.protocol]}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {pickedChannel && (
+              <div>
+                <label className="mb-2 flex items-center gap-2 text-xs text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={script === undefined}
+                    onChange={(event) => setScript(event.target.checked ? undefined : [])}
+                  />
+                  {pickedChannel.protocol === "grpc"
+                    ? "Sin guion propio: solo la petición de la llamada"
+                    : "Mandar los mensajes guardados del canal, en orden"}
+                </label>
+                {script !== undefined && (
+                  <ChannelScriptEditor
+                    steps={script}
+                    protocol={pickedChannel.protocol}
+                    variables={environmentVariables}
+                    canEdit
+                    onChange={setScript}
+                  />
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {(what === "flow" || what === "suite") && (
           <Field label={what === "flow" ? "Flujo *" : "Suite *"}>
             <select
               aria-label={what === "flow" ? "Flujo" : "Suite"}
@@ -705,6 +785,6 @@ function MonitorModal({
 /** El plan sin lo que elige el formulario: qué corre, y el conjunto de datos que va con un flujo. */
 function withoutTarget(plan: MonitorPlanView | undefined): Partial<MonitorPlanView> {
   if (!plan) return {};
-  const { workflowId: _workflowId, suiteId: _suiteId, datasetId: _datasetId, ...rest } = plan;
+  const { workflowId: _workflowId, suiteId: _suiteId, datasetId: _datasetId, channel: _channel, ...rest } = plan;
   return rest;
 }

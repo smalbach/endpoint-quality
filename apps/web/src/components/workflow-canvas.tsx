@@ -35,7 +35,7 @@ import {
 } from "@/lib/workflow-draft";
 import type { OperationSummary, RetryNote } from "@/lib/workflow-draft";
 import { NOTIFY_CHANNELS, type NotifyNodeData } from "@/lib/workflow-notify";
-import type { CaseStatus, RequestTemplateView, WorkflowStepView } from "@/lib/types";
+import type { CaseStatus, ChannelView, RequestTemplateView, WorkflowStepView } from "@/lib/types";
 
 const CASE_STATUS_LABEL: Record<CaseStatus, string> = {
   running: "Ejecutando",
@@ -735,6 +735,11 @@ function GraphqlNode({ data, selected }: NodeProps<Node<GraphqlNodeData>>) {
 type ChannelNodeData = {
   name: string;
   chosen: boolean;
+  /** El nombre del canal elegido; `null` sin elegir, mientras carga la lista o si ya no existe. */
+  channelName: string | null;
+  protocol: string | null;
+  /** Apunta a un canal que ya no está en el proyecto: la corrida lo daría en rojo de configuración. */
+  missing: boolean;
   /** Cuántas acciones escribe el nodo; `null` es «los mensajes guardados del canal». */
   scripted: number | null;
   captures: number;
@@ -748,7 +753,7 @@ function ChannelNode({ data, selected }: NodeProps<Node<ChannelNodeData>>) {
     <div
       className={cn(
         "w-52 rounded-xl border bg-white px-3 py-2 shadow-sm transition-colors",
-        status ? RUN_NODE_CLASS[status] : data.chosen ? "border-cyan-300" : "border-amber-300",
+        status ? RUN_NODE_CLASS[status] : data.chosen && !data.missing ? "border-cyan-300" : "border-amber-300",
         selected && "border-slate-900 ring-2 ring-slate-200",
       )}
     >
@@ -757,9 +762,20 @@ function ChannelNode({ data, selected }: NodeProps<Node<ChannelNodeData>>) {
         <span className="grid h-6 w-6 place-items-center rounded-md bg-cyan-100 text-cyan-700" title="Canal">
           ⇌
         </span>
-        <span className="truncate text-xs font-semibold text-slate-800">Canal · {data.name}</span>
+        {/* El canal por su nombre: el id del nodo no dice qué socket abre, y es lo que se lee en el lienzo. */}
+        <span className="truncate text-xs font-semibold text-slate-800" title={data.name}>
+          {data.channelName ?? `Canal · ${data.name}`}
+        </span>
+        {data.protocol && (
+          <span className="shrink-0 rounded bg-cyan-50 px-1 text-[9px] font-semibold text-cyan-700">{data.protocol}</span>
+        )}
         <RunDot status={status} />
       </div>
+      {data.missing && (
+        <p className="mt-1 text-[10px] font-medium text-amber-700" role="alert">
+          ⚠ El canal ya no existe en este proyecto
+        </p>
+      )}
       <p className="mt-1 truncate text-[10px] text-slate-500">
         {!data.chosen
           ? "elige el canal"
@@ -865,6 +881,7 @@ export function WorkflowCanvas({
   breakpoints,
   onToggleBreakpoint,
   flowId,
+  channels,
 }: {
   /** Which flow is open. Flows share step ids, so this — not the ids — tells a flow switch from an add. */
   flowId?: string;
@@ -890,10 +907,12 @@ export function WorkflowCanvas({
   breakpoints?: readonly string[];
   /** Mark or unmark a node as a place to stop, from its context menu. */
   onToggleBreakpoint?: (stepId: string) => void;
+  /** Los canales del proyecto; ausente mientras cargan (ver `toNodes`). */
+  channels?: ChannelView[];
 }) {
   const fromDocument = useMemo(
-    () => toNodes(steps, templates, operations, runStatus, runStartedAt, runRetries) as Node[],
-    [steps, templates, operations, runStatus, runStartedAt, runRetries],
+    () => toNodes(steps, templates, operations, runStatus, runStartedAt, runRetries, channels) as Node[],
+    [steps, templates, operations, runStatus, runStartedAt, runRetries, channels],
   );
   const [nodes, setNodes] = useState<Node[]>(fromDocument);
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);

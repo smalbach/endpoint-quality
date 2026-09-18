@@ -129,24 +129,38 @@ async function validatedDefinition(
   }
   // A channel node names a channel row, so the same holds: one of this project's, not deleted. Checked
   // here and not only at run time, where the same mistake would be a red case every night.
+  await refuseUnknownChannels(channels, projectId, definition);
+  return withoutLiteralSecrets(definition);
+}
+
+/**
+ * El 422 de un nodo `channel` que nombra un canal que no es de este proyecto (o que se borró).
+ *
+ * Aparte de `validatedDefinition` porque también lo usa duplicar, que no revalida el resto: la copia
+ * es del mismo proyecto y lo demás ya se comprobó al guardar el original, pero un canal se puede
+ * borrar después sin tocar el flujo, y la copia nacería rota sin que nadie lo hubiera pedido.
+ */
+export async function refuseUnknownChannels(
+  channels: ChannelRepositoryPort | null,
+  projectId: string,
+  definition: WorkflowDocument,
+): Promise<void> {
   const channelSteps = definition.steps
     .map((step, index) => ({ step, index }))
     .filter(({ step }) => step.kind === "channel" && step.channel);
-  if (channelSteps.length && channels) {
-    const known = new Set((await channels.listByProject(projectId)).map((channel) => channel.id));
-    const unknown = channelSteps.filter(({ step }) => !known.has(step.channel!.channelId));
-    if (unknown.length) {
-      throw new InvalidInputError(
-        "El flujo no es válido",
-        unknown.map(({ index }) => ({
-          field: `definition.steps.${index}.channel.channelId`,
-          detail: "el canal no existe en este proyecto",
-        })),
-        "workflow-invalid",
-      );
-    }
+  if (!channelSteps.length || !channels) return;
+  const known = new Set((await channels.listByProject(projectId)).map((channel) => channel.id));
+  const unknown = channelSteps.filter(({ step }) => !known.has(step.channel!.channelId));
+  if (unknown.length) {
+    throw new InvalidInputError(
+      "El flujo no es válido",
+      unknown.map(({ index }) => ({
+        field: `definition.steps.${index}.channel.channelId`,
+        detail: "el canal no existe en este proyecto",
+      })),
+      "workflow-invalid",
+    );
   }
-  return withoutLiteralSecrets(definition);
 }
 
 
@@ -292,6 +306,7 @@ export class DuplicateWorkflowHandler implements ICommandHandler<DuplicateWorkfl
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
+    @Optional() @Inject(CHANNEL_REPOSITORY) private readonly channels: ChannelRepositoryPort | null = null,
   ) {}
 
   async execute(command: DuplicateWorkflowCommand): Promise<{ workflowId: string }> {
@@ -302,6 +317,7 @@ export class DuplicateWorkflowHandler implements ICommandHandler<DuplicateWorkfl
       command.projectId,
       command.workflowId,
     );
+    await refuseUnknownChannels(this.channels, command.projectId, source.definition);
     const now = this.clock.now();
     const workflowId = randomUUID();
     await this.workflows.saveWorkflow({

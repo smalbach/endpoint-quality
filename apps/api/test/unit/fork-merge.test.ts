@@ -2,6 +2,7 @@
  * La comparación a tres bandas, caso por caso, sin filas ni proyectos: tres fotos y lo que sale.
  */
 import { describe, test } from "node:test";
+import { freeRoleName } from "@/modules/projects/application/fork-sync";
 import assert from "node:assert/strict";
 
 import {
@@ -485,5 +486,13 @@ describe("canales", () => {
       keys,
     );
     assert.equal(dangling.steps[0]!.channel!.channelId, "(no existe)");
+  });
+});
+
+describe("el nombre libre de un rol que choca", () => {
+  test("se numera con guion, cabe en los 20 caracteres de una credencial y salta lo ocupado", () => {
+    assert.equal(freeRoleName("admin", new Set(["admin"])), "admin-2");
+    assert.equal(freeRoleName("admin", new Set(["admin", "admin-2"])), "admin-3");
+    assert.equal(freeRoleName("abcdefghijklmnopqrst", new Set()), "abcdefghijklmnopqr-2");
   });
 });

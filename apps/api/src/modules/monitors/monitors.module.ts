@@ -8,6 +8,8 @@ import { IamModule } from "@/modules/iam/iam.module";
 import { ProjectsModule } from "@/modules/projects/projects.module";
 import { RunsModule } from "@/modules/runs/runs.module";
 import { EnvironmentsModule } from "@/modules/environments/environments.module";
+// `ChannelsModule` exporta el repositorio con el que se comprueba el canal de un monitor de canal.
+import { ChannelsModule } from "@/modules/channels/channels.module";
 // `SpecsModule` exporta `SAFE_FETCH`, el fetch con guardia de SSRF por el que sale el aviso.
 import { SpecsModule } from "@/modules/specs/specs.module";
 import { MONITOR_REPOSITORY } from "./domain/ports";
@@ -55,6 +57,7 @@ export const MONITOR_ADAPTERS = [
     forwardRef(() => ProjectsModule),
     forwardRef(() => RunsModule),
     forwardRef(() => EnvironmentsModule),
+    forwardRef(() => ChannelsModule),
     forwardRef(() => SpecsModule),
   ],
   controllers: [MonitorsController],

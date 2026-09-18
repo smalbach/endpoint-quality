@@ -1,4 +1,4 @@
-import type { Assertion, FailureKind, OrderMode } from "@eq/runner-core";
+import type { Assertion, FailureKind, OrderMode, StepChannel } from "@eq/runner-core";
 
 export type RunStatus = "queued" | "running" | "passed" | "failed" | "cancelled" | "error";
 export type CaseStatus = "queued" | "running" | "passed" | "failed" | "skipped";
@@ -37,6 +37,15 @@ export type RunPlan = {
   /** When set, the run walks every flow of the suite in order. Exclusive with `workflowId`: a run
    * executes the matrix, one flow, or a list of them, and «both» has no meaning. */
   suiteId?: string;
+  /**
+   * Un canal ejecutado solo, sin flujo: lo que lanza un monitor que vigila un socket o un broker.
+   *
+   * Es el mismo bloque que el nodo `channel` de un flujo —canal y guion opcional— y corre por el
+   * mismo camino: el trabajador lo envuelve en un flujo de un solo nodo que no se guarda. Así la
+   * guarda de red, los topes, la redacción y el veredicto son los del nodo, y la corrida sale con
+   * un caso, como cualquier otra. Exclusivo con `workflowId` y `suiteId`.
+   */
+  channel?: StepChannel;
   /**
    * Whether the worker stops and waits for a person before a step. `none` — the default, and every
    * run written before this existed — never waits. `step` waits before every step; `breakpoints`

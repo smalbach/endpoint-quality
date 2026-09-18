@@ -168,4 +168,12 @@ describe("el inspector del nodo canal", () => {
     fireEvent.click(screen.getByRole("button", { name: "+ Terminar envío" }));
     expect(last[0]!.channel!.messages).toEqual([{ action: "end" }]);
   });
+
+  test("un canal que ya no existe se dice claro, y el desplegable no finge que no hay ninguno elegido", () => {
+    render(<Harness initial={node({ channelId: "00000000-0000-4000-8000-00000000dead" })} />);
+    expect(screen.getByRole("alert").textContent).toMatch(/ya no existe en el proyecto/);
+    const select = screen.getByLabelText("Canal que ejecuta") as HTMLSelectElement;
+    expect(select.selectedOptions[0]!.textContent).toBe("⚠ Canal eliminado");
+    expect(screen.getByText(/canal eliminado · canal/)).toBeTruthy();
+  });
 });

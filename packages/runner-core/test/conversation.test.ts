@@ -75,6 +75,25 @@ describe("los topes paran en la trama exacta, y dicen cuál", () => {
     assert.equal(conversation.counters.bytesOut, 50);
   });
 
+  test("los bytes del cable cuentan para los topes, y el cuerpo se recorta por su propio tamaño", () => {
+    // Un mensaje gRPC: 20 bytes de protobuf en el cable, y su JSON, más largo que el tope del cuerpo.
+    const limits = { ...LIMITS, maxBytes: 30, maxMessageBytes: 16 };
+    const json = JSON.stringify({ nombre: "un nombre largo" });
+    const { conversation, stops } = play(
+      [
+        open(),
+        { direction: "in", atMs: 1, body: json, bytes: 20 },
+        { direction: "in", atMs: 2, body: json, bytes: 20 },
+      ],
+      limits,
+    );
+    assert.equal(conversation.messages[0]!.bytes, 20);
+    assert.equal(conversation.messages[0]!.truncated, true);
+    assert.equal(conversation.messages[0]!.body.length, 16);
+    assert.equal(conversation.counters.bytesIn, 40);
+    assert.deepEqual(stops, [null, null, "byte-cap"]);
+  });
+
   test("el de tiempo, cuando una trama llega pasada la duración", () => {
     const { stops } = play([open(), incoming(29_999, "a"), incoming(30_000, "b")]);
     assert.deepEqual(stops, [null, null, "time-cap"]);

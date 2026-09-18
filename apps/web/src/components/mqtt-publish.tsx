@@ -68,7 +68,7 @@ export function MqttPublishFields({
           Tema
           <input
             className={cn(inputClass, "font-mono text-xs")}
-            placeholder="sensores/sala/temp"
+            placeholder="sensores/{{sala}}/temp"
             value={value.topic}
             disabled={disabled}
             onChange={(event) => onChange({ ...value, topic: event.target.value })}

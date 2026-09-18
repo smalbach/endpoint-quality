@@ -611,6 +611,7 @@ export function WorkflowsPage() {
                 pausedStepId={activeRunId ? pausedNodeId(runProgress.paused, runProgress.cases, draft.id) : null}
                 breakpoints={activeBreakpoints(launchSettings)}
                 onToggleBreakpoint={(stepId) => setRunSettings(toggleBreakpoint(launchSettings, stepId))}
+                channels={channels.data?.channels}
               />
             )}
 

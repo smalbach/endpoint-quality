@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { Inject } from "@nestjs/common";
+import { Inject, Optional } from "@nestjs/common";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
-import type { OrderMode } from "@eq/runner-core";
+import { stepChannelSchema, type OrderMode, type StepChannel } from "@eq/runner-core";
 
 import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
@@ -9,6 +9,7 @@ import { ENV, type Env } from "@/shared/config/env";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
 import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
+import { CHANNEL_REPOSITORY, type ChannelRepositoryPort } from "@/modules/channels/domain/ports";
 import type { Run, RunPlan } from "../../domain/model";
 import { RUN_QUEUE, RUN_REPOSITORY, type RunQueuePort, type RunRepositoryPort } from "../../domain/ports";
 
@@ -41,6 +42,9 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
     @Inject(RUN_QUEUE) private readonly queue: RunQueuePort,
     @Inject(CLOCK) private readonly clock: ClockPort,
     @Inject(ENV) private readonly env: Env,
+    // Opcional como en los flujos: sin el módulo de canales, un plan con canal se rechaza en vez de
+    // encolarse sin poder comprobar de quién es el canal.
+    @Optional() @Inject(CHANNEL_REPOSITORY) private readonly channels: ChannelRepositoryPort | null = null,
   ) {}
 
   async execute(command: StartRunCommand): Promise<{ runId: string }> {
@@ -71,6 +75,8 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
         { field: "datasetId", detail: "Indica también workflowId" },
       ]);
     }
+
+    const channel = command.input.channel ? await this.checkedChannel(project.id, command.input) : null;
 
     if (command.input.workflowId) {
       const workflow = await this.workflows.findWorkflow(project.id, command.input.workflowId);
@@ -152,6 +158,7 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
       ...(command.input.workflowId ? { workflowId: command.input.workflowId } : {}),
       ...(command.input.datasetId ? { datasetId: command.input.datasetId } : {}),
       ...(command.input.suiteId ? { suiteId: command.input.suiteId } : {}),
+      ...(channel ? { channel } : {}),
       ...(pauseMode !== "none" ? { pauseMode } : {}),
       ...(pauseMode === "breakpoints" ? { breakpoints: [...new Set(command.input.breakpoints ?? [])] } : {}),
       ...(command.input.stopOnFailure ? { stopOnFailure: true } : {}),
@@ -177,6 +184,42 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
     await this.runs.save(run);
     await this.queue.enqueue(run.id);
     return { runId: run.id };
+  }
+
+  /**
+   * El canal de un plan sin flujo, comprobado como el de un nodo `channel` al guardar un flujo.
+   *
+   * La forma con el mismo esquema que el nodo —el guion no cambia de reglas por venir de un
+   * monitor— y el canal leído con el id del proyecto, así que el de otro proyecto y uno borrado son
+   * el mismo 422. Se comprueba aquí y no al recoger el trabajo por lo mismo que el flujo: el error
+   * tiene que salir en la respuesta al clic, no minutos después en una corrida en `error`.
+   */
+  private async checkedChannel(projectId: string, input: StartRunInput): Promise<StepChannel> {
+    if (input.workflowId || input.suiteId || input.datasetId) {
+      throw new InvalidInputError("Una corrida ejecuta un canal, un flujo o una suite, no varios", [
+        { field: "channel", detail: "Quita el flujo, la suite o el conjunto de datos" },
+      ]);
+    }
+    const parsed = stepChannelSchema.safeParse(input.channel);
+    if (!parsed.success) {
+      throw new InvalidInputError(
+        "El canal del plan no es válido",
+        parsed.error.issues.map((issue) => ({
+          field: ["channel", ...issue.path].join("."),
+          detail: issue.message,
+        })),
+        "channel-invalid",
+      );
+    }
+    const channel = this.channels ? await this.channels.findById(projectId, parsed.data.channelId) : null;
+    if (!channel) {
+      throw new InvalidInputError(
+        "El canal no existe",
+        [{ field: "channel.channelId", detail: "No hay ningún canal con ese id en este proyecto" }],
+        "channel-not-found",
+      );
+    }
+    return parsed.data as StepChannel;
   }
 
   /**

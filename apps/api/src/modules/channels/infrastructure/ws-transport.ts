@@ -50,6 +50,11 @@ export type OpenChannel = {
    * es lo que hace que la sesión exija un nombre de evento para mandar.
    */
   emit?(event: string, args: unknown[], ack: boolean): void;
+  /**
+   * Lo que ocupa este texto **en el cable**, cuando no es su longitud: en gRPC, el mensaje protobuf
+   * serializado con el tipo de entrada. Quien no lo trae cuenta el texto.
+   */
+  wireBytes?(text: string): number;
 };
 
 /**
@@ -60,10 +65,14 @@ export type OpenChannel = {
  * - Los trailers en el cierre: donde una llamada gRPC dice su estado y lo que quiera añadir.
  * - Una apertura sin handshake: la conexión está hecha aunque el servidor aún no haya contestado.
  */
-export type ChannelListeners = Omit<SocketListeners, "onClose" | "onOpen"> & {
+export type ChannelListeners = Omit<SocketListeners, "onClose" | "onOpen" | "onMessage"> & {
   onOpen?: (handshake?: { status: number; headers: Record<string, string>; via?: string }) => void;
   onClose: (code: number, reason: string, trailers?: Record<string, string>) => void;
-  onSent?: (text: string) => void;
+  /** `wireBytes`: el tamaño en el cable cuando `data` no lo es (el JSON de un mensaje protobuf). */
+  onMessage: (data: Buffer, binary: boolean, wireBytes?: number) => void;
+  onSent?: (text: string, wireBytes?: number) => void;
+  /** Algo que pasó en la sesión y no es un mensaje: el medio cierre de un stream gRPC. */
+  onEvent?: (text: string) => void;
   /**
    * Una trama ya traducida por quien sabe el protocolo —un evento de Socket.IO con su nombre, un
    * acuse—, sin la hora: se la pone la sesión, con su reloj, como a las demás.

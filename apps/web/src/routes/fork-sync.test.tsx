@@ -12,7 +12,7 @@
  *   abre en el original, donde se revisa.
  */
 import { describe, expect, test, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
@@ -53,6 +53,7 @@ const diff = (direction: "pull" | "merge"): ForkDiffView => ({
       targetChange: "none",
       status: "incoming",
       fields: [{ path: "name", base: "Pedidos", source: "Pedidos v2", target: "Pedidos" }],
+      pairedByName: true,
     },
   ],
 });
@@ -103,6 +104,13 @@ describe("ForkSyncPage", () => {
     );
     expect(await screen.findByText(/Cambios traídos \(versión 4\)/)).toBeTruthy();
     expect(screen.getByText(/hay que escribir token/)).toBeTruthy();
+  });
+
+  test("lo emparejado solo por el nombre lleva su marca, y lo que tiene linaje no", async () => {
+    draw("pull");
+    const flow = await screen.findByTestId("entry-workflow:w1");
+    expect(within(flow).getByText("emparejado por nombre")).toBeTruthy();
+    expect(within(screen.getByTestId("entry-endpoint:GET /orders")).queryByText("emparejado por nombre")).toBeNull();
   });
 
   test("fusionar pide confirmación nombrando el original antes de escribir", async () => {

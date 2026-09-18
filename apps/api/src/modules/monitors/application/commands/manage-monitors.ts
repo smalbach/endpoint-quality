@@ -8,13 +8,15 @@
  * ahora en vez de restaurar el que tenía. Un monitor que se enciende tras dos días apagado no debe
  * una corrida de anteayer.
  */
-import { Inject } from "@nestjs/common";
+import { Inject, Optional } from "@nestjs/common";
+import { stepChannelSchema, type StepChannel } from "@eq/runner-core";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { writableProject } from "@/modules/endpoints/application/commands/manage-endpoints";
+import { CHANNEL_REPOSITORY, type ChannelRepositoryPort } from "@/modules/channels/domain/ports";
 import {
   MAX_MONITORS_PER_PROJECT,
   blankMonitor,
@@ -29,6 +31,38 @@ import {
 import type { MonitorSchedule } from "../../domain/schedule";
 import { MONITOR_REPOSITORY, type MonitorRepositoryPort } from "../../domain/ports";
 import { MonitorFirer } from "./fire-monitor";
+
+/**
+ * El plan con su canal comprobado, cuando lo lleva.
+ *
+ * `StartRunCommand` lo vuelve a comprobar en cada vuelta —el canal puede borrarse después—, pero
+ * guardar un monitor que apunta a un canal de otro proyecto sería un monitor que falla cada noche
+ * por un error que ya se veía al pulsar «Guardar». Mismo 422 que un nodo `channel` de un flujo.
+ */
+async function checkedPlan(
+  channels: ChannelRepositoryPort | null,
+  projectId: string,
+  plan: MonitorPlan | undefined,
+): Promise<MonitorPlan | undefined> {
+  if (!plan?.channel) return plan;
+  const parsed = stepChannelSchema.safeParse(plan.channel);
+  if (!parsed.success) {
+    throw new InvalidInputError(
+      "El monitor no es válido",
+      parsed.error.issues.map((issue) => ({
+        field: ["plan", "channel", ...issue.path].join("."),
+        detail: issue.message,
+      })),
+    );
+  }
+  const channel = channels ? await channels.findById(projectId, parsed.data.channelId) : null;
+  if (!channel) {
+    throw new InvalidInputError("El monitor no es válido", [
+      { field: "plan.channel.channelId", detail: "el canal no existe en este proyecto" },
+    ]);
+  }
+  return { ...plan, channel: parsed.data as StepChannel };
+}
 
 export class CreateMonitorCommand implements ICommand {
   constructor(
@@ -45,12 +79,14 @@ export class CreateMonitorHandler implements ICommandHandler<CreateMonitorComman
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(MONITOR_REPOSITORY) private readonly monitors: MonitorRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
+    @Optional() @Inject(CHANNEL_REPOSITORY) private readonly channels: ChannelRepositoryPort | null = null,
   ) {}
 
   async execute(command: CreateMonitorCommand): Promise<MonitorView> {
     const project = await writableProject(this.projects, command.organizationId, command.projectId);
     const problems = monitorProblems(command.input, { requireAll: true });
     if (problems.length) throw new InvalidInputError("El monitor no es válido", problems);
+    const plan = (await checkedPlan(this.channels, project.id, command.input.plan)) as MonitorPlan;
 
     const existing = await this.monitors.listByProject(project.id);
     if (existing.length >= MAX_MONITORS_PER_PROJECT) {
@@ -66,7 +102,7 @@ export class CreateMonitorHandler implements ICommandHandler<CreateMonitorComman
       projectId: project.id,
       name: command.input.name.trim(),
       schedule: command.input.schedule,
-      plan: command.input.plan,
+      plan,
       alert: command.input.alert ?? null,
       now: this.clock.now(),
       actorId: command.actorId,
@@ -91,6 +127,7 @@ export class UpdateMonitorHandler implements ICommandHandler<UpdateMonitorComman
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(MONITOR_REPOSITORY) private readonly monitors: MonitorRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
+    @Optional() @Inject(CHANNEL_REPOSITORY) private readonly channels: ChannelRepositoryPort | null = null,
   ) {}
 
   async execute(command: UpdateMonitorCommand): Promise<MonitorView> {
@@ -108,7 +145,8 @@ export class UpdateMonitorHandler implements ICommandHandler<UpdateMonitorComman
         throw new ConflictError(`Ya hay un monitor llamado «${name}»`, "monitor-duplicate-name");
     }
 
-    const updated = withChanges(current, command.input, this.clock.now());
+    const plan = await checkedPlan(this.channels, project.id, command.input.plan);
+    const updated = withChanges(current, { ...command.input, plan }, this.clock.now());
     await this.monitors.save(updated);
     return viewMonitor(updated);
   }

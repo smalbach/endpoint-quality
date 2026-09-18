@@ -29,7 +29,7 @@ async function signUp(email: string): Promise<Actor> {
   return { organizationId: registered.body.organizationId, token: session.body.accessToken };
 }
 
-async function environment(): Promise<string> {
+async function environment(extra: Record<string, { initial: string }> = {}): Promise<string> {
   const created = await api()
     .post(`${base}/environments`)
     .set(as(owner))
@@ -42,6 +42,7 @@ async function environment(): Promise<string> {
         broker: { initial: `mqtt://127.0.0.1:${broker.port}` },
         mqttPass: { initial: PASSWORD, sensitive: true },
         token: { initial: TOKEN, sensitive: true },
+        ...extra,
       },
     });
   assert.equal(created.status, 201, JSON.stringify(created.body));
@@ -289,6 +290,39 @@ describe("suscripciones, testamento y propiedades", () => {
 
     const closed = await api().post(`${session}/close`).set(as(owner));
     assert.equal(closed.body.verdict.ok, true, JSON.stringify(closed.body.verdict));
+  });
+
+  test("el tema de un mensaje resuelve {{variables}}, y se valida ya resuelto", async () => {
+    const environmentId = await environment({ planta: { initial: "norte" }, comodin: { initial: "a/+" } });
+    const id = await channel({ mqtt: { version: 4, subscriptions: [{ topic: "{{planta}}/#", qos: 0 }] } });
+    const opened = await api().post(`${base}/channels/${id}/sessions`).set(as(owner)).send({ environmentId });
+    assert.equal(opened.body.status, "open", JSON.stringify(opened.body));
+    const session = `${base}/channels/sessions/${opened.body.id}`;
+
+    const sent = await api().post(`${session}/messages`).set(as(owner)).send({ text: "on", topic: "{{planta}}/luz" });
+    assert.ok(sent.status < 300, JSON.stringify(sent.body));
+    const read = await waitFor(opened.body.id, (body) =>
+      body.messages.some((m) => (m as { direction: string }).direction === "in"),
+    );
+    const rows = read.body.messages as { direction: string; topic?: string }[];
+    assert.deepEqual(
+      rows.map((row) => [row.direction, row.topic]),
+      [
+        ["out", "norte/luz"],
+        ["in", "norte/luz"],
+      ],
+    );
+
+    const missing = await api().post(`${session}/messages`).set(as(owner)).send({ text: "x", topic: "{{nadie}}/luz" });
+    assert.equal(missing.status, 422);
+    assert.equal(missing.body.errors[0].field, "topic");
+    assert.match(missing.body.errors[0].detail, /\{\{nadie\}\}/);
+
+    const wildcard = await api().post(`${session}/messages`).set(as(owner)).send({ text: "x", topic: "{{comodin}}" });
+    assert.equal(wildcard.status, 422);
+    assert.equal(wildcard.body.errors[0].field, "topic");
+    assert.match(wildcard.body.errors[0].detail, /comodines/);
+    await api().post(`${session}/close`).set(as(owner));
   });
 
   test("en 3.1.1, publicar con propiedades de usuario es un 422 que dice que son de MQTT 5", async () => {

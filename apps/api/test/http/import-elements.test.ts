@@ -78,4 +78,53 @@ describe("importar de otro proyecto por elementos", () => {
     assert.equal(again.body.endpoints, 0);
     assert.equal(again.body.skipped.length, 1);
   });
+
+  test("un flujo con un nodo canal trae su canal, y el nodo apunta a la copia", async () => {
+    const base = `${org()}/projects/${sourceId}`;
+    const created = await api()
+      .post(`${base}/channels`)
+      .set(as(owner))
+      .send({ name: "eco", url: "wss://eco.example.test/socket" });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const flow = await api()
+      .post(`${base}/workflows`)
+      .set(as(owner))
+      .send({
+        name: "con canal",
+        definition: { steps: [{ id: "c", kind: "channel", channel: { channelId: created.body.id } }] },
+      });
+    assert.equal(flow.status, 201, JSON.stringify(flow.body));
+
+    const result = await api()
+      .post(`${org()}/projects/${targetId}/import-elements`)
+      .set(as(owner))
+      .send({ sourceProjectId: sourceId, workflowIds: [flow.body.workflowId] });
+    assert.equal(result.status, 201, JSON.stringify(result.body));
+    assert.equal(result.body.workflows, 1);
+    assert.equal(result.body.channels, 1);
+
+    const channels = (await api().get(`${org()}/projects/${targetId}/channels`).set(as(owner))).body.channels as {
+      id: string;
+      name: string;
+    }[];
+    const copy = channels.find((row) => row.name === "eco");
+    assert.ok(copy, JSON.stringify(channels));
+    assert.notEqual(copy.id, created.body.id);
+    const flows = (await api().get(`${org()}/projects/${targetId}/workflows`).set(as(owner))).body.workflows as {
+      name: string;
+      steps: { channel?: { channelId: string } }[];
+    }[];
+    const imported = flows.find((row) => row.name === "con canal")!;
+    assert.equal(imported.steps[0]!.channel!.channelId, copy.id);
+
+    // Si el canal ya no está en el origen, el flujo no se copia y se dice por qué.
+    assert.equal((await api().delete(`${base}/channels/${created.body.id}`).set(as(owner))).status, 204);
+    const orphan = await api()
+      .post(`${org()}/projects/${targetId}/import-elements`)
+      .set(as(owner))
+      .send({ sourceProjectId: sourceId, workflowIds: [flow.body.workflowId] });
+    assert.equal(orphan.status, 201, JSON.stringify(orphan.body));
+    assert.equal(orphan.body.workflows, 0);
+    assert.match(JSON.stringify(orphan.body.skipped), /ya no existe en el origen/);
+  });
 });

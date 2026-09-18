@@ -22,6 +22,7 @@
 import { performance } from "node:perf_hooks";
 import { Inject, Injectable, Logger, Optional, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
 import {
+  publishTopicProblem,
   topicFilterProblem,
   unresolvedVariables,
   type ChannelExpectation,
@@ -255,8 +256,16 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
 
     const listeners: ChannelListeners = {
       onOpen: (handshake) => this.frame(session.id, { direction: "open", atMs: this.at(entry), handshake }),
-      onSent: (text) => this.frame(session.id, { direction: "out", atMs: this.at(entry), body: text }),
-      onMessage: (data, binary) =>
+      onSent: (text, wireBytes) =>
+        this.frame(session.id, {
+          direction: "out",
+          atMs: this.at(entry),
+          body: text,
+          ...(wireBytes !== undefined ? { bytes: wireBytes } : {}),
+        }),
+      // Como una suscripción MQTT: queda en la transcripción y no cuenta como enviado ni recibido.
+      onEvent: (text) => this.frame(session.id, { direction: "event", atMs: this.at(entry), body: text }),
+      onMessage: (data, binary, wireBytes) =>
         this.frame(session.id, {
           direction: "in",
           atMs: this.at(entry),
@@ -264,7 +273,7 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
           // Lo binario entra como hexadecimal de lo que quepa: guardar la trama entera es el
           // mismo motivo por el que un ejemplo tiene tope de cuerpo.
           body: binary ? data.subarray(0, 256).toString("hex") : data.toString("utf8"),
-          bytes: data.byteLength,
+          bytes: wireBytes ?? data.byteLength,
         }),
       onClose: (code, reason, trailers) =>
         this.frame(session.id, {
@@ -366,16 +375,32 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
       name: resolve(name),
       value: resolve(value),
     }));
+    // El tema también: `{{planta}}/sensores` es tan normal como un cuerpo con variables, y publicar
+    // en el tema con las llaves dentro es mandar a un sitio donde no escucha nadie, sin error.
+    const topic = publish ? resolve(publish.topic) : undefined;
+    const unresolvedInTopic = topic !== undefined && entry.plan.interpolate ? unresolvedVariables(topic) : [];
     const unresolved = entry.plan.interpolate ? unresolvedVariables([wire, properties ?? null]) : [];
-    if (unresolved.length) {
+    if (unresolved.length || unresolvedInTopic.length) {
+      const where = entry.plan.environmentName
+        ? ` en «${entry.plan.environmentName}»`
+        : ": la sesión se abrió sin entorno";
       throw new InvalidInputError(
-        `Variables sin valor: ${unresolved.join(", ")}`,
-        unresolved.map((name) => ({
-          field: "text",
-          detail: `{{${name}}} no tiene valor${entry.plan.environmentName ? ` en «${entry.plan.environmentName}»` : ": la sesión se abrió sin entorno"}`,
-        })),
+        `Variables sin valor: ${[...new Set([...unresolvedInTopic, ...unresolved])].join(", ")}`,
+        [
+          ...unresolvedInTopic.map((name) => ({ field: "topic", detail: `{{${name}}} no tiene valor${where}` })),
+          ...unresolved.map((name) => ({ field: "text", detail: `{{${name}}} no tiene valor${where}` })),
+        ],
         "unresolved-variables",
       );
+    }
+    // Y se vuelve a validar ya resuelto: una variable con `+` o `#` convierte un tema en un comodín,
+    // y publicar en un comodín hace que el broker cierre la conexión sin decir por qué.
+    const topicProblem = topic !== undefined && topic !== publish?.topic ? publishTopicProblem(topic) : null;
+    if (topicProblem) {
+      throw new InvalidInputError("El mensaje no es válido", [
+        // Sin el tema resuelto en el texto: una variable sensible dentro saldría en claro en el error.
+        { field: "topic", detail: `${topicProblem}, una vez resueltas las variables` },
+      ]);
     }
     if (emit && entry.channel.emit) {
       await this.emitEvent(sessionId, entry, entry.channel, text, emit, resolve);
@@ -402,12 +427,18 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
     entry.channel.check?.(wire);
     // Se anota lo que viaja, ya resuelto: la transcripción enseña lo que recibió el servidor, y la
     // redacción de `frame` tapa el valor de una variable sensible igual que el de cualquier otra.
-    const wirePublish = publish && { ...publish, ...(properties?.length ? { userProperties: properties } : {}) };
+    const wirePublish = publish && {
+      ...publish,
+      topic: topic ?? publish.topic,
+      ...(properties?.length ? { userProperties: properties } : {}),
+    };
+    const wireBytes = entry.channel.wireBytes?.(wire);
     this.frame(sessionId, {
       direction: "out",
       atMs: this.at(entry),
       body: wire,
-      ...(publish ? { topic: publish.topic, qos: publish.qos, retain: publish.retain } : {}),
+      ...(wireBytes !== undefined ? { bytes: wireBytes } : {}),
+      ...(wirePublish ? { topic: wirePublish.topic, qos: wirePublish.qos, retain: wirePublish.retain } : {}),
       // Se anotan como las cabeceras: tapadas por nombre y por valor dentro de `applyFrame`.
       ...(properties?.length
         ? { properties: { userProperties: properties.map(({ name, value }): [string, string] => [name, value]) } }
