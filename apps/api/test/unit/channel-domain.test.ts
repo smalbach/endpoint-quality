@@ -18,6 +18,7 @@ import {
   type ChannelCeilings,
 } from "@/modules/channels/domain/model";
 import { closeSession, isStale, onFrame, onTick, startSession } from "@/modules/channels/domain/session";
+import { redactMessage } from "@/modules/channels/application/commands/manage-sessions";
 
 const CEILINGS: ChannelCeilings = { ...DEFAULT_LIMITS, maxOpen: 20 };
 const now = new Date("2026-03-01T10:00:00.000Z");
@@ -177,5 +178,20 @@ describe("el segador", () => {
 
   test("una cerrada nunca es de segar, por viejo que sea su latido", () => {
     assert.equal(isStale({ status: "closed", heartbeatAt: new Date(0) }, now, beat), false);
+  });
+});
+
+describe("tapar un mensaje sin reescribirlo", () => {
+  test("sin nada que tapar, el texto sale exactamente como viajó", () => {
+    // Una transcripción enseña lo que pasó por el cable: un JSON compacto que aparece formateado es
+    // otro texto, con otro tamaño que el de `bytes`.
+    for (const text of ['{"type":"welcome"}', '{\n  "type": "welcome"\n}', "texto suelto", "[1,2,3]"]) {
+      assert.equal(redactMessage(text), text);
+    }
+  });
+
+  test("con algo tapado, compacto si llegó compacto, y sin el valor", () => {
+    const masked = redactMessage('{"type":"auth","password":"hunter2"}');
+    assert.equal(masked, '{"type":"auth","password":"••••••••"}');
   });
 });

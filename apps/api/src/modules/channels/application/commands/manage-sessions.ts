@@ -129,7 +129,7 @@ export class OpenChannelSessionHandler implements ICommandHandler<OpenChannelSes
         secrets,
         // La segunda red: los campos que se llaman como una credencial y los JWT por su forma, que
         // es lo que tapa un token que el servidor inventa y que ninguna variable conocía.
-        redact: (text) => redactBody(text, "application/json").body,
+        redact: redactMessage,
       },
       expect: channel.expectations,
       readOnly: environment ? !environment.writesAllowed : false,
@@ -189,6 +189,28 @@ export class OpenChannelSessionHandler implements ICommandHandler<OpenChannelSes
       secrets.push(pair.value);
     }
     return withQuery.toString();
+  }
+}
+
+/**
+ * Tapar un mensaje **sin reescribirlo** cuando no hay nada que tapar.
+ *
+ * `redactBody` devuelve el JSON formateado, que para un ejemplo guardado está bien y para una
+ * transcripción no: una conversación tiene que enseñar lo que pasó por el cable, y un mensaje
+ * compacto que aparece con saltos de línea y sangría es otro texto —con otro tamaño que el de
+ * `bytes`, y contra el que un `matches` escrito sobre el original ya no casa—. Lo cazó la prueba
+ * contra un servidor de verdad; la guionizada no comparaba cuerpos exactos.
+ *
+ * Así que: sin nada tapado, el texto tal cual; con algo tapado, compacto si llegó compacto.
+ */
+export function redactMessage(text: string): string {
+  const result = redactBody(text, "application/json");
+  if (!result.masked.length) return text;
+  if (text.includes("\n")) return result.body;
+  try {
+    return JSON.stringify(JSON.parse(result.body));
+  } catch {
+    return result.body;
   }
 }
 

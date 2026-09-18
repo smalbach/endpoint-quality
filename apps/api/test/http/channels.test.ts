@@ -13,7 +13,10 @@
  */
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import request from "supertest";
+import { WebSocketServer } from "ws";
 
 import { createTestApp, type TestContext } from "../support/test-app";
 
@@ -282,5 +285,92 @@ describe("una sesión", () => {
       403,
     );
     await api().post(`${base}/channels/sessions/${opened.body.id}/close`).set(as(owner));
+  });
+});
+
+describe("contra un servidor de verdad en loopback", () => {
+  /**
+   * La misma API, pero sin guion: la URL no está guionizada, así que el transporte de la aplicación
+   * de prueba la manda al de verdad —`ws`, la guarda de red, `createConnection` contra la IP— y hay
+   * bytes de verdad en el cable. Es lo que prueba que las piezas probadas por separado encajan: el
+   * saludo que llega con el 101, el código de cierre de verdad y el reloj que corta un socket callado.
+   */
+  let server: Server;
+  let sockets: WebSocketServer;
+  let port: number;
+
+  before(async () => {
+    server = createServer();
+    sockets = new WebSocketServer({ server });
+    sockets.on("connection", (client, upgrade) => {
+      if (upgrade.url === "/calla") return;
+      client.send('{"type":"welcome"}');
+      client.on("message", (data) => {
+        const text = String(data);
+        if (text === "adiós") client.close(4001, "hasta luego");
+        else client.send(JSON.stringify({ type: "eco", got: text }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    port = (server.address() as AddressInfo).port;
+  });
+
+  after(async () => {
+    for (const client of sockets.clients) client.terminate();
+    sockets.close();
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  test("saludo, eco y un cierre con código propio, con bytes de verdad", async () => {
+    const id = await channel({
+      url: `ws://127.0.0.1:${port}/eco`,
+      expectations: {
+        closeCode: 4001,
+        checks: [{ source: "message", path: "type", operator: "equals", value: "eco", match: { at: "any" } }],
+      },
+    });
+    const opened = await api().post(`${base}/channels/${id}/sessions`).set(as(owner)).send({});
+    assert.equal(opened.status, 201, JSON.stringify(opened.body));
+    assert.equal(opened.body.handshake.status, 101);
+
+    await api().post(`${base}/channels/sessions/${opened.body.id}/messages`).set(as(owner)).send({ text: "hola" });
+    await settle();
+    await api().post(`${base}/channels/sessions/${opened.body.id}/messages`).set(as(owner)).send({ text: "adiós" });
+
+    // El cierre lo da el servidor: hay que esperar a que llegue, no a un tiempo fijo.
+    let read = await api().get(`${base}/channels/sessions/${opened.body.id}`).set(as(owner));
+    for (let attempt = 0; attempt < 50 && read.body.status === "open"; attempt += 1) {
+      await settle();
+      read = await api().get(`${base}/channels/sessions/${opened.body.id}`).set(as(owner));
+    }
+    assert.equal(read.body.status, "closed", JSON.stringify(read.body));
+    assert.equal(read.body.stopReason, "closed-by-peer");
+    assert.equal(read.body.closeCode, 4001);
+    assert.equal(read.body.closeReason, "hasta luego");
+    assert.deepEqual(
+      read.body.messages.map((message: { direction: string; body: string }) => [message.direction, message.body]),
+      [
+        ["in", '{"type":"welcome"}'],
+        ["out", "hola"],
+        ["in", '{"type":"eco","got":"hola"}'],
+        ["out", "adiós"],
+      ],
+    );
+    assert.equal(read.body.verdict.ok, true, JSON.stringify(read.body.verdict));
+  });
+
+  test("un servidor que acepta y calla se corta por inactividad, con el reloj del registro", async () => {
+    const id = await channel({ url: `ws://127.0.0.1:${port}/calla`, limits: { idleMs: 150 } });
+    const opened = await api().post(`${base}/channels/${id}/sessions`).set(as(owner)).send({});
+    assert.equal(opened.body.status, "open");
+
+    let read = opened;
+    for (let attempt = 0; attempt < 60 && read.body.status === "open"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      read = await api().get(`${base}/channels/sessions/${opened.body.id}`).set(as(owner));
+    }
+    assert.equal(read.body.status, "closed", JSON.stringify(read.body));
+    assert.equal(read.body.stopReason, "idle-cap");
   });
 });
