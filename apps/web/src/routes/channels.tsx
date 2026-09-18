@@ -17,7 +17,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, streamRun } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { resolveActive, useActiveEnvironment } from "@/lib/active-environment";
-import { gap, isOver, mergeMessage, prettyBody, stopText, visibleMessages } from "@/lib/channel-view";
+import {
+  MAX_SAVED_MESSAGES,
+  filterMessages,
+  gap,
+  isOver,
+  mergeMessage,
+  prettyBody,
+  stopText,
+  visibleMessages,
+  withSavedMessage,
+  type MessageFilter,
+} from "@/lib/channel-view";
 import { cn } from "@/lib/format";
 import type { FieldRow } from "@/lib/request-fields";
 import type {
@@ -31,6 +42,14 @@ import type {
   RequestAuthView,
 } from "@/lib/types";
 import { AuthEditor } from "@/components/auth-editor";
+import { MqttChannelSettings } from "@/components/mqtt-channel-settings";
+import {
+  BLANK_PUBLISH,
+  MessageRoute,
+  MqttPublishFields,
+  publishTopicHint,
+  type MqttPublishDraft,
+} from "@/components/mqtt-publish";
 import { GrpcChannelForm } from "@/components/grpc-channel-form";
 import { EndpointsTabs } from "@/components/endpoints-tabs";
 import { ConfirmDialog, Modal } from "@/components/overlay";
@@ -90,8 +109,8 @@ export function ChannelsPage() {
             <div className="mt-6 text-center">
               <p className="text-sm font-medium text-slate-700">Ningún canal todavía</p>
               <p className="mt-1 text-xs text-slate-500">
-                Un canal es un WebSocket (<code>wss://</code>) o un servicio gRPC (<code>grpcs://</code>): lo que se le
-                manda y lo que se espera oír.
+                Un canal es un WebSocket (<code>wss://</code>), un broker MQTT (<code>mqtts://</code>) o un servicio
+                gRPC (<code>grpcs://</code>): lo que se le manda y lo que se espera oír.
               </p>
             </div>
           ) : (
@@ -194,7 +213,7 @@ function NewChannelModal({
   return (
     <Modal
       title="Nuevo canal"
-      description="Un WebSocket o un servicio gRPC del proyecto. La URL puede llevar {{variables}}: se resuelven contra el entorno activo al conectar."
+      description="Un WebSocket, un broker MQTT o un servicio gRPC del proyecto. La URL puede llevar {{variables}}: se resuelven contra el entorno activo al conectar."
       onClose={onClose}
       footer={
         <>
@@ -208,28 +227,17 @@ function NewChannelModal({
       }
     >
       <div className="space-y-3">
-        <div className="flex gap-1 rounded-lg bg-slate-100 p-0.5 text-xs" role="radiogroup" aria-label="Protocolo">
-          {(
-            [
-              ["ws", "WebSocket"],
-              ["grpc", "gRPC"],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              role="radio"
-              aria-checked={protocol === value}
-              onClick={() => setProtocol(value)}
-              className={cn(
-                "flex-1 rounded-md px-2.5 py-1 font-medium",
-                protocol === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500",
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <Field label="Protocolo" error={problemOf("protocol")}>
+          <select
+            className={inputClass}
+            value={protocol}
+            onChange={(event) => setProtocol(event.target.value as ChannelView["protocol"])}
+          >
+            <option value="ws">WebSocket</option>
+            <option value="mqtt">MQTT</option>
+            <option value="grpc">gRPC</option>
+          </select>
+        </Field>
         <Field label="Nombre" error={problemOf("name")}>
           <input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} />
         </Field>
@@ -237,9 +245,11 @@ function NewChannelModal({
           <input
             className={cn(inputClass, "font-mono")}
             placeholder={
-              protocol === "grpc"
-                ? "grpcs://api.ejemplo.com:443 o {{grpcBase}}"
-                : "wss://api.ejemplo.com/socket o {{wsBase}}/socket"
+              protocol === "mqtt"
+                ? "mqtts://broker.ejemplo.com:8883 o {{broker}}"
+                : protocol === "grpc"
+                  ? "grpcs://api.ejemplo.com:443 o {{grpcBase}}"
+                  : "wss://api.ejemplo.com/socket o {{wsBase}}/socket"
             }
             value={url}
             onChange={(event) => setUrl(event.target.value)}
@@ -312,6 +322,15 @@ function ChannelPanel({
       <div className="min-h-0 flex-1 overflow-y-auto">
         {tab === "conversation" ? (
           <Conversation base={base} channel={channel} environment={environment} canEdit={canEdit} />
+        ) : channel.protocol === "mqtt" ? (
+          <MqttChannelSettings
+            base={base}
+            projectId={projectId}
+            channel={channel}
+            variables={Object.keys(environment?.variables ?? {})}
+            canEdit={canEdit}
+            onRemoved={onRemoved}
+          />
         ) : (
           <ChannelSettings
             base={base}
@@ -353,6 +372,12 @@ function Conversation({
   const [session, setSession] = useState<ChannelSessionView | null>(null);
   const [messages, setMessages] = useState<ChannelMessageView[]>([]);
   const [draft, setDraft] = useState("");
+  const [filter, setFilter] = useState<MessageFilter>({ text: "", direction: "all" });
+  /** El nombre con el que se guarda el borrador en la biblioteca; `null` mientras no se pide. */
+  const [savingAs, setSavingAs] = useState<string | null>(null);
+  // Solo en MQTT: a qué tema se publica. Un WebSocket no manda nada de esto.
+  const mqtt = channel.protocol === "mqtt";
+  const [publish, setPublish] = useState<MqttPublishDraft>(BLANK_PUBLISH);
   const bottom = useRef<HTMLDivElement>(null);
 
   const setSessionId = (id: string | null) =>
@@ -428,12 +453,32 @@ function Conversation({
   });
   const send = useMutation({
     mutationFn: (text: string) =>
-      api(`${base}/channels/sessions/${sessionId}/messages`, { method: "POST", body: { text } }),
+      api(`${base}/channels/sessions/${sessionId}/messages`, {
+        method: "POST",
+        body: mqtt ? { text, ...publish } : { text },
+      }),
     onSuccess: () => setDraft(""),
     onError: (error) => toast.error(message(error)),
   });
   const close = useMutation({
     mutationFn: () => api(`${base}/channels/sessions/${sessionId}/close`, { method: "POST", body: {} }),
+    onError: (error) => toast.error(message(error)),
+  });
+  // Guardar el borrador en la biblioteca sin ir a Configuración, como el «Save message» de Postman:
+  // la trama que se acaba de afinar a mano es justo la que se quiere tener a un clic la próxima vez.
+  // Va por el mismo PATCH que la pestaña de configuración, con las mismas reglas del servidor.
+  const library = useMemo(
+    () => (savingAs === null ? null : withSavedMessage(channel.messages, { name: savingAs, body: draft })),
+    [channel.messages, savingAs, draft],
+  );
+  const keep = useMutation({
+    mutationFn: (messages: { name: string; body: string }[]) =>
+      api<ChannelView>(`${base}/channels/${channel.id}`, { method: "PATCH", body: { messages } }),
+    onSuccess: () => {
+      toast.success(`«${savingAs?.trim()}» guardada en la biblioteca`);
+      setSavingAs(null);
+      void queryClient.invalidateQueries({ queryKey: ["channel", channel.id] });
+    },
     onError: (error) => toast.error(message(error)),
   });
   // El medio cierre de un stream gRPC: «ya no mando más», y el servidor contesta lo que le quede.
@@ -444,8 +489,21 @@ function Conversation({
   const grpc = channel.protocol === "grpc";
 
   const open = session !== null && !isOver(session);
-  const canSend = canEdit && open && session.live && Boolean(draft.trim()) && !send.isPending;
+  const canSend =
+    canEdit &&
+    open &&
+    session.live &&
+    Boolean(draft.trim()) &&
+    !send.isPending &&
+    (!mqtt || publishTopicHint(publish.topic) === null);
   const rows = useMemo(() => visibleMessages(messages), [messages]);
+  const shown = useMemo(() => filterMessages(rows, filter), [rows, filter]);
+  // El hueco se mide contra el mensaje anterior **de la conversación**, no contra el anterior que
+  // pasó el filtro: filtrar no puede inventarse una pausa de tres segundos que no hubo.
+  const previousAt = useMemo(
+    () => new Map(rows.map((row, index) => [row.seq, index > 0 ? rows[index - 1].atMs : null])),
+    [rows],
+  );
 
   return (
     <div className="flex min-h-full flex-col gap-3">
@@ -491,14 +549,43 @@ function Conversation({
 
       {session && <SessionHeader session={session} maxMessages={channel.limits.maxMessages} grpc={grpc} />}
 
+      {rows.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            aria-label="Buscar en la conversación"
+            className={cn(inputClass, "h-8 max-w-xs flex-1 text-xs")}
+            placeholder="Buscar en los mensajes"
+            value={filter.text}
+            onChange={(event) => setFilter({ ...filter, text: event.target.value })}
+          />
+          <select
+            aria-label="Qué mensajes"
+            className={cn(inputClass, "h-8 w-auto text-xs")}
+            value={filter.direction}
+            onChange={(event) => setFilter({ ...filter, direction: event.target.value as MessageFilter["direction"] })}
+          >
+            <option value="all">Todos</option>
+            <option value="in">Recibidos</option>
+            <option value="out">Enviados</option>
+          </select>
+          {shown.length !== rows.length && (
+            <span className="text-[11px] text-slate-500">
+              {shown.length} de {rows.length}
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="min-h-40 flex-1 rounded-xl border border-slate-200 bg-slate-50 p-2" aria-label="Conversación">
         {rows.length === 0 ? (
           <p className="p-4 text-center text-xs text-slate-400">
             {session ? "Sin mensajes todavía." : "Conecta para empezar la conversación."}
           </p>
+        ) : shown.length === 0 ? (
+          <p className="p-4 text-center text-xs text-slate-400">Ningún mensaje pasa el filtro.</p>
         ) : (
           <ol className="space-y-1.5">
-            {rows.map((row, index) => (
+            {shown.map((row) => (
               <li
                 key={row.seq}
                 className={cn(
@@ -512,8 +599,9 @@ function Conversation({
               >
                 <div className="mb-0.5 flex items-center gap-2 text-[10px] opacity-70">
                   <span>{row.direction === "out" ? "enviado" : row.direction === "in" ? "recibido" : "error"}</span>
-                  <span>{gap(row.atMs, index > 0 ? rows[index - 1].atMs : null)}</span>
+                  <span>{gap(row.atMs, previousAt.get(row.seq) ?? null)}</span>
                   {row.kind === "binary" && <span>binario · {row.bytes} B</span>}
+                  <MessageRoute message={row} />
                 </div>
                 <pre className="whitespace-pre-wrap break-words font-mono">{prettyBody(row.body)}</pre>
                 {row.truncated && (
@@ -536,7 +624,10 @@ function Conversation({
                 <button
                   key={saved.name}
                   type="button"
-                  onClick={() => setDraft(saved.body)}
+                  onClick={() => {
+                    setDraft(saved.body);
+                    if (mqtt && saved.topic) setPublish({ ...publish, topic: saved.topic });
+                  }}
                   className="rounded-full border border-slate-200 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
                 >
                   {saved.name}
@@ -544,6 +635,7 @@ function Conversation({
               ))}
             </div>
           )}
+          {mqtt && <MqttPublishFields value={publish} onChange={setPublish} />}
           <div className="flex gap-2">
             <textarea
               aria-label="Mensaje"
@@ -563,10 +655,47 @@ function Conversation({
                 }
               }}
             />
-            <Button className="self-end" disabled={!canSend} onClick={() => send.mutate(draft)}>
-              Enviar
-            </Button>
+            <div className="flex flex-col justify-end gap-1">
+              <Button
+                variant="ghost"
+                className="h-8 text-xs"
+                disabled={!draft.trim() || savingAs !== null}
+                onClick={() => setSavingAs("")}
+              >
+                Guardar en la biblioteca
+              </Button>
+              <Button disabled={!canSend} onClick={() => send.mutate(draft)}>
+                Enviar
+              </Button>
+            </div>
           </div>
+          {savingAs !== null && (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                autoFocus
+                aria-label="Nombre de la trama"
+                className={cn(inputClass, "h-8 max-w-xs flex-1 text-xs")}
+                placeholder="auth, suscribirse, ping…"
+                value={savingAs}
+                onChange={(event) => setSavingAs(event.target.value)}
+              />
+              <Button
+                className="h-8 text-xs"
+                disabled={!savingAs.trim() || !library || keep.isPending}
+                onClick={() => library && keep.mutate(library)}
+              >
+                {channel.messages.some((saved) => saved.name.trim() === savingAs.trim()) ? "Sustituir" : "Guardar"}
+              </Button>
+              <Button variant="ghost" className="h-8 text-xs" onClick={() => setSavingAs(null)}>
+                Cancelar
+              </Button>
+              <p className="w-full text-[11px] text-slate-500">
+                {library
+                  ? "Se guarda tal cual está escrita: para un token, mejor {{variable}} que el valor."
+                  : `La biblioteca ya tiene ${MAX_SAVED_MESSAGES} tramas: borra alguna en Configuración.`}
+              </p>
+            </div>
+          )}
         </div>
       )}
 
@@ -638,7 +767,7 @@ function SessionHeader({
       <p className="text-slate-600">
         {session.counters.sent} enviados · {session.counters.received} recibidos ·{" "}
         {session.counters.bytesIn.toLocaleString("es")} bytes recibidos
-        {session.handshake && !grpc && ` · upgrade ${session.handshake.status}`}
+        {session.handshake && !grpc && ` · ${session.handshake.via ?? "upgrade"} ${session.handshake.status}`}
         {over && session.stopReason && (
           <>
             {" "}

@@ -2623,3 +2623,50 @@ No comprobado: la pantalla en el navegador (para entrar hace falta escribir una 
 editor, el explorador y el modo por GET están cubiertos por pruebas de componente.
 
 `api 1035 pruebas · web 503 · runner-core 336 · import-detect 29 · lint 0 errores · typecheck limpio`
+
+## Paridad con Postman, ola 11: el visualizador
+
+`pm.visualizer.set(plantilla, datos, opciones)` en el script posterior, y una pestaña «Visualizar»
+en la respuesta que lo dibuja. Antes, una colección de Postman que lo usaba se importaba bien y al
+enviar fallaba con un `TypeError` sobre `undefined`.
+
+### Dónde corre cada cosa
+
+El script sigue en su proceso aislado y **no dibuja nada**: deja la plantilla y los datos como
+texto, los datos serializados en el momento de la llamada. Vuelven leídos como el resto del
+resultado, sin fiarse (JSON válido, tamaños: 200 kB de plantilla, 2 MB de datos), y con los secretos
+tapados. Los datos se tapan recorriéndolos y no sobre su texto: un secreto numérico o usado como
+clave rompería el JSON y el marco no recibiría nada.
+
+La plantilla es código —Handlebars la compila a una función, y un `<script>` en ella corre tal
+cual— y viene de un script que escribió cualquiera con permiso de edición o que trajo una colección
+importada. Así que se dibuja en un `iframe` con `sandbox="allow-scripts"` y **sin**
+`allow-same-origin`: origen opaco, sin cookies, sin almacenamiento, sin alcance a la página que
+tiene la sesión. Handlebars va dentro del documento del marco, y nada de la plantilla toca esta
+página. Es el modelo de Postman, y las plantillas escritas para él funcionan igual: `pm.getData`
+responde de forma asíncrona, y una librería de gráficos desde un CDN carga. El componente va en un
+trozo aparte (92 kB) que solo carga quien abre la pestaña.
+
+En una corrida no hay panel de respuesta: un nodo de script que llama a `pm.visualizer` lo dice en
+su informe en vez de parecer que no hizo nada.
+
+### Cómo se comprobó
+
+Pruebas del proceso real (se guarda en el momento de la llamada, `clear`, no existe en el previo,
+datos circulares con su error), de la lectura sin fiarse, del tapado estructural y de la ruta HTTP
+con un secreto del entorno dentro de los datos. El documento del marco se ejecutó en jsdom: dibuja,
+escapa lo que viene de la respuesta, un `</script>` en los datos no cierra el script que los lleva,
+`pm.getData` entrega, una plantilla rota explica por qué y las opciones llegan a Handlebars.
+
+En Chromium de verdad, el mismo documento en un marco con el mismo `sandbox`: `origin=null`, el
+padre, las cookies y `localStorage` bloqueados, `pm.getData` entrega, y Chart.js cargado desde
+jsDelivr dibuja su gráfico. En la pila desplegada, «Enviar» contra una API GraphQL pública por HTTPS
+con un script que visualiza la respuesta: 200 y 14 filas en `visualization.data`. Datos de la prueba
+borrados.
+
+No comprobado: la pestaña dentro de la aplicación, en el navegador (para entrar hace falta escribir
+una contraseña); la cubre una prueba de componente. La prueba en la pila no pudo usar una variable
+secreta: crear una devuelve 500 porque `SECRETS_KEY` de `docker/.env` no mide 32 bytes. Es el fallo
+de configuración ya conocido, y no se tocó.
+
+`api 1040 pruebas · web 509 · runner-core 336 · lint 0 errores · typecheck limpio`

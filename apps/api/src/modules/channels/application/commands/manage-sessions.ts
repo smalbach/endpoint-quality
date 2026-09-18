@@ -11,12 +11,14 @@
  * esa lista —un token que el servidor inventa y devuelve— lo tapa la regla por nombre de campo
  * (`redactBody`), que es la segunda red y la misma que usan los ejemplos guardados.
  */
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { Inject } from "@nestjs/common";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 import {
   interpolateText,
+  publishTopicProblem,
   signAuth,
+  type ComputedSeed,
   unresolvedVariables,
   withEnvironmentNamespace,
   type RequestAuth,
@@ -35,6 +37,7 @@ import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/module
 import { SECRET_HEADER } from "@/modules/endpoints/domain/examples";
 import type { Environment } from "@/modules/environments/domain/model";
 import { MAX_SAVED_MESSAGE_BYTES, effectiveLimits, type Channel } from "../../domain/model";
+import { mqttSessionPlan, planProblems, type MqttPublish, type MqttSessionPlan } from "../../domain/mqtt";
 import {
   CHANNEL_REPOSITORY,
   CHANNEL_SESSION_REPOSITORY,
@@ -75,7 +78,7 @@ export class OpenChannelSessionHandler implements ICommandHandler<OpenChannelSes
     const channel = await this.channels.findById(project.id, command.channelId);
     if (!channel) throw new NotFoundError("El canal no existe", "channel-not-found");
 
-    const { environment, url, headers, secrets, interpolate } = await resolveChannelTarget(
+    const { environment, url, headers, secrets, interpolate, variables, mqtt } = await resolveChannelTarget(
       { environments: this.environments, cipher: this.cipher },
       project.id,
       channel,
@@ -122,6 +125,12 @@ export class OpenChannelSessionHandler implements ICommandHandler<OpenChannelSes
       readOnly,
       environmentName: environment?.name ?? "",
       open,
+      // Los mensajes llevan `{{variables}}` como la URL y las cabeceras: sin esto, una trama
+      // guardada con `{{token}}` viajaba con las llaves literales, y guardarla con el valor es
+      // dejar la credencial en la columna del canal. La semilla es nueva en cada mensaje, porque
+      // `{{$uuid}}` en una trama es un id por mensaje y no uno por sesión.
+      interpolate: (text) => interpolateText(text, variables, freshSeed(this.clock.now())),
+      ...(mqtt ? { mqtt } : {}),
     });
     return viewSession(started, this.registry.owns(started.id));
   }
@@ -146,6 +155,8 @@ export async function resolveChannelTarget(
   headers: Record<string, string>;
   secrets: string[];
   interpolate: (value: string) => string;
+  variables: Record<string, string>;
+  mqtt: MqttSessionPlan | undefined;
 }> {
   const environment = environmentId ? await deps.environments.findById(environmentId) : null;
   if (environmentId && (!environment || environment.projectId !== projectId))
@@ -169,7 +180,14 @@ export async function resolveChannelTarget(
     if (header.enabled && header.name.trim()) headers[header.name.trim()] = interpolate(header.value);
   }
 
-  const unresolved = unresolvedVariables([url, headers]);
+  // MQTT: usuario y contraseña salen de la autenticación `basic`, y la contraseña entra aquí en la
+  // lista de secretos —ver `mqttSessionPlan`—. No se «firma»: no hay upgrade que firmar.
+  const mqtt =
+    channel.protocol === "mqtt" && channel.mqtt
+      ? mqttSessionPlan(channel.mqtt, channel.auth, interpolate, secrets, () => randomUUID().slice(0, 8))
+      : undefined;
+
+  const unresolved = unresolvedVariables([url, headers, mqtt ?? null]);
   if (unresolved.length) {
     throw new InvalidInputError(
       `Variables sin valor: ${unresolved.join(", ")}`,
@@ -181,10 +199,13 @@ export async function resolveChannelTarget(
     );
   }
 
-  if (channel.auth && channel.auth.type !== "none" && channel.auth.type !== "inherit") {
+  const planned = mqtt ? planProblems(mqtt) : [];
+  if (planned.length) throw new InvalidInputError("Las suscripciones no son válidas con este entorno", planned);
+
+  if (!mqtt && channel.auth && channel.auth.type !== "none" && channel.auth.type !== "inherit") {
     url = sign(channel.auth, url, headers, interpolate, secrets, channel.protocol);
   }
-  return { environment, url, headers, secrets, interpolate };
+  return { environment, url, headers, secrets, interpolate, variables, mqtt };
 }
 
 /**
@@ -271,12 +292,22 @@ export function redactMessage(text: string): string {
   }
 }
 
+/** Lo que resuelve `{{$uuid}}`, `{{$now}}` y compañía, igual que en «Enviar» de un endpoint. */
+const freshSeed = (now: Date): ComputedSeed => ({
+  uuid: randomUUID(),
+  now,
+  random: Math.random(),
+  hmacSha256: (key, text) => createHmac("sha256", key).update(text).digest("hex"),
+});
+
 export class SendChannelMessageCommand implements ICommand {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
     readonly sessionId: string,
     readonly text: string,
+    /** Solo en MQTT: a qué tema, con qué QoS y si se retiene. */
+    readonly publish?: MqttPublish,
   ) {}
 }
 
@@ -298,7 +329,10 @@ export class SendChannelMessageHandler implements ICommandHandler<SendChannelMes
         { field: "text", detail: `Texto, como mucho ${MAX_SAVED_MESSAGE_BYTES / 1024} KB` },
       ]);
     }
-    await this.registry.send(session.id, command.text);
+    const topicProblem = command.publish ? publishTopicProblem(command.publish.topic) : null;
+    if (topicProblem)
+      throw new InvalidInputError("El mensaje no es válido", [{ field: "topic", detail: topicProblem }]);
+    await this.registry.send(session.id, command.text, command.publish);
   }
 }
 

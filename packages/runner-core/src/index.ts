@@ -14,6 +14,7 @@ export * from "./pattern.ts";
 export * from "./assertions.ts";
 export * from "./checks.ts";
 export * from "./conversation.ts";
+export * from "./mqtt-topic.ts";
 export * from "./flow.ts";
 export * from "./variables.ts";
 export * from "./workflows.ts";

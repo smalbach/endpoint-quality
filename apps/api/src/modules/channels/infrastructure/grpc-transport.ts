@@ -286,7 +286,7 @@ export class GrpcChannelTransport implements GrpcTransportPort {
       started.on("metadata", (received: Metadata) => {
         if (finished) return;
         ready();
-        listeners.onOpen?.({ status: 200, headers: flatMetadata(received) });
+        listeners.onOpen?.({ status: 200, headers: flatMetadata(received), via: "inicio de la llamada" });
       });
       started.on("status", onStatus);
       // El estado llega por `status`, con el código y los trailers. Sin esta escucha, el `error` que

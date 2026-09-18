@@ -9,6 +9,7 @@
  */
 import { useMemo, useState } from "react";
 
+import { GraphqlSuggest } from "@/components/graphql-suggest";
 import { useToast } from "@/components/toast";
 import { VariableSuggest } from "@/components/variable-suggest";
 import { graphqlVariablesProblem } from "@/lib/graphql-draft";
@@ -126,14 +127,18 @@ export default function GraphqlBodyEditor({
         </p>
         <VariableSuggest variables={variableNames} value={query} onChange={(text) => onChange({ text })}>
           {(suggest) => (
-            <textarea
-              {...suggest}
-              aria-label="Operación GraphQL"
-              className="h-56 w-full rounded-lg border border-slate-200 bg-slate-950 p-3 font-mono text-[11px] leading-5 text-slate-100 outline-none focus:border-slate-900"
-              placeholder={"query Usuario($id: ID!) {\n  user(id: $id) {\n    name\n  }\n}"}
-              disabled={disabled}
-              spellCheck={false}
-            />
+            <GraphqlSuggest schema={schema} field={suggest}>
+              {(complete) => (
+                <textarea
+                  {...complete}
+                  aria-label="Operación GraphQL"
+                  className="h-56 w-full rounded-lg border border-slate-200 bg-slate-950 p-3 font-mono text-[11px] leading-5 text-slate-100 outline-none focus:border-slate-900"
+                  placeholder={"query Usuario($id: ID!) {\n  user(id: $id) {\n    name\n  }\n}"}
+                  disabled={disabled}
+                  spellCheck={false}
+                />
+              )}
+            </GraphqlSuggest>
           )}
         </VariableSuggest>
         {mutationOverGet && (
@@ -196,14 +201,14 @@ export default function GraphqlBodyEditor({
         {problem && <p className="text-[11px] text-rose-700">{problem}</p>}
         {!loaded && !problem && (
           <p className="text-[11px] text-slate-500">
-            Con el esquema, la operación se valida mientras se escribe y las operaciones se eligen de una lista. Se pide
-            por introspección con el entorno y la autenticación de la petición, o se lee de un SDL.
+            Con el esquema, la operación se valida y se autocompleta mientras se escribe, y las operaciones se eligen de
+            una lista. Se pide por introspección con el entorno y la autenticación de la petición, o se lee de un SDL.
           </p>
         )}
         {loaded && (
           <>
             <p className="text-[10px] text-slate-400">
-              {typeCount(loaded.schema)} tipos · de {loaded.source} · no se guarda
+              {typeCount(loaded.schema)} tipos · de {loaded.source} · no se guarda · Ctrl+Espacio sugiere
             </p>
             <input
               aria-label="Buscar operación"

@@ -140,6 +140,14 @@ describe("la escalera de roles", () => {
       .send({ email: "nuevo@example.com", role: "editor" });
     assert.equal(allowed.status, 201);
 
+    // Y el enlace sale por correo a quien se invita, con la organización y el rol dichos: un enlace
+    // que llega sin eso no se distingue de un phishing. El registro de la API no lo repite.
+    await new Promise((resolve) => setImmediate(resolve));
+    const mail = context.mailer.sent.find((sent) => sent.to === "nuevo@example.com");
+    assert.ok(mail, "la invitación no salió por correo");
+    assert.ok(mail.text.includes(`/register?invitation=${encodeURIComponent(allowed.body.token)}`), mail.text);
+    assert.match(mail.text, /rol editor/);
+
     // Without this rule an admin invites a new owner and then either accepts it themselves or
     // asks the invitee for the link: a one-step escalation dressed as an ordinary feature.
     const escalation = await api()

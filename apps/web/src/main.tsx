@@ -24,6 +24,7 @@ import { RolesPage } from "@/routes/roles";
 import { MocksPage } from "@/routes/mocks";
 import { DocSitesPage } from "@/routes/doc-sites";
 import { MonitorsPage } from "@/routes/monitors";
+import { ForkSyncPage } from "@/routes/fork-sync";
 import { ChannelsPage } from "@/routes/channels";
 import { PublishedDocsPage } from "@/routes/published-docs";
 import { ProjectGeneralPage, ProjectSettingsLayout } from "@/routes/project-settings";
@@ -154,6 +155,7 @@ createRoot(document.getElementById("root")!).render(
                     <Route path="mocks" element={<MocksPage />} />
                     <Route path="doc-sites" element={<DocSitesPage />} />
                     <Route path="monitors" element={<MonitorsPage />} />
+                    <Route path="fork/:direction" element={<ForkSyncPage />} />
                     <Route path="settings" element={<ProjectSettingsLayout />}>
                       <Route index element={<ProjectGeneralPage />} />
                       <Route path="contract" element={<ConfigPage />} />

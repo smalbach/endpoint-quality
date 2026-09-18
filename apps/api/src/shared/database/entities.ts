@@ -142,6 +142,26 @@ export class ProjectEntity {
   @Column({ type: "timestamptz", nullable: true }) deletedAt: Date | null;
 }
 
+/**
+ * Una bifurcación: su original, y la última foto que los dos tuvieron en común.
+ *
+ * Una fila por bifurcación, con la bifurcación como clave: un proyecto sale de un solo original.
+ * `base` y `lineage` son `jsonb` porque se escriben enteros en cada sincronización y solo se leen
+ * enteros para comparar. La foto no lleva secretos —ver `fork-snapshot.ts`—.
+ */
+@Entity({ name: "project_forks" })
+export class ProjectForkEntity {
+  @PrimaryColumn("uuid") forkProjectId: string;
+  @Index() @Column("uuid") parentProjectId: string;
+  @Index() @Column("uuid") organizationId: string;
+  @Column("uuid") createdBy: string;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) syncedAt: Date;
+  @Column({ type: "int", default: 1 }) version: number;
+  @Column({ type: "jsonb" }) base: Record<string, unknown>;
+  @Column({ type: "jsonb" }) lineage: Record<string, unknown>;
+}
+
 /** Where a contract comes from, so a re-import needs no arguments and a drift check can run on
  * a schedule. */
 @Entity({ name: "spec_sources" })
@@ -696,6 +716,8 @@ export class ChannelEndpointEntity {
   @Column({ type: "jsonb", default: () => "'{}'" }) expectations: unknown;
   /** Las tramas guardadas para no reteclear la de auth en cada sesión. */
   @Column({ type: "jsonb", default: () => "'[]'" }) messages: unknown;
+  /** Solo en un canal MQTT: broker, sesión y suscripciones. Ver `1700000029000-ChannelMqtt`. */
+  @Column({ type: "jsonb", nullable: true }) mqtt: unknown;
   /** Servicio, método, mensaje y plazo de un canal gRPC. `null` en los demás protocolos. */
   @Column({ type: "jsonb", nullable: true }) grpc: unknown;
   @Column({ type: "int", default: 0 }) orderIndex: number;
@@ -741,6 +763,54 @@ export class ChannelMessageEntity {
   @Column({ type: "int" }) bytes: number;
   @Column({ type: "boolean", default: false }) truncated: boolean;
   @Column({ type: "text", default: "" }) body: string;
+  /** Solo MQTT: el tema (ya tapado), la QoS y el `retain`. Nulos en un WebSocket. */
+  @Column({ type: "text", nullable: true }) topic: string | null;
+  @Column({ type: "smallint", nullable: true }) qos: number | null;
+  @Column({ type: "boolean", nullable: true }) retain: boolean | null;
+}
+
+/**
+ * Una sesión de captura: el proxy abierto para un proyecto, con su token y sus topes.
+ *
+ * Del token solo el hash, como de un token de API: se enseña una vez al abrir la sesión. El
+ * razonamiento entero está en `captures/infrastructure/capture-proxy.ts`.
+ */
+@Entity({ name: "capture_sessions" })
+export class CaptureSessionEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Column({ type: "varchar", length: 20 }) status: string;
+  @Column({ type: "varchar", length: 64 }) tokenHash: string;
+  @Column({ type: "jsonb" }) limits: unknown;
+  @Column({ type: "int", default: 0 }) itemCount: number;
+  @Column({ type: "timestamptz" }) startedAt: Date;
+  @Column({ type: "timestamptz" }) expiresAt: Date;
+  @Column({ type: "timestamptz", nullable: true }) stoppedAt: Date | null;
+  @Column({ type: "varchar", length: 30, nullable: true }) stopReason: string | null;
+  @Column("uuid") startedBy: string;
+}
+
+/** Una petición grabada por el proxy, **ya tapada**: ver `captures/domain/model.ts`. */
+@Entity({ name: "capture_items" })
+export class CaptureItemEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Column("uuid") sessionId: string;
+  @Column("uuid") projectId: string;
+  @Column({ type: "int" }) seq: number;
+  @Column({ type: "timestamptz" }) at: Date;
+  @Column({ type: "varchar", length: 16 }) method: string;
+  @Column({ type: "varchar", length: 4000 }) url: string;
+  @Column({ type: "int", nullable: true }) status: number | null;
+  @Column({ type: "boolean", default: false }) encrypted: boolean;
+  @Column({ type: "jsonb" }) requestHeaders: Record<string, string>;
+  @Column({ type: "text", default: "" }) requestBody: string;
+  @Column({ type: "boolean", default: false }) requestBodyTruncated: boolean;
+  @Column({ type: "jsonb" }) responseHeaders: Record<string, string>;
+  @Column({ type: "text", default: "" }) responseBody: string;
+  @Column({ type: "boolean", default: false }) responseBodyTruncated: boolean;
+  @Column({ type: "varchar", length: 200, default: "" }) responseContentType: string;
+  @Column({ type: "int", default: 0 }) durationMs: number;
+  @Column({ type: "varchar", length: 500, nullable: true }) error: string | null;
 }
 
 /** Un `.proto` de un canal gRPC: se guardan para que una corrida o un monitor no tengan que volver a subirlos. */
@@ -909,7 +979,7 @@ export class CodeScanEntity {
 export const ENTITIES = [
   UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity,
   PasswordResetTokenEntity,
-  ProjectEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity,
+  ProjectEntity, ProjectForkEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity,
   EnvironmentEntity, EnvironmentCredentialEntity, SessionTokenEntity, RequestCookieEntity, ProjectConfigEntity,
   RequestTemplateEntity, WorkflowEntity, WorkflowDatasetEntity, WorkflowSuiteEntity,
   RunEntity, RunCaseEntity, RunStepEntity,
@@ -918,6 +988,7 @@ export const ENTITIES = [
   DocSiteEntity,
   MonitorEntity, MonitorExecutionEntity,
   ChannelEndpointEntity, ChannelSessionEntity, ChannelMessageEntity, ChannelProtoFileEntity,
+  CaptureSessionEntity, CaptureItemEntity,
   RoleEntity, RolePermissionEntity, RoleRuleEntity,
   SecurityRunEntity,
   PerformancePlanEntity, PerformanceRunEntity,

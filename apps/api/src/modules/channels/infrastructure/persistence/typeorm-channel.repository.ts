@@ -14,9 +14,10 @@ import type { Channel } from "../../domain/model";
 import type { ChannelRepositoryPort, ChannelSessionRepositoryPort } from "../../domain/ports";
 import type { ChannelSession, SessionStatus } from "../../domain/session";
 
-// `grpc` con su `null` explícito: una fila de antes de la columna no la trae, y `undefined` no es un canal.
+// `mqtt` y `grpc` con su `null` explícito: una fila de antes de la columna no la trae, y `undefined` no es un canal.
 const toChannel = (row: ChannelEndpointEntity): Channel => ({
   ...(row as unknown as Channel),
+  mqtt: (row.mqtt as Channel["mqtt"]) ?? null,
   grpc: (row.grpc as Channel["grpc"]) ?? null,
 });
 
@@ -120,6 +121,10 @@ export class TypeOrmChannelSessionRepository implements ChannelSessionRepository
       bytes: row.bytes,
       truncated: row.truncated,
       body: row.body,
+      // Solo si los hay: un mensaje de WebSocket sale igual que antes, sin tres campos nulos.
+      ...(row.topic !== null ? { topic: row.topic } : {}),
+      ...(row.qos !== null ? { qos: row.qos as 0 | 1 | 2 } : {}),
+      ...(row.retain !== null ? { retain: row.retain } : {}),
     }));
   }
 

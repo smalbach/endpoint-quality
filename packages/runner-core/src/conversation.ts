@@ -48,7 +48,30 @@ export type ChannelMessage = {
   body: string;
   bytes: number;
   truncated: boolean;
+} & MessageRouting;
+
+/**
+ * Por dónde viajó un mensaje, en los protocolos que lo dicen: hoy MQTT.
+ *
+ * Opcional y ausente en un WebSocket, que no tiene temas: un campo vacío en cada mensaje de socket
+ * sería una columna que se enseña y no significa nada. El tema **se tapa** como el cuerpo —un
+ * `dispositivos/<token>/estado` existe—, y QoS y `retain` van tal cual, porque son lo que distingue
+ * un mensaje retenido de uno recién publicado y es justo lo que se quiere ver al depurar.
+ */
+export type MessageRouting = {
+  topic?: string;
+  qos?: 0 | 1 | 2;
+  retain?: boolean;
 };
+
+/**
+ * La apertura, en el protocolo que sea.
+ *
+ * `via` nombra el paso que contestó —el `upgrade` de un WebSocket, el `CONNACK` de MQTT— para que el
+ * veredicto diga «0 en el CONNACK» y no «0 en el upgrade», que en MQTT sería un upgrade que no hubo.
+ * Ausente es `upgrade`, que es lo que tienen todas las filas de antes.
+ */
+export type Handshake = { status: number; headers: Record<string, string>; via?: string };
 
 /**
  * Por qué se dejó de escuchar.
@@ -72,8 +95,8 @@ export type StopReason = (typeof STOP_REASONS)[number];
 
 export type Conversation = {
   messages: ChannelMessage[];
-  /** Lo que contestó el `Upgrade`. `null` mientras no haya contestado. */
-  handshake: { status: number; headers: Record<string, string> } | null;
+  /** Lo que contestó la apertura (el `Upgrade`, el `CONNACK`). `null` mientras no haya contestado. */
+  handshake: Handshake | null;
   openedAtMs: number | null;
   closedAtMs: number | null;
   closeCode: number | null;
@@ -115,12 +138,12 @@ export type RawFrame = {
   body?: string;
   /** El tamaño real, cuando el transporte lo sabe mejor que la longitud del texto (binario). */
   bytes?: number;
-  handshake?: { status: number; headers: Record<string, string> };
+  handshake?: Handshake;
   closeCode?: number;
   closeReason?: string;
   /** Los trailers de una llamada gRPC, crudos: se tapan aquí dentro, como el cuerpo. */
   trailers?: Record<string, string>;
-};
+} & MessageRouting;
 
 /**
  * Cómo se tapa lo que va dentro de un mensaje.
@@ -206,7 +229,7 @@ export function applyFrame(
       conversation: {
         ...conversation,
         handshake: frame.handshake
-          ? { status: frame.handshake.status, headers: redactHeaders(frame.handshake.headers, rules) }
+          ? { ...frame.handshake, headers: redactHeaders(frame.handshake.headers, rules) }
           : conversation.handshake,
         openedAtMs: conversation.openedAtMs ?? frame.atMs,
       },
@@ -249,6 +272,7 @@ export function applyFrame(
     body,
     bytes,
     truncated,
+    ...routingOf(frame, rules),
   };
 
   const incoming = frame.direction !== "out";
@@ -280,6 +304,20 @@ export function applyFrame(
       stopped: conversation.stopped ?? stop,
     },
     stop,
+  };
+}
+
+/**
+ * El tema, la QoS y el `retain`, solo los que la trama trae.
+ *
+ * El tema se tapa **solo por valor**, con la lista de secretos: la regla por nombre de campo parsea
+ * JSON y un tema no lo es. Y no se recorta: la especificación ya lo limita a 64 KB.
+ */
+function routingOf(frame: RawFrame, rules: RedactionRules): MessageRouting {
+  return {
+    ...(frame.topic !== undefined ? { topic: maskSecrets(frame.topic, rules.secrets ?? []) } : {}),
+    ...(frame.qos !== undefined ? { qos: frame.qos } : {}),
+    ...(frame.retain !== undefined ? { retain: frame.retain } : {}),
   };
 }
 
@@ -328,7 +366,7 @@ export function evaluateConversation(input: EvaluateConversationInput): Evaluati
     label: "Conexión",
     pass: connected,
     detail: connected
-      ? `abierta${conversation.handshake ? ` (${openedWith(conversation.handshake.status)})` : ""}`
+      ? `abierta${conversation.handshake ? ` (${conversation.handshake.status} en el ${conversation.handshake.via ?? "upgrade"})` : ""}`
       : handshakeDetail(input),
   });
 
@@ -407,9 +445,6 @@ function handshakeDetail(input: EvaluateConversationInput): string {
   const status = input.conversation.handshake?.status;
   return status ? `el upgrade contestó ${status}` : "no se pudo conectar";
 }
-
-/** 101 es el upgrade de un WebSocket; lo demás —el 200 de HTTP/2 en gRPC— es solo el estado. */
-const openedWith = (status: number): string => (status === 101 ? "101 en el upgrade" : `HTTP ${status}`);
 
 /**
  * Los estados de gRPC por su nombre, en el orden del estándar: el número es la posición.

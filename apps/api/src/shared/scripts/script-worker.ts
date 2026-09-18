@@ -18,6 +18,8 @@ type Limits = {
   maxLineLength: number;
   maxTests: number;
   maxValueLength: number;
+  maxTemplateLength: number;
+  maxVisualizationData: number;
 };
 
 const SCRIPT_FILE = "script.js";
@@ -372,6 +374,42 @@ function prelude(global: any): void {
     tests[tests.length] = entry;
   };
 
+  /**
+   * `pm.visualizer.set(template, data, options)`: a Handlebars template and the data it renders.
+   *
+   * Nothing is rendered here. Both leave the process as text and the browser renders them in a
+   * sandboxed frame, which is where Postman renders them too. The data is serialized now, at the
+   * call: what the frame shows is what the script handed over, not what it mutated afterwards.
+   */
+  let visualization: { template: string; data: string; options: string } | null = null;
+  const serialized = (value: any, what: string, limit: number): string => {
+    let json: string | undefined;
+    try {
+      json = stringify(value);
+    } catch {
+      throw new TypeError(`${what} del visualizador no se pueden pasar a JSON`);
+    }
+    if (json === undefined) json = "null";
+    if (json.length > limit) throw new RangeError(`${what} del visualizador pasan de ${limit} caracteres`);
+    return json;
+  };
+  const visualizer = freeze({
+    set: (template: any, data: any, options: any) => {
+      if (pre) throw new TypeError("pm.visualizer solo existe en el script posterior");
+      const source = String(template ?? "");
+      if (source.length > limits.maxTemplateLength)
+        throw new RangeError(`La plantilla del visualizador pasa de ${limits.maxTemplateLength} caracteres`);
+      visualization = {
+        template: source,
+        data: serialized(data === undefined ? {} : data, "Los datos", limits.maxVisualizationData),
+        options: serialized(options === undefined || options === null ? {} : options, "Las opciones", 10_000),
+      };
+    },
+    clear: () => {
+      visualization = null;
+    },
+  });
+
   const raw = input.response;
   const noResponse = (method: string) => () => {
     throw new TypeError(`pm.response.${method} solo existe en el script posterior`);
@@ -486,6 +524,7 @@ function prelude(global: any): void {
     response: response ?? emptyResponse,
     test,
     expect,
+    visualizer,
     info: freeze({ eventName: pre ? "prerequest" : "test" }),
   });
 
@@ -515,6 +554,7 @@ function prelude(global: any): void {
         environmentUnset: keys(environmentUnset),
         variables: assign({}, localSet),
         headers: pre ? assign({}, headers) : null,
+        visualization,
       }),
   });
 }

@@ -862,6 +862,10 @@ export class RunOrchestrator {
           detail: test.message ?? (test.passed ? "Pasó" : "Falló"),
         })),
         ...(written.length ? [{ label: "Variables escritas", pass: true, detail: [...new Set(written)].join(", ") }] : []),
+        // A run has no response pane to draw it in: said, so the call does not look like it did nothing.
+        ...(outcome.visualization
+          ? [{ label: "pm.visualizer", pass: true, detail: "La visualización solo se dibuja al enviar desde el editor" }]
+          : []),
         ...shown.logs.slice(0, 50).map((log) => ({ label: `console.${log.level}`, pass: true, detail: log.text })),
       ];
       await this.finishControl(run, item, state, startedAt, {

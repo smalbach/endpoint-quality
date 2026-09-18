@@ -6,7 +6,7 @@
  * DTO que dice `@IsObject()` y nada más deja pasar cualquier cosa dentro, y un campo que el tipo de
  * TypeScript promete texto y llega como objeto acababa en un 500 con traza de Node.
  */
-import { IsArray, IsIn, IsObject, IsOptional, IsString, IsUUID, MaxLength } from "class-validator";
+import { IsArray, IsBoolean, IsIn, IsObject, IsOptional, IsString, IsUUID, MaxLength } from "class-validator";
 import type { ChannelExpectation, ChannelLimits, RequestAuth } from "@eq/runner-core";
 
 import type { EndpointHeader } from "@/modules/endpoints/domain/model";
@@ -18,9 +18,10 @@ import {
   type SavedMessage,
 } from "../../domain/model";
 import type { GrpcSettings } from "../../domain/grpc";
+import type { MqttQos, MqttSettings } from "../../domain/mqtt";
 
 export class CreateChannelDto {
-  /** Sin él, un WebSocket: es lo que era un canal antes de que hubiera otro protocolo. */
+  /** Ausente es `ws`, que es lo que eran todos los canales antes de MQTT y gRPC. */
   @IsOptional() @IsIn(CHANNEL_PROTOCOLS) protocol?: ChannelProtocol;
   @IsString() @MaxLength(MAX_CHANNEL_NAME) name: string;
   @IsString() @MaxLength(MAX_CHANNEL_URL) url: string;
@@ -30,6 +31,7 @@ export class CreateChannelDto {
   @IsOptional() @IsObject() limits?: Partial<ChannelLimits>;
   @IsOptional() @IsObject() expectations?: ChannelExpectation;
   @IsOptional() @IsArray() messages?: SavedMessage[];
+  @IsOptional() @IsObject() mqtt?: Partial<MqttSettings>;
   @IsOptional() @IsObject() grpc?: Partial<GrpcSettings>;
 }
 
@@ -43,6 +45,7 @@ export class UpdateChannelDto {
   @IsOptional() @IsObject() limits?: Partial<ChannelLimits>;
   @IsOptional() @IsObject() expectations?: ChannelExpectation;
   @IsOptional() @IsArray() messages?: SavedMessage[];
+  @IsOptional() @IsObject() mqtt?: Partial<MqttSettings>;
   @IsOptional() @IsObject() grpc?: Partial<GrpcSettings>;
 }
 
@@ -53,4 +56,8 @@ export class OpenChannelSessionDto {
 
 export class SendChannelMessageDto {
   @IsString() text: string;
+  /** Solo en MQTT, y ahí obligatorio: a qué tema se publica. */
+  @IsOptional() @IsString() topic?: string;
+  @IsOptional() @IsIn([0, 1, 2]) qos?: MqttQos;
+  @IsOptional() @IsBoolean() retain?: boolean;
 }

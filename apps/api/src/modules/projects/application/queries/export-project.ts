@@ -31,7 +31,7 @@ import {
   type ProjectBundle,
 } from "../../domain/project-bundle";
 import { ownedProject } from "../commands/update-project";
-import { withoutSecrets } from "../commands/copy-from-project";
+import { withoutSecrets } from "../../domain/copying";
 
 export class ExportProjectQuery implements IQuery {
   constructor(

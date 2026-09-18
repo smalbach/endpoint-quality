@@ -21,17 +21,26 @@
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { performance } from "node:perf_hooks";
-import { Inject, Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
-import type { ChannelExpectation, ChannelLimits, RawFrame, RedactionRules, StopReason } from "@eq/runner-core";
+import { Inject, Injectable, Logger, Optional, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
+import {
+  unresolvedVariables,
+  type ChannelExpectation,
+  type ChannelLimits,
+  type RawFrame,
+  type RedactionRules,
+  type StopReason,
+} from "@eq/runner-core";
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { ENV, type Env } from "@/shared/config/env";
-import { ConflictError } from "@/shared/errors/domain-error";
+import { ConflictError, InvalidInputError } from "@/shared/errors/domain-error";
 import { BlockedTargetError } from "@/shared/http/safe-fetch";
 import { HandshakeRejectedError } from "@/shared/http/safe-socket";
+import type { MqttPublish, MqttSessionPlan } from "../domain/mqtt";
 import { CHANNEL_SESSION_REPOSITORY, type ChannelSessionRepositoryPort } from "../domain/ports";
 import { closeSession, isFinished, isStale, onFrame, onTick, type ChannelSession } from "../domain/session";
 import { ChannelProgressStream } from "./channel-progress.stream";
+import { MQTT_TRANSPORT, type MqttTransportPort } from "./mqtt-transport";
 import { CHANNEL_TRANSPORT, type ChannelListeners, type ChannelTransportPort, type OpenChannel } from "./ws-transport";
 
 /** Cada cuánto se mira el reloj de las sesiones vivas. Decide la precisión de los topes de tiempo. */
@@ -58,12 +67,22 @@ export type SessionPlan = {
   /** Para decirlo con su nombre cuando alguien intente mandar. */
   environmentName: string;
   /**
-   * La apertura de un protocolo que no es un WebSocket, ya resuelta por quien sabe de él.
+   * La apertura de un protocolo que no es un WebSocket ni MQTT, ya resuelta por quien sabe de él.
    *
    * El registro no sabe de gRPC ni tiene por qué: recibe una función que abre y le pasa las mismas
-   * escuchas. Sin ella, se abre un socket con `url`, `headers` y `subprotocols`.
+   * escuchas. Sin ella, el transporte lo elige `transportFor`.
    */
   open?: (listeners: ChannelListeners) => Promise<OpenChannel>;
+  /**
+   * Resuelve las `{{variables}}` de un mensaje contra el entorno con el que se abrió la sesión.
+   *
+   * Es una función y no los valores: los valores descifrados se quedan en el cierre de quien abrió,
+   * y aquí no hay ningún campo que alguien pueda serializar por descuido. Sin ella, el mensaje sale
+   * tal cual se escribió.
+   */
+  interpolate?: (text: string) => string;
+  /** Solo en un canal MQTT: con qué se conecta. Su presencia es lo que elige el transporte. */
+  mqtt?: MqttSessionPlan;
 };
 
 type Live = {
@@ -97,6 +116,7 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
     @Inject(CLOCK) private readonly clock: ClockPort,
     @Inject(ENV) private readonly env: Env,
     private readonly stream: ChannelProgressStream,
+    @Optional() @Inject(MQTT_TRANSPORT) private readonly mqtt: MqttTransportPort | null = null,
   ) {}
 
   onModuleInit(): void {
@@ -162,7 +182,7 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
     try {
       entry.channel = plan.open
         ? await plan.open(listeners)
-        : await this.transport.open(
+        : await this.transportFor(session.id, entry).open(
             plan.url,
             {
               headers: plan.headers,
@@ -198,18 +218,44 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
    * Mandar un mensaje. Se anota **antes** de mandarlo, y anotado ya tapado: lo que sale en vivo y lo
    * que se guarda es el mensaje redactado; el texto crudo solo lo ve el socket.
    */
-  async send(sessionId: string, text: string): Promise<void> {
+  async send(sessionId: string, text: string, publish?: MqttPublish): Promise<void> {
     const entry = this.live.get(sessionId);
     if (!entry?.channel) throw this.notHere(sessionId);
+    // Antes que la escritura: un mensaje sin tema en MQTT, o con tema en un WebSocket, no se anota.
+    if (Boolean(entry.plan.mqtt) !== Boolean(publish)) {
+      throw new InvalidInputError("El mensaje no es válido", [
+        entry.plan.mqtt
+          ? { field: "topic", detail: "En MQTT se publica en un tema" }
+          : { field: "topic", detail: "Un WebSocket no tiene temas" },
+      ]);
+    }
     if (entry.plan.readOnly) {
       throw new ConflictError(
         `El entorno «${entry.plan.environmentName}» no permite escrituras: en él se escucha, pero no se manda. Actívalas en sus ajustes para mandar mensajes`,
         "writes-not-allowed",
       );
     }
-    entry.channel.check?.(text);
-    this.frame(sessionId, { direction: "out", atMs: this.at(entry), body: text });
-    entry.channel.send(text);
+    // Una variable sin valor se dice antes de mandar, con su nombre, como en «Enviar» de un
+    // endpoint: que el servidor reciba `{{token}}` literal y conteste «no autorizado» no dice nada.
+    const wire = entry.plan.interpolate ? entry.plan.interpolate(text) : text;
+    const unresolved = entry.plan.interpolate ? unresolvedVariables(wire) : [];
+    if (unresolved.length) {
+      throw new InvalidInputError(
+        `Variables sin valor: ${unresolved.join(", ")}`,
+        unresolved.map((name) => ({
+          field: "text",
+          detail: `{{${name}}} no tiene valor${entry.plan.environmentName ? ` en «${entry.plan.environmentName}»` : ": la sesión se abrió sin entorno"}`,
+        })),
+        "unresolved-variables",
+      );
+    }
+    // Lo que el protocolo no puede mandar —un JSON que no encaja con el tipo gRPC— se dice antes de
+    // anotarlo: la transcripción no puede tener un «enviado» que nunca salió.
+    entry.channel.check?.(wire);
+    // Se anota lo que viaja, ya resuelto: la transcripción enseña lo que recibió el servidor, y la
+    // redacción de `frame` tapa el valor de una variable sensible igual que el de cualquier otra.
+    this.frame(sessionId, { direction: "out", atMs: this.at(entry), body: wire, ...publish });
+    entry.channel.send(wire, publish);
     await entry.writes;
   }
 
@@ -263,6 +309,33 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
       // Un latido que falla no puede tumbar el proceso: el siguiente lo intenta otra vez.
       this.logger.error(`El latido de las sesiones falló: ${error instanceof Error ? error.message : error}`);
     }
+  }
+
+  /**
+   * El transporte de esta sesión: el de WebSocket, o uno que conecta al broker MQTT.
+   *
+   * El de MQTT tiene la forma del de WebSocket para que abrir sea una sola línea para los dos, y no
+   * usa las opciones del upgrade ni las escuchas de bytes: conecta con el plan de la sesión y
+   * entrega tramas ya con tema. Las tramas llegan sin hora y se les pone aquí, con el mismo reloj
+   * que a las de un socket: a partir de ahí son tramas como las demás.
+   */
+  private transportFor(sessionId: string, entry: Live): ChannelTransportPort {
+    const plan = entry.plan.mqtt;
+    if (!plan) return this.transport;
+    return { open: () => this.openMqtt(sessionId, entry, plan) };
+  }
+
+  private openMqtt(sessionId: string, entry: Live, plan: MqttSessionPlan): Promise<OpenChannel> {
+    if (!this.mqtt) throw new Error("Esta instancia no tiene transporte MQTT");
+    return this.mqtt.open(
+      entry.plan.url,
+      {
+        ...plan,
+        maxMessageBytes: entry.plan.limits.maxMessageBytes,
+        connectTimeoutMs: Math.min(entry.plan.limits.maxDurationMs, this.env.REQUEST_TIMEOUT_MS),
+      },
+      (frame) => this.frame(sessionId, { ...frame, atMs: this.at(entry) }),
+    );
   }
 
   private at(entry: Live): number {

@@ -87,6 +87,7 @@ const PARAMETER_TYPES = ["string", "number", "boolean", "uuid", "array"] as cons
 
 /** El cuerpo GraphQL trae `graphql` (~150 kB): se carga cuando alguien lo abre, no con el editor. */
 const GraphqlBodyEditor = lazy(() => import("@/components/graphql-body-editor"));
+const ResponseVisualizer = lazy(() => import("@/components/response-visualizer"));
 
 export function EndpointEditor({
   base,
@@ -1134,6 +1135,10 @@ const POST_SNIPPETS: { label: string; code: string }[] = [
     code: 'pm.test("responde en menos de 500 ms", () => pm.expect(pm.response.responseTime).to.be.below(500));',
   },
   { label: "Imprimir", code: "console.log(pm.response.json());" },
+  {
+    label: "Visualizar",
+    code: 'pm.visualizer.set(`\n<table>\n  {{#each this}}<tr><td>{{@key}}</td><td>{{this}}</td></tr>{{/each}}\n</table>`, pm.response.json());',
+  },
 ];
 
 /** The API a script has, on one strip — the analyzer's reference, with what this sandbox adds. */
@@ -1146,6 +1151,7 @@ function ScriptReference() {
     "pm.test(nombre, fn)",
     "pm.expect(x).to.equal(…)",
     "console.log",
+    "pm.visualizer.set(plantilla, datos)",
     "btoa · atob · crypto.randomUUID()",
   ];
   return (
@@ -1218,6 +1224,7 @@ const RESPONSE_TABS = [
   { id: "body", label: "Cuerpo" },
   { id: "headers", label: "Cabeceras" },
   { id: "console", label: "Consola" },
+  { id: "visualize", label: "Visualizar" },
   { id: "cookies", label: "Cookies" },
   { id: "request", label: "Petición" },
 ] as const;
@@ -1328,10 +1335,15 @@ function ResponsePanel({ send }: { send: { data?: SentRequestView; error: Error 
                   <span className="ml-1 text-slate-400">{consoleCount}</span>
                 )}
                 {entry.id === "cookies" && cookieCount > 0 && <span className="ml-1 text-slate-400">{cookieCount}</span>}
+                {entry.id === "visualize" && result.scripts.post?.visualization && (
+                  <span className="ml-1 text-emerald-600" aria-label="hay visualización">
+                    ●
+                  </span>
+                )}
               </button>
             ))}
             {tab === "cookies" && cookieCount > 0 && <span className="sr-only">{cookieCount}</span>}
-            {tab !== "console" && tab !== "cookies" && (
+            {tab !== "console" && tab !== "cookies" && tab !== "visualize" && (
               <button
                 className="ml-auto px-2 py-1 text-[11px] text-slate-500 hover:text-slate-900"
                 onClick={() => void copy()}
@@ -1342,6 +1354,10 @@ function ResponsePanel({ send }: { send: { data?: SentRequestView; error: Error 
           </div>
           {tab === "console" ? (
             <ScriptConsole scripts={result.scripts} />
+          ) : tab === "visualize" ? (
+            <Suspense fallback={<p className="mt-2 text-[11px] text-slate-500">Cargando el visualizador…</p>}>
+              <ResponseVisualizer visualization={result.scripts.post?.visualization ?? null} />
+            </Suspense>
           ) : tab === "cookies" ? (
             <CookiePanel cookies={result.cookies} />
           ) : (

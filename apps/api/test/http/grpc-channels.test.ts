@@ -305,7 +305,7 @@ describe("una llamada", () => {
     assert.deepEqual(directions(session), [
       ["out", { name: "hola" }],
       ["in", { name: "eco hola", price: null }],
-      ["out", { name: "{{itemId}}" }],
+      ["out", { name: "42" }],
       ["in", { name: "eco 42", price: null }],
     ]);
   });

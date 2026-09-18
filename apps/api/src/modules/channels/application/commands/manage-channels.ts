@@ -75,11 +75,11 @@ export class CreateChannelHandler implements ICommandHandler<CreateChannelComman
     const blank = blankChannel({
       id: randomUUID(),
       projectId: project.id,
-      protocol: command.input.protocol,
       name: command.input.name,
       url: command.input.url,
       now,
       by: command.actorId,
+      protocol: command.input.protocol,
     });
     const channel = withChanges(blank, command.input, now, command.actorId);
     await this.channels.save(channel);
@@ -110,9 +110,8 @@ export class UpdateChannelHandler implements ICommandHandler<UpdateChannelComman
     const project = await writableProject(this.projects, command.organizationId, command.projectId);
     const channel = await this.channels.findById(project.id, command.channelId);
     if (!channel) throw new NotFoundError("El canal no existe", "channel-not-found");
-    // Contra el protocolo **del canal**: lo que vale en un gRPC —un estado esperado, una URL grpcs://—
-    // no vale en un WebSocket, y al revés.
-    const problems = channelProblems(command.input, ceilingsOf(this.env), channel.protocol);
+    // El protocolo lo pone el canal y no quien escribe: decide qué se valida, y no cambia.
+    const problems = channelProblems({ ...command.input, protocol: channel.protocol }, ceilingsOf(this.env));
     if (problems.length) throw new InvalidInputError("El canal no es válido", problems);
 
     const changed = withChanges(channel, command.input, this.clock.now(), command.actorId);

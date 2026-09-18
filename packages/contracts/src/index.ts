@@ -120,6 +120,16 @@ export type ProjectSummaryOf<T> = {
   /** Null is a real state and the UI renders it: a project exists before its first import. */
   contract: ContractSummaryOf<T> | null;
   source: SpecSourceSummary | null;
+  /** De qué proyecto salió, si es una bifurcación. `parentName` es null si el original ya no está. */
+  fork: ProjectForkSummaryOf<T> | null;
+};
+
+export type ProjectForkSummaryOf<T> = {
+  parentProjectId: string;
+  parentName: string | null;
+  forkedAt: T;
+  syncedAt: T;
+  version: number;
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -962,6 +972,69 @@ export type ImportAnythingResult = {
 };
 
 /**
+ * Capturar tráfico: una sesión del proxy de captura, sin su token.
+ *
+ * El token se enseña una vez, en `CaptureStartedView`, y no vuelve a salir por ninguna ruta.
+ */
+export type CaptureSessionView = {
+  id: string;
+  status: "active" | "stopped";
+  stopReason: "manual" | "expired" | "request-limit" | "replaced" | "restart" | null;
+  itemCount: number;
+  limits: { durationMs: number; maxRequests: number; maxBodyBytes: number };
+  startedAt: string;
+  expiresAt: string;
+  stoppedAt: string | null;
+};
+
+/** Una petición grabada, en la lista en vivo: sin cuerpos, que son lo que pesa. */
+export type CaptureItemSummaryView = {
+  id: string;
+  seq: number;
+  at: string;
+  method: string;
+  /** Con los valores de la query que son credenciales ya tapados. */
+  url: string;
+  host: string;
+  /** `null` en un túnel HTTPS y en una petición que no llegó a contestar. */
+  status: number | null;
+  /** Un túnel HTTPS: solo se sabe a qué `host:puerto` iba. */
+  encrypted: boolean;
+  contentType: string;
+  durationMs: number;
+  error: string | null;
+  /** Por qué el import la tiraría —el mismo filtro que un HAR—, o `null` cuando entraría. */
+  noise: string | null;
+};
+
+/** Una petición grabada, entera. Las credenciales llegan tapadas: se taparon al grabarla. */
+export type CaptureItemView = CaptureItemSummaryView & {
+  requestHeaders: Record<string, string>;
+  requestBody: string;
+  requestBodyTruncated: boolean;
+  responseHeaders: Record<string, string>;
+  responseBody: string;
+  responseBodyTruncated: boolean;
+};
+
+/** Dónde se configura el proxy en el dispositivo. `host` es `null` cuando lo decide la pantalla. */
+export type CaptureProxyView = { host: string | null; port: number; username: string };
+
+/** La captura de un proyecto: si está activada en este despliegue, y sus sesiones recientes. */
+export type CaptureOverviewView = {
+  enabled: boolean;
+  /** Con el puerto configurado; `null` si la captura está apagada. */
+  proxy: CaptureProxyView | null;
+  sessions: CaptureSessionView[];
+};
+
+/** Lo que contesta abrir una sesión: **la única vez** que sale el token. */
+export type CaptureStartedView = { session: CaptureSessionView; token: string; proxy: CaptureProxyView };
+
+/** Una página de la lista en vivo: lo que llegó después del cursor. */
+export type CapturePageView = { session: CaptureSessionView; items: CaptureItemSummaryView[] };
+
+/**
  * What importing a Postman environment answers.
  *
  * Counts for what came in, and words for what needs a person: a secret with no value, a name that
@@ -1356,10 +1429,10 @@ export type MonitorListView = { monitors: (MonitorView & { recent: MonitorExecut
 
 export type MonitorHistoryView = { monitor: MonitorView; executions: MonitorExecutionView[] };
 
-// Canales (WebSocket y gRPC)
+// Canales (WebSocket, MQTT y gRPC)
 
 /**
- * Un canal: lo que se prueba cuando no es una petición. Hoy un WebSocket.
+ * Un canal: lo que se prueba cuando no es una petición: un WebSocket, un broker MQTT o un servicio gRPC.
  *
  * Hermano de un endpoint y no un tipo de él: la matriz, el mock, la documentación publicada y el
  * resto de lectores de endpoints no ven canales, por construcción.
@@ -1379,7 +1452,8 @@ export type ChannelCheckView = {
   operator: string;
   value?: unknown;
   severity?: "error" | "warning";
-  match?: { at: "first" | "last" | "any" | "all"; index?: number };
+  /** `topic`: solo los mensajes de ese tema MQTT (con `+` y `#`) antes de elegir cuál. */
+  match?: { at: "first" | "last" | "any" | "all"; index?: number; topic?: string };
 };
 
 export type ChannelExpectationView = {
@@ -1389,6 +1463,17 @@ export type ChannelExpectationView = {
   status?: number;
   firstMessageBudgetMs?: number;
   checks?: ChannelCheckView[];
+};
+
+/** Lo propio de un canal MQTT. Usuario y contraseña van en `auth` como `basic`. */
+export type MqttSettingsView = {
+  /** 4 es 3.1.1 y 5 es 5.0. */
+  version: 4 | 5;
+  /** Vacío: se inventa uno por sesión. */
+  clientId: string;
+  keepaliveSec: number;
+  cleanSession: boolean;
+  subscriptions: { topic: string; qos: 0 | 1 | 2 }[];
 };
 
 /** Servicio, método, mensaje y plazo de un canal gRPC. */
@@ -1403,7 +1488,7 @@ export type GrpcSettingsView = {
 
 export type ChannelView = {
   id: string;
-  protocol: "ws" | "grpc";
+  protocol: "ws" | "mqtt" | "grpc";
   name: string;
   /** Con `{{variables}}` si hace falta: se resuelve contra el entorno al abrir. */
   url: string;
@@ -1412,8 +1497,10 @@ export type ChannelView = {
   auth: { type: string; params: Record<string, string> } | null;
   limits: ChannelLimitsView;
   expectations: ChannelExpectationView;
-  /** Tramas guardadas, para no reteclear la de auth en cada sesión. */
-  messages: { name: string; body: string }[];
+  /** Tramas guardadas, para no reteclear la de auth en cada sesión. En MQTT, con su tema. */
+  messages: { name: string; body: string; topic?: string; qos?: 0 | 1 | 2; retain?: boolean }[];
+  /** Solo en un canal MQTT. */
+  mqtt: MqttSettingsView | null;
   /** Solo en un canal gRPC; `null` en los demás. */
   grpc: GrpcSettingsView | null;
   orderIndex: number;
@@ -1431,6 +1518,10 @@ export type ChannelMessageView = {
   /** El tamaño real: `body` puede venir recortado, y entonces `truncated` lo dice. */
   bytes: number;
   truncated: boolean;
+  /** Solo MQTT: el tema (ya tapado), la QoS y si venía retenido. */
+  topic?: string;
+  qos?: 0 | 1 | 2;
+  retain?: boolean;
 };
 
 export type ChannelSessionView = {
@@ -1438,7 +1529,8 @@ export type ChannelSessionView = {
   channelId: string;
   environmentId: string | null;
   status: "connecting" | "open" | "closed" | "error";
-  handshake: { status: number; headers: Record<string, string> } | null;
+  /** `via`: qué paso contestó la apertura —`CONNACK` en MQTT—; ausente es el `upgrade`. */
+  handshake: { status: number; headers: Record<string, string>; via?: string } | null;
   counters: { sent: number; received: number; bytesIn: number; bytesOut: number };
   closeCode: number | null;
   closeReason: string;
@@ -1550,6 +1642,12 @@ export type ScriptRunView = {
   tests: { name: string; passed: boolean; message: string | null }[];
   /** Names of the environment variables whose current value it changed. */
   environmentUpdates: string[];
+  /**
+   * What `pm.visualizer.set` left, for the response's «Visualizar» tab: a Handlebars template and
+   * its data and options as JSON text. Rendered by the browser in a sandboxed frame; null when the
+   * script did not call it.
+   */
+  visualization: { template: string; data: string; options: string } | null;
   durationMs: number;
 };
 
@@ -1969,6 +2067,61 @@ export type ImportElementsResultView = {
 };
 
 // ---------------------------------------------------------------------------------------------
+// Forks: bifurcar, traer cambios y fusionar
+// ---------------------------------------------------------------------------------------------
+
+/** Lo que nace al bifurcar, y lo que se quedó en el original a propósito. */
+export type ForkCreatedView = {
+  projectId: string;
+  slug: string;
+  copied: {
+    endpoints: number;
+    requestTemplates: number;
+    workflows: number;
+    suites: number;
+    environments: number;
+    roles: number;
+    sections: number;
+  };
+  skipped: { what: string; detail: string }[];
+};
+
+export type ForkMergeKind = "endpoint" | "template" | "workflow" | "environment";
+export type ForkChange = "none" | "added" | "modified" | "deleted";
+/** `incoming` se aplica, `kept` se queda en el destino, `same` coincide y `conflict` pide elegir. */
+export type ForkDiffStatus = "incoming" | "kept" | "same" | "conflict";
+export type ForkFieldChange = { path: string; base?: unknown; source?: unknown; target?: unknown };
+
+export type ForkDiffEntryView = {
+  kind: ForkMergeKind;
+  key: string;
+  label: string;
+  sourceChange: ForkChange;
+  targetChange: ForkChange;
+  status: ForkDiffStatus;
+  fields: ForkFieldChange[];
+};
+
+/** Una comparación a tres bandas: origen → destino, contra la última foto común. */
+export type ForkDiffView = {
+  direction: "pull" | "merge";
+  /** Se devuelve al aplicar: si alguno de los dos proyectos cambió entretanto, es un 409. */
+  token: string;
+  version: number;
+  syncedAt: string;
+  source: { id: string; name: string };
+  target: { id: string; name: string };
+  entries: ForkDiffEntryView[];
+};
+
+export type ForkSyncOutcomeView = {
+  direction: "pull" | "merge";
+  version: number;
+  applied: Record<ForkMergeKind, number>;
+  skipped: { what: string; detail: string }[];
+};
+
+// ---------------------------------------------------------------------------------------------
 // Export / import a project as a file
 // ---------------------------------------------------------------------------------------------
 
@@ -2003,6 +2156,7 @@ export type MembersView = MembersViewOf<string>;
 export type ApiTokenView = ApiTokenViewOf<string>;
 export type ContractSummary = ContractSummaryOf<string>;
 export type ProjectSummary = ProjectSummaryOf<string>;
+export type ProjectForkSummary = ProjectForkSummaryOf<string>;
 export type CredentialSummary = CredentialSummaryOf<string>;
 export type Environment = EnvironmentSummaryOf<string>;
 export type RoleView = RoleViewOf<string>;

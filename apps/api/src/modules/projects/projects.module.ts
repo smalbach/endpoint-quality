@@ -2,7 +2,7 @@ import { Module, forwardRef } from "@nestjs/common";
 import { CqrsModule } from "@nestjs/cqrs";
 import { TypeOrmModule } from "@nestjs/typeorm";
 
-import { ProjectEntity } from "@/shared/database/entities";
+import { ProjectEntity, ProjectForkEntity } from "@/shared/database/entities";
 import { AuthModule } from "@/modules/auth/auth.module";
 import { IamModule } from "@/modules/iam/iam.module";
 import { SpecsModule } from "@/modules/specs/specs.module";
@@ -10,10 +10,13 @@ import { ProjectConfigModule } from "@/modules/config/config.module";
 import { WorkflowsModule } from "@/modules/workflows/workflows.module";
 import { EnvironmentsModule } from "@/modules/environments/environments.module";
 import { EndpointsModule } from "@/modules/endpoints/endpoints.module";
-import { PROJECT_REPOSITORY } from "./domain/ports";
+import { PROJECT_FORK_REPOSITORY, PROJECT_REPOSITORY } from "./domain/ports";
 import { TypeOrmProjectRepository } from "./infrastructure/persistence/typeorm-project.repository";
+import { TypeOrmProjectForkRepository } from "./infrastructure/persistence/typeorm-project-fork.repository";
 import { CreateProjectHandler } from "./application/commands/create-project";
-import { CopyFromProjectHandler } from "./application/commands/copy-from-project";
+import { ForkProjectHandler } from "./application/commands/fork-project";
+import { GetForkDiffHandler, SyncForkHandler } from "./application/commands/sync-fork";
+import { ForkSync } from "./application/fork-sync";
 import { ImportElementsHandler } from "./application/commands/import-elements";
 import { ImportProjectBundleHandler } from "./application/commands/import-project-bundle";
 import { ImportAnythingHandler } from "./application/commands/import-anything";
@@ -33,7 +36,8 @@ export const PROJECT_COMMAND_HANDLERS = [
   UpdateProjectHandler,
   SetProjectArchivedHandler,
   DeleteProjectHandler,
-  CopyFromProjectHandler,
+  ForkProjectHandler,
+  SyncForkHandler,
   ImportElementsHandler,
   ImportProjectBundleHandler,
   ImportAnythingHandler,
@@ -44,8 +48,14 @@ export const PROJECT_QUERY_HANDLERS = [
   GetImportPreviewHandler,
   ExportProjectHandler,
   ExportPostmanHandler,
+  GetForkDiffHandler,
 ];
-export const PROJECT_ADAPTERS = [{ provide: PROJECT_REPOSITORY, useClass: TypeOrmProjectRepository }];
+/** Lo que comparten la vista previa y la aplicación de una sincronización: ver `fork-sync.ts`. */
+export const PROJECT_SERVICES = [ForkSync];
+export const PROJECT_ADAPTERS = [
+  { provide: PROJECT_REPOSITORY, useClass: TypeOrmProjectRepository },
+  { provide: PROJECT_FORK_REPOSITORY, useClass: TypeOrmProjectForkRepository },
+];
 
 /**
  * The controller lives here and serves both modules' routes, because a contract is not a
@@ -55,7 +65,7 @@ export const PROJECT_ADAPTERS = [{ provide: PROJECT_REPOSITORY, useClass: TypeOr
 @Module({
   imports: [
     CqrsModule,
-    TypeOrmModule.forFeature([ProjectEntity]),
+    TypeOrmModule.forFeature([ProjectEntity, ProjectForkEntity]),
     forwardRef(() => SpecsModule),
     // Copying a project reads the other one's configuration, its flows and its environments, so
     // this module needs all three repositories. Circular, because each of those modules already
@@ -73,7 +83,7 @@ export const PROJECT_ADAPTERS = [{ provide: PROJECT_REPOSITORY, useClass: TypeOr
     IamModule,
   ],
   controllers: [ProjectsController],
-  providers: [...PROJECT_ADAPTERS, ...PROJECT_COMMAND_HANDLERS, ...PROJECT_QUERY_HANDLERS],
-  exports: [PROJECT_REPOSITORY],
+  providers: [...PROJECT_ADAPTERS, ...PROJECT_SERVICES, ...PROJECT_COMMAND_HANDLERS, ...PROJECT_QUERY_HANDLERS],
+  exports: [PROJECT_REPOSITORY, PROJECT_FORK_REPOSITORY],
 })
 export class ProjectsModule {}

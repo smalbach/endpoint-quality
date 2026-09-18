@@ -15,6 +15,7 @@
  * succeeds is a check nobody can tell you ran.
  */
 import type { ActualResponse } from "./assertions.ts";
+import { topicMatches } from "./mqtt-topic.ts";
 import type { Assertion } from "./types.ts";
 import { valueAtPath } from "./variables.ts";
 
@@ -48,7 +49,18 @@ export type CheckSource = (typeof CHECK_SOURCES)[number];
  * de verdad se escribe contra un socket, y que sin esto no se podía decir.
  */
 export const MESSAGE_MATCHES = ["first", "last", "any", "all"] as const;
-export type MessageMatch = { at: (typeof MESSAGE_MATCHES)[number]; index?: number };
+export type MessageMatch = {
+  at: (typeof MESSAGE_MATCHES)[number];
+  index?: number;
+  /**
+   * Solo los mensajes de este tema —un filtro MQTT, con `+` y `#`— antes de elegir cuál.
+   *
+   * Un canal MQTT oye varios temas en la misma sesión, y «el último mensaje» sin decir de qué tema
+   * es el de cualquiera: la comprobación pasaría o fallaría según quién publicó el último. Con el
+   * filtro, `first`, `last`, la posición, `any`, `all` y `messageCount` cuentan **dentro** del tema.
+   */
+  topic?: string;
+};
 
 /**
  * Lo que una comprobación necesita saber de un mensaje, y nada más.
@@ -56,7 +68,7 @@ export type MessageMatch = { at: (typeof MESSAGE_MATCHES)[number]; index?: numbe
  * Estructural a propósito: `ChannelMessage` encaja sin que este fichero lo importe, así que la
  * dependencia va en una sola dirección —la conversación usa este motor, no al revés—.
  */
-export type CheckMessage = { seq: number; body: string };
+export type CheckMessage = { seq: number; body: string; topic?: string };
 
 export const CHECK_OPERATORS = [
   "equals",
@@ -105,7 +117,8 @@ export function evaluateChecks(checks: StepCheck[], context: CheckContext): Asse
   return checks.map((check) => evaluateCheck(check, context));
 }
 
-function evaluateCheck(check: StepCheck, context: CheckContext): Assertion {
+function evaluateCheck(check: StepCheck, given: CheckContext): Assertion {
+  const context = withinTopic(check, given);
   if (check.source === "message" && (check.match?.at === "any" || check.match?.at === "all")) {
     return evaluateAcrossMessages(check, context.messages ?? []);
   }
@@ -128,6 +141,24 @@ function evaluateCheck(check: StepCheck, context: CheckContext): Assertion {
     pass,
     ...(check.severity ? { severity: check.severity } : {}),
     detail: `Obtenido ${describe(actual)}`,
+  };
+}
+
+/**
+ * Los mensajes del tema que pide la comprobación, y solo esos.
+ *
+ * Un mensaje sin tema —el de un WebSocket— no casa con ningún filtro: una comprobación con tema en
+ * un canal que no tiene temas no mira nada, y sale en rojo por «no llegó ningún mensaje», que es la
+ * verdad.
+ */
+function withinTopic(check: StepCheck, context: CheckContext): CheckContext {
+  const filter = check.match?.topic;
+  if (!filter || (check.source !== "message" && check.source !== "messageCount")) return context;
+  return {
+    ...context,
+    messages: (context.messages ?? []).filter(
+      (message) => message.topic !== undefined && topicMatches(filter, message.topic),
+    ),
   };
 }
 
@@ -187,7 +218,8 @@ function pickMessage(messages: CheckMessage[], match: MessageMatch | undefined):
 function where(check: StepCheck): string {
   if (check.source === "status") return "status";
   if (check.source === "durationMs") return "duración";
-  if (check.source === "messageCount") return "mensajes recibidos";
+  const topic = check.match?.topic ? ` en ${check.match.topic}` : "";
+  if (check.source === "messageCount") return `mensajes recibidos${topic}`;
   if (check.source === "message") {
     const which =
       check.match?.index !== undefined
@@ -199,7 +231,7 @@ function where(check: StepCheck): string {
             : check.match?.at === "first"
               ? "primer mensaje"
               : "último mensaje";
-    return check.path ? `${which} · ${check.path}` : which;
+    return check.path ? `${which}${topic} · ${check.path}` : `${which}${topic}`;
   }
   if (check.source === "header") return `cabecera ${check.path ?? ""}`.trim();
   return check.path ? `body.${check.path}` : "body";

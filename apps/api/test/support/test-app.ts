@@ -44,6 +44,11 @@ import { InMemoryDocSiteRepository } from "./in-memory-doc-sites";
 import { InMemoryMonitorRepository } from "./in-memory-monitors";
 import { InMemoryChannelRepository, InMemoryChannelSessionRepository } from "./in-memory-channels";
 import { StubChannelTransport } from "./stub-channel-transport";
+import { InMemoryCaptureRepository } from "./in-memory-captures";
+import { CAPTURE_REPOSITORY } from "@/modules/captures/domain/ports";
+import { CapturesController } from "@/modules/captures/presentation/captures.controller";
+import { CaptureProxyService } from "@/modules/captures/infrastructure/capture-proxy.service";
+import { CAPTURE_COMMAND_HANDLERS, CAPTURE_QUERY_HANDLERS } from "@/modules/captures/captures.module";
 import { ENDPOINT_REPOSITORY, EXAMPLE_REPOSITORY } from "@/modules/endpoints/domain/ports";
 import { EndpointsController } from "@/modules/endpoints/presentation/endpoints.controller";
 import { MOCK_REPOSITORY } from "@/modules/mocks/domain/ports";
@@ -70,6 +75,7 @@ import { GRPC_TRANSPORT, GrpcChannelTransport } from "@/modules/channels/infrast
 import { GrpcSessionPlanner } from "@/modules/channels/application/grpc";
 import { InMemoryChannelProtoRepository } from "./in-memory-protos";
 import { CHANNEL_TRANSPORT, WsChannelTransport } from "@/modules/channels/infrastructure/ws-transport";
+import { MQTT_TRANSPORT, MqttChannelTransport } from "@/modules/channels/infrastructure/mqtt-transport";
 import { ChannelProgressStream } from "@/modules/channels/infrastructure/channel-progress.stream";
 import { ChannelSessionRegistry } from "@/modules/channels/infrastructure/session-registry";
 import { CHANNEL_COMMAND_HANDLERS, CHANNEL_QUERY_HANDLERS } from "@/modules/channels/channels.module";
@@ -81,9 +87,10 @@ import {
 import { INVITATION_REPOSITORY, MEMBERSHIP_REPOSITORY, ORGANIZATION_REPOSITORY } from "@/modules/iam/domain/ports";
 import { OrganizationsController } from "@/modules/iam/presentation/organizations.controller";
 import { IAM_COMMAND_HANDLERS, IAM_QUERY_HANDLERS } from "@/modules/iam/iam.module";
-import { PROJECT_REPOSITORY } from "@/modules/projects/domain/ports";
+import { PROJECT_FORK_REPOSITORY, PROJECT_REPOSITORY } from "@/modules/projects/domain/ports";
+import { InMemoryProjectForkRepository } from "./in-memory-forks";
 import { ProjectsController } from "@/modules/projects/presentation/projects.controller";
-import { PROJECT_COMMAND_HANDLERS, PROJECT_QUERY_HANDLERS } from "@/modules/projects/projects.module";
+import { PROJECT_COMMAND_HANDLERS, PROJECT_QUERY_HANDLERS, PROJECT_SERVICES } from "@/modules/projects/projects.module";
 import { SPEC_REPOSITORY } from "@/modules/specs/domain/ports";
 import { SPEC_COMMAND_HANDLERS, SPEC_QUERY_HANDLERS } from "@/modules/specs/specs.module";
 import {
@@ -259,6 +266,10 @@ export const TEST_ENV: NodeJS.ProcessEnv = {
   JWT_REFRESH_SECRET: "b".repeat(48),
   ACCESS_TOKEN_TTL: "15m",
   REFRESH_TOKEN_TTL_DAYS: "30",
+  // El proxy de captura encendido en un puerto libre y solo en loopback. Escucha únicamente mientras
+  // una prueba tiene una sesión abierta.
+  CAPTURE_PROXY_PORT: "0",
+  CAPTURE_PROXY_HOST: "127.0.0.1",
 };
 
 export type TestContext = {
@@ -295,6 +306,8 @@ export type TestContext = {
     channels: InMemoryChannelRepository;
     channelSessions: InMemoryChannelSessionRepository;
     channelProtos: InMemoryChannelProtoRepository;
+    captures: InMemoryCaptureRepository;
+    forks: InMemoryProjectForkRepository;
   };
   http: StubSafeFetch;
   /** Los sockets de los canales: guionizados por URL, y los que no, al transporte de verdad. */
@@ -339,7 +352,10 @@ export async function createTestApp(): Promise<TestContext> {
     channels: new InMemoryChannelRepository(),
     channelSessions: new InMemoryChannelSessionRepository(),
     channelProtos: new InMemoryChannelProtoRepository(),
+    captures: new InMemoryCaptureRepository(),
   };
+  const forks = new InMemoryProjectForkRepository(repositories);
+  const allRepositories = { ...repositories, forks };
   const mailer = new RecordingMailer();
   // Lo que no se guioniza sale por el transporte de verdad, con la misma política de red que el
   // resto de la aplicación de prueba: loopback permitido, porque las pruebas de socket de verdad
@@ -374,6 +390,7 @@ export async function createTestApp(): Promise<TestContext> {
       MonitorsController,
       ChannelsController,
       GrpcChannelsController,
+      CapturesController,
       RolesController,
       SecurityRunsController,
       PerformanceController,
@@ -394,6 +411,7 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: MEMBERSHIP_REPOSITORY, useValue: repositories.memberships },
       { provide: INVITATION_REPOSITORY, useValue: repositories.invitations },
       { provide: PROJECT_REPOSITORY, useValue: repositories.projects },
+      { provide: PROJECT_FORK_REPOSITORY, useValue: forks },
       { provide: SPEC_REPOSITORY, useValue: repositories.specs },
       { provide: SAFE_FETCH, useValue: http },
       { provide: RUN_REPOSITORY, useValue: repositories.runs },
@@ -439,12 +457,16 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: CHANNEL_REPOSITORY, useValue: repositories.channels },
       { provide: CHANNEL_SESSION_REPOSITORY, useValue: repositories.channelSessions },
       { provide: CHANNEL_TRANSPORT, useValue: channels },
+      // MQTT sin guion: las pruebas hablan con un broker en proceso en loopback, como las de socket.
+      { provide: MQTT_TRANSPORT, useValue: new MqttChannelTransport({ ...env, ALLOW_PRIVATE_TARGETS: true }) },
       { provide: CHANNEL_PROTO_REPOSITORY, useValue: repositories.channelProtos },
       // gRPC sin guion: las pruebas llaman a un servidor de verdad en loopback, como las de socket.
       { provide: GRPC_TRANSPORT, useValue: new GrpcChannelTransport({ ...env, ALLOW_PRIVATE_TARGETS: true }) },
       GrpcSessionPlanner,
       ChannelProgressStream,
       ChannelSessionRegistry,
+      { provide: CAPTURE_REPOSITORY, useValue: repositories.captures },
+      CaptureProxyService,
       // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the
       // repository is ciphertext, and a pass-through would make that assertion meaningless.
       { provide: SECRET_CIPHER, useValue: new AesGcmSecretCipher(Buffer.alloc(32, 9).toString("base64")) },
@@ -453,6 +475,7 @@ export async function createTestApp(): Promise<TestContext> {
       ...AUTH_EVENT_HANDLERS,
       ...IAM_COMMAND_HANDLERS,
       ...IAM_QUERY_HANDLERS,
+      ...PROJECT_SERVICES,
       ...PROJECT_COMMAND_HANDLERS,
       ...PROJECT_QUERY_HANDLERS,
       ...SPEC_COMMAND_HANDLERS,
@@ -480,6 +503,8 @@ export async function createTestApp(): Promise<TestContext> {
       ...MONITOR_EVENT_HANDLERS,
       ...CHANNEL_COMMAND_HANDLERS,
       ...CHANNEL_QUERY_HANDLERS,
+      ...CAPTURE_COMMAND_HANDLERS,
+      ...CAPTURE_QUERY_HANDLERS,
       ...ROLE_COMMAND_HANDLERS,
       ...ROLE_QUERY_HANDLERS,
       ...SECURITY_RUN_COMMAND_HANDLERS,
@@ -541,7 +566,7 @@ export async function createTestApp(): Promise<TestContext> {
     app,
     clock,
     env,
-    repositories,
+    repositories: allRepositories,
     http,
     channels,
     mailer,

@@ -42,6 +42,7 @@ import {
   UpdateChannelDto,
 } from "@/modules/channels/presentation/dto/channels.dto";
 import { ReflectGrpcDto, SaveProtosDto } from "@/modules/channels/presentation/dto/grpc.dto";
+import { ImportCaptureDto } from "@/modules/captures/presentation/dto/captures.dto";
 import type { OpenAPIObject } from "@nestjs/swagger";
 
 import {
@@ -69,7 +70,8 @@ import {
 } from "@/modules/iam/presentation/dto/iam.dto";
 import {
   ArchiveProjectDto,
-  CopyFromProjectDto,
+  ForkProjectDto,
+  SyncForkDto,
   ImportElementsDto,
   ImportProjectBundleDto,
   ImportAnythingDto,
@@ -150,7 +152,8 @@ const DTOS = [
   CreateProjectDto,
   UpdateProjectDto,
   ArchiveProjectDto,
-  CopyFromProjectDto,
+  ForkProjectDto,
+  SyncForkDto,
   ImportElementsDto,
   ImportProjectBundleDto,
   ImportAnythingDto,
@@ -195,6 +198,7 @@ const DTOS = [
   SendChannelMessageDto,
   SaveProtosDto,
   ReflectGrpcDto,
+  ImportCaptureDto,
   CreatePlanDto,
   UpdatePlanDto,
   StartPerformanceRunDto,

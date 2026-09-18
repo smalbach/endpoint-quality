@@ -125,6 +125,8 @@ export class ProcessScriptSandbox implements ScriptSandboxPort {
             maxLineLength: SCRIPT_LIMITS.maxLineLength,
             maxTests: SCRIPT_LIMITS.maxTests,
             maxValueLength: SCRIPT_LIMITS.maxValueLength,
+            maxTemplateLength: SCRIPT_LIMITS.maxTemplateLength,
+            maxVisualizationData: SCRIPT_LIMITS.maxVisualizationData,
           },
         },
         (error) => {

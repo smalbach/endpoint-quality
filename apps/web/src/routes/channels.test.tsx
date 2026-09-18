@@ -40,6 +40,7 @@ const channel = (patch: Partial<ChannelView> = {}): ChannelView => ({
   limits: { maxMessages: 200, maxBytes: 1_048_576, maxMessageBytes: 65_536, maxDurationMs: 30_000, idleMs: 10_000 },
   expectations: {},
   messages: [],
+  mqtt: null,
   grpc: null,
   orderIndex: 0,
   createdAt: "2026-03-01T10:00:00.000Z",
@@ -184,6 +185,56 @@ describe("la pantalla de canales", () => {
     expect(screen.getAllByText("primero")).toHaveLength(1);
   });
 
+  test("buscar en la conversación deja las filas que casan, y dice cuántas de cuántas", async () => {
+    can.edit = true;
+    answers({
+      session: session({
+        status: "closed",
+        live: false,
+        messages: [
+          msg(1, { body: "hola" }),
+          msg(2, { direction: "out", body: "suscribir precios" }),
+          msg(3, { body: "precio: 12" }),
+        ],
+      }),
+    });
+    show("/p/p1/channels?c=c1&s=s1");
+    expect(await screen.findByText("hola")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Buscar en la conversación"), { target: { value: "precio" } });
+    expect(screen.queryByText("hola")).toBeNull();
+    expect(screen.getByText("2 de 3")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Qué mensajes"), { target: { value: "in" } });
+    expect(screen.queryByText("suscribir precios")).toBeNull();
+    expect(screen.getByText("precio: 12")).toBeTruthy();
+  });
+
+  test("el borrador se guarda en la biblioteca con un nombre, por el PATCH del canal", async () => {
+    can.edit = true;
+    answers({
+      detail: { ...channel({ messages: [{ name: "ping", body: '{"type":"ping"}' }] }), sessions: [] },
+      session: session(),
+    });
+    stream.mockImplementation(async () => {});
+    show("/p/p1/channels?c=c1&s=s1");
+    fireEvent.change(await screen.findByLabelText("Mensaje"), {
+      target: { value: '{"type":"auth","token":"{{token}}"}' },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar en la biblioteca" }));
+    fireEvent.change(screen.getByLabelText("Nombre de la trama"), { target: { value: "auth" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/channels/c1", {
+        method: "PATCH",
+        body: {
+          messages: [
+            { name: "ping", body: '{"type":"ping"}' },
+            { name: "auth", body: '{"type":"auth","token":"{{token}}"}' },
+          ],
+        },
+      }),
+    );
+  });
+
   test("quien solo lee no conecta ni crea", async () => {
     can.edit = false;
     answers();
@@ -217,7 +268,7 @@ describe("un canal gRPC", () => {
     show("/p/p1/channels");
     fireEvent.click(await screen.findByRole("button", { name: "Nuevo canal" }));
     const dialog = within(await screen.findByRole("dialog"));
-    fireEvent.click(dialog.getByRole("radio", { name: "gRPC" }));
+    fireEvent.change(dialog.getByRole("combobox"), { target: { value: "grpc" } });
     fireEvent.change(dialog.getAllByRole("textbox")[0], { target: { value: "tienda" } });
     fireEvent.change(dialog.getAllByRole("textbox")[1], { target: { value: "{{grpcBase}}" } });
     fireEvent.click(dialog.getByRole("button", { name: "Crear" }));

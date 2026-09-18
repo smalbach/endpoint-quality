@@ -363,7 +363,7 @@ describe("una llamada gRPC, que cierra con un estado y unos trailers", () => {
 
   test("el estado esperado se afirma con su nombre, y el detalle trae el del servidor", () => {
     const { conversation } = play([
-      { direction: "open", atMs: 0, handshake: { status: 200, headers: {} } },
+      { direction: "open", atMs: 0, handshake: { status: 200, headers: {}, via: "inicio de la llamada" } },
       { direction: "close", atMs: 5, closeCode: 14, closeReason: "sin backend", trailers: {} },
     ]);
     const verdict = evaluateConversation({ expect: { status: 0 }, conversation });
@@ -372,7 +372,7 @@ describe("una llamada gRPC, que cierra con un estado y unos trailers", () => {
     assert.deepEqual(
       verdict.assertions.map((assertion) => [assertion.label, assertion.pass, assertion.detail]),
       [
-        ["Conexión", true, "abierta (HTTP 200)"],
+        ["Conexión", true, "abierta (200 en el inicio de la llamada)"],
         ["Estado OK (0)", false, "terminó con UNAVAILABLE (14): sin backend"],
       ],
     );

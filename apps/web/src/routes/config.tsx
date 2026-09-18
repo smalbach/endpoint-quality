@@ -5,7 +5,6 @@ import { api, type ApiError } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { Badge, Button, Card, Field, inputClass } from "@/components/ui";
 import { SECTION_EDITORS } from "@/components/config-editors";
-import { CopyFromProject } from "@/components/copy-from-project";
 import { ImportElements } from "@/components/import-elements";
 import { SECTION_GROUPS, SECTION_GUIDE } from "@/lib/config-sections";
 import { unchanged } from "@/lib/config-draft";
@@ -249,16 +248,9 @@ function ImportContract({
           >
             Importar desde la URL
           </Button>
-          {/* Under the contract import, because that is the other thing somebody does in the first
-              five minutes of a project — and the two are the same sentence: «este proyecto empieza
-              desde algo», sea un documento o el proyecto de al lado. */}
-          <CopyFromProject
-            base={base}
-            projectId={projectId}
-            organizationId={organizationId}
-            disabled={disabled}
-            onCopied={onImported}
-          />
+          {/* Bajo la importación del contrato, porque es lo otro que se hace en los primeros cinco
+              minutos de un proyecto: «este proyecto empieza desde algo». Empezar desde otro proyecto
+              entero es bifurcarlo, desde su menú; aquí se traen piezas sueltas. */}
           <ImportElements
             base={base}
             projectId={projectId}
