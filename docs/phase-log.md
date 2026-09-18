@@ -2770,3 +2770,73 @@ añadir temas MQTT a mitad de sesión, will y propiedades de MQTT 5, metadata gR
 y monitores invoquen canales, reconectar un WebSocket, y el reimport de un campo de fichero de
 Postman. Y sigue `SECRETS_KEY`: 48 bytes en `docker/.env`, sin tocar; con ella, crear una variable
 secreta es un 500.
+
+## Paridad con Postman, ola 13: canales en corridas, solicitudes de fusión y los extras
+
+Tres agentes en paralelo, integrados en `main` y probados juntos en la pila.
+
+### Canales dentro de corridas y monitores
+
+Un nodo de flujo nuevo, `channel`, con un guion de `send` (con tema, QoS y retain en MQTT, y una
+pausa), `wait` (N mensajes más, con tiempo máximo) y `end` (medio cierre de un stream gRPC). Sin guion
+manda los mensajes guardados del canal; con `[]` solo escucha. El veredicto es el del canal: el nodo
+no lleva comprobaciones propias. Captura de `last.x`, `messages.N.x` o una regex.
+
+**Un solo camino de apertura.** `ChannelSessionOpener` sale del handler de «Conectar» y lo usan los
+dos: guarda de red, topes, redacción, secretos, entorno sin escrituras y métodos gRPC sin efectos se
+heredan, no se repiten. `HeadlessChannelRunner` cierra al recibir lo esperado, al cerrar el otro lado
+o al saltar un tope. A `run_steps` va la transcripción tapada; lo recibido sin tapar vive solo en
+memoria, para las capturas. Un monitor con un flujo de canales funciona sin cambios. En Postman el
+nodo sale en `skipped`.
+
+### Solicitudes de fusión y más cosas que viajan entre bifurcaciones
+
+Solicitudes de fusión (`ForkMergeRequests1700000033000`): se crean desde la bifurcación y se revisan
+en el original, con comentarios, aprobar, rechazar, retirar y fusionar. El autor no se aprueba a sí
+mismo; como mucho una pendiente por bifurcación, con un índice único parcial. Fusionar recalcula la
+comparación y cierra la solicitud en la misma transacción que el plan. El correo al autor no lleva la
+comparación. La comparación a tres bandas cubre ahora suites, roles (con permisos y reglas), secciones
+y **canales**. Bifurcar copia los canales con sus `.proto`, sin secretos, y remapea el `channelId` de
+los nodos: antes el flujo copiado se quedaba apuntando al canal del original. El fichero de proyecto
+también lleva los canales.
+
+La carrera que quedó abierta en la ola 12 está cerrada: `apply` bloquea la fila de `project_forks` y
+compara la versión **dentro** de la transacción; dos aplicaciones con la misma huella dan 200 y 409.
+
+### Extras de canales y dos arreglos del import
+
+- **MQTT**: suscribirse y darse de baja a mitad de sesión, anotado como evento, que no cuenta como
+  mensaje (un `SUBACK` contado como recibido haría pasar «al menos un mensaje» sin mensajes).
+  Testamento, y propiedades de usuario de MQTT 5 de ida y vuelta, tapadas como cabeceras
+  (`ChannelMessageProperties1700000034000`).
+- **gRPC**: metadata `-bin` en base64; cada secreto se busca también en base64. Con reflexión, una
+  sola conexión por sesión.
+- **WebSocket**: tramas binarias en base64 o hexadecimal; los secretos se buscan también en el volcado.
+- **Import**: un fichero de un `formdata` de Postman o Insomnia vuelve como campo de fichero (antes,
+  texto vacío). Un `urlencoded` en un nodo `fetch` deja intactas las `{{variables}}`: el envío
+  codifica cada valor dentro de su campo.
+
+### Un fallo que salió en la pila
+
+Una bifurcación nace con el entorno sin escrituras. Con gRPC por reflexión, el método se resuelve y
+el entorno se comprueba **después** de conectar, y el rechazo salía como «no se pudo conectar», con
+fallo `network`. Un error de dominio durante la apertura es ahora `config`, con su propio mensaje.
+Hay prueba que falla sin el arreglo.
+
+### Cómo se comprobó
+
+Suite sobre `main` integrado: `api 1196 · web 579 · runner-core 371 · lint 0 errores · typecheck
+limpio`. En la pila, con las migraciones 33 y 34 aplicadas:
+
+- **MQTT** en HiveMQ: suscribirse a `{{tema}}/b/#` con la sesión abierta, publicar y recibir el eco.
+- **WebSocket** en `echo.websocket.org`: `de ad be ef` en hexadecimal sale y vuelve como `deadbeef`.
+- **Flujo** con dos nodos canal: gRPC en `grpcb.in` por reflexión, cuya respuesta se captura y se
+  publica por MQTT; los dos en verde.
+- **Bifurcación**: los tres canales copiados, los nodos apuntando a las copias. La corrida sale roja
+  `config` con el entorno sin escrituras y verde al permitirlas.
+- **Solicitud de fusión**: aprobar la propia da 403; comentar, 204; fusionar lleva el canal
+  renombrado al original y la deja `merged`.
+
+Datos de la prueba borrados. No comprobado: las pantallas en el navegador. Pendiente: un monitor que
+apunte a un canal sin flujo, `{{variables}}` en los temas MQTT del guion, y el nombre del canal en el
+lienzo (hoy enseña el id). Y `SECRETS_KEY`, sin tocar.
