@@ -18,6 +18,8 @@
  *
  * Cuatro vías de entrada, las mismas que importan aquí: ficheros, una carpeta entera, texto pegado
  * y una URL. La quinta de Postman —un repositorio— ya es otra cosa en este producto: el Escáner.
+ * Y una más que Postman tiene fuera del import y aquí vive dentro: capturar el tráfico que pasa por
+ * un proxy (`capture-traffic.tsx`), que acaba en el mismo resumen porque entra como un HAR.
  *
  * La vía de la URL lleva además **una credencial opcional**, porque un contrato interno vive detrás
  * de un gateway y sin ella «desde una URL» sólo servía para lo que ya era público; no se guarda en
@@ -32,6 +34,7 @@ import { detectImport, looksZipped, readZip, targetsOf, type Detected, type Impo
 import { api, ApiError } from "@/lib/api";
 import { useOrganization } from "@/lib/auth";
 import { Modal } from "@/components/overlay";
+import { CaptureTraffic } from "@/components/capture-traffic";
 import { Button, Field, inputClass } from "@/components/ui";
 import { cn } from "@/lib/format";
 import type { ImportAnythingResult, ImportedItemResult, ProjectSummary } from "@/lib/types";
@@ -80,7 +83,11 @@ export async function readDropped(files: File[]): Promise<DroppedFile[]> {
   return read.flat();
 }
 
-type Tab = "files" | "text" | "url";
+/**
+ * «Capturar tráfico» es una pestaña más y no una puerta aparte: es un HAR grabado de otra manera, y
+ * lo elegido entra por la misma puerta y acaba en el mismo resumen.
+ */
+type Tab = "files" | "text" | "url" | "capture";
 
 /**
  * La credencial con la que leer la URL, tal como se pide en pantalla.
@@ -143,6 +150,7 @@ export function ImportDialog({
   const [baseUrl, setBaseUrl] = useState("");
   const [target, setTarget] = useState(projectId ?? "");
   const [dragging, setDragging] = useState(false);
+  const [captured, setCaptured] = useState<ImportAnythingResult | null>(null);
   const filePicker = useRef<HTMLInputElement>(null);
   const folderPicker = useRef<HTMLInputElement>(null);
 
@@ -201,7 +209,7 @@ export function ImportDialog({
   return (
     <Modal
       title="Importar"
-      description="Ficheros, una carpeta, un texto pegado o un enlace. Se reconoce qué es cada cosa antes de escribir nada."
+      description="Ficheros, una carpeta, un texto pegado, un enlace o el tráfico que pase por un proxy. Se reconoce qué es cada cosa antes de escribir nada."
       onClose={onClose}
       size="lg"
     >
@@ -240,6 +248,7 @@ export function ImportDialog({
               ["files", "Ficheros"],
               ["text", "Texto sin formato"],
               ["url", "Desde una URL"],
+              ["capture", "Capturar tráfico"],
             ] as const
           ).map(([value, label]) => (
             <button
@@ -401,6 +410,16 @@ export function ImportDialog({
           </div>
         )}
 
+        {tab === "capture" && !captured && target && (
+          <CaptureTraffic
+            projectId={target}
+            onResult={(result) => {
+              setCaptured(result);
+              onImported();
+            }}
+          />
+        )}
+
         {/* Lo reconocido, mientras sueltas y sin preguntar a nadie. */}
         {!run.data && found.length > 0 && (
           <ul className="mt-3 space-y-1.5">
@@ -433,12 +452,14 @@ export function ImportDialog({
 
         {run.error && <Problem error={run.error} />}
         {run.data && <Done result={run.data} projectId={target} onClose={onClose} />}
+        {tab === "capture" && captured && <Done result={captured} projectId={target} onClose={onClose} />}
 
         <div className="mt-4 flex items-center justify-end gap-2">
           <Button variant="ghost" className="h-8 text-xs" onClick={onClose}>
-            {run.data ? "Cerrar" : "Cancelar"}
+            {run.data || captured ? "Cerrar" : "Cancelar"}
           </Button>
-          {!run.data && (
+          {/* La captura tiene su propio botón, junto a la lista de lo que se elige. */}
+          {!run.data && tab !== "capture" && (
             <Button className="h-8 text-xs" disabled={!ready || run.isPending} onClick={() => run.mutate()}>
               {run.isPending ? "Importando…" : "Importar"}
             </Button>
