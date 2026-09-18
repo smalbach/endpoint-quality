@@ -12,7 +12,7 @@
  * (`redactBody`), que es la segunda red y la misma que usan los ejemplos guardados.
  */
 import { createHmac, randomUUID } from "node:crypto";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 import {
   interpolateText,
@@ -21,6 +21,7 @@ import {
   type ComputedSeed,
   unresolvedVariables,
   withEnvironmentNamespace,
+  type ChannelLimits,
   type RequestAuth,
 } from "@eq/runner-core";
 
@@ -45,6 +46,13 @@ import {
   type MqttQos,
   type MqttSessionPlan,
 } from "../../domain/mqtt";
+import {
+  eventNameProblem,
+  socketIoSessionPlan,
+  type SocketIoEmit,
+  type SocketIoSessionPlan,
+} from "../../domain/socketio";
+import { SOCKETIO_TRANSPORT, type SocketIoTransportPort } from "../../infrastructure/socketio-transport";
 import {
   CHANNEL_REPOSITORY,
   CHANNEL_SESSION_REPOSITORY,
@@ -94,6 +102,7 @@ export class ChannelSessionOpener {
     @Inject(ENV) private readonly env: Env,
     private readonly registry: ChannelSessionRegistry,
     private readonly grpc: GrpcSessionPlanner,
+    @Optional() @Inject(SOCKETIO_TRANSPORT) private readonly socketio: SocketIoTransportPort | null = null,
   ) {}
 
   async open(input: {
@@ -112,7 +121,7 @@ export class ChannelSessionOpener {
       input.grpcRequest !== undefined && input.channel.grpc
         ? { ...input.channel, grpc: { ...input.channel.grpc, message: input.grpcRequest } }
         : input.channel;
-    const { environment, url, headers, secrets, interpolate, variables, mqtt } = await resolveChannelTarget(
+    const { environment, url, headers, secrets, interpolate, variables, mqtt, socketio } = await resolveChannelTarget(
       { environments: this.environments, cipher: this.cipher },
       input.projectId,
       channel,
@@ -133,7 +142,16 @@ export class ChannelSessionOpener {
             readOnly,
             environmentName: environment?.name ?? "",
           })
-        : undefined;
+        : socketio
+          ? socketIoOpener(
+              this.socketio,
+              url,
+              headers,
+              socketio,
+              limits,
+              Math.min(limits.maxDurationMs, this.env.REQUEST_TIMEOUT_MS),
+            )
+          : undefined;
 
     const session = startSession({
       id: randomUUID(),
@@ -173,6 +191,28 @@ export class ChannelSessionOpener {
       ...(input.onReceived ? { onReceived: input.onReceived } : {}),
     });
   }
+}
+
+/**
+ * Lo que abre un canal Socket.IO: su transporte con el plan ya resuelto. Una trama que traduce el
+ * transporte —un evento con su nombre, un acuse— entra por `onFrame`, con la hora de la sesión.
+ */
+function socketIoOpener(
+  transport: SocketIoTransportPort | null,
+  url: string,
+  headers: Record<string, string>,
+  plan: SocketIoSessionPlan,
+  limits: ChannelLimits,
+  connectTimeoutMs: number,
+): SessionPlan["open"] {
+  return (listeners) => {
+    if (!transport) throw new Error("Esta instancia no tiene transporte Socket.IO");
+    return transport.open(
+      url,
+      { ...plan, headers, maxMessageBytes: limits.maxMessageBytes, connectTimeoutMs, ackTimeoutMs: connectTimeoutMs },
+      (frame) => listeners.onFrame?.(frame),
+    );
+  };
 }
 
 @CommandHandler(OpenChannelSessionCommand)
@@ -225,6 +265,7 @@ export async function resolveChannelTarget(
   interpolate: (value: string) => string;
   variables: Record<string, string>;
   mqtt: MqttSessionPlan | undefined;
+  socketio: SocketIoSessionPlan | undefined;
 }> {
   const environment = environmentId ? await deps.environments.findById(environmentId) : null;
   if (environmentId && (!environment || environment.projectId !== projectId))
@@ -256,7 +297,13 @@ export async function resolveChannelTarget(
       ? mqttSessionPlan(channel.mqtt, channel.auth, interpolate, secrets, () => randomUUID().slice(0, 8))
       : undefined;
 
-  const unresolved = unresolvedVariables([url, headers, mqtt ?? null]);
+  // Socket.IO: la carga de `auth` y la query, resueltas, con cada valor de la carga en los secretos.
+  const socketio =
+    channel.protocol === "socketio" && channel.socketio
+      ? socketIoSessionPlan(channel.socketio, url, interpolate, secrets)
+      : undefined;
+
+  const unresolved = unresolvedVariables([url, headers, mqtt ?? null, socketio?.plan ?? null]);
   if (unresolved.length) {
     throw new InvalidInputError(
       `Variables sin valor: ${unresolved.join(", ")}`,
@@ -270,11 +317,13 @@ export async function resolveChannelTarget(
 
   const planned = mqtt ? planProblems(mqtt) : [];
   if (planned.length) throw new InvalidInputError("Las suscripciones no son válidas con este entorno", planned);
+  if (socketio?.problems.length)
+    throw new InvalidInputError("La carga de auth no es válida con este entorno", socketio.problems);
 
   if (!mqtt && channel.auth && channel.auth.type !== "none" && channel.auth.type !== "inherit") {
     url = sign(channel.auth, url, headers, interpolate, secrets, channel.protocol);
   }
-  return { environment, url, headers, secrets, interpolate, variables, mqtt };
+  return { environment, url, headers, secrets, interpolate, variables, mqtt, socketio: socketio?.plan };
 }
 
 /**
@@ -394,6 +443,8 @@ export class SendChannelMessageCommand implements ICommand {
     readonly publish?: MqttPublish,
     /** Solo en un WebSocket: el texto son bytes en base64 o hexadecimal, y sale como trama binaria. */
     readonly binary?: BinaryEncoding,
+    /** Solo en Socket.IO, y ahí obligatorio: el evento, el acuse y los argumentos. */
+    readonly emit?: SocketIoEmit,
   ) {}
 }
 
@@ -423,6 +474,8 @@ export class SendChannelMessageHandler implements ICommandHandler<SendChannelMes
         ? userPropertiesProblems(command.publish.userProperties, "userProperties")
         : [];
     if (propertyProblems.length) throw new InvalidInputError("El mensaje no es válido", propertyProblems);
+    const emitProblems = command.emit ? emitInputProblems(command.emit) : [];
+    if (emitProblems.length) throw new InvalidInputError("El mensaje no es válido", emitProblems);
     // Esté donde esté el socket: si lo tiene otra instancia viva, la orden va a ella por el bus.
     await this.registry.route(session, {
       op: "send",
@@ -430,9 +483,29 @@ export class SendChannelMessageHandler implements ICommandHandler<SendChannelMes
       text: command.text,
       publish: command.publish,
       binary: command.binary,
+      emit: command.emit,
     });
   }
 }
+
+/** Lo que un `emit` tiene mal antes de llegar a la sesión: el nombre, y cuántos y cómo de grandes. */
+function emitInputProblems(emit: SocketIoEmit): { field: string; detail: string }[] {
+  const problems: { field: string; detail: string }[] = [];
+  // Con `{{variables}}` el nombre se vuelve a mirar ya resuelto; aquí, lo que ya se sabe.
+  const eventProblem = eventNameProblem(emit.event);
+  if (eventProblem) problems.push({ field: "event", detail: eventProblem });
+  if (emit.args !== undefined) {
+    if (!Array.isArray(emit.args) || emit.args.some((arg) => typeof arg !== "string"))
+      problems.push({ field: "args", detail: "Los argumentos son una lista de textos" });
+    else if (emit.args.length > MAX_EMIT_ARGS) problems.push({ field: "args", detail: `Como mucho ${MAX_EMIT_ARGS}` });
+    else if (emit.args.reduce((sum, arg) => sum + Buffer.byteLength(arg, "utf8"), 0) > MAX_SAVED_MESSAGE_BYTES)
+      problems.push({ field: "args", detail: `Entre todos, como mucho ${MAX_SAVED_MESSAGE_BYTES / 1024} KB` });
+  }
+  return problems;
+}
+
+/** Los argumentos de un evento. Diez es más de los que usa cualquier API de verdad. */
+const MAX_EMIT_ARGS = 10;
 
 export class CloseChannelSessionCommand implements ICommand {
   constructor(

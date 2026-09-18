@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { EnvironmentVariables } from "@/modules/environments/domain/model";
 import { storableHeader, type Channel } from "@/modules/channels/domain/model";
+import { storableSocketIo } from "@/modules/channels/domain/socketio";
 import { redactAuth, storableParams } from "@/modules/workflows/domain/postman-auth";
 
 /**
@@ -50,5 +51,7 @@ export function storableChannel(channel: Channel): Channel {
     ...channel,
     headers: channel.headers.map(storableHeader),
     auth: channel.auth ? { type: channel.auth.type, params: storableParams(redactAuth(channel.auth).auth) } : null,
+    // La query y la carga de `auth` de Socket.IO, con la misma regla que las cabeceras.
+    socketio: channel.socketio ? storableSocketIo(channel.socketio) : null,
   };
 }

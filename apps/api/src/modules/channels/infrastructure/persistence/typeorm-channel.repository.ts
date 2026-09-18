@@ -13,6 +13,7 @@ import {
 import { ChannelEndpointEntity, ChannelMessageEntity, ChannelSessionEntity } from "@/shared/database/entities";
 import type { Channel } from "../../domain/model";
 import { DEFAULT_MQTT, type MqttSettings } from "../../domain/mqtt";
+import { DEFAULT_SOCKETIO, type SocketIoSettings } from "../../domain/socketio";
 import type { ChannelRepositoryPort, ChannelSessionRepositoryPort } from "../../domain/ports";
 import type { ChannelSession, SessionStatus } from "../../domain/session";
 
@@ -23,6 +24,7 @@ const toChannel = (row: ChannelEndpointEntity): Channel => ({
   // `userProperties`, y la pantalla los lee sin preguntar.
   mqtt: row.mqtt ? { ...DEFAULT_MQTT, ...(row.mqtt as Partial<MqttSettings>) } : null,
   grpc: (row.grpc as Channel["grpc"]) ?? null,
+  socketio: row.socketio ? { ...DEFAULT_SOCKETIO, ...(row.socketio as Partial<SocketIoSettings>) } : null,
 });
 
 @Injectable()
@@ -130,6 +132,8 @@ export class TypeOrmChannelSessionRepository implements ChannelSessionRepository
       ...(row.qos !== null ? { qos: row.qos as 0 | 1 | 2 } : {}),
       ...(row.retain !== null ? { retain: row.retain } : {}),
       ...(row.properties ? { properties: row.properties as MessageProperties } : {}),
+      ...(row.event !== null ? { event: row.event } : {}),
+      ...(row.ack !== null ? { ack: row.ack } : {}),
     }));
   }
 

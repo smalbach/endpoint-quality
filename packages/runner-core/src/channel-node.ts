@@ -11,7 +11,7 @@
  * pulsando «Enviar», y una corrida no tiene a nadie. Tres acciones y ninguna más:
  *
  * - `send` manda un texto (con `{{variables}}` de la corrida), tras `delayMs` si lo pide. En MQTT
- *   lleva su tema, QoS y `retain`, como un mensaje guardado.
+ *   lleva su tema, QoS y `retain`, como un mensaje guardado; en Socket.IO, el evento que emite.
  * - `wait` espera a que lleguen `messages` mensajes **más**, como mucho `timeoutMs`. Es lo que hace
  *   que «manda el login, espera el ok, manda la suscripción» no dependa de la suerte.
  * - `end` termina de mandar sin cerrar: el medio cierre de un stream de cliente gRPC.
@@ -37,6 +37,10 @@ export type ChannelScriptSend = {
   topic?: string;
   qos?: 0 | 1 | 2;
   retain?: boolean;
+  /** Solo Socket.IO, y ahí obligatorio: el evento que se emite, con el cuerpo como argumento. */
+  event?: string;
+  /** Solo Socket.IO: esperar el acuse del servidor, que queda en la transcripción como recibido. */
+  ack?: boolean;
   /** Pausa antes de mandarlo. */
   delayMs?: number;
 };
@@ -72,6 +76,8 @@ const sendSchema = z.object({
     }),
   qos: z.union([z.literal(0), z.literal(1), z.literal(2)]).optional(),
   retain: z.boolean().optional(),
+  event: z.string().min(1, "el evento necesita un nombre").max(200).optional(),
+  ack: z.boolean().optional(),
   delayMs: z.number().int().min(0).max(30_000).optional(),
 });
 
@@ -96,8 +102,8 @@ export const stepChannelSchema = z.object({
   idleMs: z.number().int().min(100).max(60_000).optional(),
 });
 
-/** Un mensaje recibido tal como lo lee una captura: el texto y, en MQTT, su tema. */
-export type ReceivedMessage = { body: string; topic?: string };
+/** Un mensaje recibido tal como lo lee una captura: el texto y, en MQTT, su tema; en Socket.IO, su evento. */
+export type ReceivedMessage = { body: string; topic?: string; event?: string };
 
 /**
  * La conversación, con la forma de una respuesta: lo que leen las capturas, un `If` o un script.
@@ -127,6 +133,7 @@ export function conversationResponse(input: {
       last: messages.length ? messages[messages.length - 1] : null,
       count: messages.length,
       topics: input.received.map((message) => message.topic ?? null),
+      events: input.received.map((message) => message.event ?? null),
       closeCode: input.closeCode,
     },
     raw: input.received.map((message) => message.body).join("\n"),

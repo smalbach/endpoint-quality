@@ -129,7 +129,7 @@ describe("la conversación como respuesta", () => {
   test("sin apertura ni mensajes: estado 0, lista vacía y sin último", () => {
     const actual = conversationResponse({ received: [], handshake: null, closeCode: null });
     assert.equal(actual.status, 0);
-    assert.deepEqual(actual.body, { messages: [], last: null, count: 0, topics: [], closeCode: null });
+    assert.deepEqual(actual.body, { messages: [], last: null, count: 0, topics: [], events: [], closeCode: null });
     assert.equal(actual.raw, "");
   });
 });

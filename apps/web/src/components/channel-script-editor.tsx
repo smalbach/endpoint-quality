@@ -138,6 +138,29 @@ export function ChannelScriptEditor({
                       </label>
                     </>
                   )}
+                  {protocol === "socketio" && (
+                    <>
+                      <Field label="Evento" info="El evento que se emite; el mensaje es su argumento (texto o JSON).">
+                        <input
+                          aria-label={`Evento ${index + 1}`}
+                          className={`${inputClass} font-mono`}
+                          placeholder="chat:mensaje"
+                          value={step.event ?? ""}
+                          disabled={!canEdit}
+                          onChange={(event) => set(index, { ...step, event: event.target.value })}
+                        />
+                      </Field>
+                      <label className="flex items-end gap-2 pb-2 text-xs text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(step.ack)}
+                          disabled={!canEdit}
+                          onChange={(event) => set(index, { ...step, ack: event.target.checked || undefined })}
+                        />
+                        Esperar acuse
+                      </label>
+                    </>
+                  )}
                   <Field
                     label="Antes, esperar (ms)"
                     info="Pausa antes de mandar este mensaje (0–30 000 ms). Vacío: sin pausa."

@@ -80,6 +80,7 @@ import { HeadlessChannelRunner } from "@/modules/channels/application/headless-s
 import { InMemoryChannelProtoRepository } from "./in-memory-protos";
 import { CHANNEL_TRANSPORT, WsChannelTransport } from "@/modules/channels/infrastructure/ws-transport";
 import { MQTT_TRANSPORT, MqttChannelTransport } from "@/modules/channels/infrastructure/mqtt-transport";
+import { SOCKETIO_TRANSPORT, SocketIoChannelTransport } from "@/modules/channels/infrastructure/socketio-transport";
 import { ChannelProgressStream } from "@/modules/channels/infrastructure/channel-progress.stream";
 import { ChannelSessionRegistry } from "@/modules/channels/infrastructure/session-registry";
 import { CHANNEL_COMMAND_HANDLERS, CHANNEL_QUERY_HANDLERS } from "@/modules/channels/channels.module";
@@ -487,6 +488,8 @@ export async function createTestApp(
       { provide: CHANNEL_TRANSPORT, useValue: channels },
       // MQTT sin guion: las pruebas hablan con un broker en proceso en loopback, como las de socket.
       { provide: MQTT_TRANSPORT, useValue: new MqttChannelTransport(channelEnv) },
+      // Socket.IO sin guion: las pruebas hablan con un servidor `socket.io` en proceso, en loopback.
+      { provide: SOCKETIO_TRANSPORT, useValue: new SocketIoChannelTransport(channelEnv) },
       { provide: CHANNEL_PROTO_REPOSITORY, useValue: repositories.channelProtos },
       // gRPC sin guion: las pruebas llaman a un servidor de verdad en loopback, como las de socket.
       { provide: GRPC_TRANSPORT, useValue: new GrpcChannelTransport(channelEnv) },

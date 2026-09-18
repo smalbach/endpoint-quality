@@ -20,6 +20,7 @@ export const PROTOCOL_LABEL: Record<ChannelView["protocol"], string> = {
   ws: "WebSocket",
   mqtt: "MQTT",
   grpc: "gRPC",
+  socketio: "Socket.IO",
 };
 
 /** Un nodo canal recién soltado: sin canal, que el inspector elige y `channelNodeProblems` pide. */
@@ -29,6 +30,7 @@ export const defaultChannelNode = (): ChannelNodeView => ({ channelId: "" });
 export function newScriptStep(action: ScriptAction, protocol: ChannelView["protocol"] | undefined): ScriptStepView {
   if (action === "wait") return { action: "wait", messages: 1, timeoutMs: 5_000 };
   if (action === "end") return { action: "end" };
+  if (protocol === "socketio") return { action: "send", body: "", event: "" };
   return protocol === "mqtt" ? { action: "send", body: "", topic: "", qos: 0 } : { action: "send", body: "" };
 }
 
@@ -46,6 +48,7 @@ export function effectiveScript(node: ChannelNodeView, channel: ChannelView | un
     ...(message.topic !== undefined ? { topic: message.topic } : {}),
     ...(message.qos !== undefined ? { qos: message.qos } : {}),
     ...(message.retain !== undefined ? { retain: message.retain } : {}),
+    ...(message.event !== undefined ? { event: message.event } : {}),
   }));
 }
 
@@ -78,6 +81,10 @@ export function channelNodeProblems(step: WorkflowStepView, channels?: ChannelVi
       if (channel && channel.protocol !== "mqtt" && action.topic)
         problems.push(`${where} lleva tema, y solo MQTT publica en uno.`);
       if (action.topic && /[+#]/.test(action.topic)) problems.push(`${where} publica en un tema con comodines.`);
+      if (channel?.protocol === "socketio" && !action.event?.trim())
+        problems.push(`${where} no tiene evento: en Socket.IO se emite uno.`);
+      if (channel && channel.protocol !== "socketio" && (action.event !== undefined || action.ack !== undefined))
+        problems.push(`${where} emite un evento, y solo Socket.IO los emite.`);
       if (action.delayMs !== undefined && (action.delayMs < 0 || action.delayMs > 30_000))
         problems.push(`${where} espera más de 30 000 ms antes de mandar.`);
     }

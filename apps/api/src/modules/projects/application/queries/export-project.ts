@@ -248,6 +248,7 @@ export class ExportProjectHandler implements IQueryHandler<ExportProjectQuery, P
           messages: channel.messages,
           ...(channel.mqtt ? { mqtt: channel.mqtt } : {}),
           ...(channel.grpc ? { grpc: channel.grpc } : {}),
+          ...(channel.socketio ? { socketio: channel.socketio } : {}),
           protos: channel.protocol === "grpc" ? await this.protos.list(channel.id) : [],
         };
       }),

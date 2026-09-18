@@ -40,6 +40,7 @@ import { BlockedTargetError } from "@/shared/http/safe-fetch";
 import { HandshakeRejectedError } from "@/shared/http/safe-socket";
 import { MqttRejectedError } from "@/shared/http/safe-mqtt";
 import type { MqttPublish, MqttQos, MqttSessionPlan } from "../domain/mqtt";
+import { argsBody, emitValues, type SocketIoEmit } from "../domain/socketio";
 import { CHANNEL_SESSION_REPOSITORY, type ChannelSessionRepositoryPort } from "../domain/ports";
 import { closeSession, isFinished, isStale, onFrame, onTick, type ChannelSession } from "../domain/session";
 import { ChannelProgressStream } from "./channel-progress.stream";
@@ -82,7 +83,14 @@ export type MqttSubscriptionResult = { topic: string; granted: number | null; de
  * Lleva solo datos: el texto se interpola allí, con el entorno que guarda el plan de la sesión.
  */
 export type SessionCommand =
-  | { op: "send"; sessionId: string; text: string; publish?: MqttPublish; binary?: BinaryEncoding }
+  | {
+      op: "send";
+      sessionId: string;
+      text: string;
+      publish?: MqttPublish;
+      binary?: BinaryEncoding;
+      emit?: SocketIoEmit;
+    }
   | { op: "subscribe"; sessionId: string; topic: string; qos: MqttQos }
   | { op: "unsubscribe"; sessionId: string; topic: string }
   | { op: "end"; sessionId: string }
@@ -267,6 +275,7 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
           trailers,
         }),
       onError: (error) => this.frame(session.id, { direction: "error", atMs: this.at(entry), body: error.message }),
+      onFrame: (frame) => this.frame(session.id, { ...frame, atMs: this.at(entry) }),
     };
     try {
       entry.channel = plan.open
@@ -309,9 +318,24 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
    * Mandar un mensaje. Se anota **antes** de mandarlo, y anotado ya tapado: lo que sale en vivo y lo
    * que se guarda es el mensaje redactado; el texto crudo solo lo ve el socket.
    */
-  async send(sessionId: string, text: string, publish?: MqttPublish, binary?: BinaryEncoding): Promise<void> {
+  async send(
+    sessionId: string,
+    text: string,
+    publish?: MqttPublish,
+    binary?: BinaryEncoding,
+    /** Solo Socket.IO, y ahí obligatorio: el evento, el acuse y los argumentos. */
+    emit?: SocketIoEmit,
+  ): Promise<void> {
     const entry = this.live.get(sessionId);
     if (!entry?.channel) throw this.notHere(sessionId);
+    // Antes que nada: un mensaje sin evento en Socket.IO, o con evento en otro protocolo, no se anota.
+    if (Boolean(entry.channel.emit) !== Boolean(emit)) {
+      throw new InvalidInputError("El mensaje no es válido", [
+        entry.channel.emit
+          ? { field: "event", detail: "En Socket.IO se emite un evento: falta su nombre" }
+          : { field: "event", detail: "Solo un canal Socket.IO emite eventos" },
+      ]);
+    }
     if (binary && !entry.channel.sendBinary)
       throw new ConflictError("Este canal no manda tramas binarias: solo un WebSocket", "channel-no-binary");
     // Antes que la escritura: un mensaje sin tema en MQTT, o con tema en un WebSocket, no se anota.
@@ -353,6 +377,10 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
         "unresolved-variables",
       );
     }
+    if (emit && entry.channel.emit) {
+      await this.emitEvent(sessionId, entry, entry.channel, text, emit, resolve);
+      return;
+    }
     if (binary && entry.channel.sendBinary) {
       // Los bytes, decodificados **después** de interpolar: una `{{variable}}` puede llevar la parte
       // en base64 o en hexadecimal. Se anotan como lo binario que llega —hexadecimal de lo que quepa y
@@ -386,6 +414,44 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
         : {}),
     });
     entry.channel.send(wire, wirePublish);
+    await entry.writes;
+  }
+
+  /**
+   * Emitir un evento de Socket.IO: el nombre y cada argumento resueltos contra el entorno, una
+   * variable sin valor dicha antes de mandar, y anotado **antes** de emitir con el evento y si se
+   * pidió acuse. Sin `args`, el texto es el único argumento (y vacío, ninguno).
+   */
+  private async emitEvent(
+    sessionId: string,
+    entry: Live,
+    channel: OpenChannel,
+    text: string,
+    emit: SocketIoEmit,
+    resolve: (value: string) => string,
+  ): Promise<void> {
+    const event = resolve(emit.event);
+    const wires = (emit.args ?? (text ? [text] : [])).map(resolve);
+    const unresolved = entry.plan.interpolate ? unresolvedVariables([event, wires]) : [];
+    if (unresolved.length) {
+      throw new InvalidInputError(
+        `Variables sin valor: ${unresolved.join(", ")}`,
+        unresolved.map((name) => ({ field: "args", detail: `{{${name}}} no tiene valor` })),
+        "unresolved-variables",
+      );
+    }
+    const values = emitValues(wires);
+    // El cuerpo anotado es el que se ve escrito cuando es un solo argumento: la transcripción enseña
+    // lo que se mandó, no su JSON normalizado.
+    const body = wires.length === 1 ? wires[0] : argsBody(values);
+    this.frame(sessionId, {
+      direction: "out",
+      atMs: this.at(entry),
+      body,
+      event,
+      ...(emit.ack ? { ack: true } : {}),
+    });
+    channel.emit?.(event, values, emit.ack);
     await entry.writes;
   }
 
@@ -543,7 +609,7 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
   private async local(command: SessionCommand): Promise<unknown> {
     switch (command.op) {
       case "send":
-        return this.send(command.sessionId, command.text, command.publish, command.binary);
+        return this.send(command.sessionId, command.text, command.publish, command.binary, command.emit);
       case "subscribe":
         return this.subscribe(command.sessionId, command.topic, command.qos);
       case "unsubscribe":
