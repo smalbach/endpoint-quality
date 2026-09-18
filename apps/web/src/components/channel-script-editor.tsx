@@ -104,7 +104,10 @@ export function ChannelScriptEditor({
                 <div className="grid grid-cols-2 gap-2 @3xl:grid-cols-4">
                   {protocol === "mqtt" && (
                     <>
-                      <Field label="Tema" info="Dónde se publica. Sin comodines (+ ni #), como al publicar a mano.">
+                      <Field
+                        label="Tema"
+                        info="Dónde se publica. Admite {{variables}} de la corrida y, ya resuelto, no lleva comodines (+ ni #), como al publicar a mano."
+                      >
                         <input
                           aria-label={`Tema ${index + 1}`}
                           className={`${inputClass} font-mono`}
