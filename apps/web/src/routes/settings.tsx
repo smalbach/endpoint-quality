@@ -190,10 +190,10 @@ function Invite({ base, onInvited }: { base: string; onInvited: () => void }) {
 
       {invite.error && <p className="w-full text-xs text-rose-700">{(invite.error as Error).message}</p>}
       {invite.data && (
-        // No hay correo saliente en este producto. Decirlo aquí es mejor que dejar a alguien
-        // esperando un mensaje que no va a llegar.
+        // El correo sale solo, pero el enlace se enseña igual: si tarda o cae en spam, se puede
+        // pasar por otro canal sin volver a invitar.
         <p className="w-full rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-          Invitación creada. Este producto no manda correos: pásale este enlace tú mismo.
+          Invitación creada y enviada por correo. Si no le llega, pásale este enlace tú mismo.
           <code className="mt-1 block break-all font-mono text-[11px]">{`${window.location.origin}/register?invitation=${invite.data.token}`}</code>
         </p>
       )}

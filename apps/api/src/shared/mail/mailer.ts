@@ -144,6 +144,29 @@ export function welcomeMail(input: { name: string; link: string }): Omit<Mail, "
   };
 }
 
+/**
+ * La invitación a una organización.
+ *
+ * Dice quién invita, a qué y con qué rol, porque un enlace que llega sin eso es indistinguible de
+ * un phishing; y cuándo caduca, para que nadie lo guarde para luego.
+ */
+export function invitationMail(input: {
+  organization: string;
+  role: string;
+  link: string;
+  days: number;
+}): Omit<Mail, "to"> {
+  const lines = [
+    `Te han invitado a la organización «${input.organization}» de Endpoint Quality, con el rol ${input.role}.`,
+    `El enlace funciona una sola vez durante ${input.days} días. Si no esperabas esta invitación, ignora este correo.`,
+  ];
+  return {
+    subject: `Invitación a «${input.organization}»`,
+    html: layout("Te han invitado", lines, { label: "Aceptar la invitación", href: input.link }),
+    text: `${lines.join("\n\n")}\n\n${input.link}`,
+  };
+}
+
 export function passwordResetMail(input: { name: string; link: string; minutes: number }): Omit<Mail, "to"> {
   const lines = [
     `Hola, ${input.name}.`,
