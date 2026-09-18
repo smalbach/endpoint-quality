@@ -202,6 +202,32 @@ describe("el nodo GraphQL", () => {
     await stub.stop();
   });
 
+  test("lleva su autenticación como un fetch: Basic con el usuario del entorno y la clave firmada", async () => {
+    const stub = new GraphqlStub();
+    await stub.start();
+    const { caseOf, detailOf } = await runFlow(
+      stub,
+      [
+        {
+          id: "firmado",
+          kind: "graphql",
+          graphql: {
+            url: "/graphql",
+            query: "{ __typename }",
+            auth: { type: "basic", params: { username: "{{usuario}}", password: "{{clave}}" } },
+          },
+        },
+      ],
+      { variables: { usuario: "ana", clave: "hunter2" } },
+    );
+    assert.equal(caseOf("firmado").status, "passed");
+    const sent = stub.requests.find((entry) => entry.method === "POST");
+    assert.equal(sent?.headers.authorization, `Basic ${Buffer.from("ana:hunter2").toString("base64")}`);
+    // En el informe la cabecera sale tapada, como en un fetch.
+    assert.doesNotMatch(JSON.stringify(await detailOf("firmado")), /hunter2|YW5hOmh1bnRlcjI/);
+    await stub.stop();
+  });
+
   test("el documento rechaza variables que no pueden ser un objeto JSON", async () => {
     const stub = new GraphqlStub();
     await stub.start();

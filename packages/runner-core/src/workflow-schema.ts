@@ -299,6 +299,7 @@ export const workflowStepSchema = z.object({
       expectedStatus: z.number().int().min(100).max(599).optional(),
       useSession: z.boolean().optional(),
       allowErrors: z.boolean().optional(),
+      auth: authSchema.optional(),
     })
     .optional(),
   // The `loop` node: the list it walks. Same ceilings as a `forEach`, for the same reason.

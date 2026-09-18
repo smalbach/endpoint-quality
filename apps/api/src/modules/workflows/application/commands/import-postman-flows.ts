@@ -19,6 +19,7 @@ import {
 import {
   definitionFrom,
   fetchCallFrom,
+  graphqlCallFrom,
   flowsOf,
   readItemScripts,
   type PostmanStepDraft,
@@ -148,7 +149,9 @@ export class ImportPostmanFlowsHandler implements ICommandHandler<
         if (scripts.reason) {
           notes.push(`«${item.label}»: el test se mantiene como nodo script (${scripts.reason}).`);
         }
-        const match = matchOperation(item.request, operations);
+        // Una operación GraphQL va a su nodo aunque el contrato declare `POST /graphql`: esa ruta es
+        // la misma para todas las operaciones, y un nodo `request` sobre ella no lee `errors`.
+        const match = item.request.graphql ? null : matchOperation(item.request, operations);
 
         if (match) {
           const previous = byName.get(item.label);
@@ -182,6 +185,28 @@ export class ImportPostmanFlowsHandler implements ICommandHandler<
           drafts.push({
             label: item.name,
             source: { kind: "request", requestTemplateId: row.id },
+            checks: scripts.checks,
+            captures: scripts.captures,
+            prerequest: item.prerequest,
+            test: scripts.test,
+          });
+          continue;
+        }
+
+        const graphql = graphqlCallFrom(item, scripts.expectedStatus);
+        if (typeof graphql === "string") {
+          skipped.push({ name: item.label, method: item.request.method, url: item.request.url, reason: graphql });
+          continue;
+        }
+        if (graphql) {
+          if (graphql.droppedCredential) {
+            notes.push(
+              `«${item.label}»: llevaba una credencial escrita a mano; se quitó y el nodo presenta la sesión de la corrida.`,
+            );
+          }
+          drafts.push({
+            label: item.name,
+            source: { kind: "graphql", graphql: graphql.graphql },
             checks: scripts.checks,
             captures: scripts.captures,
             prerequest: item.prerequest,
@@ -247,7 +272,7 @@ export class ImportPostmanFlowsHandler implements ICommandHandler<
           action: previous ? "updated" : "created",
           steps: definition.steps.length,
           requests: countKind(definition, "request"),
-          calls: countKind(definition, "fetch"),
+          calls: countKind(definition, "fetch") + countKind(definition, "graphql"),
           scripts: countKind(definition, "script"),
         },
       });
@@ -276,5 +301,5 @@ export class ImportPostmanFlowsHandler implements ICommandHandler<
   }
 }
 
-const countKind = (definition: WorkflowDocument, kind: "request" | "fetch" | "script"): number =>
+const countKind = (definition: WorkflowDocument, kind: "request" | "fetch" | "graphql" | "script"): number =>
   definition.steps.filter((step) => (step.kind ?? "request") === kind).length;

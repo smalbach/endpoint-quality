@@ -43,7 +43,10 @@ type PostmanRequest = {
   method: string;
   header: KeyValue[];
   url: { raw: string; query?: KeyValue[] };
-  body?: { mode: "raw"; raw: string; options: { raw: { language: string } } };
+  body?:
+    | { mode: "raw"; raw: string; options: { raw: { language: string } } }
+    /** Lo que Postman escribe para una petición GraphQL: la operación y las variables como texto. */
+    | { mode: "graphql"; graphql: { query: string; variables: string } };
   /** El bloque `auth` de Postman. Ausente significa «hereda», igual que en sus ficheros. */
   auth?: Record<string, unknown>;
   description?: string;
@@ -223,9 +226,13 @@ function folderFor(
 
   for (const step of steps) {
     const kind = step.kind ?? "request";
-    if (kind === "request" || kind === "fetch") {
+    if (kind === "request" || kind === "fetch" || kind === "graphql") {
       const built =
-        kind === "request" ? requestItem(step, templates, skipped, label(step)) : fetchItem(step, skipped, label(step));
+        kind === "request"
+          ? requestItem(step, templates, skipped, label(step))
+          : kind === "graphql"
+            ? graphqlItem(step, skipped, label(step))
+            : fetchItem(step, skipped, label(step));
       if (!built) continue;
       if (pendingPrerequest.length) {
         built.event = [...(built.event ?? []), event("prerequest", pendingPrerequest)];
@@ -346,6 +353,36 @@ function fetchItem(step: WorkflowStep, skipped: PostmanExport["skipped"], label:
       ...authOf(call.auth, label, skipped),
       url: urlOf(call.url, query),
       ...(call.body ? { body: raw(call.body, languageOf(call.headers ?? {})) } : {}),
+    },
+  };
+}
+
+/**
+ * Un nodo `graphql` como la petición GraphQL de Postman: `POST` con `mode: "graphql"`.
+ *
+ * Antes se quedaba fuera del fichero «porque Postman no tiene nada equivalente», y sí lo tiene. Lo
+ * que no cabe se dice: `operationName` no tiene campo en ese formato —Postman lo deduce de la
+ * operación— y «acepta errores» es una decisión de este producto sobre cómo juzgar la respuesta.
+ */
+function graphqlItem(step: WorkflowStep, skipped: PostmanExport["skipped"], label: string): PostmanRequestItem | null {
+  const call = step.graphql;
+  if (!call) return null;
+  if (call.operationName)
+    skipped.push({ what: label, detail: `su operationName «${call.operationName}» no tiene campo en Postman` });
+  if (call.allowErrors)
+    skipped.push({
+      what: label,
+      detail: "acepta respuestas con errors, y Postman no juzga eso: al volver, fallará con ellos",
+    });
+  const [path] = call.url.split("?");
+  return {
+    name: `GQL ${call.operationName || path}`,
+    request: {
+      method: "POST",
+      header: headerList(call.headers ?? {}, call.disabledHeaders ?? {}, skipped, label),
+      ...authOf(call.auth, label, skipped),
+      url: urlOf(call.url, []),
+      body: { mode: "graphql", graphql: { query: call.query, variables: call.variables ?? "" } },
     },
   };
 }
@@ -495,6 +532,8 @@ function authOf(
 
 function endpointBody(endpoint: BundleEndpoint): { body?: PostmanRequest["body"] } {
   const body = endpoint.body;
+  if (body?.mode === "graphql" && body.text.trim())
+    return { body: { mode: "graphql", graphql: { query: body.text, variables: body.variables ?? "" } } };
   if (!body || body.mode === "none" || !body.text.trim()) return {};
   return { body: raw(body.text, languageFor(body.contentType)) };
 }

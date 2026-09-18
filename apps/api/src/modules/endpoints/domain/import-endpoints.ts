@@ -22,6 +22,7 @@ import {
   parsePostmanCollection,
   pathOf,
   queryOf,
+  type GraphqlOperation,
   type ParsedRequest,
   type PostmanExample,
 } from "@/modules/workflows/domain/import-requests";
@@ -207,7 +208,7 @@ function draftFromRequest(request: ParsedRequest): EndpointDraft | string {
       value,
       enabled: true,
     })),
-    body: bodyFrom(request.body),
+    body: request.graphql ? graphqlBodyFrom(request.graphql) : bodyFrom(request.body),
     // The credential itself is dropped with the header; that the request carried one is kept.
     requiresAuth:
       lowered.some((name) => ["authorization", "x-api-key", "api-key", "apikey"].includes(name)) ||
@@ -216,6 +217,17 @@ function draftFromRequest(request: ParsedRequest): EndpointDraft | string {
     auth: request.auth,
     operationId: null,
     examples: request.examples,
+  };
+}
+
+/** Una operación de la fuente como el modo `graphql` del editor: la operación y sus variables aparte. */
+function graphqlBodyFrom(operation: GraphqlOperation): EndpointBody {
+  return {
+    ...EMPTY_BODY,
+    mode: "graphql",
+    text: operation.query,
+    contentType: "application/json",
+    ...(operation.variables.trim() ? { variables: operation.variables } : {}),
   };
 }
 

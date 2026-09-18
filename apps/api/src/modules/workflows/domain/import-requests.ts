@@ -44,7 +44,19 @@ export type ParsedRequest = {
    * que no guardan respuestas, que son todos menos Postman.
    */
   examples: PostmanExample[];
+  /**
+   * La operación, cuando la fuente la guardaba **como GraphQL** y no como un JSON cualquiera.
+   *
+   * Va al lado de `body` y no en su lugar: `body` ya lleva los mismos bytes escritos como JSON, y
+   * quien no sabe de GraphQL —una petición guardada, una comparación con el contrato— los manda tal
+   * cual y acierta. Quien sí sabe —un endpoint, un nodo de flujo— lee esto y conserva la operación
+   * y sus variables por separado, que es lo que se edita.
+   */
+  graphql?: GraphqlOperation;
 };
+
+/** Una operación GraphQL tal como la guardan Postman e Insomnia: el texto y las variables (JSON). */
+export type GraphqlOperation = { query: string; variables: string };
 
 /** A request that could not be turned into a template, and why — said in words somebody can act
  * on, because «4 no se importaron» is a number nobody can do anything with. */
@@ -476,6 +488,7 @@ export function readPostmanCollection(text: string): PostmanCollection | null {
           body: postmanBody(request.body, headers.enabled),
           auth: resolved.auth,
           examples: postmanExamples(item.response),
+          ...withGraphql(postmanGraphql(request.body)),
         },
         prerequest: eventScript(item.event, "prerequest"),
         test: eventScript(item.event, "test"),
@@ -601,6 +614,12 @@ function postmanBody(value: unknown, headers: Record<string, string>): RequestBo
   const body = asRecord(value);
   if (!body) return { type: "none" };
   const mode = asString(body.mode);
+  // Antes esto caía en el `mode !== "raw"` de abajo y el cuerpo se perdía sin decirlo: una
+  // colección de GraphQL llegaba con todas sus peticiones vacías.
+  if (mode === "graphql") {
+    const operation = postmanGraphql(body);
+    return operation ? graphqlRequestBody(operation) : { type: "none" };
+  }
   if (mode === "urlencoded" || mode === "formdata") {
     const fields = fromKeyValues(body[mode]);
     const type = mode === "urlencoded" ? "x-www-form-urlencoded" : "form-data";
@@ -684,6 +703,7 @@ export function parseInsomniaExport(text: string): ImportedRequests {
       url: search ? `${url}${url.includes("?") ? "&" : "?"}${search}` : url,
       headers: headers.enabled,
       body: insomniaBody(row.body, headers.enabled),
+      ...withGraphql(insomniaGraphql(row.body)),
       auth: redactAuth(insomniaAuth(row.authentication)).auth,
       // Insomnia tampoco guarda respuestas junto a la petición.
       examples: [],
@@ -739,10 +759,68 @@ function insomniaAuth(value: unknown): RequestAuth {
   }
 }
 
+/** El bloque `graphql` de un cuerpo de Postman, o `null` si no lo es o no trae operación. */
+function postmanGraphql(value: unknown): GraphqlOperation | null {
+  const body = asRecord(value);
+  if (!body || asString(body.mode) !== "graphql") return null;
+  return graphqlOperation(asRecord(body.graphql));
+}
+
+/**
+ * `{query, variables}` en cualquiera de las dos formas que se ven: variables como texto (Postman)
+ * o como objeto (Insomnia, y Postman cuando alguien editó el fichero a mano).
+ */
+function graphqlOperation(value: Record<string, unknown> | null): GraphqlOperation | null {
+  const query = asString(value?.query);
+  if (!query.trim()) return null;
+  const variables = value?.variables;
+  return {
+    query,
+    variables:
+      typeof variables === "string"
+        ? variables
+        : variables && typeof variables === "object"
+          ? JSON.stringify(variables, null, 2)
+          : "",
+  };
+}
+
+const withGraphql = (operation: GraphqlOperation | null): { graphql?: GraphqlOperation } =>
+  operation ? { graphql: operation } : {};
+
+/**
+ * La operación escrita como el JSON que viaja, para quien no sabe de GraphQL.
+ *
+ * Unas variables con `{{plantillas}}` sin comillas no son JSON hasta que se sustituyen, así que en
+ * ese caso se escriben como texto dentro del objeto en vez de tirarlas: el cuerpo sigue diciendo lo
+ * mismo, y se lee bien en cuanto el entorno tenga los valores.
+ */
+export function graphqlRequestBody(operation: GraphqlOperation): RequestBody {
+  const variables = operation.variables.trim();
+  let text = JSON.stringify({ query: operation.query });
+  if (variables) {
+    const parsed = safeJson(variables);
+    text =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? JSON.stringify({ query: operation.query, variables: parsed })
+        : `{"query":${JSON.stringify(operation.query)},"variables":${variables}}`;
+  }
+  return bodyFrom({ form: {}, payload: text, declared: "application/json", urlencodeOnly: false });
+}
+
+/** Un cuerpo de Insomnia de tipo GraphQL: `application/graphql` con `{query, variables}` en JSON. */
+function insomniaGraphql(value: unknown): GraphqlOperation | null {
+  const body = asRecord(value);
+  if (!body || !asString(body.mimeType).includes("graphql")) return null;
+  return graphqlOperation(asRecord(safeJson(asString(body.text))));
+}
+
 function insomniaBody(value: unknown, headers: Record<string, string>): RequestBody {
   const body = asRecord(value);
   if (!body) return { type: "none" };
   const mime = asString(body.mimeType);
+  const graphql = insomniaGraphql(body);
+  if (graphql) return graphqlRequestBody(graphql);
   if (mime.includes("form-urlencoded") || mime.includes("form-data")) {
     const fields = fromKeyValues(body.params);
     const type = mime.includes("form-data") ? "form-data" : "x-www-form-urlencoded";

@@ -10,6 +10,7 @@
  * Pure on purpose: the schema, the engine and the tests share these functions, and none of them
  * needs the network to decide what a body means.
  */
+import type { RequestAuth } from "./auth.ts";
 import type { Assertion } from "./types.ts";
 
 /**
@@ -37,6 +38,12 @@ export type StepGraphql = {
   expectedStatus?: number;
   /** A non-empty `errors` array does not fail the node. */
   allowErrors?: boolean;
+  /**
+   * Cómo entra, igual que un `fetch`: los mismos tipos que Postman, firmados sobre el `POST` que sale.
+   * Una colección de GraphQL lleva su autenticación como cualquier otra, y sin esto se perdía al
+   * importarla.
+   */
+  auth?: RequestAuth;
 };
 
 /** GraphQL's own `Name` grammar: what an `operationName` has to be for a server to find it. */

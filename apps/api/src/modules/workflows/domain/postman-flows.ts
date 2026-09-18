@@ -30,10 +30,12 @@ import type { PostmanItem } from "./import-requests";
 import { translatePostmanScript } from "./postman-scripts";
 import {
   FETCH_METHODS,
+  graphqlVariablesProblem,
   type FetchMethod,
   type RequestBody,
   type ResponseCheck,
   type StepFetch,
+  type StepGraphql,
   type WorkflowCapture,
   type WorkflowDocument,
   type WorkflowStep,
@@ -68,7 +70,10 @@ export function flowsOf(collection: { name: string; items: PostmanItem[] }): Pos
 }
 
 /** What a node sends: a saved request of this project, or a call written on the node. */
-export type StepSource = { kind: "request"; requestTemplateId: string } | { kind: "fetch"; fetch: StepFetch };
+export type StepSource =
+  | { kind: "request"; requestTemplateId: string }
+  | { kind: "fetch"; fetch: StepFetch }
+  | { kind: "graphql"; graphql: StepGraphql };
 
 /** One item, read: the node it becomes and everything its scripts turned into. */
 export type PostmanStepDraft = {
@@ -151,7 +156,9 @@ export function definitionFrom(steps: PostmanStepDraft[]): WorkflowDocument {
       id,
       ...(draft.source.kind === "request"
         ? { requestTemplateId: draft.source.requestTemplateId }
-        : { kind: "fetch" as const, fetch: draft.source.fetch }),
+        : draft.source.kind === "graphql"
+          ? { kind: "graphql" as const, graphql: draft.source.graphql }
+          : { kind: "fetch" as const, fetch: draft.source.fetch }),
       ...(previous ? { dependsOn: [previous] } : {}),
       ...(draft.checks.length ? { checks: draft.checks } : {}),
       ...(draft.captures.length ? { captures: draft.captures } : {}),
@@ -259,18 +266,7 @@ export function fetchCallFrom(item: PostmanItem, expectedStatus: number | null):
   const body = fetchBody(item.request.body);
   if (typeof body === "string") return body;
 
-  const headers: Record<string, string> = {};
-  let droppedCredential = false;
-  for (const [name, value] of Object.entries(item.request.headers)) {
-    const clean = name.trim();
-    if (!HEADER_NAME.test(clean) || TRANSPORT_HEADER.test(clean)) continue;
-    if (/[\r\n]/.test(value)) continue;
-    if (CREDENTIAL_HEADER.test(clean) && !ONLY_VARIABLES.test(value)) {
-      droppedCredential = true;
-      continue;
-    }
-    headers[clean] = value;
-  }
+  const { headers, droppedCredential } = callHeaders(item.request.headers);
   if (body?.contentType && !Object.keys(headers).some((name) => name.toLowerCase() === "content-type")) {
     headers["Content-Type"] = body.contentType;
   }
@@ -287,6 +283,60 @@ export function fetchCallFrom(item: PostmanItem, expectedStatus: number | null):
       ...(droppedCredential ? { useSession: true } : {}),
       // Cómo entra, leído del bloque `auth` del fichero y ya heredado por el lector. `inherit` no
       // se guarda: es lo que hace la llamada sin bloque, y escribirlo solo engorda el documento.
+      ...(item.request.auth.type !== "inherit" ? { auth: item.request.auth } : {}),
+    },
+    droppedCredential,
+  };
+}
+
+/** The headers a node written from an item keeps, and whether a literal credential was dropped. */
+function callHeaders(source: Record<string, string>): { headers: Record<string, string>; droppedCredential: boolean } {
+  const headers: Record<string, string> = {};
+  let droppedCredential = false;
+  for (const [name, value] of Object.entries(source)) {
+    const clean = name.trim();
+    if (!HEADER_NAME.test(clean) || TRANSPORT_HEADER.test(clean)) continue;
+    if (/[\r\n]/.test(value)) continue;
+    if (CREDENTIAL_HEADER.test(clean) && !ONLY_VARIABLES.test(value)) {
+      droppedCredential = true;
+      continue;
+    }
+    headers[clean] = value;
+  }
+  return { headers, droppedCredential };
+}
+
+export type GraphqlCall = { graphql: StepGraphql; droppedCredential: boolean };
+
+/**
+ * Una petición GraphQL de la colección como nodo `graphql`, y no como un `fetch` con el JSON escrito.
+ *
+ * El nodo es el que sabe leer la respuesta: un servidor GraphQL contesta 200 con `errors` dentro, y
+ * un `fetch` daría ese caso en verde. Con la operación y sus variables por separado, además, lo que
+ * se edita en el lienzo es lo mismo que se editaba en Postman.
+ *
+ * El método no se lleva: el nodo manda siempre `POST`, que es lo que Postman hace con un cuerpo
+ * GraphQL aunque la petición diga otra cosa. `null` cuando el item no es GraphQL.
+ */
+export function graphqlCallFrom(item: PostmanItem, expectedStatus: number | null): GraphqlCall | string | null {
+  const operation = item.request.graphql;
+  if (!operation) return null;
+  const url = item.request.url.trim();
+  if (!url || /[\r\n]/.test(url)) return "la URL no se puede leer";
+  if (url.length > 2000) return "la URL es demasiado larga";
+  if (graphqlVariablesProblem(operation.variables)) return "sus variables de GraphQL no son un objeto JSON";
+
+  const { headers, droppedCredential } = callHeaders(item.request.headers);
+  // El nodo pone su propio `Content-Type`; el de la colección es el mismo o uno que sobra.
+  for (const name of Object.keys(headers)) if (name.toLowerCase() === "content-type") delete headers[name];
+  return {
+    graphql: {
+      url,
+      query: operation.query,
+      ...(operation.variables.trim() ? { variables: operation.variables } : {}),
+      ...(Object.keys(headers).length ? { headers } : {}),
+      ...(expectedStatus !== null ? { expectedStatus } : {}),
+      ...(droppedCredential ? { useSession: true } : {}),
       ...(item.request.auth.type !== "inherit" ? { auth: item.request.auth } : {}),
     },
     droppedCredential,

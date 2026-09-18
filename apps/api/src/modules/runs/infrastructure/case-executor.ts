@@ -425,6 +425,7 @@ export class CaseExecutor {
         body: graphqlBody({ query: call.query, variables: variables.value, operationName: call.operationName }),
         ...(call.expectedStatus ? { expectedStatus: call.expectedStatus } : {}),
         ...(call.useSession ? { useSession: true } : {}),
+        ...(call.auth ? { auth: call.auth } : {}),
       },
       // Already substituted: an empty map leaves the fetch nothing to replace a second time.
       target: { ...input.target, variables: {} },

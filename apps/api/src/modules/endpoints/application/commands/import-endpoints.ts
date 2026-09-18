@@ -124,7 +124,12 @@ export class ImportEndpointFileHandler implements ICommandHandler<ImportEndpoint
           method: draft.method,
           path: draft.path,
           name: draft.description ?? "",
-          reason: "Repetido en el fichero",
+          // Varias operaciones GraphQL comparten `POST /graphql`, y un endpoint es uno por método y
+          // ruta: la segunda no es un repetido, es otra operación que aquí no tiene fila propia.
+          reason:
+            draft.body?.mode === "graphql"
+              ? "Otra operación GraphQL en la misma URL: un endpoint es uno por método y ruta. Importa la colección como flujo y cada operación será un nodo"
+              : "Repetido en el fichero",
         });
       else accepted.push(draft);
       seen.add(key);
