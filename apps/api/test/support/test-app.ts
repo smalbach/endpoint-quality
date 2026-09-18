@@ -42,6 +42,8 @@ import { InMemoryEndpointRepository, InMemoryExampleRepository } from "./in-memo
 import { InMemoryMockRepository } from "./in-memory-mocks";
 import { InMemoryDocSiteRepository } from "./in-memory-doc-sites";
 import { InMemoryMonitorRepository } from "./in-memory-monitors";
+import { InMemoryChannelRepository, InMemoryChannelSessionRepository } from "./in-memory-channels";
+import { StubChannelTransport } from "./stub-channel-transport";
 import { ENDPOINT_REPOSITORY, EXAMPLE_REPOSITORY } from "@/modules/endpoints/domain/ports";
 import { EndpointsController } from "@/modules/endpoints/presentation/endpoints.controller";
 import { MOCK_REPOSITORY } from "@/modules/mocks/domain/ports";
@@ -60,6 +62,12 @@ import {
   MONITOR_EVENT_HANDLERS,
   MONITOR_QUERY_HANDLERS,
 } from "@/modules/monitors/monitors.module";
+import { CHANNEL_REPOSITORY, CHANNEL_SESSION_REPOSITORY } from "@/modules/channels/domain/ports";
+import { ChannelsController } from "@/modules/channels/presentation/channels.controller";
+import { CHANNEL_TRANSPORT, WsChannelTransport } from "@/modules/channels/infrastructure/ws-transport";
+import { ChannelProgressStream } from "@/modules/channels/infrastructure/channel-progress.stream";
+import { ChannelSessionRegistry } from "@/modules/channels/infrastructure/session-registry";
+import { CHANNEL_COMMAND_HANDLERS, CHANNEL_QUERY_HANDLERS } from "@/modules/channels/channels.module";
 import {
   ENDPOINT_COMMAND_HANDLERS,
   ENDPOINT_EVENT_HANDLERS,
@@ -279,8 +287,12 @@ export type TestContext = {
     mocks: InMemoryMockRepository;
     docSites: InMemoryDocSiteRepository;
     monitors: InMemoryMonitorRepository;
+    channels: InMemoryChannelRepository;
+    channelSessions: InMemoryChannelSessionRepository;
   };
   http: StubSafeFetch;
+  /** Los sockets de los canales: guionizados por URL, y los que no, al transporte de verdad. */
+  channels: StubChannelTransport;
   /** Every mail the application sent. The reset link is only reachable through here. */
   mailer: RecordingMailer;
   /** Lets a test await the queue instead of polling for a run to finish. */
@@ -318,8 +330,14 @@ export async function createTestApp(): Promise<TestContext> {
     mocks: new InMemoryMockRepository(),
     docSites: new InMemoryDocSiteRepository(),
     monitors: new InMemoryMonitorRepository(),
+    channels: new InMemoryChannelRepository(),
+    channelSessions: new InMemoryChannelSessionRepository(),
   };
   const mailer = new RecordingMailer();
+  // Lo que no se guioniza sale por el transporte de verdad, con la misma política de red que el
+  // resto de la aplicación de prueba: loopback permitido, porque las pruebas de socket de verdad
+  // apuntan a un servidor en 127.0.0.1.
+  const channels = new StubChannelTransport(new WsChannelTransport({ ...env, ALLOW_PRIVATE_TARGETS: true }));
   // Loopback is allowed here because the run tests point the engine at a stub server on
   // 127.0.0.1, which is also the ordinary self-hosted case.
   const http = new StubSafeFetch({
@@ -347,6 +365,7 @@ export async function createTestApp(): Promise<TestContext> {
       PublishedDocsController,
       DocSitesController,
       MonitorsController,
+      ChannelsController,
       RolesController,
       SecurityRunsController,
       PerformanceController,
@@ -409,6 +428,11 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: MOCK_REPOSITORY, useValue: repositories.mocks },
       { provide: DOC_SITE_REPOSITORY, useValue: repositories.docSites },
       { provide: MONITOR_REPOSITORY, useValue: repositories.monitors },
+      { provide: CHANNEL_REPOSITORY, useValue: repositories.channels },
+      { provide: CHANNEL_SESSION_REPOSITORY, useValue: repositories.channelSessions },
+      { provide: CHANNEL_TRANSPORT, useValue: channels },
+      ChannelProgressStream,
+      ChannelSessionRegistry,
       // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the
       // repository is ciphertext, and a pass-through would make that assertion meaningless.
       { provide: SECRET_CIPHER, useValue: new AesGcmSecretCipher(Buffer.alloc(32, 9).toString("base64")) },
@@ -442,6 +466,8 @@ export async function createTestApp(): Promise<TestContext> {
       ...MONITOR_COMMAND_HANDLERS,
       ...MONITOR_QUERY_HANDLERS,
       ...MONITOR_EVENT_HANDLERS,
+      ...CHANNEL_COMMAND_HANDLERS,
+      ...CHANNEL_QUERY_HANDLERS,
       ...ROLE_COMMAND_HANDLERS,
       ...ROLE_QUERY_HANDLERS,
       ...SECURITY_RUN_COMMAND_HANDLERS,
@@ -505,6 +531,7 @@ export async function createTestApp(): Promise<TestContext> {
     env,
     repositories,
     http,
+    channels,
     mailer,
     queue,
     close: async () => {

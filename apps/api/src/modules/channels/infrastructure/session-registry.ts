@@ -47,6 +47,16 @@ export type SessionPlan = {
   limits: ChannelLimits;
   rules: RedactionRules;
   expect: ChannelExpectation;
+  /**
+   * El entorno no permite escrituras: se escucha y no se manda.
+   *
+   * Es la misma protección que para un `POST` contra un entorno de solo lectura, adaptada a lo que
+   * un socket es. Abrirlo y oír es leer; mandar un mensaje puede cambiar lo que sea al otro lado, y
+   * el interruptor del entorno existe precisamente para que eso no pase contra producción.
+   */
+  readOnly: boolean;
+  /** Para decirlo con su nombre cuando alguien intente mandar. */
+  environmentName: string;
 };
 
 type Live = {
@@ -174,6 +184,12 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
   async send(sessionId: string, text: string): Promise<void> {
     const entry = this.live.get(sessionId);
     if (!entry?.channel) throw this.notHere(sessionId);
+    if (entry.plan.readOnly) {
+      throw new ConflictError(
+        `El entorno «${entry.plan.environmentName}» no permite escrituras: en él se escucha, pero no se manda. Actívalas en sus ajustes para mandar mensajes`,
+        "writes-not-allowed",
+      );
+    }
     this.frame(sessionId, { direction: "out", atMs: this.at(entry), body: text });
     entry.channel.send(text);
     await entry.writes;

@@ -19,6 +19,7 @@ import { EndpointsModule } from "./modules/endpoints/endpoints.module";
 import { MocksModule } from "./modules/mocks/mocks.module";
 import { DocsModule } from "./modules/docs/docs.module";
 import { MonitorsModule } from "./modules/monitors/monitors.module";
+import { ChannelsModule } from "./modules/channels/channels.module";
 import { RolesModule } from "./modules/roles/roles.module";
 import { SecurityRunsModule } from "./modules/security-runs/security-runs.module";
 import { PerformanceModule } from "./modules/performance/performance.module";
@@ -53,6 +54,7 @@ import { HealthController } from "./shared/health.controller";
     MocksModule,
     DocsModule,
     MonitorsModule,
+    ChannelsModule,
     RolesModule,
     SecurityRunsModule,
     PerformanceModule,

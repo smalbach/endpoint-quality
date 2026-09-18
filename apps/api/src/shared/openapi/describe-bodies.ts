@@ -35,6 +35,12 @@ import {
 import { CreateMockDto, UpdateMockDto } from "@/modules/mocks/presentation/dto/mocks.dto";
 import { CreateDocSiteDto, UpdateDocSiteDto } from "@/modules/docs/presentation/dto/doc-sites.dto";
 import { CreateMonitorDto, UpdateMonitorDto } from "@/modules/monitors/presentation/dto/monitors.dto";
+import {
+  CreateChannelDto,
+  OpenChannelSessionDto,
+  SendChannelMessageDto,
+  UpdateChannelDto,
+} from "@/modules/channels/presentation/dto/channels.dto";
 import type { OpenAPIObject } from "@nestjs/swagger";
 
 import {
@@ -182,6 +188,10 @@ const DTOS = [
   UpdateDocSiteDto,
   CreateMonitorDto,
   UpdateMonitorDto,
+  CreateChannelDto,
+  UpdateChannelDto,
+  OpenChannelSessionDto,
+  SendChannelMessageDto,
   CreatePlanDto,
   UpdatePlanDto,
   StartPerformanceRunDto,

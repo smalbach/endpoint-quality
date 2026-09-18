@@ -55,6 +55,8 @@ const plan = (over: Partial<SessionPlan> = {}): SessionPlan => ({
   limits: DEFAULT_LIMITS,
   rules: { secrets: [SECRET] },
   expect: {},
+  readOnly: false,
+  environmentName: "",
   ...over,
 });
 

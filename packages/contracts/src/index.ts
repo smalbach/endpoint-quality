@@ -1348,6 +1348,95 @@ export type MonitorListView = { monitors: (MonitorView & { recent: MonitorExecut
 
 export type MonitorHistoryView = { monitor: MonitorView; executions: MonitorExecutionView[] };
 
+// Canales (WebSocket)
+
+/**
+ * Un canal: lo que se prueba cuando no es una petición. Hoy un WebSocket.
+ *
+ * Hermano de un endpoint y no un tipo de él: la matriz, el mock, la documentación publicada y el
+ * resto de lectores de endpoints no ven canales, por construcción.
+ */
+export type ChannelLimitsView = {
+  maxMessages: number;
+  maxBytes: number;
+  maxMessageBytes: number;
+  maxDurationMs: number;
+  idleMs: number;
+};
+
+export type ChannelCheckView = {
+  label?: string;
+  source: "message" | "messageCount";
+  path?: string;
+  operator: string;
+  value?: unknown;
+  severity?: "error" | "warning";
+  match?: { at: "first" | "last" | "any" | "all"; index?: number };
+};
+
+export type ChannelExpectationView = {
+  minMessages?: number;
+  closeCode?: number;
+  firstMessageBudgetMs?: number;
+  checks?: ChannelCheckView[];
+};
+
+export type ChannelView = {
+  id: string;
+  protocol: "ws";
+  name: string;
+  /** Con `{{variables}}` si hace falta: se resuelve contra el entorno al abrir. */
+  url: string;
+  subprotocols: string[];
+  headers: { name: string; value: string; enabled: boolean }[];
+  auth: { type: string; params: Record<string, string> } | null;
+  limits: ChannelLimitsView;
+  expectations: ChannelExpectationView;
+  /** Tramas guardadas, para no reteclear la de auth en cada sesión. */
+  messages: { name: string; body: string }[];
+  orderIndex: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** Un mensaje de una conversación, **ya redactado**. `atMs` va desde la apertura. */
+export type ChannelMessageView = {
+  seq: number;
+  direction: "out" | "in" | "open" | "close" | "error";
+  atMs: number;
+  kind: "text" | "binary" | "ping" | "pong";
+  body: string;
+  /** El tamaño real: `body` puede venir recortado, y entonces `truncated` lo dice. */
+  bytes: number;
+  truncated: boolean;
+};
+
+export type ChannelSessionView = {
+  id: string;
+  channelId: string;
+  environmentId: string | null;
+  status: "connecting" | "open" | "closed" | "error";
+  handshake: { status: number; headers: Record<string, string> } | null;
+  counters: { sent: number; received: number; bytesIn: number; bytesOut: number };
+  closeCode: number | null;
+  closeReason: string;
+  /** Por qué se dejó de escuchar. Alcanzar un tope no es un error: es un hecho de la sesión. */
+  stopReason: string | null;
+  verdict: {
+    ok: boolean;
+    failure: string | null;
+    assertions: { label: string; pass: boolean; detail: string; severity?: "error" | "warning" }[];
+  } | null;
+  openedAt: string;
+  closedAt: string | null;
+  /** Si esta instancia de la API tiene el socket. Sin eso, la sesión se lee y no se usa. */
+  live: boolean;
+  messages?: ChannelMessageView[];
+};
+
+export type ChannelListView = { channels: ChannelView[] };
+export type ChannelDetailView = ChannelView & { sessions: ChannelSessionView[] };
+
 /** La página publicada, tal y como la lee quien abre la URL: sin sesión y sin cuenta aquí. */
 export type DocPageView = {
   title: string;
