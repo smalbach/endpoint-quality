@@ -25,6 +25,8 @@ import {
   MAX_EXAMPLE_NAME,
 } from "@/modules/endpoints/domain/examples";
 import { DATA_SCOPES, roleProblems } from "@/modules/roles/domain/model";
+import { CHANNEL_PROTOCOLS, channelProblems, type ChannelCeilings, type ChannelInput } from "@/modules/channels/domain/model";
+import { protoFilesProblems } from "@/modules/channels/domain/grpc";
 import { WORKFLOW_STATUSES } from "@/modules/workflows/domain/model";
 import { safeParsePlanDefinition } from "@/modules/performance/domain/plan-schema";
 import { projectSettingsProblems } from "./model";
@@ -42,8 +44,8 @@ import { NO_AUTH } from "./project-auth";
  * - **No secret travels.** A sensitive variable leaves as its name with an empty value, credentials
  *   and the project's login secrets are not in the file at all. A file is copied, mailed and
  *   committed; a token inside it is a token in all of those places.
- * - **Ids in the file are references, not ids.** A flow names its requests and its sub-flows by the
- *   ids they had where they were exported; importing makes new ones and rewrites every reference,
+ * - **Ids in the file are references, not ids.** A flow names its requests, its sub-flows and its
+ *   channels by the ids they had where they were exported; importing makes new ones and rewrites every reference,
  *   so nothing lands pointing at rows of another project.
  * - **Everything is validated before anything is written.** The file is untrusted input from a
  *   disk, so each piece goes through the same validator its own editor uses — and a file with one
@@ -232,6 +234,45 @@ const bundleWorkflow = z.object({
 
 const bundleDataset = z.object({ workflowId: ref, name, rows: z.unknown() });
 
+/**
+ * A channel a flow's `channel` node runs. It travels with the flows because a node without its
+ * channel cannot run — and it travels as it is stored: headers and auth already without literals,
+ * the `.proto` files of a gRPC one included. The shape of each setting is the channel editor's job,
+ * so it is checked by `channelProblems`, not restated here.
+ */
+const bundleChannel = z.object({
+  id: ref,
+  protocol: z.enum(CHANNEL_PROTOCOLS).default("ws"),
+  name,
+  url: z.string().min(1).max(2000),
+  subprotocols: z.array(z.string()).optional(),
+  headers: z.array(z.object({ name: z.string(), value: z.string(), enabled: z.boolean().default(true) })).optional(),
+  auth: z.unknown().optional(),
+  limits: z.record(z.string(), z.number()).optional(),
+  expectations: z.unknown().optional(),
+  messages: z.array(z.unknown()).optional(),
+  mqtt: z.unknown().optional(),
+  grpc: z.unknown().optional(),
+  protos: z.array(z.object({ path: z.string(), content: z.string() })).default([]),
+});
+export type BundleChannel = z.infer<typeof bundleChannel>;
+
+/** What the channel editor would receive for a bundle channel: the same input, the same checks. */
+export const channelInputOf = (channel: BundleChannel): ChannelInput & { name: string; url: string } =>
+  ({
+    protocol: channel.protocol,
+    name: channel.name,
+    url: channel.url,
+    ...(channel.subprotocols !== undefined ? { subprotocols: channel.subprotocols } : {}),
+    ...(channel.headers !== undefined ? { headers: channel.headers } : {}),
+    ...(channel.auth !== undefined ? { auth: channel.auth } : {}),
+    ...(channel.limits !== undefined ? { limits: channel.limits } : {}),
+    ...(channel.expectations !== undefined ? { expectations: channel.expectations } : {}),
+    ...(channel.messages !== undefined ? { messages: channel.messages } : {}),
+    ...(channel.mqtt ? { mqtt: channel.mqtt } : {}),
+    ...(channel.grpc ? { grpc: channel.grpc } : {}),
+  }) as ChannelInput & { name: string; url: string };
+
 const bundleSuite = z.object({
   name,
   description: z.string().max(2000).nullable().default(null),
@@ -291,6 +332,7 @@ export const projectBundleSchema = z.object({
       workflows: z.array(bundleWorkflow).max(500).default([]),
       datasets: z.array(bundleDataset).max(1000).default([]),
       suites: z.array(bundleSuite).max(200).default([]),
+      channels: z.array(bundleChannel).max(200).default([]),
     })
     .optional(),
   environments: z.array(bundleEnvironment).max(200).optional(),
@@ -331,14 +373,15 @@ export function partsIn(bundle: ProjectBundle): ProjectBundlePart[] {
 /**
  * A flow's graph with its references moved to the target's ids.
  *
- * Two references live inside the document: the request a step sends and the flow a sub-flow node
- * runs. Anything the maps do not know is returned as missing rather than left pointing at the
+ * Three references live inside the document: the request a step sends, the flow a sub-flow node
+ * runs and the channel a channel node opens. Anything the maps do not know is returned as missing rather than left pointing at the
  * exporting project's rows.
  */
 export function remapDefinition(
   definition: FlowDefinition,
   templateIds: Map<string, string>,
   workflowIds: Map<string, string>,
+  channelIds: Map<string, string> = new Map(),
 ): { definition: FlowDefinition; missing: Problem[] } {
   const missing: Problem[] = [];
   const steps = definition.steps.map((step, index) => {
@@ -353,6 +396,12 @@ export function remapDefinition(
       const mapped = workflowIds.get(subflow.workflowId);
       if (mapped) next.subflow = { ...subflow, workflowId: mapped };
       else missing.push({ field: `steps.${index}.subflow.workflowId`, detail: "el sub-flujo no viene en el fichero" });
+    }
+    const channel = step.channel as Record<string, unknown> | undefined;
+    if (channel && typeof channel.channelId === "string") {
+      const mapped = channelIds.get(channel.channelId);
+      if (mapped) next.channel = { ...channel, channelId: mapped };
+      else missing.push({ field: `steps.${index}.channel.channelId`, detail: "el canal no viene en el fichero" });
     }
     return next;
   });
@@ -408,7 +457,8 @@ const httpUrlProblem = (value: string): string | null => {
 export function bundleProblems(
   bundle: ProjectBundle,
   parts: Set<ProjectBundlePart>,
-  ids: { templates: Map<string, string>; workflows: Map<string, string> },
+  ids: { templates: Map<string, string>; workflows: Map<string, string>; channels: Map<string, string> },
+  channelCeilings: ChannelCeilings,
 ): Problem[] {
   const problems: Problem[] = [];
   const push = (prefix: string, issues: Problem[]) =>
@@ -458,7 +508,13 @@ export function bundleProblems(
   }
 
   if (parts.has("flows") && bundle.flows) {
-    const { requestTemplates, workflows, datasets, suites } = bundle.flows;
+    const { requestTemplates, workflows, datasets, suites, channels } = bundle.flows;
+    if (ids.channels.size !== channels.length)
+      problems.push({ field: "flows.channels", detail: "hay dos canales con el mismo id" });
+    channels.forEach((channel, index) => {
+      push(`flows.channels.${index}`, channelProblems(channelInputOf(channel), channelCeilings));
+      if (channel.protos.length) push(`flows.channels.${index}.protos`, protoFilesProblems(channel.protos));
+    });
     requestTemplates.forEach((template, index) => {
       const verdict = safeParseRequestTemplate({
         name: template.name,
@@ -479,7 +535,7 @@ export function bundleProblems(
     if (ids.workflows.size !== workflows.length)
       problems.push({ field: "flows.workflows", detail: "hay dos flujos con el mismo id" });
     workflows.forEach((workflow, index) => {
-      const remapped = remapDefinition(workflow.definition, ids.templates, ids.workflows);
+      const remapped = remapDefinition(workflow.definition, ids.templates, ids.workflows, ids.channels);
       push(`flows.workflows.${index}.definition`, remapped.missing);
       if (remapped.missing.length) return;
       const verdict = safeParseWorkflowDocument(remapped.definition);

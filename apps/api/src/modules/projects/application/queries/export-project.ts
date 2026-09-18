@@ -31,7 +31,9 @@ import {
   type ProjectBundle,
 } from "../../domain/project-bundle";
 import { ownedProject } from "../commands/update-project";
-import { withoutSecrets } from "../../domain/copying";
+import { storableChannel, withoutSecrets } from "../../domain/copying";
+import { CHANNEL_REPOSITORY, type ChannelRepositoryPort } from "@/modules/channels/domain/ports";
+import { CHANNEL_PROTO_REPOSITORY, type ChannelProtoRepositoryPort } from "@/modules/channels/domain/grpc";
 
 export class ExportProjectQuery implements IQuery {
   constructor(
@@ -64,6 +66,8 @@ export class ExportProjectHandler implements IQueryHandler<ExportProjectQuery, P
     @Inject(PERFORMANCE_PLAN_REPOSITORY) private readonly plans: PerformancePlanRepositoryPort,
     @Inject(SPEC_REPOSITORY) private readonly specs: SpecRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
+    @Inject(CHANNEL_REPOSITORY) private readonly channels: ChannelRepositoryPort,
+    @Inject(CHANNEL_PROTO_REPOSITORY) private readonly protos: ChannelProtoRepositoryPort,
   ) {}
 
   async execute(query: ExportProjectQuery): Promise<ProjectBundle> {
@@ -223,6 +227,31 @@ export class ExportProjectHandler implements IQueryHandler<ExportProjectQuery, P
       // A suite is a list of this project's flows; exporting one flow is not exporting that list.
       partial ? Promise.resolve([]) : this.workflows.listSuites(projectId),
     ]);
+    // The channels the exported flows open — all of them in a whole export, like the requests. As
+    // they are stored, and once more through `storableChannel`: a row from before that rule could
+    // still carry a literal, and a file is the worst place for it.
+    const opened = new Set(workflows.flatMap((workflow) => workflow.definition.steps.map((step) => step.channel?.channelId)));
+    const channels = (await this.channels.listByProject(projectId)).filter((channel) => !partial || opened.has(channel.id));
+    const exportedChannels = await Promise.all(
+      channels.map(async (row) => {
+        const channel = storableChannel(row);
+        return {
+          id: channel.id,
+          protocol: channel.protocol,
+          name: channel.name,
+          url: channel.url,
+          subprotocols: channel.subprotocols,
+          headers: channel.headers,
+          auth: channel.auth,
+          limits: { ...channel.limits },
+          expectations: channel.expectations,
+          messages: channel.messages,
+          ...(channel.mqtt ? { mqtt: channel.mqtt } : {}),
+          ...(channel.grpc ? { grpc: channel.grpc } : {}),
+          protos: channel.protocol === "grpc" ? await this.protos.list(channel.id) : [],
+        };
+      }),
+    );
 
     return {
       requestTemplates: templates
@@ -258,6 +287,7 @@ export class ExportProjectHandler implements IQueryHandler<ExportProjectQuery, P
         description: suite.description,
         workflowIds: suite.workflowIds.filter((id) => kept.has(id)),
       })),
+      channels: exportedChannels,
     };
   }
 }

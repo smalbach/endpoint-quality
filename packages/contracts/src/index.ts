@@ -2220,6 +2220,8 @@ export type ProjectBundleImportResultView = {
   workflows: number;
   datasets: number;
   suites: number;
+  /** Los canales que los flujos del fichero abren, con sus `.proto`. */
+  channels: number;
   environments: number;
   performancePlans: number;
   skipped: { what: string; detail: string }[];

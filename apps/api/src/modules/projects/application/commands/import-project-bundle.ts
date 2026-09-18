@@ -4,8 +4,13 @@ import { CommandBus, CommandHandler, type ICommand, type ICommandHandler } from 
 import type { ConfigSection, RequestBody, ScenarioCredential, WorkflowDocument } from "@eq/runner-core";
 import type { ProjectBundleImportResultView, ProjectBundlePart } from "@eq/contracts";
 
-import { InvalidInputError } from "@/shared/errors/domain-error";
+import { ConflictError, InvalidInputError } from "@/shared/errors/domain-error";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
+import { ENV, type Env } from "@/shared/config/env";
+import { CHANNEL_REPOSITORY, type ChannelRepositoryPort } from "@/modules/channels/domain/ports";
+import { CHANNEL_PROTO_REPOSITORY, type ChannelProtoRepositoryPort } from "@/modules/channels/domain/grpc";
+import { MAX_CHANNELS_PER_PROJECT, blankChannel, withChanges } from "@/modules/channels/domain/model";
+import { ceilingsOf } from "@/modules/channels/application/commands/manage-channels";
 import { CONFIG_REPOSITORY, type ConfigRepositoryPort } from "@/modules/config/domain/ports";
 import {
   ENDPOINT_REPOSITORY,
@@ -35,6 +40,7 @@ import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "../../domain/por
 import { normalizeTags, type Project } from "../../domain/model";
 import {
   bundleProblems,
+  channelInputOf,
   isBundlePart,
   missingOperations,
   parseProjectBundle,
@@ -59,7 +65,7 @@ export class ImportProjectBundleCommand implements ICommand {
 }
 
 type Result = ProjectBundleImportResultView;
-type Ids = { templates: Map<string, string>; workflows: Map<string, string> };
+type Ids = { templates: Map<string, string>; workflows: Map<string, string>; channels: Map<string, string> };
 
 /**
  * A project file into this project.
@@ -84,6 +90,9 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
     @Inject(PERFORMANCE_PLAN_REPOSITORY) private readonly plans: PerformancePlanRepositoryPort,
     @Inject(SPEC_REPOSITORY) private readonly specs: SpecRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
+    @Inject(ENV) private readonly env: Env,
+    @Inject(CHANNEL_REPOSITORY) private readonly channels: ChannelRepositoryPort,
+    @Inject(CHANNEL_PROTO_REPOSITORY) private readonly protos: ChannelProtoRepositoryPort,
     private readonly commandBus: CommandBus,
   ) {}
 
@@ -110,8 +119,9 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
     const ids: Ids = {
       templates: new Map((bundle.flows?.requestTemplates ?? []).map((template) => [template.id, randomUUID()])),
       workflows: new Map((bundle.flows?.workflows ?? []).map((workflow) => [workflow.id, randomUUID()])),
+      channels: new Map((bundle.flows?.channels ?? []).map((channel) => [channel.id, randomUUID()])),
     };
-    const problems = bundleProblems(bundle, parts, ids);
+    const problems = bundleProblems(bundle, parts, ids, ceilingsOf(this.env));
     if (problems.length) {
       throw new InvalidInputError(
         "El fichero tiene elementos que no son válidos; no se ha importado nada",
@@ -119,6 +129,12 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
         "bundle-invalid",
       );
     }
+    const incoming = parts.has("flows") ? (bundle.flows?.channels.length ?? 0) : 0;
+    if (incoming && (await this.channels.countByProject(project.id)) + incoming > MAX_CHANNELS_PER_PROJECT)
+      throw new ConflictError(
+        `Con los ${incoming} canales del fichero, el proyecto pasaría de ${MAX_CHANNELS_PER_PROJECT}; no se ha importado nada`,
+        "channels-full",
+      );
 
     const now = this.clock.now();
     const result: Result = {
@@ -134,6 +150,7 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
       workflows: 0,
       datasets: 0,
       suites: 0,
+      channels: 0,
       environments: 0,
       performancePlans: 0,
       skipped: [],
@@ -370,11 +387,23 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
       result.requestTemplates += 1;
     }
 
+    // Before the flows: a channel node names its channel, and the channel has to exist to be named.
+    // Through `withChanges`, the channel editor's own write, so headers and auth are stored as any
+    // channel of this project would be — a literal that somebody typed into the file stays out.
+    for (const channel of flows.channels) {
+      const id = ids.channels.get(channel.id) ?? randomUUID();
+      const input = channelInputOf(channel);
+      const blank = blankChannel({ id, projectId: project.id, name: input.name, url: input.url, now, by: actorId, protocol: channel.protocol });
+      await this.channels.save(withChanges(blank, input, now, actorId));
+      if (channel.protocol === "grpc" && channel.protos.length) await this.protos.replace(id, channel.protos);
+      result.channels += 1;
+    }
+
     const workflowNames = new Set((await this.workflows.listWorkflows(project.id)).map((row) => row.name));
     for (const workflow of flows.workflows) {
       const name = uniqueName(workflow.name, workflowNames);
       workflowNames.add(name);
-      const { definition } = remapDefinition(workflow.definition, ids.templates, ids.workflows);
+      const { definition } = remapDefinition(workflow.definition, ids.templates, ids.workflows, ids.channels);
       await this.workflows.saveWorkflow({
         ...stamp,
         id: ids.workflows.get(workflow.id) ?? randomUUID(),

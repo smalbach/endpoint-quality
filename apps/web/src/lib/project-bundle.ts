@@ -27,7 +27,7 @@ export const BUNDLE_PART_META: Record<ProjectBundlePart, { label: string; hint: 
   config: { label: "Configuración", hint: "Secciones del contrato: presupuestos, envelope, textos…" },
   endpoints: { label: "Endpoints", hint: "Rutas, parámetros, cuerpos y scripts." },
   roles: { label: "Roles y permisos", hint: "Roles, permisos por endpoint y reglas entre roles." },
-  flows: { label: "Flujos", hint: "Flujos, peticiones guardadas, datasets y suites." },
+  flows: { label: "Flujos", hint: "Flujos, peticiones guardadas, datasets, suites y los canales que abren." },
   environments: { label: "Entornos", hint: "URL y variables, sin credenciales ni valores secretos." },
   performance: { label: "Planes de rendimiento", hint: "Escenarios, perfil de carga y umbrales." },
 };
@@ -142,6 +142,7 @@ export function describeImport(result: ProjectBundleImportResultView): string {
     [result.workflows, "flujo", "flujos"],
     [result.datasets, "dataset", "datasets"],
     [result.suites, "suite", "suites"],
+    [result.channels, "canal", "canales"],
     [result.environments, "entorno", "entornos"],
     [result.performancePlans, "plan de rendimiento", "planes de rendimiento"],
   ];
