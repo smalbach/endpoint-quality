@@ -53,7 +53,9 @@ export class ExecutionContextFactory {
   async build(input: {
     projectId: string;
     environmentId: string | null;
-    specVersionId: string;
+    /** Null on a run that reads no operation (see `Run.specVersionId`): nothing is resolved, and the
+     * live contract is not fetched either — a channel run has no business calling `/openapi.json`. */
+    specVersionId: string | null;
   }): Promise<ExecutionContext> {
     const project = await this.projects.findById(input.projectId);
     if (!project) throw new Error("El proyecto ya no existe");
@@ -61,8 +63,8 @@ export class ExecutionContextFactory {
     const environment = input.environmentId ? await this.environments.findById(input.environmentId) : null;
     if (!environment) throw new Error("Hace falta un entorno con URL base");
 
-    const stored = await this.specs.listOperations(input.specVersionId);
-    if (stored.length === 0) throw new Error("La versión del contrato no tiene operaciones");
+    const stored = input.specVersionId ? await this.specs.listOperations(input.specVersionId) : [];
+    if (input.specVersionId && stored.length === 0) throw new Error("La versión del contrato no tiene operaciones");
 
     const config = await assembleProjectConfig(this.config, project.id);
     const operations: Operation[] = stored.map(
@@ -87,7 +89,9 @@ export class ExecutionContextFactory {
       session: null,
       // Y el tarro empieza vacío: lo llena el primer `Set-Cookie` de la corrida.
       cookies: [],
-      ...(await this.loadSpec(environment.specUrl ?? `${environment.baseUrl}/openapi.json`)),
+      ...(input.specVersionId
+        ? await this.loadSpec(environment.specUrl ?? `${environment.baseUrl}/openapi.json`)
+        : { spec: null, specError: "La corrida no usa el contrato del proyecto" }),
     };
 
     return { config, resolved, target, authEnabled: environment.authEnforced };

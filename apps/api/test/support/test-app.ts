@@ -24,6 +24,7 @@ import cookieParser from "cookie-parser";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 
 import { MAX_JSON_BODY } from "@/shared/http/body-limits";
+import { FLOW_HOOK_PATH, flowHookBodyParser } from "@/shared/http/hook-body";
 
 import { ENV, type Env, loadEnv } from "@/shared/config/env";
 import { CLOCK, FixedClock } from "@/shared/clock/clock.port";
@@ -162,6 +163,10 @@ import { RequestPreviewer } from "@/modules/runs/infrastructure/request-previewe
 import { RunOrchestrator } from "@/modules/runs/infrastructure/run-orchestrator";
 import { RunProgressStream } from "@/modules/runs/infrastructure/run-progress.stream";
 import { InMemoryRunQueue } from "@/modules/runs/infrastructure/queue/in-memory-queue";
+import { FLOW_HOOK_REPOSITORY } from "@/modules/runs/domain/flow-hooks";
+import { FlowHookWaiter } from "@/modules/runs/infrastructure/flow-hook-waiter";
+import { FlowHooksController } from "@/modules/runs/presentation/flow-hooks.controller";
+import { InMemoryFlowHookRepository } from "./in-memory-flow-hooks";
 import {
   InMemoryApiTokenRepository,
   InMemoryInvitationRepository,
@@ -305,6 +310,7 @@ export type TestContext = {
     config: InMemoryConfigRepository;
     workflows: InMemoryWorkflowRepository;
     runs: InMemoryRunRepository;
+    flowHooks: InMemoryFlowHookRepository;
     passwordResets: InMemoryPasswordResetRepository;
     endpoints: InMemoryEndpointRepository;
     examples: InMemoryExampleRepository;
@@ -376,6 +382,7 @@ export async function createTestApp(
     config: new InMemoryConfigRepository(),
     workflows: new InMemoryWorkflowRepository(),
     runs: new InMemoryRunRepository(),
+    flowHooks: new InMemoryFlowHookRepository(),
     passwordResets: new InMemoryPasswordResetRepository(),
     endpoints: new InMemoryEndpointRepository(),
     examples: new InMemoryExampleRepository(),
@@ -417,6 +424,7 @@ export async function createTestApp(
       WorkflowsController,
       RunsController,
       RequestPreviewController,
+      FlowHooksController,
       EndpointsController,
       MockServeController,
       MocksController,
@@ -453,6 +461,8 @@ export async function createTestApp(
       { provide: SAFE_FETCH, useValue: http },
       { provide: RUN_REPOSITORY, useValue: repositories.runs },
       { provide: RUN_QUEUE, useValue: queue },
+      { provide: FLOW_HOOK_REPOSITORY, useValue: repositories.flowHooks },
+      FlowHookWaiter,
       CaseExecutor,
       ExecutionContextFactory,
       { provide: REQUEST_PREVIEWER, useClass: RequestPreviewer },
@@ -566,6 +576,8 @@ export async function createTestApp(
 
   const app = moduleRef.createNestApplication<NestExpressApplication>({ logger: false });
   app.use(cookieParser());
+  // Como en `main.ts`: la ruta pública del webhook lee su propio cuerpo antes del JSON global.
+  app.use(FLOW_HOOK_PATH, flowHookBodyParser());
   // Set through the same call `main.ts` uses, against the same constant. If the two drifted, a
   // contract that imports in production would fail here — or, worse, the other way round.
   app.useBodyParser("json", { limit: MAX_JSON_BODY });

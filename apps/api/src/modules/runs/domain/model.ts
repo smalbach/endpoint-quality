@@ -75,7 +75,10 @@ export type Run = {
   id: string;
   projectId: string;
   environmentId: string | null;
-  specVersionId: string;
+  /** The contract version it was measured against, pinned at start. Null when the run reads no
+   * operation — a channel plan, or a flow with no saved request or login in it — and the project
+   * may have no contract at all. */
+  specVersionId: string | null;
   status: RunStatus;
   plan: RunPlan;
   totals: RunTotals;

@@ -1968,6 +1968,56 @@ describe("permisos y aislamiento", () => {
     assert.equal(response.status, 409);
     assert.match(response.body.type, /no-active-spec$/);
   });
+
+  test("sin contrato sí corre un flujo que no lee operaciones, y no uno con una petición guardada", async () => {
+    const target = new StubTarget({});
+    await target.start();
+    const bare = await api().post(`${base}/projects`).set(as(owner)).send({ name: "solo fetch" });
+    const projectBase = `${base}/projects/${bare.body.projectId}`;
+    const environment = await api()
+      .post(`${projectBase}/environments`)
+      .set(as(owner))
+      .send({ name: "stub", baseUrl: target.origin, writesAllowed: true, authEnforced: false, variables: {} });
+    assert.equal(environment.status, 201, JSON.stringify(environment.body));
+    const flow = async (name: string, steps: Record<string, unknown>[]) => {
+      const created = await api().post(`${projectBase}/workflows`).set(as(owner)).send({ name, definition: { steps } });
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      return created.body.workflowId as string;
+    };
+    const start = (workflowId: string) =>
+      api()
+        .post(`${projectBase}/runs`)
+        .set(as(owner))
+        .send({ environmentId: environment.body.environmentId, workflowId });
+
+    const onlyFetch = await flow("solo fetch", [
+      { id: "leer", kind: "fetch", fetch: { method: "GET", url: "/things" } },
+      { id: "fijo", kind: "mock", mock: { status: 200, body: '{"ok":true}' }, dependsOn: ["leer"] },
+    ]);
+    const started = await start(onlyFetch);
+    assert.equal(started.status, 202, JSON.stringify(started.body));
+    await context.queue.idle();
+    const run = await api().get(`${projectBase}/runs/${started.body.runId}`).set(as(owner));
+    assert.equal(run.body.status, "passed", JSON.stringify(run.body.cases));
+
+    // Una petición guardada se resuelve contra una operación: sin contrato, el 409 de siempre. También
+    // cuando está dentro de un sub-flujo, que corre con el mismo contexto.
+    // Sin contrato no se puede guardar una prueba, así que el flujo llega como llegaría de un paquete
+    // importado: escrito en la tabla.
+    const withRequest = await flow("con petición", [{ id: "crear", kind: "fetch", fetch: { method: "GET", url: "/x" } }]);
+    const row = await context.repositories.workflows.findWorkflow(bare.body.projectId, withRequest);
+    await context.repositories.workflows.saveWorkflow({
+      ...row!,
+      definition: { steps: [{ id: "crear", requestTemplateId: "00000000-0000-4000-8000-000000000001" }] },
+    });
+    const refused = await start(withRequest);
+    assert.equal(refused.status, 409, JSON.stringify(refused.body));
+    assert.match(refused.body.type, /no-active-spec$/);
+    const parent = await flow("padre", [{ id: "hijo", kind: "subflow", subflow: { workflowId: withRequest } }]);
+    const nested = await start(parent);
+    assert.equal(nested.status, 409, JSON.stringify(nested.body));
+    await target.stop();
+  });
 });
 
 /**

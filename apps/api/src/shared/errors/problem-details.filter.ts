@@ -35,6 +35,16 @@ const TITLE_BY_STATUS: Record<number, string> = {
   500: "Error interno",
 };
 
+/**
+ * La URL de un nodo webhook lleva su token en la ruta, y el token es la credencial: ni la respuesta
+ * ni el registro de un 500 la repiten. Se reconoce por el prefijo y no con el de `runs`, porque un
+ * filtro compartido no debería depender de un módulo.
+ */
+const HOOK_TOKEN_IN_PATH = /^(\/hooks\/flows\/)[^/?#]+/;
+function withoutHookToken(url: string): string {
+  return url.replace(HOOK_TOKEN_IN_PATH, "$1[token-redactado]");
+}
+
 type ProblemDetails = {
   type: string;
   title: string;
@@ -52,13 +62,14 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     const context = host.switchToHttp();
     const response = context.getResponse<Response>();
     const request = context.getRequest<Request>();
-    const problem = this.toProblem(exception, request.url);
+    const url = withoutHookToken(request.url);
+    const problem = this.toProblem(exception, url);
 
     if (problem.status >= 500) {
       // Logged in full here and described in one line there. The operator gets the cause; the
       // caller gets nothing that describes the inside of the process.
       this.logger.error(
-        `${request.method} ${request.url} → 500`,
+        `${request.method} ${url} → 500`,
         exception instanceof Error ? exception.stack : String(exception),
       );
     }

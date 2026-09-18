@@ -51,6 +51,7 @@ import {
   type StepRerun,
   type StepRequest,
   type StepSubflow,
+  type StepWebhook,
   type WorkflowStep,
 } from "@eq/runner-core";
 
@@ -69,11 +70,14 @@ import { flattenPrepared, nestedScenarioId } from "./subflow-support";
 import { mockStep } from "./mock-node";
 import { channelStep } from "./channel-node";
 import { HeadlessChannelRunner } from "@/modules/channels/application/headless-session";
+import { hookResponse } from "../domain/flow-hooks";
+import { FlowHookWaiter, hookStep } from "./flow-hook-waiter";
 import {
   RunCaseFinishedEvent,
   RunCaseRetryingEvent,
   RunCaseStartedEvent,
   RunFinishedEvent,
+  RunHookWaitingEvent,
   RunPausedEvent,
   RunResumedEvent,
   RunStartedEvent,
@@ -97,6 +101,8 @@ export class RunOrchestrator {
     private readonly eventBus: EventBus,
     // The channel node opens its session through the channels module, the same way «Conectar» does.
     private readonly channels: HeadlessChannelRunner,
+    // The webhook node's URL and its wait (see `flow-hook-waiter.ts`).
+    private readonly hooks: FlowHookWaiter,
   ) {}
 
   /** Wired at boot by the module. Kept separate from the constructor so the handler is
@@ -1083,6 +1089,14 @@ export class RunOrchestrator {
       return;
     }
 
+    // A webhook node sends nothing: it hands out a one-time URL and waits for an outside system to call
+    // it. Scheduled like a request, after the condition and the wait; what the call carries is its
+    // response.
+    if (item.step.kind === "webhook" && item.step.webhook) {
+      await this.webhook(run, context, item, state, startedAt, item.step.webhook);
+      return;
+    }
+
     const walked = this.elementsFor(item.step, responses, budget);
     const elements = walked?.elements ?? null;
     if (elements && elements.length === 0) {
@@ -1585,6 +1599,106 @@ export class RunOrchestrator {
     });
   }
 
+  /**
+   * A webhook node: a one-time URL handed out, and the flow held until something outside calls it.
+   *
+   * While it waits the case is `running` and its step row carries the address with the token masked;
+   * the URL to copy is on the run view (`hooks`), derived again on every read and never stored. When
+   * the wait ends the **same row** is rewritten, so the case has one step and not two. A call that
+   * arrives is the node's response (status 200, its body, masked like a capture), judged by the
+   * node's checks and read by its captures and by every node after it. Nobody calling is a failure;
+   * a cancellation is not a verdict, so the case is skipped like the ones the cancel never reached.
+   */
+  private async webhook(
+    run: Run,
+    context: ExecutionContext,
+    item: PreparedItem,
+    state: WalkState,
+    startedAt: Date,
+    config: StepWebhook,
+  ): Promise<void> {
+    const hook = await this.hooks.open(run.id, item.runCase, item.step.id, config);
+    const rowId = randomUUID();
+    const writeRow = (step: ExecutedStep) =>
+      this.runs.saveSteps(toRunSteps(item.runCase.id, [step]).map((row) => ({ ...row, id: rowId })));
+    const expiresAt = new Date(hook.expiresAt).toISOString();
+    await writeRow(
+      hookStep(item.runCase, hook, {
+        ok: false,
+        failure: null,
+        assertions: [
+          { label: "Webhook", pass: false, severity: "warning", detail: `Esperando un ${hook.method} hasta ${expiresAt}` },
+        ],
+      }),
+    );
+    const started: RunCase = { ...item.runCase, status: "running", startedAt };
+    await this.runs.saveCase(started);
+    this.eventBus.publish(new RunCaseStartedEvent(run.projectId, run.id, started));
+    this.eventBus.publish(
+      new RunHookWaitingEvent(run.projectId, run.id, {
+        caseId: item.runCase.id,
+        stepId: item.step.id,
+        method: hook.method,
+        expiresAt,
+      }),
+    );
+
+    const waitedFrom = Date.now();
+    const outcome = await this.hooks.wait(run.id, hook);
+    const durationMs = Date.now() - waitedFrom;
+    const sent = { method: hook.method, url: hook.redactedUrl, headers: {}, body: null };
+
+    if (outcome.kind === "cancelled") {
+      await writeRow(
+        hookStep(item.runCase, hook, {
+          ok: false,
+          failure: null,
+          durationMs,
+          assertions: [
+            { label: "Webhook", pass: false, severity: "warning", detail: "La corrida se canceló mientras esperaba la llamada" },
+          ],
+        }),
+      );
+      const skipped: RunCase = { ...item.runCase, status: "skipped", startedAt, finishedAt: this.clock.now(), durationMs };
+      state.passed.set(item.step.id, false);
+      await this.runs.saveCase(skipped);
+      await this.announce(run, skipped);
+      return;
+    }
+
+    if (outcome.kind === "timeout") {
+      // `network` — «no hubo respuesta» — is the closest kind there is: the outside system never called.
+      const assertions: Assertion[] = [
+        { label: "Webhook", pass: false, detail: `Nadie llamó en ${Math.round(hook.timeoutMs / 1000)} s` },
+      ];
+      await writeRow(hookStep(item.runCase, hook, { ok: false, failure: "network", assertions, durationMs }));
+      await this.finishControl(run, item, state, startedAt, { ok: false, failure: "network", assertions, sent, steps: [], durationMs });
+      return;
+    }
+
+    const { delivery } = outcome;
+    const actual = hookResponse(delivery);
+    state.responses.set(item.step.id, { actual, durationMs });
+    const judged = evaluateChecks(item.step.checks ?? [], { response: actual, durationMs });
+    const capture = this.captureInto(item.step, actual, context);
+    const assertions: Assertion[] = [
+      {
+        label: "Webhook",
+        pass: true,
+        detail: `Llegó un ${delivery.method}${delivery.contentType ? ` con ${delivery.contentType}` : ""}`,
+      },
+      ...judged,
+      ...(capture ? [capture] : []),
+    ];
+    const ok = holds(assertions);
+    // A check the author wrote is `check`; a capture that found nothing in a payload the checks
+    // accepted is `flow`, as on a request.
+    const failure: FailureKind | null = ok ? null : holds(judged) ? "flow" : "check";
+    await writeRow(hookStep(item.runCase, hook, { ok, failure, assertions, delivery, durationMs }));
+    // The row is already written under its own id, so `steps: []` leaves finishControl to close the case.
+    await this.finishControl(run, item, state, startedAt, { ok, failure, assertions, sent, steps: [], durationMs });
+  }
+
   /** A loop's body steps it never walked — the loop was skipped, found no list or an empty one —
    * still get a verdict: a case left `queued` is not a result. */
   private async closeLoopBody(run: Run, item: PreparedItem, state: WalkState): Promise<void> {
@@ -1806,7 +1920,9 @@ export class RunOrchestrator {
 
   private async finish(run: Run, cancelled: boolean): Promise<void> {
     const totals = await this.runs.recomputeTotals(run.id);
-    const status = cancelled ? "cancelled" : verdictFor(totals);
+    // Asked once more: a step that notices the cancel itself — a webhook wait — closes its own case,
+    // and when it was the last one the walk ends without passing a boundary where it would look.
+    const status = cancelled || (await this.queue.isCancelled(run.id)) ? "cancelled" : verdictFor(totals);
     await this.runs.updateStatus(run.id, status, this.clock.now());
     this.eventBus.publish(new RunFinishedEvent(run.projectId, run.id, status, totals));
   }
@@ -2004,6 +2120,8 @@ function controlCaseFields(step: WorkflowStep): { operationId: string; method: s
     case "channel":
       // The protocol and the name are only known once the channel is read; `channelStep` fills them in.
       return { operationId: "", method: "CHANNEL", path: step.channel?.channelId ?? "" };
+    case "webhook":
+      return { operationId: "", method: "HOOK", path: `espera ${Math.round((step.webhook?.timeoutMs ?? 0) / 1000)} s` };
     default:
       return null;
   }

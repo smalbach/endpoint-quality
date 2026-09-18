@@ -279,7 +279,8 @@ export type StepKind =
   | "subflow"
   | "graphql"
   | "mock"
-  | "channel";
+  | "channel"
+  | "webhook";
 
 /** A `graphql` node: one operation sent as `POST` `{query, variables, operationName}` the way a fetch
  * sends its call (URL absolute or under the base URL, session only with `useSession`). `variables` is
@@ -329,6 +330,27 @@ export type StepMockView = {
   disabledHeaders?: Record<string, string>;
   body?: string;
   delayMs?: number;
+};
+
+/** A `webhook` node: the flow waits up to `timeoutMs` (1 s–10 min) for an outside system to call the
+ * one-time URL the run publishes when it reaches the node, with `method` (POST when absent). What
+ * arrives is the node's response (status 200, the body) for its checks, captures and later nodes. */
+export type StepWebhookView = { timeoutMs: number; method?: "POST" | "PUT" };
+
+/**
+ * A run waiting on a webhook node: the case, its node, the URL to call and until when.
+ *
+ * `url` carries the one-time token, which is stored nowhere: it is derived again on every read, and
+ * only while the node waits. On the run view (`hooks`) and on the stream's `waiting` event, both for
+ * the run's authenticated followers only. Once the wait is over the case's step shows the address
+ * with the token masked, and what arrived.
+ */
+export type RunHookWaitView = {
+  caseId: string;
+  stepId: string;
+  url: string;
+  method: "POST" | "PUT";
+  expiresAt: string;
 };
 
 /** One action of a `channel` node's script: send a text (MQTT: to `topic` with `qos`/`retain`), after
@@ -450,6 +472,8 @@ export type WorkflowStepView = {
   mock?: StepMockView;
   /** On a `channel` node: the channel it runs and its script. */
   channel?: StepChannelView;
+  /** On a `webhook` node: how long it waits for the outside call, and with which verb. */
+  webhook?: StepWebhookView;
   /** On any node downstream of an `If`: which of its two paths this node sits on. */
   branch?: StepBranchView;
   dependsOn?: string[];
@@ -798,6 +822,9 @@ export type RunViewOf<T> = RunOf<T> & {
   /** Where a run launched to wait for a person is waiting now: the case about to execute and its
    * node. Null or absent while it is not waiting. */
   paused?: RunPauseView | null;
+  /** The webhook nodes waiting for their outside call right now, with the URL to call. Absent or
+   * empty when none is. */
+  hooks?: RunHookWaitView[];
 };
 /** A waiting run's position. `stepId` is null outside a flow. */
 export type RunPauseView = { caseId: string; stepId: string | null };

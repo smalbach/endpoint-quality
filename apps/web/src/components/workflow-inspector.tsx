@@ -18,6 +18,7 @@ import {
   variablesFor,
 } from "@/lib/workflow-draft";
 import type { OperationSummary } from "@/lib/workflow-draft";
+import { WEBHOOK_TIMEOUT_MS, formatWait, webhookTimeoutProblem } from "@/lib/workflow-webhook";
 import { VariableSuggest } from "@/components/variable-suggest";
 import {
   NOTIFY_CHANNELS,
@@ -226,6 +227,8 @@ export function WorkflowInspector({
         />
       ) : kind === "mock" ? (
         <MockInspector step={step} variables={variables} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
+      ) : kind === "webhook" ? (
+        <WebhookInspector step={step} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
       ) : kind === "channel" ? (
         <ChannelInspector
           step={step}
@@ -2130,6 +2133,109 @@ function MockInspector({
           label: "Capturas",
           count: step.captures?.length,
           content: <CapturesTab step={step} canEdit={canEdit} sampleBody={mockSampleBody(mock)} onChange={onChange} />,
+        },
+        {
+          id: "failure",
+          label: "Si falla",
+          marked: failureSet(step),
+          content: <FailureEditor step={step} canEdit={canEdit} retries={false} onChange={onChange} />,
+        },
+      ]}
+    />
+  );
+}
+
+/** Un nodo webhook: cuánto espera y con qué verbo. La URL solo existe cuando una corrida llega a él. */
+function WebhookInspector({
+  step,
+  canEdit,
+  onChange,
+  onRemove,
+}: {
+  step: WorkflowStepView;
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+  onRemove: () => void;
+}) {
+  const webhook = step.webhook ?? { timeoutMs: WEBHOOK_TIMEOUT_MS.initial, method: "POST" as const };
+  const setWebhook = (change: Partial<NonNullable<WorkflowStepView["webhook"]>>) =>
+    onChange({ ...step, webhook: { ...webhook, ...change } });
+  const problem = webhookTimeoutProblem(webhook.timeoutMs);
+
+  return (
+    <NodePanel
+      kind="webhook"
+      title="Esperar webhook"
+      subtitle={`${webhook.method ?? "POST"} · ${formatWait(webhook.timeoutMs)} · ${step.id}`}
+      description="Detiene el flujo hasta que un sistema externo —una pasarela de pagos, un trabajo asíncrono— llame a una URL de un solo uso. Lo que llegue (cuerpo y cabeceras, con las credenciales tapadas) es la respuesta de este nodo, con estado 200: sus comprobaciones y capturas y los nodos siguientes la leen. Si nadie llama a tiempo, el nodo falla."
+      canEdit={canEdit}
+      onRemove={onRemove}
+      tabs={[
+        {
+          id: "main",
+          label: "Webhook",
+          content: (
+            <>
+              <div className="grid gap-3 @3xl:grid-cols-[10rem_10rem_minmax(0,1fr)]">
+                <Field label="Esperar hasta (s)" info={"Cuánto espera la llamada, de 1 s a 10 min. Si no llega a tiempo, el nodo falla."}>
+                  <input
+                    className={inputClass}
+                    type="number"
+                    min={WEBHOOK_TIMEOUT_MS.min / 1000}
+                    max={WEBHOOK_TIMEOUT_MS.max / 1000}
+                    value={Math.round(webhook.timeoutMs / 1000)}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      setWebhook({
+                        timeoutMs:
+                          Math.min(
+                            WEBHOOK_TIMEOUT_MS.max / 1000,
+                            Math.max(WEBHOOK_TIMEOUT_MS.min / 1000, Math.round(Number(event.target.value)) || 1),
+                          ) * 1000,
+                      })
+                    }
+                  />
+                </Field>
+                <Field label="Método de la llamada" info={"El verbo con el que tiene que llegar. Con el otro, la URL contesta 404 y sigue esperando."}>
+                  <select
+                    className={inputClass}
+                    value={webhook.method ?? "POST"}
+                    disabled={!canEdit}
+                    onChange={(event) => setWebhook({ method: event.target.value as "POST" | "PUT" })}
+                  >
+                    <option value="POST">POST</option>
+                    <option value="PUT">PUT</option>
+                  </select>
+                </Field>
+                <p className={`text-[11px] leading-5 @3xl:self-end @3xl:pb-2 ${problem ? "text-amber-700" : "text-slate-500"}`}>
+                  {problem ? `La espera: ${problem}` : `Espera como mucho ${formatWait(webhook.timeoutMs)} (de 1 s a 10 min).`}
+                </p>
+              </div>
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-900">
+                <p>
+                  <span className="font-semibold">La URL aparece en la corrida.</span> No existe hasta que una ejecución llega a
+                  este nodo: entonces se genera una URL nueva, se muestra en el progreso de la corrida con un botón para copiarla,
+                  y sirve una sola vez. No se guarda en ninguna parte: en el registro queda con el token tapado.
+                </p>
+                <p className="mt-1">
+                  Una llamada con otro método, repetida o fuera de tiempo recibe 404. El cuerpo admite JSON, formulario o texto,
+                  hasta 1 MB. La dirección base la fija <span className="font-mono">PUBLIC_API_URL</span> en la API.
+                </p>
+              </div>
+            </>
+          ),
+        },
+        {
+          id: "checks",
+          label: "Comprobaciones",
+          count: step.checks?.length,
+          content: <ChecksEditor step={step} canEdit={canEdit} onChange={onChange} />,
+        },
+        {
+          id: "captures",
+          label: "Capturas",
+          count: step.captures?.length,
+          content: <CapturesTab step={step} canEdit={canEdit} onChange={onChange} />,
         },
         {
           id: "failure",

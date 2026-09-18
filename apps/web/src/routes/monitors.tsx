@@ -206,6 +206,10 @@ export function MonitorsPage() {
                 <span className="ml-auto text-[11px] text-slate-400">{monitor.scheduleLabel}</span>
               </div>
 
+              <p className="text-[11px] text-slate-600">
+                Corre {describeTarget(monitor.plan, flows.data, channels.data?.channels, channels.isSuccess)}
+              </p>
+
               <p className="text-[11px] text-slate-500">
                 {monitor.enabled && monitor.nextRunAt
                   ? `Le toca el ${formatDate(monitor.nextRunAt)}.`
@@ -293,6 +297,36 @@ export function MonitorsPage() {
       )}
     </div>
   );
+}
+
+/**
+ * Qué corre, en una línea de la tarjeta: el canal con su protocolo, el flujo o la suite por su nombre,
+ * o la matriz del contrato.
+ *
+ * El plan guarda ids, y un id no dice nada a quien mira la lista; los nombres salen de las mismas
+ * consultas que el formulario. Un canal que ya no está en la lista (y la lista ya llegó) se dice
+ * borrado: la próxima vuelta acabará en error por eso, y mejor verlo aquí antes.
+ */
+function describeTarget(
+  plan: MonitorPlanView,
+  flows: WorkflowsView | undefined,
+  channels: ChannelView[] | undefined,
+  channelsLoaded: boolean,
+): string {
+  if (plan.channel) {
+    const channel = channels?.find((entry) => entry.id === plan.channel?.channelId);
+    if (channel) return `el canal «${channel.name}» · ${PROTOCOL_LABEL[channel.protocol]}`;
+    return channelsLoaded ? "un canal que ya no existe" : "un canal";
+  }
+  if (plan.workflowId) {
+    const flow = flows?.workflows.find((entry) => entry.id === plan.workflowId);
+    return flow ? `el flujo «${flow.name}»` : "un flujo";
+  }
+  if (plan.suiteId) {
+    const suite = flows?.suites.find((entry) => entry.id === plan.suiteId);
+    return suite ? `la suite «${suite.name}»` : "una suite";
+  }
+  return "la matriz del contrato";
 }
 
 /**

@@ -26,6 +26,7 @@ import {
   FETCH_METHODS,
   STEP_ON_ERROR,
   STEP_WAITS,
+  WEBHOOK_METHODS,
   concurrentPairs,
   loopBody,
   rerunPath,
@@ -229,7 +230,16 @@ export const workflowStepSchema = z.object({
       "graphql",
       "mock",
       "channel",
+      "webhook",
     ])
+    .optional(),
+  // The `webhook` node: how long the flow waits for an outside call. Capped at ten minutes because
+  // the in-memory queue walks one run at a time, so every run queued behind it waits too.
+  webhook: z
+    .object({
+      timeoutMs: z.number().int().min(1_000).max(600_000),
+      method: z.enum(WEBHOOK_METHODS).optional(),
+    })
     .optional(),
   // The `channel` node: a saved channel run as a bounded conversation. Whether the channel exists in
   // this project spans two tables — the command handler checks it, as it does a subflow's flow.
@@ -760,6 +770,33 @@ export const workflowDocumentSchema = z
           }
         }
       }
+      if (step.webhook && kind !== "webhook") {
+        context.addIssue({
+          code: "custom",
+          message: "solo un nodo webhook lleva su bloque webhook",
+          path: ["steps", index, "webhook"],
+        });
+      }
+      if (kind === "webhook") {
+        if (!step.webhook) {
+          context.addIssue({
+            code: "custom",
+            message: "un nodo webhook necesita cuánto esperar",
+            path: ["steps", index, "webhook"],
+          });
+        }
+        // What arrives arrives once: repeating the node would hand out a second URL nobody was given,
+        // and a list walk would be one URL per element.
+        for (const field of ["retry", "forEach", "authorizes"] as const) {
+          if (step[field]) {
+            context.addIssue({
+              code: "custom",
+              message: "un nodo webhook no admite reintentos, forEach ni login: espera una sola llamada",
+              path: ["steps", index, field],
+            });
+          }
+        }
+      }
       if (step.poll && kind !== "poll") {
         context.addIssue({
           code: "custom",
@@ -1022,6 +1059,14 @@ export const workflowDocumentSchema = z
           context.addIssue({
             code: "custom",
             message: `«${step.id}» está dentro del bucle «${loop.id}»: un sub-flujo no puede ir dentro de un bucle`,
+            path: ["steps", index, "kind"],
+          });
+        }
+        if (step.kind === "webhook") {
+          // One URL per iteration, handed out mid-run, is not something a provider can be given.
+          context.addIssue({
+            code: "custom",
+            message: `«${step.id}» está dentro del bucle «${loop.id}»: un webhook no puede esperar dentro de un bucle`,
             path: ["steps", index, "kind"],
           });
         }

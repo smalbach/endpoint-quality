@@ -280,7 +280,11 @@ function folderFor(
           ? // Una colección de Postman v2.1 solo describe peticiones HTTP: sus WebSocket, MQTT y gRPC
             // viven en otro formato que su exportación de colecciones no incluye.
             "es un canal (WebSocket, MQTT o gRPC), y una colección de Postman solo lleva peticiones HTTP: se queda fuera del fichero"
-          : `es un nodo «${kind}», y Postman no tiene nada equivalente: se queda fuera del fichero`,
+          : kind === "webhook"
+            ? // Una colección manda peticiones; esperar a que alguien de fuera la llame no es algo que
+              // su runner sepa hacer, y la URL de un solo uso solo existe mientras corre una corrida.
+              "espera la llamada de un sistema externo a una URL de un solo uso que solo existe durante una corrida, y Postman no espera llamadas: se queda fuera del fichero"
+            : `es un nodo «${kind}», y Postman no tiene nada equivalente: se queda fuera del fichero`,
     });
   }
 

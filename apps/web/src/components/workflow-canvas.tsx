@@ -36,6 +36,7 @@ import {
 import type { OperationSummary, RetryNote } from "@/lib/workflow-draft";
 import { NOTIFY_CHANNELS, type NotifyNodeData } from "@/lib/workflow-notify";
 import type { CaseStatus, ChannelView, RequestTemplateView, WorkflowStepView } from "@/lib/types";
+import { formatWait } from "@/lib/workflow-webhook";
 
 const CASE_STATUS_LABEL: Record<CaseStatus, string> = {
   running: "Ejecutando",
@@ -829,7 +830,48 @@ function MockNode({ data, selected }: NodeProps<Node<MockNodeData>>) {
   );
 }
 
+type WebhookNodeData = {
+  name: string;
+  timeoutMs: number;
+  method: "POST" | "PUT";
+  checks: number;
+  captures: number;
+  runStatus?: CaseStatus;
+};
+
+/** Un webhook: el flujo se para aquí hasta que algo de fuera llame a la URL de un solo uso que reparte la corrida. */
+function WebhookNode({ data, selected }: NodeProps<Node<WebhookNodeData>>) {
+  const status = data.runStatus;
+  return (
+    <div
+      className={cn(
+        "w-52 rounded-xl border bg-white px-3 py-2 shadow-sm transition-colors",
+        status ? RUN_NODE_CLASS[status] : "border-amber-300",
+        selected && "border-slate-900 ring-2 ring-slate-200",
+      )}
+    >
+      <Handle type="target" position={Position.Left} />
+      <div className="flex items-center gap-2">
+        <span className="grid h-6 w-6 place-items-center rounded-md bg-amber-100 text-amber-800" title="Esperar webhook">
+          ⚓
+        </span>
+        <span className="truncate text-xs font-semibold text-slate-800">Webhook · {data.name}</span>
+        <RunDot status={status} />
+      </div>
+      <p className="mt-1 truncate font-mono text-[10px] text-slate-500">
+        espera un {data.method} · hasta {formatWait(data.timeoutMs)}
+      </p>
+      <p className="mt-0.5 text-[10px] text-amber-800">
+        {data.checks ? `${data.checks} comprob.` : "sin comprobaciones"}
+        {data.captures ? ` · ${data.captures} capturas` : ""}
+      </p>
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+}
+
 const nodeTypes = {
+  webhook: WebhookNode,
   graphql: GraphqlNode,
   notify: NotifyNode,
   subflow: SubflowNode,

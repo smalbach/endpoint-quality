@@ -111,6 +111,11 @@ export function ImportElements({
             selected={workflows}
             onChange={setWorkflows}
           />
+          {workflows.size > 0 && (
+            <p className="-mt-2 text-[11px] text-slate-500">
+              Cada flujo trae lo que usa: sus pruebas, sus canales y los flujos que ejecuta como sub-flujo.
+            </p>
+          )}
           <Picker
             title="Entornos"
             items={preview.data.environments.map((e) => ({ id: e.id, label: e.name }))}

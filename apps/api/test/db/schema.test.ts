@@ -90,6 +90,7 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
       "endpoints",
       "environment_credentials",
       "environments",
+      "flow_hooks",
       "fork_merge_request_events",
       "fork_merge_requests",
       "invitations",

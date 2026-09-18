@@ -263,3 +263,56 @@ describe("monitores con dos relojes", () => {
     await target.stop();
   });
 });
+
+describe("un nodo webhook que espera en A, llamado por B", () => {
+  test("la llamada que entra por B despierta a A por el bus, sin esperar al sondeo", async () => {
+    const { target, projectBase, environmentId } = await project(0);
+    const workflow = await on(a)
+      .post(`${projectBase}/workflows`)
+      .set(as(owner))
+      .send({
+        name: "Espera un pago",
+        definition: {
+          steps: [
+            {
+              id: "pago",
+              kind: "webhook",
+              webhook: { timeoutMs: 20_000 },
+              checks: [{ source: "body", path: "status", operator: "equals", value: "paid" }],
+            },
+          ],
+        },
+      });
+    assert.equal(workflow.status, 201, JSON.stringify(workflow.body));
+    const started = await on(a)
+      .post(`${projectBase}/runs`)
+      .set(as(owner))
+      .send({ environmentId, workflowId: workflow.body.workflowId });
+    assert.equal(started.status, 202, JSON.stringify(started.body));
+    const runPath = `${projectBase}/runs/${started.body.runId}`;
+
+    // La URL la calcula B, que no tiene la corrida: sale de la tabla y de la clave compartida.
+    let url = "";
+    for (let tries = 0; !url && tries < 100; tries++) {
+      const view = await on(b).get(runPath).set(as(owner));
+      url = (view.body.hooks as { url: string }[] | undefined)?.[0]?.url ?? "";
+      if (!url) await settle();
+    }
+    const token = /\/hooks\/flows\/([A-Za-z0-9_-]{43})$/.exec(url)?.[1];
+    assert.ok(token, `B no enseñó la URL: ${url}`);
+
+    const calledAt = Date.now();
+    const delivered = await on(b).post(`/hooks/flows/${token}`).send({ status: "paid" });
+    assert.equal(delivered.status, 202, JSON.stringify(delivered.body));
+    await a.queue.idle();
+    // El sondeo de la tabla es de un segundo: acabar mucho antes es que el aviso llegó por el bus.
+    assert.ok(Date.now() - calledAt < 700, `A tardó ${Date.now() - calledAt} ms en enterarse`);
+
+    const run = await on(b).get(runPath).set(as(owner));
+    assert.equal(run.body.status, "passed", JSON.stringify(run.body.cases));
+    // Y la misma URL, otra vez y por la otra instancia, ya no existe.
+    const again = await on(a).post(`/hooks/flows/${token}`).send({ status: "paid" });
+    assert.equal(again.status, 404);
+    await target.stop();
+  });
+});

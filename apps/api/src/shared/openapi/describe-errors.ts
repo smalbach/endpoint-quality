@@ -53,6 +53,9 @@ export const PUBLIC_PATHS = new Set([
   // aquí. Igual que el mock, lo que la protege es que el `publicId` no se adivine, más la
   // `x-api-key` cuando se creó privada. En esta lista **a propósito**, por lo mismo.
   "/shared/docs/{publicId}",
+  // La URL de un nodo webhook: la llama un sistema externo, y lo que la protege es su token de un solo
+  // uso. La única de esta lista que escribe, con su propio tope de cuerpo y de llamadas por minuto.
+  "/hooks/flows/{token}",
 ]);
 
 const PROBLEM_DETAILS = "ProblemDetails";

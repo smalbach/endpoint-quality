@@ -74,6 +74,19 @@ export class RunResumedEvent {
   ) {}
 }
 
+/**
+ * Un nodo webhook espera su llamada de fuera. **Sin la URL**: el evento cruza el bus entre instancias,
+ * y el token no tiene por qué viajar por él. Quien sigue la corrida vuelve a pedirla y la URL llega en
+ * `hooks`, calculada en la instancia que contesta. El evento del caso que la termina viene después.
+ */
+export class RunHookWaitingEvent {
+  constructor(
+    readonly projectId: string,
+    readonly runId: string,
+    readonly hook: { caseId: string; stepId: string; method: "POST" | "PUT"; expiresAt: string },
+  ) {}
+}
+
 export class RunFinishedEvent {
   constructor(
     readonly projectId: string,
