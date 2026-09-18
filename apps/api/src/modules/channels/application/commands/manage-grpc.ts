@@ -210,7 +210,7 @@ export class EndChannelStreamHandler implements ICommandHandler<EndChannelStream
     const session = await this.sessions.findById(project.id, command.sessionId);
     if (!session) throw new NotFoundError("La sesión no existe", "channel-session-not-found");
     if (isFinished(session)) throw new ConflictError("La sesión ya terminó", "channel-session-finished");
-    this.registry.end(session.id);
+    await this.registry.route(session, { op: "end", sessionId: session.id });
   }
 }
 

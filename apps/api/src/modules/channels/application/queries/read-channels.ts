@@ -72,7 +72,7 @@ export class GetChannelHandler implements IQueryHandler<
     return {
       ...viewChannel(channel),
       sessions: sessions.map((session) =>
-        viewSession(this.registry.current(session.id) ?? session, this.registry.owns(session.id)),
+        viewSession(this.registry.current(session.id) ?? session, this.registry.usable(session)),
       ),
     };
   }
@@ -100,7 +100,9 @@ export class GetChannelSessionHandler implements IQueryHandler<GetChannelSession
     if (!stored) throw new NotFoundError("La sesión no existe", "channel-session-not-found");
     const live = this.registry.current(stored.id);
     if (live) return viewSession(live, true, live.conversation.messages);
-    return viewSession(stored, false, await this.sessions.listMessages(stored.id));
+    // Abierta en otra instancia viva: la fila y sus mensajes guardados, y se puede usar igual —las
+    // órdenes y el stream van a la dueña por el bus—.
+    return viewSession(stored, await this.registry.answers(stored), await this.sessions.listMessages(stored.id));
   }
 }
 

@@ -542,7 +542,8 @@ function Conversation({
             )}
             {!session.live && (
               <p className="text-xs text-amber-700">
-                Esta sesión la tiene otra instancia de la API: se puede leer, pero no seguir ni usar desde aquí.
+                La instancia de la API que tiene esta sesión no contesta: se puede leer, pero no seguir ni usar. Se
+                cerrará sola.
               </p>
             )}
           </>

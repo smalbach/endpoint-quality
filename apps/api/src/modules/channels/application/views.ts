@@ -35,7 +35,10 @@ export type ChannelSessionView = {
   verdict: ChannelSession["verdict"];
   openedAt: string;
   closedAt: string | null;
-  /** Si el socket lo tiene esta instancia. Sin eso, la sesión se puede leer y no usar. */
+  /**
+   * Si la sesión se puede usar: su socket lo tiene esta instancia u otra que sigue viva (las órdenes
+   * y el stream le llegan por el bus). Sin eso, su dueña murió: se puede leer y no usar.
+   */
   live: boolean;
   messages?: ChannelMessage[];
 };
