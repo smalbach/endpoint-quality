@@ -33,6 +33,7 @@ import type {
   MonitorExecutionView,
   MonitorListView,
   MonitorOutcomeView,
+  MonitorPlanView,
   MonitorScheduleView,
   MonitorView,
   WorkflowsView,
@@ -83,6 +84,7 @@ export function MonitorsPage() {
   const enabled = Boolean(organization && projectId);
 
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<MonitorView | null>(null);
   const [deleting, setDeleting] = useState<MonitorView | null>(null);
 
   const list = useQuery({
@@ -220,6 +222,9 @@ export function MonitorsPage() {
                   >
                     Correr ahora
                   </Button>
+                  <Button variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => setEditing(monitor)}>
+                    Editar
+                  </Button>
                   <Button
                     variant="ghost"
                     className="ml-auto h-7 px-2 text-[11px] text-rose-600"
@@ -235,15 +240,31 @@ export function MonitorsPage() {
       )}
 
       {creating && (
-        <CreateMonitorModal
+        <MonitorModal
           base={base}
           environments={environments.data ?? []}
           flows={flows.data}
           onClose={() => setCreating(false)}
-          onCreated={async (name) => {
+          onSaved={async (name) => {
             setCreating(false);
             await refresh();
             toast.success(`«${name}» creado`);
+          }}
+        />
+      )}
+
+      {editing && (
+        <MonitorModal
+          key={editing.id}
+          base={base}
+          environments={environments.data ?? []}
+          flows={flows.data}
+          editing={editing}
+          onClose={() => setEditing(null)}
+          onSaved={async (name) => {
+            setEditing(null);
+            await refresh();
+            toast.success(`«${name}» guardado`);
           }}
         />
       )}
@@ -307,41 +328,57 @@ function Executions({ executions }: { executions: MonitorExecutionView[] }) {
  * Para un horario diario o semanal, la zona **se propone la del navegador**, que es la de quien lo
  * está escribiendo. Es la única vez en este producto que un valor por defecto es el cómodo, y es
  * porque aquí lo cómodo es también lo correcto: la hora que quiere decir es la de su reloj.
+ *
+ * El mismo formulario edita. Al editar, la zona es **la que ya tenía el monitor** y no la del
+ * navegador: quien abre desde Bogotá un monitor puesto en Madrid para cambiarle el nombre no ha
+ * pedido que se le mueva la hora.
  */
-function CreateMonitorModal({
+function MonitorModal({
   base,
   environments,
   flows,
+  editing,
   onClose,
-  onCreated,
+  onSaved,
 }: {
   base: string;
   environments: Environment[];
   flows: WorkflowsView | undefined;
+  /** El monitor que se edita; sin él, se crea uno. */
+  editing?: MonitorView;
   onClose: () => void;
-  onCreated: (name: string) => Promise<void>;
+  onSaved: (name: string) => Promise<void>;
 }) {
-  const [name, setName] = useState("");
-  const [kind, setKind] = useState<"interval" | "daily" | "weekly">("interval");
-  const [minutes, setMinutes] = useState(60);
-  const [hour, setHour] = useState(9);
-  const [minute, setMinute] = useState(0);
-  const [weekdays, setWeekdays] = useState<number[]>([1]);
+  const initialSchedule = editing?.schedule;
+  const initialAlert = editing?.alert ?? null;
+  const [name, setName] = useState(editing?.name ?? "");
+  const [kind, setKind] = useState<"interval" | "daily" | "weekly">(initialSchedule?.kind ?? "interval");
+  const [minutes, setMinutes] = useState(initialSchedule?.kind === "interval" ? initialSchedule.minutes : 60);
+  const [hour, setHour] = useState(initialSchedule && initialSchedule.kind !== "interval" ? initialSchedule.hour : 9);
+  const [minute, setMinute] = useState(
+    initialSchedule && initialSchedule.kind !== "interval" ? initialSchedule.minute : 0,
+  );
+  const [weekdays, setWeekdays] = useState<number[]>(
+    initialSchedule?.kind === "weekly" ? initialSchedule.weekdays : [1],
+  );
   const [timeZone] = useState(() => {
+    if (initialSchedule && initialSchedule.kind !== "interval") return initialSchedule.timeZone;
     try {
       return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
     } catch {
       return "UTC";
     }
   });
-  const [environmentId, setEnvironmentId] = useState(environments[0]?.id ?? "");
-  const [what, setWhat] = useState<"matrix" | "flow" | "suite">("matrix");
-  const [targetId, setTargetId] = useState("");
-  const [alerting, setAlerting] = useState(false);
-  const [channel, setChannel] = useState<MonitorAlertView["channel"]>("slack");
-  const [urlVariable, setUrlVariable] = useState("");
-  const [recipients, setRecipients] = useState("");
-  const [afterFailures, setAfterFailures] = useState(1);
+  const [environmentId, setEnvironmentId] = useState(editing?.plan.environmentId ?? environments[0]?.id ?? "");
+  const [what, setWhat] = useState<"matrix" | "flow" | "suite">(
+    editing?.plan.workflowId ? "flow" : editing?.plan.suiteId ? "suite" : "matrix",
+  );
+  const [targetId, setTargetId] = useState(editing?.plan.workflowId ?? editing?.plan.suiteId ?? "");
+  const [alerting, setAlerting] = useState(Boolean(initialAlert));
+  const [channel, setChannel] = useState<MonitorAlertView["channel"]>(initialAlert?.channel ?? "slack");
+  const [urlVariable, setUrlVariable] = useState(initialAlert?.urlVariable ?? "");
+  const [recipients, setRecipients] = useState((initialAlert?.recipients ?? []).join(", "));
+  const [afterFailures, setAfterFailures] = useState(initialAlert?.afterFailures ?? 1);
 
   // Un solo campo de texto y no una lista de entradas: se pegan de un chat o de una libreta, y
   // separadas por lo que sea —coma, punto y coma, o un salto de línea— es como vienen pegadas.
@@ -354,30 +391,49 @@ function CreateMonitorModal({
     return { kind: "weekly", weekdays, hour, minute, timeZone };
   };
 
-  const create = useMutation({
-    mutationFn: () =>
-      api<MonitorView>(`${base}/monitors`, {
-        method: "POST",
+  // Cada canal manda su campo y no el otro, igual que lo valida la API: un aviso por correo
+  // con un nombre de variable dentro no se sabe por dónde sale.
+  const alert = (): MonitorAlertView =>
+    byMail
+      ? { channel, recipients: addresses, afterFailures }
+      : { channel, urlVariable: urlVariable.trim(), afterFailures };
+
+  const plan = (): MonitorPlanView => ({
+    // Al editar se conserva lo que este formulario no enseña —etiquetas, muestras, concurrencia—:
+    // guardar el nombre no puede tirar en silencio el resto del plan. El conjunto de datos es de un
+    // flujo, así que solo sobrevive si el flujo es el mismo.
+    ...withoutTarget(editing?.plan),
+    ...(editing?.plan.datasetId && what === "flow" && targetId === editing.plan.workflowId
+      ? { datasetId: editing.plan.datasetId }
+      : {}),
+    environmentId,
+    ...(what === "flow" && targetId ? { workflowId: targetId } : {}),
+    ...(what === "suite" && targetId ? { suiteId: targetId } : {}),
+  });
+
+  const save = useMutation({
+    mutationFn: () => {
+      if (!editing)
+        return api<MonitorView>(`${base}/monitors`, {
+          method: "POST",
+          body: { name: name.trim(), schedule: schedule(), plan: plan(), ...(alerting ? { alert: alert() } : {}) },
+        });
+      // El horario solo viaja si cambió: la API recalcula el turno desde ahora cuando lo recibe, y
+      // cambiar el nombre de un monitor horario no debe correrle la siguiente vuelta una hora.
+      const next = schedule();
+      const scheduleChanged = JSON.stringify(next) !== JSON.stringify(editing.schedule);
+      return api<MonitorView>(`${base}/monitors/${editing.id}`, {
+        method: "PATCH",
+        // `alert: null` es «quitar el aviso»; ausente lo dejaría como estaba y la casilla mentiría.
         body: {
           name: name.trim(),
-          schedule: schedule(),
-          plan: {
-            environmentId,
-            ...(what === "flow" && targetId ? { workflowId: targetId } : {}),
-            ...(what === "suite" && targetId ? { suiteId: targetId } : {}),
-          },
-          // Cada canal manda su campo y no el otro, igual que lo valida la API: un aviso por correo
-          // con un nombre de variable dentro no se sabe por dónde sale.
-          ...(alerting
-            ? {
-                alert: byMail
-                  ? { channel, recipients: addresses, afterFailures }
-                  : { channel, urlVariable: urlVariable.trim(), afterFailures },
-              }
-            : {}),
+          ...(scheduleChanged ? { schedule: next } : {}),
+          plan: plan(),
+          alert: alerting ? alert() : null,
         },
-      }),
-    onSuccess: () => onCreated(name.trim()),
+      });
+    },
+    onSuccess: () => onSaved(name.trim()),
   });
 
   const badVariable = alerting && !byMail && !VARIABLE_NAME.test(urlVariable.trim());
@@ -396,8 +452,12 @@ function CreateMonitorModal({
 
   return (
     <Modal
-      title="Crear un monitor"
-      description="Una corrida que se lanza sola. Crearlo no lanza nada: el primer turno es el siguiente del horario."
+      title={editing ? "Editar el monitor" : "Crear un monitor"}
+      description={
+        editing
+          ? "Guardar no lanza nada. Si cambia el horario, el turno siguiente se calcula desde ahora."
+          : "Una corrida que se lanza sola. Crearlo no lanza nada: el primer turno es el siguiente del horario."
+      }
       size="sm"
       onClose={onClose}
       footer={
@@ -405,14 +465,14 @@ function CreateMonitorModal({
           <Button variant="ghost" onClick={onClose}>
             Cancelar
           </Button>
-          <Button disabled={incomplete || create.isPending} onClick={() => create.mutate()}>
-            {create.isPending ? "Creando…" : "Crear"}
+          <Button disabled={incomplete || save.isPending} onClick={() => save.mutate()}>
+            {editing ? (save.isPending ? "Guardando…" : "Guardar") : save.isPending ? "Creando…" : "Crear"}
           </Button>
         </>
       }
     >
       <div className="space-y-3">
-        <Field label="Nombre *" error={create.error?.message}>
+        <Field label="Nombre *" error={save.error?.message}>
           <input
             autoFocus
             className={inputClass}
@@ -640,4 +700,11 @@ function CreateMonitorModal({
       </div>
     </Modal>
   );
+}
+
+/** El plan sin lo que elige el formulario: qué corre, y el conjunto de datos que va con un flujo. */
+function withoutTarget(plan: MonitorPlanView | undefined): Partial<MonitorPlanView> {
+  if (!plan) return {};
+  const { workflowId: _workflowId, suiteId: _suiteId, datasetId: _datasetId, ...rest } = plan;
+  return rest;
 }

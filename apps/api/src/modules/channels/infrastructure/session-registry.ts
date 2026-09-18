@@ -22,11 +22,18 @@ import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { performance } from "node:perf_hooks";
 import { Inject, Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
-import type { ChannelExpectation, ChannelLimits, RawFrame, RedactionRules, StopReason } from "@eq/runner-core";
+import {
+  unresolvedVariables,
+  type ChannelExpectation,
+  type ChannelLimits,
+  type RawFrame,
+  type RedactionRules,
+  type StopReason,
+} from "@eq/runner-core";
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { ENV, type Env } from "@/shared/config/env";
-import { ConflictError } from "@/shared/errors/domain-error";
+import { ConflictError, InvalidInputError } from "@/shared/errors/domain-error";
 import { BlockedTargetError } from "@/shared/http/safe-fetch";
 import { HandshakeRejectedError } from "@/shared/http/safe-socket";
 import { CHANNEL_SESSION_REPOSITORY, type ChannelSessionRepositoryPort } from "../domain/ports";
@@ -57,6 +64,14 @@ export type SessionPlan = {
   readOnly: boolean;
   /** Para decirlo con su nombre cuando alguien intente mandar. */
   environmentName: string;
+  /**
+   * Resuelve las `{{variables}}` de un mensaje contra el entorno con el que se abrió la sesión.
+   *
+   * Es una función y no los valores: los valores descifrados se quedan en el cierre de quien abrió,
+   * y aquí no hay ningún campo que alguien pueda serializar por descuido. Sin ella, el mensaje sale
+   * tal cual se escribió.
+   */
+  interpolate?: (text: string) => string;
 };
 
 type Live = {
@@ -190,8 +205,24 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
         "writes-not-allowed",
       );
     }
-    this.frame(sessionId, { direction: "out", atMs: this.at(entry), body: text });
-    entry.channel.send(text);
+    // Una variable sin valor se dice antes de mandar, con su nombre, como en «Enviar» de un
+    // endpoint: que el servidor reciba `{{token}}` literal y conteste «no autorizado» no dice nada.
+    const wire = entry.plan.interpolate ? entry.plan.interpolate(text) : text;
+    const unresolved = entry.plan.interpolate ? unresolvedVariables(wire) : [];
+    if (unresolved.length) {
+      throw new InvalidInputError(
+        `Variables sin valor: ${unresolved.join(", ")}`,
+        unresolved.map((name) => ({
+          field: "text",
+          detail: `{{${name}}} no tiene valor${entry.plan.environmentName ? ` en «${entry.plan.environmentName}»` : ": la sesión se abrió sin entorno"}`,
+        })),
+        "unresolved-variables",
+      );
+    }
+    // Se anota lo que viaja, ya resuelto: la transcripción enseña lo que recibió el servidor, y la
+    // redacción de `frame` tapa el valor de una variable sensible igual que el de cualquier otra.
+    this.frame(sessionId, { direction: "out", atMs: this.at(entry), body: wire });
+    entry.channel.send(wire);
     await entry.writes;
   }
 

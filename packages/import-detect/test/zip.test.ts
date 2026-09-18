@@ -174,6 +174,143 @@ describe("los topes de lo que se saca", () => {
   });
 });
 
+/**
+ * Un zip en Zip64: cada entrada con sus tres campos de 32 bits a `0xFFFFFFFF` y los de verdad en el
+ * extra `0x0001`, y el final de 32 bits apuntando al registro de Zip64 a través del localizador.
+ *
+ * Todo marcado, que es el caso más exigente para el orden del extra. `declared` pone en el extra un
+ * tamaño sin comprimir de 64 bits, que es donde una bomba zip de este formato miente.
+ */
+function buildZip64(files: { name: string; body: string; declared?: bigint }[]): Uint8Array {
+  const locals: Buffer[] = [];
+  const central: Buffer[] = [];
+  let offset = 0;
+  for (const file of files) {
+    const name = Buffer.from(file.name, "utf8");
+    const raw = Buffer.from(file.body, "utf8");
+    const data = deflateRawSync(raw);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(45, 4);
+    local.writeUInt16LE(8, 8);
+    local.writeUInt32LE(0xffffffff, 18);
+    local.writeUInt32LE(0xffffffff, 22);
+    local.writeUInt16LE(name.length, 26);
+    const localExtra = Buffer.alloc(20);
+    localExtra.writeUInt16LE(0x0001, 0);
+    localExtra.writeUInt16LE(16, 2);
+    localExtra.writeBigUInt64LE(file.declared ?? BigInt(raw.length), 4);
+    localExtra.writeBigUInt64LE(BigInt(data.length), 12);
+    local.writeUInt16LE(localExtra.length, 28);
+    locals.push(Buffer.concat([local, name, localExtra, data]));
+
+    // Un campo extra ajeno delante del de Zip64, como los de fecha que pone el `zip` del sistema:
+    // el lector tiene que buscar el suyo, no suponer que es el primero.
+    const other = Buffer.from([0x55, 0x54, 0x05, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00]);
+    const zip64 = Buffer.alloc(28);
+    zip64.writeUInt16LE(0x0001, 0);
+    zip64.writeUInt16LE(24, 2);
+    zip64.writeBigUInt64LE(file.declared ?? BigInt(raw.length), 4);
+    zip64.writeBigUInt64LE(BigInt(data.length), 12);
+    zip64.writeBigUInt64LE(BigInt(offset), 20);
+    const extra = Buffer.concat([other, zip64]);
+    const entry = Buffer.alloc(46);
+    entry.writeUInt32LE(0x02014b50, 0);
+    entry.writeUInt16LE(45, 6);
+    entry.writeUInt16LE(8, 10);
+    entry.writeUInt32LE(0xffffffff, 20);
+    entry.writeUInt32LE(0xffffffff, 24);
+    entry.writeUInt16LE(name.length, 28);
+    entry.writeUInt16LE(extra.length, 30);
+    entry.writeUInt32LE(0xffffffff, 42);
+    central.push(Buffer.concat([entry, name, extra]));
+    offset += local.length + name.length + localExtra.length + data.length;
+  }
+  const directory = Buffer.concat(central);
+  const record = Buffer.alloc(56);
+  record.writeUInt32LE(0x06064b50, 0);
+  record.writeBigUInt64LE(44n, 4);
+  record.writeUInt16LE(45, 12);
+  record.writeUInt16LE(45, 14);
+  record.writeBigUInt64LE(BigInt(files.length), 24);
+  record.writeBigUInt64LE(BigInt(files.length), 32);
+  record.writeBigUInt64LE(BigInt(directory.length), 40);
+  record.writeBigUInt64LE(BigInt(offset), 48);
+  const locator = Buffer.alloc(20);
+  locator.writeUInt32LE(0x07064b50, 0);
+  locator.writeBigUInt64LE(BigInt(offset + directory.length), 8);
+  locator.writeUInt32LE(1, 16);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(Math.min(files.length, 0xffff), 8);
+  end.writeUInt16LE(Math.min(files.length, 0xffff), 10);
+  end.writeUInt32LE(0xffffffff, 12);
+  end.writeUInt32LE(0xffffffff, 16);
+  return new Uint8Array(Buffer.concat([...locals, directory, record, locator, end]));
+}
+
+describe("Zip64", () => {
+  test("los tamaños y el desplazamiento se leen del extra, y el índice del registro de Zip64", async () => {
+    const entries = await readZip(
+      buildZip64([
+        { name: "Tienda.postman_collection.json", body: collection("Tienda") },
+        { name: "local.postman_environment.json", body: environment("local") },
+      ]),
+    );
+    assert.deepEqual(
+      entries.map((entry) => detectImport(entry.name, entry.text).kind),
+      ["postman-collection", "postman-environment"],
+    );
+  });
+
+  test("un tamaño de 64 bits que miente pasa por el mismo tope, y las demás entran", async () => {
+    const entries = await readZip(
+      buildZip64([
+        { name: "bomba.json", body: "0".repeat(1_000), declared: 5n * 1024n * 1024n * 1024n },
+        { name: "enorme.json", body: "{}", declared: 0xffffffffffffffffn },
+        { name: "tienda.json", body: collection("Tienda") },
+      ]),
+    );
+    assert.deepEqual(
+      entries.map((entry) => entry.name),
+      ["tienda.json"],
+    );
+  });
+
+  test("más de 65 535 entradas: la cuenta es la de 64 bits, no la del final truncado", async () => {
+    // La cuenta de 16 bits de 70 000 se leería como 4 464, y la colección, que va la última, no se
+    // alcanzaría nunca. Las de delante no son texto, así que el tope de 200 no la tapa.
+    const noise = Array.from({ length: 69_999 }, (_, index) => ({ name: `i${index}.png`, body: "" }));
+    const entries = await readZip(buildZip64([...noise, { name: "tienda.json", body: collection("Tienda") }]));
+    assert.deepEqual(
+      entries.map((entry) => entry.name),
+      ["tienda.json"],
+    );
+  });
+
+  test("una entrada cifrada se sigue saltando", async () => {
+    const zip = buildZip64([
+      { name: "cifrada.json", body: collection("Secreta") },
+      { name: "tienda.json", body: collection("Tienda") },
+    ]);
+    // El bit 0 de las banderas de la primera entrada del índice, puesto a mano.
+    const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+    const directory = Number(view.getBigUint64(zip.length - 22 - 20 - 56 + 48, true));
+    view.setUint16(directory + 8, 0x1, true);
+    assert.deepEqual(
+      (await readZip(zip)).map((entry) => entry.name),
+      ["tienda.json"],
+    );
+  });
+
+  test("un localizador que apunta fuera es un índice corrupto, no un zip vacío", async () => {
+    const zip = buildZip64([{ name: "tienda.json", body: collection("Tienda") }]);
+    const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+    view.setBigUint64(zip.length - 22 - 20 + 8, 0xfffffffffn, true);
+    await assert.rejects(() => readZip(zip), /índice corrupto/);
+  });
+});
+
 describe("y contra un zip que no ha escrito esta prueba", () => {
   // Lo único que descarta que el lector y el escritor de arriba estén mal de la misma manera.
   const zipAvailable = (() => {
@@ -202,4 +339,33 @@ describe("y contra un zip que no ha escrito esta prueba", () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  test(
+    "y uno en Zip64 forzado (`zip -fz`), que antes salía como «no parece un .zip»",
+    {
+      skip: zipAvailable ? false : "sin `zip`",
+    },
+    async () => {
+      const directory = mkdtempSync(join(tmpdir(), "eq-zip64-"));
+      try {
+        writeFileSync(join(directory, "Tienda.postman_collection.json"), collection("Tienda"));
+        writeFileSync(join(directory, "local.postman_environment.json"), environment("local"));
+        execFileSync(
+          "zip",
+          ["-q", "-fz", "volcado.zip", "Tienda.postman_collection.json", "local.postman_environment.json"],
+          { cwd: directory },
+        );
+        const bytes = new Uint8Array(readFileSync(join(directory, "volcado.zip")));
+        // Que de verdad es Zip64: el localizador está justo delante del final de 32 bits.
+        assert.equal(Buffer.from(bytes).readUInt32LE(bytes.length - 22 - 20), 0x07064b50);
+        const entries = await readZip(bytes);
+        assert.deepEqual(entries.map((entry) => detectImport(entry.name, entry.text).kind).sort(), [
+          "postman-collection",
+          "postman-environment",
+        ]);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
 });

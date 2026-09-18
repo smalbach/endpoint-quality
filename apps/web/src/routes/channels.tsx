@@ -17,7 +17,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, streamRun } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { resolveActive, useActiveEnvironment } from "@/lib/active-environment";
-import { gap, isOver, mergeMessage, prettyBody, stopText, visibleMessages } from "@/lib/channel-view";
+import {
+  MAX_SAVED_MESSAGES,
+  filterMessages,
+  gap,
+  isOver,
+  mergeMessage,
+  prettyBody,
+  stopText,
+  visibleMessages,
+  withSavedMessage,
+  type MessageFilter,
+} from "@/lib/channel-view";
 import { cn } from "@/lib/format";
 import type { FieldRow } from "@/lib/request-fields";
 import type {
@@ -312,6 +323,9 @@ function Conversation({
   const [session, setSession] = useState<ChannelSessionView | null>(null);
   const [messages, setMessages] = useState<ChannelMessageView[]>([]);
   const [draft, setDraft] = useState("");
+  const [filter, setFilter] = useState<MessageFilter>({ text: "", direction: "all" });
+  /** El nombre con el que se guarda el borrador en la biblioteca; `null` mientras no se pide. */
+  const [savingAs, setSavingAs] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
 
   const setSessionId = (id: string | null) =>
@@ -395,10 +409,34 @@ function Conversation({
     mutationFn: () => api(`${base}/channels/sessions/${sessionId}/close`, { method: "POST", body: {} }),
     onError: (error) => toast.error(message(error)),
   });
+  // Guardar el borrador en la biblioteca sin ir a Configuración, como el «Save message» de Postman:
+  // la trama que se acaba de afinar a mano es justo la que se quiere tener a un clic la próxima vez.
+  // Va por el mismo PATCH que la pestaña de configuración, con las mismas reglas del servidor.
+  const library = useMemo(
+    () => (savingAs === null ? null : withSavedMessage(channel.messages, { name: savingAs, body: draft })),
+    [channel.messages, savingAs, draft],
+  );
+  const keep = useMutation({
+    mutationFn: (messages: { name: string; body: string }[]) =>
+      api<ChannelView>(`${base}/channels/${channel.id}`, { method: "PATCH", body: { messages } }),
+    onSuccess: () => {
+      toast.success(`«${savingAs?.trim()}» guardada en la biblioteca`);
+      setSavingAs(null);
+      void queryClient.invalidateQueries({ queryKey: ["channel", channel.id] });
+    },
+    onError: (error) => toast.error(message(error)),
+  });
 
   const open = session !== null && !isOver(session);
   const canSend = canEdit && open && session.live && Boolean(draft.trim()) && !send.isPending;
   const rows = useMemo(() => visibleMessages(messages), [messages]);
+  const shown = useMemo(() => filterMessages(rows, filter), [rows, filter]);
+  // El hueco se mide contra el mensaje anterior **de la conversación**, no contra el anterior que
+  // pasó el filtro: filtrar no puede inventarse una pausa de tres segundos que no hubo.
+  const previousAt = useMemo(
+    () => new Map(rows.map((row, index) => [row.seq, index > 0 ? rows[index - 1].atMs : null])),
+    [rows],
+  );
 
   return (
     <div className="flex min-h-full flex-col gap-3">
@@ -439,14 +477,43 @@ function Conversation({
 
       {session && <SessionHeader session={session} maxMessages={channel.limits.maxMessages} />}
 
+      {rows.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            aria-label="Buscar en la conversación"
+            className={cn(inputClass, "h-8 max-w-xs flex-1 text-xs")}
+            placeholder="Buscar en los mensajes"
+            value={filter.text}
+            onChange={(event) => setFilter({ ...filter, text: event.target.value })}
+          />
+          <select
+            aria-label="Qué mensajes"
+            className={cn(inputClass, "h-8 w-auto text-xs")}
+            value={filter.direction}
+            onChange={(event) => setFilter({ ...filter, direction: event.target.value as MessageFilter["direction"] })}
+          >
+            <option value="all">Todos</option>
+            <option value="in">Recibidos</option>
+            <option value="out">Enviados</option>
+          </select>
+          {shown.length !== rows.length && (
+            <span className="text-[11px] text-slate-500">
+              {shown.length} de {rows.length}
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="min-h-40 flex-1 rounded-xl border border-slate-200 bg-slate-50 p-2" aria-label="Conversación">
         {rows.length === 0 ? (
           <p className="p-4 text-center text-xs text-slate-400">
             {session ? "Sin mensajes todavía." : "Conecta para empezar la conversación."}
           </p>
+        ) : shown.length === 0 ? (
+          <p className="p-4 text-center text-xs text-slate-400">Ningún mensaje pasa el filtro.</p>
         ) : (
           <ol className="space-y-1.5">
-            {rows.map((row, index) => (
+            {shown.map((row) => (
               <li
                 key={row.seq}
                 className={cn(
@@ -460,7 +527,7 @@ function Conversation({
               >
                 <div className="mb-0.5 flex items-center gap-2 text-[10px] opacity-70">
                   <span>{row.direction === "out" ? "enviado" : row.direction === "in" ? "recibido" : "error"}</span>
-                  <span>{gap(row.atMs, index > 0 ? rows[index - 1].atMs : null)}</span>
+                  <span>{gap(row.atMs, previousAt.get(row.seq) ?? null)}</span>
                   {row.kind === "binary" && <span>binario · {row.bytes} B</span>}
                 </div>
                 <pre className="whitespace-pre-wrap break-words font-mono">{prettyBody(row.body)}</pre>
@@ -507,10 +574,47 @@ function Conversation({
                 }
               }}
             />
-            <Button className="self-end" disabled={!canSend} onClick={() => send.mutate(draft)}>
-              Enviar
-            </Button>
+            <div className="flex flex-col justify-end gap-1">
+              <Button
+                variant="ghost"
+                className="h-8 text-xs"
+                disabled={!draft.trim() || savingAs !== null}
+                onClick={() => setSavingAs("")}
+              >
+                Guardar en la biblioteca
+              </Button>
+              <Button disabled={!canSend} onClick={() => send.mutate(draft)}>
+                Enviar
+              </Button>
+            </div>
           </div>
+          {savingAs !== null && (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                autoFocus
+                aria-label="Nombre de la trama"
+                className={cn(inputClass, "h-8 max-w-xs flex-1 text-xs")}
+                placeholder="auth, suscribirse, ping…"
+                value={savingAs}
+                onChange={(event) => setSavingAs(event.target.value)}
+              />
+              <Button
+                className="h-8 text-xs"
+                disabled={!savingAs.trim() || !library || keep.isPending}
+                onClick={() => library && keep.mutate(library)}
+              >
+                {channel.messages.some((saved) => saved.name.trim() === savingAs.trim()) ? "Sustituir" : "Guardar"}
+              </Button>
+              <Button variant="ghost" className="h-8 text-xs" onClick={() => setSavingAs(null)}>
+                Cancelar
+              </Button>
+              <p className="w-full text-[11px] text-slate-500">
+                {library
+                  ? "Se guarda tal cual está escrita: para un token, mejor {{variable}} que el valor."
+                  : `La biblioteca ya tiene ${MAX_SAVED_MESSAGES} tramas: borra alguna en Configuración.`}
+              </p>
+            </div>
+          )}
         </div>
       )}
 

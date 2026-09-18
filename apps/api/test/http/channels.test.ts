@@ -174,6 +174,43 @@ describe("una sesión", () => {
     assert.ok(context.channels.sent[0].text.includes(TOKEN));
   });
 
+  test("un mensaje lleva `{{variables}}` del entorno, y la transcripción las enseña tapadas", async () => {
+    const environmentId = await environment(true);
+    const id = await channel();
+    context.channels.script(SOCKET, {});
+    const opened = await api().post(`${base}/channels/${id}/sessions`).set(as(owner)).send({ environmentId });
+    assert.equal(opened.body.status, "open", JSON.stringify(opened.body));
+
+    const sent = await api()
+      .post(`${base}/channels/sessions/${opened.body.id}/messages`)
+      .set(as(owner))
+      .send({ text: '{"type":"auth","token":"{{token}}","id":"{{$uuid}}"}' });
+    assert.equal(sent.status, 202, JSON.stringify(sent.body));
+    await settle();
+
+    // El socket recibió el valor y un id de verdad, no las llaves.
+    const wire = JSON.parse(context.channels.sent[0].text) as { token: string; id: string };
+    assert.equal(wire.token, TOKEN);
+    assert.match(wire.id, /^[0-9a-f]{8}-[0-9a-f]{4}-/);
+
+    // Y lo guardado es lo que viajó, con el secreto tapado: ni el valor, ni la plantilla.
+    const read = await api().get(`${base}/channels/sessions/${opened.body.id}`).set(as(owner));
+    const out = (read.body.messages as { direction: string; body: string }[]).find((row) => row.direction === "out");
+    assert.ok(out, JSON.stringify(read.body.messages));
+    assert.ok(!out.body.includes(TOKEN), out.body);
+    assert.ok(!out.body.includes("{{token}}"), out.body);
+    assert.ok(out.body.includes(wire.id), out.body);
+
+    const missing = await api()
+      .post(`${base}/channels/sessions/${opened.body.id}/messages`)
+      .set(as(owner))
+      .send({ text: '{"key":"{{noExiste}}"}' });
+    assert.equal(missing.status, 422, JSON.stringify(missing.body));
+    assert.match(missing.body.errors[0].detail, /\{\{noExiste\}\} no tiene valor en «entorno-/);
+    assert.equal(context.channels.sent.length, 1, "la de la variable sin valor no puede haber salido");
+    await api().post(`${base}/channels/sessions/${opened.body.id}/close`).set(as(owner));
+  });
+
   test("un entorno sin escrituras deja escuchar y no deja mandar", async () => {
     const environmentId = await environment(false);
     const id = await channel();

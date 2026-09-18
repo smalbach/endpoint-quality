@@ -294,6 +294,72 @@ describe("la pantalla de monitores", () => {
     });
   });
 
+  test("editar abre el formulario relleno y guarda con PATCH sin tocar el horario ni el resto del plan", async () => {
+    answers({
+      monitors: [
+        monitor({
+          plan: { environmentId: "env-1", workflowId: "w1", datasetId: "d1", labels: ["humo"] },
+          alert: { channel: "slack", urlVariable: "SLACK_WEBHOOK", afterFailures: 2 },
+        }),
+      ],
+    });
+    draw();
+    await waitFor(() => expect(screen.getByText("Editar")).toBeTruthy());
+    fireEvent.click(screen.getByText("Editar"));
+    const dialog = within(await screen.findByRole("dialog"));
+
+    expect((dialog.getByLabelText(/Nombre/) as HTMLInputElement).value).toBe("producción");
+    expect((dialog.getByLabelText("Intervalo") as HTMLSelectElement).value).toBe("60");
+    expect((dialog.getByLabelText("Flujo") as HTMLSelectElement).value).toBe("w1");
+    expect((dialog.getByLabelText(/Variable del entorno/) as HTMLInputElement).value).toBe("SLACK_WEBHOOK");
+
+    fireEvent.change(dialog.getByLabelText(/Nombre/), { target: { value: "producción nueva" } });
+    fireEvent.click(dialog.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => {
+      const patch = call.mock.calls.find(([, options]) => options?.method === "PATCH");
+      expect(patch).toBeTruthy();
+      expect(patch![0]).toMatch(/\/monitors\/m1$/);
+      // Sin `schedule`: la API recalcula el turno cuando lo recibe, y aquí no cambió.
+      expect(patch![1].body).toEqual({
+        name: "producción nueva",
+        plan: { environmentId: "env-1", workflowId: "w1", datasetId: "d1", labels: ["humo"] },
+        alert: { channel: "slack", urlVariable: "SLACK_WEBHOOK", afterFailures: 2 },
+      });
+    });
+  });
+
+  test("al editar, un horario cambiado viaja con la zona del monitor, y quitar el aviso manda null", async () => {
+    answers({
+      monitors: [
+        monitor({
+          schedule: { kind: "daily", hour: 9, minute: 0, timeZone: "Europe/Madrid" },
+          alert: { channel: "email", recipients: ["guardia@ejemplo.com"], afterFailures: 1 },
+        }),
+      ],
+    });
+    draw();
+    await waitFor(() => expect(screen.getByText("Editar")).toBeTruthy());
+    fireEvent.click(screen.getByText("Editar"));
+    const dialog = within(await screen.findByRole("dialog"));
+
+    // La zona es la del monitor, no la del navegador de quien lo abre.
+    expect(dialog.getByText(/En tu zona: Europe\/Madrid/)).toBeTruthy();
+    fireEvent.change(dialog.getByLabelText("Hora"), { target: { value: "7" } });
+    fireEvent.click(dialog.getByLabelText("Avisar cuando se ponga en rojo"));
+    fireEvent.click(dialog.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => {
+      const patch = call.mock.calls.find(([, options]) => options?.method === "PATCH");
+      expect(patch![1].body).toEqual({
+        name: "producción",
+        schedule: { kind: "daily", hour: 7, minute: 0, timeZone: "Europe/Madrid" },
+        plan: { environmentId: "env-1" },
+        alert: null,
+      });
+    });
+  });
+
   test("eliminar avisa de que el historial se va y las corridas se quedan", async () => {
     answers();
     draw();

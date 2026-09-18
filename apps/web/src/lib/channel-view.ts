@@ -65,3 +65,45 @@ export function visibleMessages(messages: ChannelMessageView[]): ChannelMessageV
     (message) => message.direction === "in" || message.direction === "out" || message.direction === "error",
   );
 }
+
+/** Qué filas de la conversación se quieren ver: todas, las que llegaron o las que salieron. */
+export type MessageFilter = { text: string; direction: "all" | "in" | "out" };
+
+/**
+ * La conversación filtrada, como el buscador de mensajes de Postman.
+ *
+ * Los errores pasan **cualquier** filtro de dirección: filtrar por «recibidos» y no ver nada es
+ * justo cuando hace falta ver que el socket se rompió. El texto sí los filtra, porque quien busca
+ * una palabra busca esa palabra. Se busca sobre lo que se guardó —ya tapado—, así que no hay forma
+ * de encontrar un secreto por aquí.
+ */
+export function filterMessages(rows: ChannelMessageView[], filter: MessageFilter): ChannelMessageView[] {
+  const needle = filter.text.trim().toLowerCase();
+  return rows.filter(
+    (row) =>
+      (filter.direction === "all" || row.direction === filter.direction || row.direction === "error") &&
+      (!needle || row.body.toLowerCase().includes(needle)),
+  );
+}
+
+/** Las tramas que caben en la biblioteca de un canal. La API valida el mismo número. */
+export const MAX_SAVED_MESSAGES = 30;
+
+/**
+ * La biblioteca con una trama más: la del mismo nombre se **sustituye** y no se duplica.
+ *
+ * Guardar dos veces «auth» con otro cuerpo es corregir la primera, no tener dos botones con el
+ * mismo nombre que mandan cosas distintas. Devuelve `null` si no cabe: se dice, y no se tira la más
+ * vieja por su cuenta.
+ */
+export function withSavedMessage(
+  library: { name: string; body: string }[],
+  entry: { name: string; body: string },
+): { name: string; body: string }[] | null {
+  const name = entry.name.trim();
+  const rows = library.map(({ name: current, body }) => ({ name: current, body }));
+  const at = rows.findIndex((row) => row.name.trim() === name);
+  if (at >= 0) return rows.map((row, index) => (index === at ? { name, body: entry.body } : row));
+  if (rows.length >= MAX_SAVED_MESSAGES) return null;
+  return [...rows, { name, body: entry.body }];
+}
