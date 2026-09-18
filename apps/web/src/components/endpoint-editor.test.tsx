@@ -64,6 +64,7 @@ const SENT: SentRequestView = {
         { name: "id", passed: false, message: "se esperaba 8 y llegó 7" },
       ],
       environmentUpdates: ["lastId"],
+      visualization: { template: "<b>{{id}}</b>", data: '{"id":7}', options: "{}" },
       durationMs: 31,
     },
   },
@@ -158,6 +159,18 @@ describe("el editor de endpoints", () => {
     expect(screen.getByText("id recibido 7")).toBeDefined();
     expect(screen.getByText(/se esperaba 8 y llegó 7/)).toBeDefined();
     expect(screen.getByText("Guardó en el entorno: lastId")).toBeDefined();
+  });
+
+  test("«Visualizar» dibuja lo del script en un marco aislado: scripts sí, mismo origen no", async () => {
+    mount();
+    await screen.findByDisplayValue("/users/{id}");
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    await screen.findByText("1/2 pruebas");
+
+    fireEvent.click(screen.getByRole("button", { name: /^Visualizar/ }));
+    const frame = (await screen.findByTitle("Visualización")) as HTMLIFrameElement;
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frame.getAttribute("srcdoc")).toContain('var template = "\\u003cb>{{id}}\\u003c/b>"');
   });
 
   test("un fragmento se añade al final del script", async () => {
