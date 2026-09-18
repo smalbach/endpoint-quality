@@ -11,7 +11,7 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Sse, UseGuards } from "@nestjs/common";
 import { CommandBus, QueryBus } from "@nestjs/cqrs";
 import { SkipThrottle } from "@nestjs/throttler";
-import { Observable, concat, from, mergeMap, of, takeWhile } from "rxjs";
+import { Observable } from "rxjs";
 
 import {
   CurrentUser,
@@ -101,7 +101,8 @@ export class ChannelsController {
    * La conversación en vivo.
    *
    * Abre con la **sesión entera** —la transcripción hasta ahora— y sigue con los mensajes según
-   * llegan: quien recarga ve lo que ya pasó y lo que pase después, sin un hueco entre las dos cosas.
+   * llegan: quien recarga ve lo que ya pasó y lo que pase después, sin un hueco entre las dos cosas
+   * y sin repetir ninguno (ver dentro: se escucha antes de leer, y se descarta por `seq`).
    * Una sesión ya terminada contesta con la transcripción y `finished`, y el stream se cierra; es la
    * misma regla que el de una corrida, y por el mismo motivo: sin ella, quien llega tarde se queda
    * esperando un evento que no va a llegar.
@@ -112,30 +113,63 @@ export class ChannelsController {
   @Sse("sessions/:sessionId/stream")
   @SkipThrottle()
   @RequireRole("viewer")
-  stream(
+  async stream(
     @Param("organizationId") organizationId: string,
     @Param("projectId") projectId: string,
     @Param("sessionId") sessionId: string,
-  ): Observable<{ data: unknown; type: string }> {
-    const snapshot = from(
-      this.queryBus.execute<GetChannelSessionQuery, ChannelSessionView>(
+  ): Promise<Observable<{ data: unknown; type: string }>> {
+    // **Se escucha antes de leer.** Con `concat(instantánea, en vivo)` la suscripción a lo vivo llega
+    // cuando la lectura ya terminó, y un mensaje que entra mientras tanto no está ni en la
+    // instantánea ni en el stream. Así, lo que llega durante la lectura se retiene y se suelta
+    // después, descartando por `seq` lo que la instantánea ya traía.
+    const held: { data: unknown; type: string }[] = [];
+    let forward: ((event: { data: unknown; type: string }) => void) | null = null;
+    const live = this.progress
+      .forSession(sessionId)
+      .subscribe((event) => (forward ? forward(event) : held.push(event)));
+
+    // Y se lee **antes** de devolver el stream, para que los dos «no» sean respuestas de verdad: una
+    // vez devuelto, las cabeceras del SSE ya salieron con 200 y un 409 no llegaría como tal.
+    let session: ChannelSessionView;
+    try {
+      session = await this.queryBus.execute<GetChannelSessionQuery, ChannelSessionView>(
         new GetChannelSessionQuery(organizationId, projectId, sessionId),
-      ),
-    );
-    return snapshot.pipe(
-      mergeMap((session) => {
-        const over = session.status === "closed" || session.status === "error";
-        if (over) return of({ type: "finished", data: session });
-        if (!session.live) {
-          throw new ConflictError(
-            "Esta sesión está abierta en otra instancia de la API, y su socket no se puede seguir desde aquí",
-            "channel-session-not-here",
-          );
+      );
+    } catch (error) {
+      live.unsubscribe();
+      throw error;
+    }
+    const over = session.status === "closed" || session.status === "error";
+    if (!over && !session.live) {
+      live.unsubscribe();
+      throw new ConflictError(
+        "Esta sesión está abierta en otra instancia de la API, y su socket no se puede seguir desde aquí",
+        "channel-session-not-here",
+      );
+    }
+
+    return new Observable((subscriber) => {
+      if (over) {
+        live.unsubscribe();
+        subscriber.next({ type: "finished", data: session });
+        subscriber.complete();
+        return;
+      }
+      let lastSeq = Math.max(-1, ...(session.messages ?? []).map((message) => message.seq));
+      const emit = (event: { data: unknown; type: string }) => {
+        if (event.type === "message") {
+          const seq = (event.data as { message: { seq: number } }).message.seq;
+          if (seq <= lastSeq) return;
+          lastSeq = seq;
         }
-        return concat(of({ type: "snapshot", data: session as unknown }), this.progress.forSession(sessionId));
-      }),
-      takeWhile((event) => event.type !== "finished", true),
-    );
+        subscriber.next(event);
+        if (event.type === "finished") subscriber.complete();
+      };
+      subscriber.next({ type: "snapshot", data: session });
+      forward = emit;
+      for (const event of held.splice(0)) emit(event);
+      return () => live.unsubscribe();
+    });
   }
 
   @Get(":channelId")

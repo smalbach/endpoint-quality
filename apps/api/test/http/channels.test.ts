@@ -374,3 +374,93 @@ describe("contra un servidor de verdad en loopback", () => {
     assert.equal(read.body.stopReason, "idle-cap");
   });
 });
+
+describe("una sesión viva en otra instancia", () => {
+  test("su stream es un 409 que lo dice, y no un stream vacío que parece una sesión callada", async () => {
+    // Una fila abierta cuyo socket no está en este proceso: lo que ve una instancia cuando el
+    // balanceador la manda a la que no tiene el socket.
+    const id = await channel();
+    const now = context.clock.now();
+    const foreign = {
+      id: crypto.randomUUID(),
+      channelId: id,
+      projectId: base.split("/").pop()!,
+      environmentId: null,
+      status: "open" as const,
+      conversation: {
+        messages: [],
+        handshake: { status: 101, headers: {} },
+        openedAtMs: 0,
+        closedAtMs: null,
+        closeCode: null,
+        closeReason: "",
+        stopped: null,
+        counters: { sent: 0, received: 0, bytesIn: 0, bytesOut: 0 },
+      },
+      verdict: null,
+      stopReason: null,
+      ownerInstance: "otra-maquina:1:abcd",
+      heartbeatAt: now,
+      openedAt: now,
+      closedAt: null,
+      startedBy: owner.userId,
+    };
+    await context.repositories.channelSessions.save(foreign);
+
+    const stream = await api().get(`${base}/channels/sessions/${foreign.id}/stream`).set(as(owner));
+    assert.equal(stream.status, 409, JSON.stringify(stream.body));
+    assert.match(String(stream.body.type), /channel-session-not-here$/);
+    // Y mandar tampoco: el socket no está aquí.
+    const sent = await api()
+      .post(`${base}/channels/sessions/${foreign.id}/messages`)
+      .set(as(owner))
+      .send({ text: "hola" });
+    assert.equal(sent.status, 409);
+  });
+});
+
+describe("el stream en vivo", () => {
+  test("abre con la transcripción, sigue con lo nuevo, cada mensaje una vez, y se cierra al terminar", async () => {
+    const environmentId = await environment(true);
+    const id = await channel();
+    context.channels.script(SOCKET, { greeting: ['{"n":0}'], reply: (text) => [`{"eco":${JSON.stringify(text)}}`] });
+    const opened = await api().post(`${base}/channels/${id}/sessions`).set(as(owner)).send({ environmentId });
+
+    const following = api()
+      .get(`${base}/channels/sessions/${opened.body.id}/stream`)
+      .set(as(owner))
+      .buffer(true)
+      .parse((response, done) => {
+        let text = "";
+        response.on("data", (chunk: Buffer) => (text += chunk.toString()));
+        response.on("end", () => done(null, text));
+      })
+      .then((response) => response);
+
+    await settle();
+    for (const text of ["uno", "dos"]) {
+      await api().post(`${base}/channels/sessions/${opened.body.id}/messages`).set(as(owner)).send({ text });
+      await settle();
+    }
+    await api().post(`${base}/channels/sessions/${opened.body.id}/close`).set(as(owner));
+
+    const body = String((await following).body);
+    const events = body
+      .split("\n\n")
+      .filter(Boolean)
+      .map((block) => ({
+        type: /^event: (.*)$/m.exec(block)?.[1] ?? "",
+        data: JSON.parse(/^data: (.*)$/m.exec(block)?.[1] ?? "null") as Record<string, unknown>,
+      }));
+    assert.equal(events[0].type, "snapshot");
+    assert.equal(events[events.length - 1].type, "finished");
+
+    // Los de la instantánea más los que llegaron después: cada `seq` una vez, y seguidos.
+    const snapshotSeqs = ((events[0].data.messages as { seq: number }[]) ?? []).map((message) => message.seq);
+    const liveSeqs = events
+      .filter((event) => event.type === "message")
+      .map((event) => (event.data.message as { seq: number }).seq);
+    const all = [...snapshotSeqs, ...liveSeqs];
+    assert.deepEqual(all, [0, 1, 2, 3, 4], body);
+  });
+});
