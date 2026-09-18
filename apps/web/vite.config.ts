@@ -18,5 +18,17 @@ export default defineConfig({
       },
     },
   },
-  test: { environment: "jsdom", globals: true },
+  test: {
+    environment: "jsdom",
+    globals: true,
+    // En las pruebas, Node cargaría `graphql-language-service` por su `main` de CommonJS, que trae el
+    // `graphql` de CommonJS; las pruebas usan el ESM, y un esquema de un `graphql` no lo reconoce el
+    // otro («from another module or realm»). Su build ESM, pasado por Vite, importa el mismo que ellas.
+    // El `vite build` ya elige ese por su `module`.
+    alias: {
+      "graphql-language-service": fileURLToPath(
+        new URL("./node_modules/graphql-language-service/esm/index.js", import.meta.url),
+      ),
+    },
+  },
 });

@@ -11,7 +11,7 @@
  *   salida.
  */
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { buildSchema, graphqlSync } from "graphql";
 import { useState } from "react";
 
@@ -43,9 +43,11 @@ const answered = (body: unknown, status = 200): SentRequestView =>
 function Harness({
   introspect,
   method = "POST",
+  variableNames = [],
 }: {
   introspect: (query: string) => Promise<SentRequestView>;
   method?: string;
+  variableNames?: string[];
 }) {
   const [body, setBody] = useState({ text: "", variables: "" });
   return (
@@ -54,7 +56,7 @@ function Harness({
         query={body.text}
         variables={body.variables}
         onChange={(patch) => setBody((current) => ({ ...current, ...patch }))}
-        variableNames={[]}
+        variableNames={variableNames}
         disabled={false}
         method={method}
         schemaKey="https://api.test/graphql"
@@ -120,5 +122,96 @@ describe("el cuerpo GraphQL", () => {
     render(<Harness introspect={vi.fn()} />);
     fireEvent.change(screen.getByLabelText("Variables GraphQL"), { target: { value: "[1]" } });
     expect(screen.getByText("Las variables tienen que ser un objeto JSON.")).toBeTruthy();
+  });
+});
+
+/**
+ * El autocompletado, montado: lo que ofrece en cada sitio está en `lib/graphql-suggestions`; aquí,
+ * cuándo sale la lista, qué teclas se queda y que convive con la de `{{variables}}`.
+ */
+describe("el autocompletado de la operación", () => {
+  async function mount(variableNames: string[] = [], withSchema = true) {
+    render(<Harness introspect={vi.fn()} variableNames={variableNames} />);
+    if (withSchema) {
+      const file = Object.assign(new File([SDL], "schema.graphql"), { text: async () => SDL });
+      fireEvent.change(screen.getByLabelText("Esquema desde fichero"), { target: { files: [file] } });
+      await screen.findByText(/de schema.graphql/);
+    }
+    const field = screen.getByLabelText<HTMLTextAreaElement>("Operación GraphQL");
+    /** El texto y el cursor, que es lo que el navegador deja; el seguimiento va al fotograma siguiente. */
+    const type = async (text: string, caret = text.length) => {
+      fireEvent.change(field, { target: { value: text } });
+      field.setSelectionRange(caret, caret);
+      await act(async () => {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      });
+    };
+    const list = () => screen.queryByLabelText("Sugerencias del esquema");
+    const offered = () =>
+      within(list()!)
+        .getAllByRole("button")
+        .map((button) => button.getAttribute("aria-label"));
+    return { field, type, list, offered };
+  }
+
+  test("al escribir un campo ofrece los del tipo, con su tipo; las flechas eligen y Enter lo escribe", async () => {
+    const { field, type, list, offered } = await mount();
+    await type("{ us");
+    expect(offered()).toEqual(["user"]);
+    expect(list()!.textContent).toContain("User");
+
+    await type("{ user(id: 1) { ");
+    expect(list()).toBeNull();
+
+    await type("{ user(id: 1) { n");
+    expect(offered()).toEqual(["name", "__typename"]);
+    fireEvent.keyDown(field, { key: "ArrowDown" });
+    fireEvent.keyDown(field, { key: "ArrowDown" });
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(field.value).toBe("{ user(id: 1) { name");
+    expect(list()).toBeNull();
+    expect(field.selectionStart).toBe(field.value.length);
+  });
+
+  test("dentro de `(` ofrece los argumentos; un clic escribe `nombre: `, y Escape cierra", async () => {
+    const { field, type, list, offered } = await mount();
+    await type("mutation { rename(");
+    expect(offered()).toEqual(["name"]);
+    fireEvent.mouseDown(screen.getByRole("button", { name: "name" }));
+    expect(field.value).toBe("mutation { rename(name: ");
+
+    await type("{ m");
+    expect(offered()).toContain("me");
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(list()).toBeNull();
+    expect(field.value).toBe("{ m");
+  });
+
+  test("Tab acepta la resaltada y Ctrl+Espacio abre la lista sin haber escrito nada", async () => {
+    const { field, type, offered } = await mount();
+    await type("{ me { }", 7);
+    fireEvent.keyDown(field, { key: " ", ctrlKey: true });
+    expect(offered()).toEqual(expect.arrayContaining(["id", "name", "__typename"]));
+    fireEvent.keyDown(field, { key: "ArrowDown" });
+    fireEvent.keyDown(field, { key: "Tab" });
+    expect(field.value).toBe("{ me { name}");
+  });
+
+  test("sin esquema no ofrece nada", async () => {
+    const { field, type, list } = await mount([], false);
+    await type("{ us");
+    fireEvent.keyDown(field, { key: " ", ctrlKey: true });
+    expect(list()).toBeNull();
+  });
+
+  test("dentro de un `{{` manda la lista de variables del entorno, y la del esquema sigue después", async () => {
+    const { field, type, list, offered } = await mount(["userId"]);
+    await type("{ user(id: {{us");
+    expect(list()).toBeNull();
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(field.value).toBe("{ user(id: {{userId}}");
+
+    await type("{ user(id: {{userId}}) { na");
+    expect(offered()[0]).toBe("name");
   });
 });
