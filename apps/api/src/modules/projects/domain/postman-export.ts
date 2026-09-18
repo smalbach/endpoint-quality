@@ -34,10 +34,22 @@ export const POSTMAN_SCHEMA = "https://schema.getpostman.com/json/collection/v2.
 
 /** Las cabeceras cuyo valor no sale nunca a menos que sea puramente `{{variables}}`. */
 const CREDENTIAL_HEADER = /^(authorization|cookie|proxy-authorization|x-api-key|api-key|apikey)$/i;
+/**
+ * Los campos de formulario que son una credencial: el `password` de un login, el `client_secret`
+ * de un token OAuth. Un formulario es por donde viaja casi todo secreto que no va en una cabecera,
+ * así que se le aplica la misma regla que a ellas.
+ */
+const CREDENTIAL_FIELD =
+  /^(password|passwd|pwd|secret|client_secret|clientsecret|api[_-]?key|access_token|refresh_token|token)$/i;
 /** Un valor que es solo variables, y por tanto no contiene el secreto sino su nombre. */
 const ONLY_VARIABLES = /^(?:[A-Za-z][\w-]*\s+)?(?:\{\{\s*[A-Za-z_][A-Za-z0-9_.-]*\s*\}\}\s*)+$/;
 
 type KeyValue = { key: string; value: string; disabled?: boolean };
+/**
+ * Una fila de `formdata`. Un fichero no lleva `value` sino `src`, la ruta en el disco de quien lo
+ * eligió — y esa ruta no existe aquí, así que sale sin ella.
+ */
+type FormDataRow = { key: string; value?: string; type: "text" | "file"; disabled?: boolean };
 type PostmanEvent = { listen: "prerequest" | "test"; script: { type: "text/javascript"; exec: string[] } };
 type PostmanRequest = {
   method: string;
@@ -46,7 +58,9 @@ type PostmanRequest = {
   body?:
     | { mode: "raw"; raw: string; options: { raw: { language: string } } }
     /** Lo que Postman escribe para una petición GraphQL: la operación y las variables como texto. */
-    | { mode: "graphql"; graphql: { query: string; variables: string } };
+    | { mode: "graphql"; graphql: { query: string; variables: string } }
+    | { mode: "formdata"; formdata: FormDataRow[] }
+    | { mode: "urlencoded"; urlencoded: KeyValue[] };
   /** El bloque `auth` de Postman. Ausente significa «hereda», igual que en sus ficheros. */
   auth?: Record<string, unknown>;
   description?: string;
@@ -328,7 +342,7 @@ function requestItem(
       method: template.method.toUpperCase(),
       header: headerList(template.headers, template.disabledHeaders, skipped, label),
       url: urlOf(`{{baseUrl}}${path}`, [...query, ...disabled]),
-      ...bodyOf(template.body as RequestBody | undefined),
+      ...bodyOf(template.body as RequestBody | undefined, skipped, label),
       ...(template.description ? { description: template.description } : {}),
     },
   };
@@ -412,7 +426,7 @@ function endpointItem(endpoint: BundleEndpoint, baseUrl: string, skipped: Postma
           ...(parameter.enabled ? {} : { disabled: true }),
         })),
       ),
-      ...endpointBody(endpoint),
+      ...endpointBody(endpoint, skipped, label),
       ...authOf(endpoint.auth, label, skipped),
       ...(endpoint.description ? { description: endpoint.description } : {}),
     },
@@ -531,10 +545,18 @@ function authOf(
   return { auth: written.block };
 }
 
-function endpointBody(endpoint: BundleEndpoint): { body?: PostmanRequest["body"] } {
+function endpointBody(
+  endpoint: BundleEndpoint,
+  skipped: PostmanExport["skipped"],
+  label: string,
+): { body?: PostmanRequest["body"] } {
   const body = endpoint.body;
   if (body?.mode === "graphql" && body.text.trim())
     return { body: { mode: "graphql", graphql: { query: body.text, variables: body.variables ?? "" } } };
+  // Un formulario no tiene texto: sus filas son el cuerpo. Antes caía en el `text` vacío de abajo
+  // y el endpoint salía sin cuerpo, sin decirlo.
+  if (body?.mode === "form-data" || body?.mode === "x-www-form-urlencoded")
+    return formBody(body.mode, body.fields, skipped, label);
   if (!body || body.mode === "none" || !body.text.trim()) return {};
   return { body: raw(body.text, languageFor(body.contentType)) };
 }
@@ -579,17 +601,71 @@ const raw = (text: string, language: string): PostmanRequest["body"] => ({
   options: { raw: { language } },
 });
 
-function bodyOf(body: RequestBody | undefined): { body?: PostmanRequest["body"] } {
+function bodyOf(
+  body: RequestBody | undefined,
+  skipped: PostmanExport["skipped"],
+  label: string,
+): { body?: PostmanRequest["body"] } {
   if (!body || body.type === "none") return {};
   if (body.type === "json") return { body: raw(JSON.stringify(body.json, null, 2), "json") };
   if (body.type === "raw") return { body: raw(body.text, languageFor(body.contentType)) };
-  // Un cuerpo de formulario sale como texto codificado: Postman tiene `urlencoded` y `formdata`,
-  // pero el lector de aquí devuelve los campos ya como mapas y reconstruir el modo exacto sería
-  // adivinar cuál de los dos era.
-  const pairs = Object.entries(body.fields)
-    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
-    .join("&");
-  return { body: raw(pairs, "text") };
+  // Un formulario sale como formulario. Antes salía como texto `a=1&b=2`, con la excusa de que no
+  // se sabía cuál de los dos modos era — y el tipo lo dice. Ese texto, además, volvía del import
+  // como un cuerpo `raw`: la ida y vuelta convertía un formulario en una cadena.
+  const rows = (fields: Record<string, string>, enabled: boolean) =>
+    Object.entries(fields).map(([name, value]) => ({ name, value, kind: "text" as const, enabled }));
+  return formBody(body.type, [...rows(body.fields, true), ...rows(body.disabledFields, false)], skipped, label);
+}
+
+/**
+ * Las filas de un formulario como las escribe Postman: `formdata` o `urlencoded`.
+ *
+ * Dos cosas no salen enteras, y las dos se dicen en `skipped`:
+ *
+ * - **Un fichero sale sin fichero.** Aquí solo se guarda el nombre del campo —los bytes nunca
+ *   llegan a la fila— y lo que Postman guarda es la ruta en el disco de quien lo eligió, que tampoco
+ *   existe aquí. Sale como fila `file` sin `src`: Postman la enseña con el botón de elegir, que es
+ *   exactamente lo que falta hacer. En `urlencoded` no se escribe: ese modo no manda ficheros, y el
+ *   editor tampoco los envía en él.
+ * - **Una credencial escrita a mano sale vacía y desactivada**, la misma regla que las cabeceras.
+ */
+function formBody(
+  mode: "form-data" | "x-www-form-urlencoded",
+  fields: { name: string; value: string; kind: "text" | "file"; enabled: boolean }[],
+  skipped: PostmanExport["skipped"],
+  label: string,
+): { body?: PostmanRequest["body"] } {
+  const rows: FormDataRow[] = [];
+  for (const field of fields) {
+    const off = field.enabled ? {} : { disabled: true };
+    if (field.kind === "file") {
+      if (mode === "x-www-form-urlencoded") continue;
+      skipped.push({
+        what: label,
+        detail: `el campo «${field.name}» es un fichero: sale sin él, hay que elegirlo en Postman`,
+      });
+      rows.push({ key: field.name, type: "file", ...off });
+      continue;
+    }
+    if (CREDENTIAL_FIELD.test(field.name) && field.value && !ONLY_VARIABLES.test(field.value)) {
+      skipped.push({ what: label, detail: `el campo «${field.name}» lleva un valor escrito a mano y sale vacío` });
+      rows.push({ key: field.name, value: "", type: "text", disabled: true });
+      continue;
+    }
+    rows.push({ key: field.name, value: field.value, type: "text", ...off });
+  }
+  if (!rows.length) return {};
+  if (mode === "form-data") return { body: { mode: "formdata", formdata: rows } };
+  return {
+    body: {
+      mode: "urlencoded",
+      urlencoded: rows.map(({ key, value, disabled }) => ({
+        key,
+        value: value ?? "",
+        ...(disabled ? { disabled } : {}),
+      })),
+    },
+  };
 }
 
 const languageOf = (headers: Record<string, string>): string =>
