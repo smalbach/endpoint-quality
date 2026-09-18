@@ -29,7 +29,7 @@ export class GetForkDiffQuery implements IQuery {
 }
 
 /** La comparación como la ve una pantalla: qué proyecto da, cuál recibe, y cada elemento que cambió. */
-function view(comparison: Comparison): ForkDiffView {
+export function view(comparison: Comparison): ForkDiffView {
   return {
     direction: comparison.direction,
     token: comparison.token,
@@ -81,17 +81,31 @@ export class SyncForkHandler implements ICommandHandler<SyncForkCommand, ForkSyn
 
   async execute(command: SyncForkCommand): Promise<ForkSyncOutcomeView> {
     const comparison = await this.sync.compare(command.organizationId, command.projectId, command.direction);
-    if (comparison.target.project.archivedAt)
-      throw new ConflictError(`«${comparison.target.project.name}» está archivado`, "project-archived");
-    if (command.token !== comparison.token)
-      throw new ConflictError(
-        "Alguno de los dos proyectos cambió desde que se hizo la comparación: vuelve a cargarla",
-        "fork-diff-stale",
-      );
-    const problems = resolutionProblems(comparison.entries, command.resolutions);
-    if (problems.length) throw new InvalidInputError("Faltan decisiones o sobran", problems, "fork-unresolved");
-    const { plan, outcome } = this.sync.plan(comparison, command.resolutions, command.actorId, this.clock.now());
+    const { plan, outcome } = checkedPlan(this.sync, comparison, command, this.clock.now());
     await this.sync.apply(plan);
     return outcome;
   }
+}
+
+/**
+ * Lo que se comprueba antes de construir un plan, en un solo sitio: fusionar directamente y fusionar
+ * una solicitud son la misma operación, y tienen que rechazar lo mismo del mismo modo. Lo único que
+ * se comprueba después, dentro de la transacción, es la versión de la bifurcación.
+ */
+export function checkedPlan(
+  sync: ForkSync,
+  comparison: Comparison,
+  input: { token: string; resolutions: Resolutions; actorId: string },
+  now: Date,
+) {
+  if (comparison.target.project.archivedAt)
+    throw new ConflictError(`«${comparison.target.project.name}» está archivado`, "project-archived");
+  if (input.token !== comparison.token)
+    throw new ConflictError(
+      "Alguno de los dos proyectos cambió desde que se hizo la comparación: vuelve a cargarla",
+      "fork-diff-stale",
+    );
+  const problems = resolutionProblems(comparison.entries, input.resolutions);
+  if (problems.length) throw new InvalidInputError("Faltan decisiones o sobran", problems, "fork-unresolved");
+  return sync.plan(comparison, input.resolutions, input.actorId, now);
 }

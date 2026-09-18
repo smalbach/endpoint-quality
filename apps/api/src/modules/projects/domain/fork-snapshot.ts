@@ -1,11 +1,13 @@
-import type { WorkflowDocument } from "@eq/runner-core";
+import type { ConfigSection, WorkflowDocument } from "@eq/runner-core";
 
 import { endpointKey, type Endpoint } from "@/modules/endpoints/domain/model";
 import type { Environment, EnvironmentVariables } from "@/modules/environments/domain/model";
-import type { RequestTemplateRow, WorkflowRow } from "@/modules/workflows/domain/model";
+import type { ConfigRow } from "@/modules/config/domain/ports";
+import type { Role } from "@/modules/roles/domain/model";
+import type { RequestTemplateRow, SuiteRow, WorkflowRow } from "@/modules/workflows/domain/model";
 import { redactAuth, withoutLiteralSecrets } from "@/modules/workflows/domain/postman-auth";
 import { emptySnapshot, type ForkSnapshot, type JsonValue, type MergeKind } from "./fork-merge";
-import type { Lineage, LinkedKind, ProjectContents } from "./fork";
+import { emptyLineage, LINKED_KINDS, type Lineage, type LinkedKind, type ProjectContents } from "./fork";
 
 /**
  * De filas a fotos: la clave de linaje de cada elemento y lo que de él se compara.
@@ -24,8 +26,22 @@ const emptyKeyMap = (): KeyMap => ({
   endpoint: new Map(),
   template: new Map(),
   workflow: new Map(),
+  suite: new Map(),
   environment: new Map(),
+  role: new Map(),
+  section: new Map(),
 });
+
+/**
+ * Las secciones que se comparan: todas menos dos.
+ *
+ * - `implemented` es un hecho sobre el código de cada proyecto —qué operaciones tiene hechas—, no
+ *   una decisión que se lleve de uno a otro; por eso tampoco se copia al bifurcar.
+ * - `access` no la escribe nadie: se deriva de los roles en cada cambio. Se compara a través de los
+ *   roles, y quien aplica la vuelve a derivar en el destino. Compararla además la enseñaría dos
+ *   veces, y aplicarla tal cual dejaría una matriz que no dice lo que dicen los roles del destino.
+ */
+export const syncedSection = (section: ConfigSection): boolean => section !== "implemented" && section !== "access";
 
 /** Lo que falta de un lado se marca así en la clave: no puede coincidir con ningún id. */
 export const FORK_ONLY = "fork:";
@@ -33,16 +49,24 @@ export const FORK_ONLY = "fork:";
 const NAMED: Record<LinkedKind, (contents: ProjectContents) => { id: string; name: string }[]> = {
   template: (contents) => contents.templates,
   workflow: (contents) => contents.workflows,
+  suite: (contents) => contents.suites,
   environment: (contents) => contents.environments,
+  role: (contents) => contents.roles,
 };
+
+/** Una sección se llama igual en todos los proyectos: su nombre es su clave, y su «id». */
+function sectionKeys(contents: ProjectContents, keys: KeyMap): void {
+  for (const row of contents.sections) if (syncedSection(row.section)) keys.section.set(row.section, row.section);
+}
 
 /** Las claves del original: sus propios ids. El original es el que da nombre al linaje. */
 export function parentKeys(parent: ProjectContents): KeyMap {
   const keys = emptyKeyMap();
   for (const endpoint of parent.endpoints) keys.endpoint.set(endpoint.id, endpointKey(endpoint.method, endpoint.path));
-  for (const kind of ["template", "workflow", "environment"] as const) {
+  for (const kind of LINKED_KINDS) {
     for (const row of NAMED[kind](parent)) keys[kind].set(row.id, row.id);
   }
+  sectionKeys(parent, keys);
   return keys;
 }
 
@@ -64,10 +88,11 @@ export function forkKeys(
   parent?: ProjectContents,
 ): { keys: KeyMap; implicit: Lineage } {
   const keys = emptyKeyMap();
-  const implicit: Lineage = { template: [], workflow: [], environment: [] };
+  const implicit = emptyLineage();
   for (const endpoint of fork.endpoints) keys.endpoint.set(endpoint.id, endpointKey(endpoint.method, endpoint.path));
-  for (const kind of ["template", "workflow", "environment"] as const) {
-    const byFork = new Map(lineage[kind].map((pair) => [pair.forkId, pair.parentId]));
+  sectionKeys(fork, keys);
+  for (const kind of LINKED_KINDS) {
+    const byFork = new Map((lineage[kind] ?? []).map((pair) => [pair.forkId, pair.parentId]));
     const claimed = new Set(
       NAMED[kind](fork)
         .map((row) => byFork.get(row.id))
@@ -182,6 +207,52 @@ export const environmentContent = (environment: Environment): JsonValue =>
     disabledVariables: comparableVariables(environment.disabledVariables),
   });
 
+/**
+ * Una suite es su nombre y sus flujos **en orden** —corre en ese orden—, cada uno por su clave.
+ */
+export const suiteContent = (suite: SuiteRow, keys: KeyMap): JsonValue =>
+  json({
+    name: suite.name,
+    description: suite.description,
+    workflows: suite.workflowIds.map((id) => keys.workflow.get(id) ?? DANGLING),
+  });
+
+/**
+ * Un rol, con lo que decide sobre cada endpoint y sobre los otros roles.
+ *
+ * Los permisos van dentro del rol y no como elementos sueltos porque se deciden y se leen así —la
+ * fila de un rol en la matriz—, y un permiso suelto que llega sin su rol no significa nada. Cada
+ * uno se nombra por la clave del endpoint (método y ruta) y cada regla por la clave del otro rol:
+ * los ids son de cada proyecto. De las reglas entre roles, cada una va en el rol de origen.
+ *
+ * La posición no cuenta: es el orden en la pantalla, no una decisión sobre la API.
+ */
+export function roleContent(role: Role, contents: ProjectContents, keys: KeyMap): JsonValue {
+  const permissions: Record<string, JsonValue> = {};
+  for (const permission of contents.rolePermissions) {
+    if (permission.roleId !== role.id) continue;
+    const endpoint = keys.endpoint.get(permission.endpointId);
+    if (endpoint) permissions[endpoint] = { access: permission.access, dataScope: permission.dataScope };
+  }
+  const rules: Record<string, JsonValue> = {};
+  for (const rule of contents.roleRules) {
+    if (rule.sourceRoleId !== role.id) continue;
+    const target = keys.role.get(rule.targetRoleId);
+    if (target) rules[target] = { canRead: rule.canRead, canWrite: rule.canWrite, canDelete: rule.canDelete };
+  }
+  return json({
+    name: role.name,
+    description: role.description,
+    color: role.color,
+    sameRoleDataIsolation: role.sameRoleDataIsolation,
+    permissions,
+    rules,
+  });
+}
+
+/** Una sección es su documento. No hay secretos en ninguna: son muestras, reglas y textos. */
+export const sectionContent = (row: ConfigRow): JsonValue => json(row.data ?? null);
+
 /** La foto de un proyecto con las claves dadas. */
 export function snapshotOf(contents: ProjectContents, keys: KeyMap): ForkSnapshot {
   const snapshot = emptySnapshot();
@@ -200,11 +271,21 @@ export function snapshotOf(contents: ProjectContents, keys: KeyMap): ForkSnapsho
       content: workflowContent(workflow, contents, keys),
     };
   }
+  for (const suite of contents.suites) {
+    snapshot.suite[keys.suite.get(suite.id)!] = { label: suite.name, content: suiteContent(suite, keys) };
+  }
   for (const environment of contents.environments) {
     snapshot.environment[keys.environment.get(environment.id)!] = {
       label: environment.name,
       content: environmentContent(environment),
     };
+  }
+  for (const role of contents.roles) {
+    snapshot.role[keys.role.get(role.id)!] = { label: role.name, content: roleContent(role, contents, keys) };
+  }
+  for (const row of contents.sections) {
+    if (!syncedSection(row.section)) continue;
+    snapshot.section[row.section] = { label: row.section, content: sectionContent(row) };
   }
   return snapshot;
 }

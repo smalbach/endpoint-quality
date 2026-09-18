@@ -33,6 +33,8 @@ import { ForkSync } from "../fork-sync";
 import { freeSlug } from "./create-project";
 import { ownedProject } from "./update-project";
 
+type Contents = Awaited<ReturnType<ForkSync["contents"]>>;
+
 export type ForkProjectInput = { name?: string; description?: string };
 
 export class ForkProjectCommand implements ICommand {
@@ -121,7 +123,7 @@ export class ForkProjectHandler implements ICommandHandler<ForkProjectCommand, F
     await this.projects.save(project);
 
     project = { ...project, activeSpecVersionId: await this.copyContract(parent, project.id) };
-    result.copied.sections = await this.copySections(parent.id, project.id, actorId, now);
+    result.copied.sections = await this.copySections(contents, project.id, actorId, now);
 
     const endpointIds = new Map<string, string>();
     const endpoints = contents.endpoints.map((endpoint) => {
@@ -152,9 +154,8 @@ export class ForkProjectHandler implements ICommandHandler<ForkProjectCommand, F
       }));
     if (examples.length) await this.examples.saveMany(examples);
 
-    result.copied.roles = await this.copyRoles(parent.id, project.id, endpointIds, actorId, now);
-
     const lineage = emptyLineage();
+    result.copied.roles = await this.copyRoles(contents, project.id, endpointIds, actorId, now, lineage);
     await this.copyFlows(contents, project.id, actorId, now, lineage, result);
     const environmentIds = await this.copyEnvironments(contents, project.id, now, lineage, result);
     if (parent.activeEnvironmentId)
@@ -196,28 +197,31 @@ export class ForkProjectHandler implements ICommandHandler<ForkProjectCommand, F
   }
 
   /** Todas menos `implemented`, que es un hecho sobre el código de un proyecto y no una decisión. */
-  private async copySections(parentId: string, projectId: string, actorId: string, now: Date): Promise<number> {
-    const rows = (await this.config.listSections(parentId)).filter((row) => row.section !== "implemented");
+  private async copySections(contents: Contents, projectId: string, actorId: string, now: Date): Promise<number> {
+    const rows = contents.sections.filter((row) => row.section !== "implemented");
     for (const row of rows) await this.config.saveSection({ ...row, projectId, updatedAt: now, updatedBy: actorId });
     return rows.length;
   }
 
+  /** Los roles con sus permisos y sus reglas, y cada rol en el linaje: desde ahora se sincronizan. */
   private async copyRoles(
-    parentId: string,
+    contents: Contents,
     projectId: string,
     endpointIds: Map<string, string>,
     actorId: string,
     now: Date,
+    lineage: Lineage,
   ): Promise<number> {
-    const roles = await this.roles.list(parentId);
+    const roles = contents.roles;
     if (!roles.length) return 0;
     const roleIds = new Map<string, string>();
     for (const role of roles) {
       const id = randomUUID();
       roleIds.set(role.id, id);
+      lineage.role.push({ parentId: role.id, forkId: id });
       await this.roles.save({ ...role, id, projectId, createdAt: now, updatedAt: now });
     }
-    const permissions = (await this.roles.listPermissions(parentId))
+    const permissions = contents.rolePermissions
       .filter((permission) => roleIds.has(permission.roleId) && endpointIds.has(permission.endpointId))
       .map((permission) => ({
         ...permission,
@@ -225,7 +229,7 @@ export class ForkProjectHandler implements ICommandHandler<ForkProjectCommand, F
         endpointId: endpointIds.get(permission.endpointId)!,
       }));
     if (permissions.length) await this.roles.applyPermissions(permissions);
-    const rules = (await this.roles.listRules(parentId))
+    const rules = contents.roleRules
       .filter((rule) => roleIds.has(rule.sourceRoleId) && roleIds.has(rule.targetRoleId))
       .map((rule) => ({
         ...rule,
@@ -251,7 +255,7 @@ export class ForkProjectHandler implements ICommandHandler<ForkProjectCommand, F
    * mismo proyecto por otro camino, y un flujo sin sus filas no se puede correr igual que el suyo.
    */
   private async copyFlows(
-    contents: Awaited<ReturnType<ForkSync["contents"]>>,
+    contents: Contents,
     projectId: string,
     actorId: string,
     now: Date,
@@ -331,9 +335,11 @@ export class ForkProjectHandler implements ICommandHandler<ForkProjectCommand, F
     }
 
     for (const suite of contents.suites) {
+      const id = randomUUID();
+      lineage.suite.push({ parentId: suite.id, forkId: id });
       await this.workflows.saveSuite({
         ...suite,
-        id: randomUUID(),
+        id,
         projectId,
         workflowIds: suite.workflowIds.map((id) => workflowIds.get(id)).filter((id): id is string => Boolean(id)),
         createdAt: now,
@@ -346,7 +352,7 @@ export class ForkProjectHandler implements ICommandHandler<ForkProjectCommand, F
 
   /** El destino y sus variables, sin nada que sea un secreto. Devuelve id del original → id nuevo. */
   private async copyEnvironments(
-    contents: Awaited<ReturnType<ForkSync["contents"]>>,
+    contents: Contents,
     projectId: string,
     now: Date,
     lineage: Lineage,

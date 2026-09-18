@@ -87,8 +87,12 @@ import {
 import { INVITATION_REPOSITORY, MEMBERSHIP_REPOSITORY, ORGANIZATION_REPOSITORY } from "@/modules/iam/domain/ports";
 import { OrganizationsController } from "@/modules/iam/presentation/organizations.controller";
 import { IAM_COMMAND_HANDLERS, IAM_QUERY_HANDLERS } from "@/modules/iam/iam.module";
-import { PROJECT_FORK_REPOSITORY, PROJECT_REPOSITORY } from "@/modules/projects/domain/ports";
-import { InMemoryProjectForkRepository } from "./in-memory-forks";
+import {
+  MERGE_REQUEST_REPOSITORY,
+  PROJECT_FORK_REPOSITORY,
+  PROJECT_REPOSITORY,
+} from "@/modules/projects/domain/ports";
+import { InMemoryMergeRequestRepository, InMemoryProjectForkRepository } from "./in-memory-forks";
 import { ProjectsController } from "@/modules/projects/presentation/projects.controller";
 import { PROJECT_COMMAND_HANDLERS, PROJECT_QUERY_HANDLERS, PROJECT_SERVICES } from "@/modules/projects/projects.module";
 import { SPEC_REPOSITORY } from "@/modules/specs/domain/ports";
@@ -307,6 +311,7 @@ export type TestContext = {
     channelSessions: InMemoryChannelSessionRepository;
     channelProtos: InMemoryChannelProtoRepository;
     captures: InMemoryCaptureRepository;
+    mergeRequests: InMemoryMergeRequestRepository;
     forks: InMemoryProjectForkRepository;
   };
   http: StubSafeFetch;
@@ -353,6 +358,7 @@ export async function createTestApp(): Promise<TestContext> {
     channelSessions: new InMemoryChannelSessionRepository(),
     channelProtos: new InMemoryChannelProtoRepository(),
     captures: new InMemoryCaptureRepository(),
+    mergeRequests: new InMemoryMergeRequestRepository(),
   };
   const forks = new InMemoryProjectForkRepository(repositories);
   const allRepositories = { ...repositories, forks };
@@ -412,6 +418,7 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: INVITATION_REPOSITORY, useValue: repositories.invitations },
       { provide: PROJECT_REPOSITORY, useValue: repositories.projects },
       { provide: PROJECT_FORK_REPOSITORY, useValue: forks },
+      { provide: MERGE_REQUEST_REPOSITORY, useValue: repositories.mergeRequests },
       { provide: SPEC_REPOSITORY, useValue: repositories.specs },
       { provide: SAFE_FETCH, useValue: http },
       { provide: RUN_REPOSITORY, useValue: repositories.runs },

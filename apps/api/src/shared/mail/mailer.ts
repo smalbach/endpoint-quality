@@ -179,3 +179,36 @@ export function passwordResetMail(input: { name: string; link: string; minutes: 
     text: `${lines.join("\n\n")}\n\n${input.link}`,
   };
 }
+
+/**
+ * El aviso a quien pidió una fusión de que alguien decidió sobre ella.
+ *
+ * Dice qué solicitud, entre qué proyectos, quién y qué hizo. **No lleva** la comparación ni los
+ * comentarios: citan cabeceras, cuerpos y scripts de los proyectos, y un correo se reenvía y se
+ * archiva. El detalle está detrás del enlace, con sesión y permisos.
+ */
+export function mergeRequestMail(input: {
+  title: string;
+  fork: string;
+  parent: string;
+  actor: string;
+  kind: "comment" | "approved" | "declined" | "merged" | "closed";
+  link: string;
+}): Omit<Mail, "to"> {
+  const verb: Record<typeof input.kind, string> = {
+    comment: "comentó",
+    approved: "aprobó",
+    declined: "rechazó",
+    merged: "fusionó",
+    closed: "retiró",
+  };
+  const lines = [
+    `${input.actor} ${verb[input.kind]} tu solicitud «${input.title}», de «${input.fork}» a «${input.parent}».`,
+    "Este aviso no lleva la comparación ni los comentarios: están en la solicitud.",
+  ];
+  return {
+    subject: `Tu solicitud «${input.title}»: ${verb[input.kind]} por ${input.actor}`,
+    html: layout("Solicitud de fusión", lines, { label: "Ver la solicitud", href: input.link }),
+    text: `${lines.join("\n\n")}\n\n${input.link}`,
+  };
+}

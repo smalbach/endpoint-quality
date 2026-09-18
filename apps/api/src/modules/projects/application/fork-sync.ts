@@ -1,14 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
-import type { RequestAuth, WorkflowDocument } from "@eq/runner-core";
+import { safeParseSection, type ConfigSection, type RequestAuth, type WorkflowDocument } from "@eq/runner-core";
 
 import { ConflictError } from "@/shared/errors/domain-error";
+import { CONFIG_REPOSITORY, type ConfigRepositoryPort, type ConfigRow } from "@/modules/config/domain/ports";
 import { ENDPOINT_REPOSITORY, type EndpointRepositoryPort } from "@/modules/endpoints/domain/ports";
 import type { Endpoint } from "@/modules/endpoints/domain/model";
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
 import type { Environment, EnvironmentVariables } from "@/modules/environments/domain/model";
 import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
-import type { DatasetRow, RequestTemplateRow, WorkflowRow } from "@/modules/workflows/domain/model";
+import type { DatasetRow, RequestTemplateRow, SuiteRow, WorkflowRow } from "@/modules/workflows/domain/model";
+import { ROLE_REPOSITORY, type RoleRepositoryPort } from "@/modules/roles/domain/ports";
+import type { Role, RolePermission, RoleRule } from "@/modules/roles/domain/model";
+import { deriveAccess, readAccess } from "@/modules/roles/domain/derive-access";
 import { isSecretParam, redactAuth, withoutLiteralSecrets } from "@/modules/workflows/domain/postman-auth";
 import type { Project } from "../domain/model";
 import {
@@ -17,9 +21,19 @@ import {
   type ProjectForkRepositoryPort,
   type ProjectRepositoryPort,
 } from "../domain/ports";
-import type { ForkWritePlan, Lineage, LinkedKind, ProjectContents, ProjectFork } from "../domain/fork";
+import {
+  completeLineage,
+  LINKED_KINDS,
+  type ForkWritePlan,
+  type Lineage,
+  type LinkedKind,
+  type ProjectContents,
+  type ProjectFork,
+} from "../domain/fork";
 import {
   diffToken,
+  MERGE_KINDS,
+  withAllKinds,
   threeWayDiff,
   winner,
   type DiffEntry,
@@ -27,7 +41,7 @@ import {
   type MergeKind,
   type Resolutions,
 } from "../domain/fork-merge";
-import { forkKeys, parentKeys, snapshotOf, type KeyMap } from "../domain/fork-snapshot";
+import { forkKeys, parentKeys, snapshotOf, syncedSection, type KeyMap } from "../domain/fork-snapshot";
 import { uniqueName } from "../domain/copying";
 import { ownedProject } from "./commands/update-project";
 
@@ -58,8 +72,6 @@ export type SyncOutcome = {
   skipped: SyncSkip[];
 };
 
-const LINKED: LinkedKind[] = ["template", "workflow", "environment"];
-
 /**
  * Comparar una bifurcación con su original y convertir las decisiones en un plan de escritura.
  *
@@ -76,18 +88,46 @@ export class ForkSync {
     @Inject(ENDPOINT_REPOSITORY) private readonly endpoints: EndpointRepositoryPort,
     @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
     @Inject(ENVIRONMENT_REPOSITORY) private readonly environments: EnvironmentRepositoryPort,
+    @Inject(ROLE_REPOSITORY) private readonly roles: RoleRepositoryPort,
+    @Inject(CONFIG_REPOSITORY) private readonly config: ConfigRepositoryPort,
   ) {}
 
   async contents(projectId: string): Promise<ProjectContents> {
-    const [endpoints, templates, workflows, datasets, suites, environments] = await Promise.all([
+    const [
+      endpoints,
+      templates,
+      workflows,
+      datasets,
+      suites,
+      environments,
+      roles,
+      rolePermissions,
+      roleRules,
+      sections,
+    ] = await Promise.all([
       this.endpoints.listAll(projectId),
       this.workflows.listTemplates(projectId),
       this.workflows.listWorkflows(projectId),
       this.workflows.listDatasets(projectId),
       this.workflows.listSuites(projectId),
       this.environments.listForProject(projectId),
+      this.roles.list(projectId),
+      this.roles.listPermissions(projectId),
+      this.roles.listRules(projectId),
+      this.config.listSections(projectId),
     ]);
-    return { endpoints, templates, workflows, datasets, suites, environments };
+    return {
+      endpoints,
+      templates,
+      workflows,
+      datasets,
+      suites,
+      environments,
+      roles,
+      rolePermissions,
+      roleRules,
+      sections,
+    };
   }
 
   /**
@@ -99,8 +139,10 @@ export class ForkSync {
    */
   async pair(organizationId: string, forkProjectId: string) {
     const forkProject = await ownedProject(this.projects, organizationId, forkProjectId);
-    const fork = await this.forks.findByFork(forkProject.id);
-    if (!fork) throw new ConflictError("Este proyecto no es una bifurcación", "not-a-fork");
+    const stored = await this.forks.findByFork(forkProject.id);
+    if (!stored) throw new ConflictError("Este proyecto no es una bifurcación", "not-a-fork");
+    // Una bifurcación de antes de que se compararan suites, roles y secciones: sin esos tipos.
+    const fork = { ...stored, base: withAllKinds(stored.base), lineage: completeLineage(stored.lineage) };
     const parent = await this.projects.findById(fork.parentProjectId);
     if (!parent || parent.organizationId !== organizationId)
       throw new ConflictError("El proyecto original ya no existe", "fork-parent-gone");
@@ -126,7 +168,7 @@ export class ForkSync {
     };
     const [source, target] = direction === "pull" ? [parentSide, forkSide] : [forkSide, parentSide];
     const lineage = Object.fromEntries(
-      LINKED.map((kind) => [kind, [...fork.lineage[kind], ...implicit[kind]]]),
+      LINKED_KINDS.map((kind) => [kind, [...fork.lineage[kind], ...implicit[kind]]]),
     ) as Lineage;
     return {
       direction,
@@ -173,7 +215,13 @@ export class ForkSync {
   }
 }
 
-type Row = Endpoint | RequestTemplateRow | WorkflowRow | Environment;
+type Row = Endpoint | RequestTemplateRow | WorkflowRow | SuiteRow | Environment | Role | ConfigRow;
+
+/** El id de una fila en su proyecto. Una sección no tiene: su nombre hace de id. */
+const idOf = (row: Row): string => ("id" in row ? row.id : row.section);
+
+const byKind = <T>(make: () => T): Record<MergeKind, T> =>
+  Object.fromEntries(MERGE_KINDS.map((kind) => [kind, make()])) as Record<MergeKind, T>;
 
 /** Lo que una clave nombra en cada lado, por tipo. */
 function rowsByKey(contents: ProjectContents, keys: KeyMap): Record<MergeKind, Map<string, Row>> {
@@ -183,7 +231,12 @@ function rowsByKey(contents: ProjectContents, keys: KeyMap): Record<MergeKind, M
     endpoint: index("endpoint", contents.endpoints),
     template: index("template", contents.templates),
     workflow: index("workflow", contents.workflows),
+    suite: index("suite", contents.suites),
     environment: index("environment", contents.environments),
+    role: index("role", contents.roles),
+    section: new Map(
+      contents.sections.filter((row) => syncedSection(row.section)).map((row) => [row.section, row as Row]),
+    ),
   };
 }
 
@@ -193,25 +246,16 @@ function rowsByKey(contents: ProjectContents, keys: KeyMap): Record<MergeKind, M
  * Primero se decide qué se escribe y con qué id —los flujos nombran pruebas y otros flujos por id,
  * y esos ids tienen que existir antes de reescribir ningún documento—; después se escriben las
  * filas. Lo que no puede hacerse sin romper otra cosa —borrar una prueba que un flujo del destino
- * sigue usando, borrar un flujo que una suite nombra— no se hace, y se dice.
+ * sigue usando, borrar un flujo que una suite nombra, un rol con el nombre de otro— no se hace, y
+ * se dice.
  */
 class PlanBuilder {
   private readonly source: Record<MergeKind, Map<string, Row>>;
   private readonly target: Record<MergeKind, Map<string, Row>>;
   /** Clave → id en el destino después del plan. */
   private readonly targetIds: Record<MergeKind, Map<string, string>>;
-  private readonly writes: Record<MergeKind, Set<string>> = {
-    endpoint: new Set(),
-    template: new Set(),
-    workflow: new Set(),
-    environment: new Set(),
-  };
-  private readonly removals: Record<MergeKind, Set<string>> = {
-    endpoint: new Set(),
-    template: new Set(),
-    workflow: new Set(),
-    environment: new Set(),
-  };
+  private readonly writes = byKind(() => new Set<string>());
+  private readonly removals = byKind(() => new Set<string>());
   private readonly skipped: SyncSkip[] = [];
   private readonly lineage: Lineage;
 
@@ -225,11 +269,11 @@ class PlanBuilder {
     this.targetIds = Object.fromEntries(
       (Object.keys(this.target) as MergeKind[]).map((kind) => [
         kind,
-        new Map([...this.target[kind]].map(([key, row]) => [key, row.id])),
+        new Map([...this.target[kind]].map(([key, row]) => [key, idOf(row)])),
       ]),
     ) as Record<MergeKind, Map<string, string>>;
     this.lineage = Object.fromEntries(
-      LINKED.map((kind) => [kind, comparison.lineage[kind].map((pair) => ({ ...pair }))]),
+      LINKED_KINDS.map((kind) => [kind, comparison.lineage[kind].map((pair) => ({ ...pair }))]),
     ) as Lineage;
   }
 
@@ -239,39 +283,53 @@ class PlanBuilder {
       return;
     }
     this.writes[entry.kind].add(entry.key);
-    if (!this.targetIds[entry.kind].has(entry.key)) this.targetIds[entry.kind].set(entry.key, randomUUID());
+    if (!this.targetIds[entry.kind].has(entry.key))
+      this.targetIds[entry.kind].set(entry.key, entry.kind === "section" ? entry.key : randomUUID());
   }
 
   build(): { plan: ForkWritePlan; outcome: SyncOutcome } {
+    this.dragWorkflows();
     this.guardWorkflowRemovals();
     this.dragTemplates();
     const workflows = this.workflowRows();
     this.guardTemplateRemovals(workflows);
     const templates = this.templateRows();
+    const suites = this.suiteRows();
     const environments = this.environmentRows();
     const datasets = this.datasetRows();
+    const endpoints = this.endpointRows();
+    const roles = this.roleRows();
+    const permissions = this.permissionRows(roles);
+    const rules = this.ruleRows();
+    const sections = this.sectionRows();
+    const access = this.accessSection(roles, permissions, endpoints);
+    if (access) sections.push(access);
     const target = this.comparison.target.project;
     const removed = (kind: MergeKind) =>
-      [...this.removals[kind]].map((key) => this.target[kind].get(key)!.id).filter(Boolean);
+      [...this.removals[kind]].map((key) => idOf(this.target[kind].get(key)!)).filter(Boolean);
 
-    for (const kind of LINKED) {
-      for (const key of this.removals[kind]) this.unlink(kind, { targetId: this.target[kind].get(key)!.id });
+    for (const kind of LINKED_KINDS) {
+      for (const key of this.removals[kind]) this.unlink(kind, { targetId: idOf(this.target[kind].get(key)!) });
       for (const key of this.writes[kind]) {
         if (this.target[kind].has(key)) continue;
-        this.link(kind, this.source[kind].get(key)!.id, this.targetIds[kind].get(key)!);
+        this.link(kind, idOf(this.source[kind].get(key)!), this.targetIds[kind].get(key)!);
       }
     }
 
     const fork = this.nextFork();
     const plan: ForkWritePlan = {
       targetProjectId: target.id,
-      endpoints: { save: this.endpointRows(), remove: removed("endpoint") },
+      endpoints: { save: endpoints, remove: removed("endpoint") },
       templates: { save: templates, remove: removed("template") },
       workflows: { save: workflows, remove: removed("workflow") },
       datasets,
+      suites: { save: suites, remove: removed("suite") },
       environments: { save: environments, remove: removed("environment") },
+      roles: { save: roles, remove: removed("role"), permissions, rules },
+      sections: { save: sections, remove: removed("section") as ConfigSection[] },
       project: this.nextProject(environments),
       fork,
+      expectedVersion: this.comparison.fork.version,
       at: this.now,
     };
     const applied = Object.fromEntries(
@@ -398,13 +456,42 @@ class PlanBuilder {
   }
 
   /**
-   * Un flujo que una suite del destino nombra no se borra: la suite correría menos flujos de los que
-   * dice. Las suites no se sincronizan, así que es el destino quien decide qué hacer con ella.
+   * Una suite que llega trae los flujos que nombra y el destino no tendrá —porque allí se borraron,
+   * o porque el conflicto lo ganó el destino borrándolos—, como un flujo trae sus pruebas: una suite
+   * que llega corriendo menos flujos de los que dice es peor que un flujo que vuelve.
+   */
+  private dragWorkflows(): void {
+    for (const key of this.writes.suite) {
+      const suite = this.source.suite.get(key) as SuiteRow;
+      for (const id of suite.workflowIds) {
+        const workflowKey = this.comparison.source.keys.workflow.get(id);
+        if (!workflowKey || !this.source.workflow.has(workflowKey)) continue;
+        const present = this.targetIds.workflow.has(workflowKey) && !this.removals.workflow.has(workflowKey);
+        if (present) continue;
+        this.removals.workflow.delete(workflowKey);
+        this.writes.workflow.add(workflowKey);
+        if (!this.targetIds.workflow.has(workflowKey)) this.targetIds.workflow.set(workflowKey, randomUUID());
+        this.skipped.push({
+          what: "flujo",
+          detail: `${(this.source.workflow.get(workflowKey) as WorkflowRow).name}: vino con la suite ${suite.name}, que lo corre`,
+        });
+      }
+    }
+  }
+
+  /**
+   * Un flujo que una suite del destino seguirá nombrando no se borra: la suite correría menos flujos
+   * de los que dice. Las suites que se reescriben o se borran con este plan no cuentan —las que
+   * llegan ya trajeron los suyos—.
    */
   private guardWorkflowRemovals(): void {
+    const staying = this.comparison.target.contents.suites.filter((row) => {
+      const key = this.comparison.target.keys.suite.get(row.id)!;
+      return !this.writes.suite.has(key) && !this.removals.suite.has(key);
+    });
     for (const key of [...this.removals.workflow]) {
       const workflow = this.target.workflow.get(key) as WorkflowRow;
-      const suite = this.comparison.target.contents.suites.find((row) => row.workflowIds.includes(workflow.id));
+      const suite = staying.find((row) => row.workflowIds.includes(workflow.id));
       if (!suite) continue;
       this.removals.workflow.delete(key);
       this.skipped.push({ what: "flujo", detail: `${workflow.name}: no se borró, la suite ${suite.name} lo usa` });
@@ -423,14 +510,194 @@ class PlanBuilder {
     ];
     const used = new Set(remaining.flatMap((row) => row.definition.steps.map((step) => step.requestTemplateId)));
     for (const key of [...this.removals.template]) {
-      const row = this.target.template.get(key)!;
+      const row = this.target.template.get(key) as RequestTemplateRow;
       if (!used.has(row.id)) continue;
       this.removals.template.delete(key);
       this.skipped.push({
         what: "prueba",
-        detail: `${(row as RequestTemplateRow).name}: no se borró, un flujo la usa`,
+        detail: `${row.name}: no se borró, un flujo la usa`,
       });
     }
+  }
+
+  /** Las suites, con sus flujos traducidos a los ids del destino y en el mismo orden. */
+  private suiteRows(): SuiteRow[] {
+    const taken = this.namesAfter("suite");
+    return [...this.writes.suite].map((key) => {
+      const source = this.source.suite.get(key) as SuiteRow;
+      const current = this.target.suite.get(key) as SuiteRow | undefined;
+      const workflowIds: string[] = [];
+      for (const id of source.workflowIds) {
+        const workflowKey = this.comparison.source.keys.workflow.get(id);
+        const targetId =
+          workflowKey && !this.removals.workflow.has(workflowKey)
+            ? this.targetIds.workflow.get(workflowKey)
+            : undefined;
+        if (targetId) workflowIds.push(targetId);
+        else
+          this.skipped.push({ what: "suite", detail: `${source.name}: nombraba un flujo que ya no existe y se quitó` });
+      }
+      return {
+        ...source,
+        id: this.targetIds.suite.get(key)!,
+        projectId: this.comparison.target.project.id,
+        name: this.freeName("suite", source.name, current?.name, taken),
+        workflowIds,
+        createdAt: current?.createdAt ?? this.now,
+        updatedAt: this.now,
+        updatedBy: this.actorId,
+      };
+    });
+  }
+
+  /**
+   * Los roles. El nombre no se numera como el de un flujo: un rol se nombra en las credenciales y en
+   * la matriz, y «admin (2)» ni cabe en sus reglas ni querría decir nada. Si el destino ya tiene
+   * otro rol con ese nombre, este no se trae, y se dice.
+   */
+  private roleRows(): Role[] {
+    const taken = this.namesAfter("role");
+    let position = this.comparison.target.contents.roles.reduce((max, row) => Math.max(max, row.position), -1) + 1;
+    const rows: Role[] = [];
+    for (const key of [...this.writes.role]) {
+      const source = this.source.role.get(key) as Role;
+      const current = this.target.role.get(key) as Role | undefined;
+      if (taken.has(source.name)) {
+        this.writes.role.delete(key);
+        if (!current) this.targetIds.role.delete(key);
+        this.skipped.push({ what: "rol", detail: `${source.name}: el destino ya tiene otro rol con ese nombre` });
+        continue;
+      }
+      taken.add(source.name);
+      rows.push({
+        ...source,
+        id: this.targetIds.role.get(key)!,
+        projectId: this.comparison.target.project.id,
+        position: current?.position ?? position++,
+        createdAt: current?.createdAt ?? this.now,
+        updatedAt: this.now,
+      });
+    }
+    return rows;
+  }
+
+  /**
+   * Los permisos de cada rol que se reescribe: los suyos del destino se borran y se escriben los del
+   * origen, cada uno sobre el endpoint del destino con el mismo método y ruta. Un permiso sobre un
+   * endpoint que el destino no tendrá no tiene dónde ir.
+   */
+  private permissionRows(roles: Role[]): ForkWritePlan["roles"]["permissions"] {
+    const clear = roles.filter((role) => this.comparison.target.contents.roles.some((row) => row.id === role.id));
+    const save: RolePermission[] = [];
+    for (const key of this.writes.role) {
+      const source = this.source.role.get(key) as Role;
+      const roleId = this.targetIds.role.get(key)!;
+      let lost = 0;
+      for (const permission of this.comparison.source.contents.rolePermissions) {
+        if (permission.roleId !== source.id) continue;
+        const endpointKey = this.comparison.source.keys.endpoint.get(permission.endpointId);
+        const endpointId =
+          endpointKey && !this.removals.endpoint.has(endpointKey)
+            ? this.targetIds.endpoint.get(endpointKey)
+            : undefined;
+        if (endpointId) save.push({ ...permission, roleId, endpointId });
+        else lost += 1;
+      }
+      if (lost)
+        this.skipped.push({
+          what: "rol",
+          detail: `${source.name}: ${lost} permiso(s) sobre endpoints que el destino no tiene`,
+        });
+    }
+    return { clear: clear.map((role) => role.id), save };
+  }
+
+  /**
+   * Las reglas entre roles, enteras, si algún rol cambia: las del destino cuyo rol de origen no se
+   * toca, más las de cada rol que llega. Una regla hacia un rol que el destino no tendrá se cae.
+   */
+  private ruleRows(): RoleRule[] | null {
+    if (!this.writes.role.size && !this.removals.role.size) return null;
+    const projectId = this.comparison.target.project.id;
+    const gone = new Set([...this.removals.role].map((key) => idOf(this.target.role.get(key)!)));
+    const rewritten = new Set([...this.writes.role].map((key) => this.targetIds.role.get(key)!));
+    const rules = this.comparison.target.contents.roleRules.filter(
+      (rule) => !rewritten.has(rule.sourceRoleId) && !gone.has(rule.sourceRoleId) && !gone.has(rule.targetRoleId),
+    );
+    const present = (key: string | undefined) =>
+      key && !this.removals.role.has(key) ? this.targetIds.role.get(key) : undefined;
+    for (const key of this.writes.role) {
+      const source = this.source.role.get(key) as Role;
+      for (const rule of this.comparison.source.contents.roleRules) {
+        if (rule.sourceRoleId !== source.id) continue;
+        const targetRoleId = present(this.comparison.source.keys.role.get(rule.targetRoleId));
+        if (!targetRoleId) {
+          this.skipped.push({ what: "rol", detail: `${source.name}: una regla hacia un rol que el destino no tiene` });
+          continue;
+        }
+        rules.push({ ...rule, projectId, sourceRoleId: this.targetIds.role.get(key)!, targetRoleId });
+      }
+    }
+    return rules;
+  }
+
+  private sectionRows(): ConfigRow[] {
+    return [...this.writes.section].map((key) => ({
+      projectId: this.comparison.target.project.id,
+      section: key as ConfigSection,
+      data: (this.source.section.get(key) as ConfigRow).data,
+      updatedAt: this.now,
+      updatedBy: this.actorId,
+    }));
+  }
+
+  /**
+   * La sección `access` del destino, derivada otra vez de los roles que tendrá, como la deriva
+   * cualquier cambio en la pantalla de roles: con lo que el destino tenga de ella que no sale de los
+   * roles —los estados de rechazo, las reglas cruzadas— y con cada rol renombrado renombrado también
+   * ahí. Solo si algún rol cambia.
+   */
+  private accessSection(roles: Role[], permissions: ForkWritePlan["roles"]["permissions"], written: Endpoint[]) {
+    if (!this.writes.role.size && !this.removals.role.size) return null;
+    const target = this.comparison.target.contents;
+    const gone = new Set([...this.removals.role].map((key) => idOf(this.target.role.get(key)!)));
+    const rewritten = new Set(roles.map((role) => role.id));
+    const finalRoles = [...target.roles.filter((row) => !gone.has(row.id) && !rewritten.has(row.id)), ...roles].sort(
+      (left, right) => left.position - right.position,
+    );
+    const cleared = new Set(permissions.clear);
+    const finalPermissions = [
+      ...target.rolePermissions.filter((row) => !gone.has(row.roleId) && !cleared.has(row.roleId)),
+      ...permissions.save,
+    ];
+    const removedEndpoints = new Set([...this.removals.endpoint].map((key) => idOf(this.target.endpoint.get(key)!)));
+    const writtenIds = new Set(written.map((row) => row.id));
+    const finalEndpoints = [
+      ...target.endpoints.filter((row) => !removedEndpoints.has(row.id) && !writtenIds.has(row.id)),
+      ...written,
+    ];
+    const stored = target.sections.find((row) => row.section === "access");
+    if (!stored && !finalRoles.length) return null;
+    const renamed: Record<string, string> = {};
+    for (const role of roles) {
+      const before = target.roles.find((row) => row.id === role.id);
+      if (before && before.name !== role.name) renamed[before.name] = role.name;
+    }
+    const data = {
+      access: deriveAccess(readAccess(stored?.data), finalRoles, finalPermissions, finalEndpoints, renamed),
+    };
+    if (!safeParseSection("access", data).ok) {
+      this.skipped.push({ what: "sección", detail: "access: no se pudo derivar de los roles; revísala en Roles" });
+      return null;
+    }
+    const row: ConfigRow = {
+      projectId: this.comparison.target.project.id,
+      section: "access",
+      data,
+      updatedAt: this.now,
+      updatedBy: this.actorId,
+    };
+    return row;
   }
 
   /**
@@ -442,7 +709,7 @@ class PlanBuilder {
     const remove: string[] = [];
     const targetProject = this.comparison.target.project.id;
     for (const key of this.writes.workflow) {
-      const sourceId = this.source.workflow.get(key)!.id;
+      const sourceId = idOf(this.source.workflow.get(key)!);
       const targetId = this.targetIds.workflow.get(key)!;
       const current = new Map(
         this.comparison.target.contents.datasets
@@ -465,7 +732,7 @@ class PlanBuilder {
       remove.push(...[...current.values()].map((row) => row.id));
     }
     for (const key of this.removals.workflow) {
-      const id = this.target.workflow.get(key)!.id;
+      const id = idOf(this.target.workflow.get(key)!);
       remove.push(
         ...this.comparison.target.contents.datasets.filter((row) => row.workflowId === id).map((row) => row.id),
       );
@@ -521,7 +788,7 @@ class PlanBuilder {
   /** El entorno activo sigue apuntando a uno que existe, como lo mantienen los comandos de entornos. */
   private nextProject(written: Environment[]): Project | null {
     const project = this.comparison.target.project;
-    const removed = new Set([...this.removals.environment].map((key) => this.target.environment.get(key)!.id));
+    const removed = new Set([...this.removals.environment].map((key) => idOf(this.target.environment.get(key)!)));
     const remaining = [
       ...this.comparison.target.contents.environments.filter((row) => !removed.has(row.id)),
       ...written.filter((row) => !this.comparison.target.contents.environments.some((old) => old.id === row.id)),

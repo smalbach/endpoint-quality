@@ -108,6 +108,21 @@ export class SyncForkDto {
   @IsOptional() @IsObject() resolutions?: Record<string, "source" | "target">;
 }
 
+/** Una solicitud de fusión: qué se pide, dicho por quien lo pide. Lo que se lleva sale de la comparación. */
+export class CreateMergeRequestDto {
+  @IsString() @MaxLength(200) title: string;
+  @IsOptional() @IsString() @MaxLength(10_000) description?: string;
+}
+
+export class MergeRequestCommentDto {
+  @IsString() @MaxLength(10_000) body: string;
+}
+
+/** Aprobar, rechazar o retirar, con un comentario opcional que va en la misma línea del hilo. */
+export class MergeRequestReviewDto {
+  @IsOptional() @IsString() @MaxLength(10_000) body?: string;
+}
+
 /** Element-by-element import: exactly which endpoints, flows and environments to bring. */
 export class ImportElementsDto {
   @IsUUID() sourceProjectId: string;

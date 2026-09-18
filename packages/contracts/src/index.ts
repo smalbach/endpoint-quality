@@ -2086,7 +2086,7 @@ export type ForkCreatedView = {
   skipped: { what: string; detail: string }[];
 };
 
-export type ForkMergeKind = "endpoint" | "template" | "workflow" | "environment";
+export type ForkMergeKind = "endpoint" | "template" | "workflow" | "suite" | "environment" | "role" | "section";
 export type ForkChange = "none" | "added" | "modified" | "deleted";
 /** `incoming` se aplica, `kept` se queda en el destino, `same` coincide y `conflict` pide elegir. */
 export type ForkDiffStatus = "incoming" | "kept" | "same" | "conflict";
@@ -2119,6 +2119,55 @@ export type ForkSyncOutcomeView = {
   version: number;
   applied: Record<ForkMergeKind, number>;
   skipped: { what: string; detail: string }[];
+};
+
+/** `open` y `approved` esperan una decisión; las otras tres ya la tienen. */
+export type MergeRequestStatus = "open" | "approved" | "merged" | "declined" | "closed";
+export type MergeRequestEventKind = "comment" | "approved" | "declined" | "merged" | "closed";
+
+/** Una solicitud de fusión en una lista: sin la comparación, que puede ser larga. */
+export type MergeRequestSummaryView = {
+  id: string;
+  title: string;
+  status: MergeRequestStatus;
+  fork: { id: string; name: string };
+  parent: { id: string; name: string };
+  author: { id: string; name: string };
+  createdAt: string;
+  updatedAt: string;
+  /** Cuántos elementos pedía llevar al crearla, y cuántos de ellos eran conflictos. */
+  changes: number;
+  conflicts: number;
+  comments: number;
+  approvals: number;
+};
+
+export type MergeRequestEventView = {
+  id: string;
+  kind: MergeRequestEventKind;
+  author: { id: string; name: string };
+  body: string;
+  createdAt: string;
+};
+
+export type MergeRequestDetailView = MergeRequestSummaryView & {
+  description: string;
+  /** La comparación tal como estaba al crearla: lo que se pidió. */
+  requested: ForkDiffEntryView[];
+  /** La versión de la bifurcación entonces. */
+  requestedVersion: number;
+  decidedAt: string | null;
+  mergedVersion: number | null;
+  events: MergeRequestEventView[];
+  /**
+   * Lo que se aplicaría ahora, recalculado en cada lectura: es lo que se fusiona, con su huella.
+   * `null` si ya no está pendiente o si uno de los dos proyectos ya no se puede comparar
+   * (`unavailable` dice por qué).
+   */
+  current: ForkDiffView | null;
+  unavailable: string | null;
+  /** Lo que quien la lee puede hacer con ella ahora mismo. */
+  can: { approve: boolean; decline: boolean; close: boolean; merge: boolean; comment: boolean };
 };
 
 // ---------------------------------------------------------------------------------------------
