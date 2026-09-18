@@ -43,7 +43,7 @@ import {
   type ProjectBundle,
 } from "../../domain/project-bundle";
 import { ownedProject } from "./update-project";
-import { uniqueName } from "./copy-from-project";
+import { uniqueName } from "../../domain/copying";
 import { redactAuth, withoutLiteralSecrets } from "@/modules/workflows/domain/postman-auth";
 
 export class ImportProjectBundleCommand implements ICommand {

@@ -8,7 +8,12 @@ import { SPEC_REPOSITORY, type SpecRepositoryPort } from "@/modules/specs/domain
 import { RUN_REPOSITORY, type RunRepositoryPort } from "@/modules/runs/domain/ports";
 import type { Project } from "../../domain/model";
 import { viewProjectAuth } from "../../domain/project-auth";
-import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "../../domain/ports";
+import {
+  PROJECT_FORK_REPOSITORY,
+  PROJECT_REPOSITORY,
+  type ProjectForkRepositoryPort,
+  type ProjectRepositoryPort,
+} from "../../domain/ports";
 
 export class ListProjectsQuery implements IQuery {
   constructor(
@@ -33,11 +38,12 @@ export class ListProjectsHandler implements IQueryHandler<ListProjectsQuery, Pro
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(SPEC_REPOSITORY) private readonly specs: SpecRepositoryPort,
     @Inject(RUN_REPOSITORY) private readonly runs: RunRepositoryPort,
+    @Inject(PROJECT_FORK_REPOSITORY) private readonly forks: ProjectForkRepositoryPort,
   ) {}
 
   async execute(query: ListProjectsQuery): Promise<ProjectSummary[]> {
     const projects = await this.projects.listForOrganization(query.organizationId, query.includeArchived);
-    return Promise.all(projects.map((project) => summarize(project, this.specs, this.runs)));
+    return Promise.all(projects.map((project) => summarize(project, this.specs, this.runs, this.forks, this.projects)));
   }
 }
 
@@ -47,13 +53,14 @@ export class GetProjectHandler implements IQueryHandler<GetProjectQuery, Project
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(SPEC_REPOSITORY) private readonly specs: SpecRepositoryPort,
     @Inject(RUN_REPOSITORY) private readonly runs: RunRepositoryPort,
+    @Inject(PROJECT_FORK_REPOSITORY) private readonly forks: ProjectForkRepositoryPort,
   ) {}
 
   async execute(query: GetProjectQuery): Promise<ProjectSummary> {
     const project = await this.projects.findById(query.projectId);
     if (!project || project.organizationId !== query.organizationId)
       throw new NotFoundError("El proyecto no existe", "project-not-found");
-    return summarize(project, this.specs, this.runs);
+    return summarize(project, this.specs, this.runs, this.forks, this.projects);
   }
 }
 
@@ -61,6 +68,8 @@ async function summarize(
   project: Project,
   specs: SpecRepositoryPort,
   runs: RunRepositoryPort,
+  forks: ProjectForkRepositoryPort,
+  projects: ProjectRepositoryPort,
 ): Promise<ProjectSummary> {
   // The latest run, whatever it was — a matrix, a flow or a suite — is what the card says the
   // project's health is. The analyzer showed three figures; security and performance join this one
@@ -70,6 +79,10 @@ async function summarize(
   // first import, because importing can fail and losing the project with it helps nobody.
   const active = project.activeSpecVersionId ? await specs.findVersionById(project.activeSpecVersionId) : null;
   const source = await specs.findLatestSource(project.id);
+  const fork = await forks.findByFork(project.id);
+  // El nombre del original, si sigue estando y es de esta organización. Uno borrado no se nombra:
+  // la insignia dice que el original ya no está, que es lo que alguien puede hacer algo con ello.
+  const parent = fork ? await projects.findById(fork.parentProjectId) : null;
   return {
     id: project.id,
     name: project.name,
@@ -100,6 +113,15 @@ async function summarize(
       : null,
     source: source
       ? { kind: source.kind, location: source.location, headersStored: source.headersCiphertext !== null }
+      : null,
+    fork: fork
+      ? {
+          parentProjectId: fork.parentProjectId,
+          parentName: parent && parent.organizationId === project.organizationId ? parent.name : null,
+          forkedAt: fork.createdAt,
+          syncedAt: fork.syncedAt,
+          version: fork.version,
+        }
       : null,
   };
 }

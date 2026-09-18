@@ -120,6 +120,16 @@ export type ProjectSummaryOf<T> = {
   /** Null is a real state and the UI renders it: a project exists before its first import. */
   contract: ContractSummaryOf<T> | null;
   source: SpecSourceSummary | null;
+  /** De qué proyecto salió, si es una bifurcación. `parentName` es null si el original ya no está. */
+  fork: ProjectForkSummaryOf<T> | null;
+};
+
+export type ProjectForkSummaryOf<T> = {
+  parentProjectId: string;
+  parentName: string | null;
+  forkedAt: T;
+  syncedAt: T;
+  version: number;
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -2021,6 +2031,61 @@ export type ImportElementsResultView = {
 };
 
 // ---------------------------------------------------------------------------------------------
+// Forks: bifurcar, traer cambios y fusionar
+// ---------------------------------------------------------------------------------------------
+
+/** Lo que nace al bifurcar, y lo que se quedó en el original a propósito. */
+export type ForkCreatedView = {
+  projectId: string;
+  slug: string;
+  copied: {
+    endpoints: number;
+    requestTemplates: number;
+    workflows: number;
+    suites: number;
+    environments: number;
+    roles: number;
+    sections: number;
+  };
+  skipped: { what: string; detail: string }[];
+};
+
+export type ForkMergeKind = "endpoint" | "template" | "workflow" | "environment";
+export type ForkChange = "none" | "added" | "modified" | "deleted";
+/** `incoming` se aplica, `kept` se queda en el destino, `same` coincide y `conflict` pide elegir. */
+export type ForkDiffStatus = "incoming" | "kept" | "same" | "conflict";
+export type ForkFieldChange = { path: string; base?: unknown; source?: unknown; target?: unknown };
+
+export type ForkDiffEntryView = {
+  kind: ForkMergeKind;
+  key: string;
+  label: string;
+  sourceChange: ForkChange;
+  targetChange: ForkChange;
+  status: ForkDiffStatus;
+  fields: ForkFieldChange[];
+};
+
+/** Una comparación a tres bandas: origen → destino, contra la última foto común. */
+export type ForkDiffView = {
+  direction: "pull" | "merge";
+  /** Se devuelve al aplicar: si alguno de los dos proyectos cambió entretanto, es un 409. */
+  token: string;
+  version: number;
+  syncedAt: string;
+  source: { id: string; name: string };
+  target: { id: string; name: string };
+  entries: ForkDiffEntryView[];
+};
+
+export type ForkSyncOutcomeView = {
+  direction: "pull" | "merge";
+  version: number;
+  applied: Record<ForkMergeKind, number>;
+  skipped: { what: string; detail: string }[];
+};
+
+// ---------------------------------------------------------------------------------------------
 // Export / import a project as a file
 // ---------------------------------------------------------------------------------------------
 
@@ -2055,6 +2120,7 @@ export type MembersView = MembersViewOf<string>;
 export type ApiTokenView = ApiTokenViewOf<string>;
 export type ContractSummary = ContractSummaryOf<string>;
 export type ProjectSummary = ProjectSummaryOf<string>;
+export type ProjectForkSummary = ProjectForkSummaryOf<string>;
 export type CredentialSummary = CredentialSummaryOf<string>;
 export type Environment = EnvironmentSummaryOf<string>;
 export type RoleView = RoleViewOf<string>;

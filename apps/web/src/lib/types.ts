@@ -182,4 +182,10 @@ export type {
   PostmanExportResult,
   ImportedItemResult,
   ImportKindView,
+  ForkCreatedView,
+  ForkDiffEntryView,
+  ForkDiffView,
+  ForkSyncOutcomeView,
+  ForkFieldChange,
+  ProjectForkSummary,
 } from "@eq/contracts";

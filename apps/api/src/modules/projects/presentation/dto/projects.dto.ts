@@ -91,20 +91,21 @@ export class ImportSpecDto {
   @IsOptional() @IsBoolean() activate?: boolean;
 }
 
+/** Una bifurcación: cómo se llama. Todo lo demás sale del original. */
+export class ForkProjectDto {
+  @IsOptional() @IsString() @MaxLength(200) name?: string;
+  @IsOptional() @IsString() @MaxLength(2000) description?: string;
+}
+
 /**
- * Copiar de otro proyecto de la misma organización.
+ * Aplicar una comparación: la huella de la que se vio, y quién gana en cada conflicto.
  *
- * Which sections come across is a list and not a boolean, because the useful copy is almost never
- * all of it: two projects share an envelope and a set of budgets far more often than they share
- * which operations are implemented, and that last one is a fact about somebody else's code.
+ * `resolutions` es `tipo:clave` → `source` o `target`. Se valida contra la comparación en el
+ * comando, que es quien sabe qué conflictos hay.
  */
-export class CopyFromProjectDto {
-  @IsUUID() sourceProjectId: string;
-  @IsOptional() @IsArray() @IsString({ each: true }) sections?: string[];
-  @IsOptional() @IsBoolean() flows?: boolean;
-  /** Their targets and their variables. **Never their credentials, nor the value of a variable
-   * marked sensitive** — see the command; it says which ones it emptied. */
-  @IsOptional() @IsBoolean() environments?: boolean;
+export class SyncForkDto {
+  @IsString() @MaxLength(64) token: string;
+  @IsOptional() @IsObject() resolutions?: Record<string, "source" | "target">;
 }
 
 /** Element-by-element import: exactly which endpoints, flows and environments to bring. */

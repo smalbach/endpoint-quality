@@ -1,7 +1,7 @@
 /**
  * Importing chosen pieces of another project: pick a source, then tick the endpoints, flows and
- * environments to bring. The whole-project copy is next to it; this is for when only a few pieces
- * are wanted.
+ * environments to bring. Starting from a whole project is forking it, from that project's menu;
+ * this is for when only a few pieces are wanted.
  */
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
