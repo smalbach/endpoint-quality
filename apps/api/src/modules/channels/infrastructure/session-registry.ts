@@ -32,7 +32,7 @@ import { HandshakeRejectedError } from "@/shared/http/safe-socket";
 import { CHANNEL_SESSION_REPOSITORY, type ChannelSessionRepositoryPort } from "../domain/ports";
 import { closeSession, isFinished, isStale, onFrame, onTick, type ChannelSession } from "../domain/session";
 import { ChannelProgressStream } from "./channel-progress.stream";
-import { CHANNEL_TRANSPORT, type ChannelTransportPort, type OpenChannel } from "./ws-transport";
+import { CHANNEL_TRANSPORT, type ChannelListeners, type ChannelTransportPort, type OpenChannel } from "./ws-transport";
 
 /** Cada cuánto se mira el reloj de las sesiones vivas. Decide la precisión de los topes de tiempo. */
 export const TICK_MS = 1_000;
@@ -57,6 +57,13 @@ export type SessionPlan = {
   readOnly: boolean;
   /** Para decirlo con su nombre cuando alguien intente mandar. */
   environmentName: string;
+  /**
+   * La apertura de un protocolo que no es un WebSocket, ya resuelta por quien sabe de él.
+   *
+   * El registro no sabe de gRPC ni tiene por qué: recibe una función que abre y le pasa las mismas
+   * escuchas. Sin ella, se abre un socket con `url`, `headers` y `subprotocols`.
+   */
+  open?: (listeners: ChannelListeners) => Promise<OpenChannel>;
 };
 
 type Live = {
@@ -129,32 +136,42 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
     this.live.set(session.id, entry);
     await this.sessions.save(session);
 
+    const listeners: ChannelListeners = {
+      onOpen: (handshake) => this.frame(session.id, { direction: "open", atMs: this.at(entry), handshake }),
+      onSent: (text) => this.frame(session.id, { direction: "out", atMs: this.at(entry), body: text }),
+      onMessage: (data, binary) =>
+        this.frame(session.id, {
+          direction: "in",
+          atMs: this.at(entry),
+          kind: binary ? "binary" : "text",
+          // Lo binario entra como hexadecimal de lo que quepa: guardar la trama entera es el
+          // mismo motivo por el que un ejemplo tiene tope de cuerpo.
+          body: binary ? data.subarray(0, 256).toString("hex") : data.toString("utf8"),
+          bytes: data.byteLength,
+        }),
+      onClose: (code, reason, trailers) =>
+        this.frame(session.id, {
+          direction: "close",
+          atMs: this.at(entry),
+          closeCode: code,
+          closeReason: reason,
+          trailers,
+        }),
+      onError: (error) => this.frame(session.id, { direction: "error", atMs: this.at(entry), body: error.message }),
+    };
     try {
-      entry.channel = await this.transport.open(
-        plan.url,
-        {
-          headers: plan.headers,
-          subprotocols: plan.subprotocols,
-          maxPayload: plan.limits.maxMessageBytes,
-          handshakeTimeoutMs: Math.min(plan.limits.maxDurationMs, this.env.REQUEST_TIMEOUT_MS),
-        },
-        {
-          onOpen: (handshake) => this.frame(session.id, { direction: "open", atMs: this.at(entry), handshake }),
-          onMessage: (data, binary) =>
-            this.frame(session.id, {
-              direction: "in",
-              atMs: this.at(entry),
-              kind: binary ? "binary" : "text",
-              // Lo binario entra como hexadecimal de lo que quepa: guardar la trama entera es el
-              // mismo motivo por el que un ejemplo tiene tope de cuerpo.
-              body: binary ? data.subarray(0, 256).toString("hex") : data.toString("utf8"),
-              bytes: data.byteLength,
-            }),
-          onClose: (code, reason) =>
-            this.frame(session.id, { direction: "close", atMs: this.at(entry), closeCode: code, closeReason: reason }),
-          onError: (error) => this.frame(session.id, { direction: "error", atMs: this.at(entry), body: error.message }),
-        },
-      );
+      entry.channel = plan.open
+        ? await plan.open(listeners)
+        : await this.transport.open(
+            plan.url,
+            {
+              headers: plan.headers,
+              subprotocols: plan.subprotocols,
+              maxPayload: plan.limits.maxMessageBytes,
+              handshakeTimeoutMs: Math.min(plan.limits.maxDurationMs, this.env.REQUEST_TIMEOUT_MS),
+            },
+            listeners,
+          );
     } catch (error) {
       // No llegó a abrir. Lo que pasó decide de quién es el rojo: la guarda o una URL que no es de
       // socket son `config` —nadie llegó a llamar—, y el resto es `network`, con el estado del
@@ -190,9 +207,19 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
         "writes-not-allowed",
       );
     }
+    entry.channel.check?.(text);
     this.frame(sessionId, { direction: "out", atMs: this.at(entry), body: text });
     entry.channel.send(text);
     await entry.writes;
+  }
+
+  /** Terminar de mandar sin cerrar: el medio cierre de un stream. Quien no lo tiene, lo dice. */
+  end(sessionId: string): void {
+    const entry = this.live.get(sessionId);
+    if (!entry?.channel) throw this.notHere(sessionId);
+    if (!entry.channel.end)
+      throw new ConflictError("Este canal no tiene un envío que terminar: se cierra entero", "channel-no-half-close");
+    entry.channel.end();
   }
 
   async close(sessionId: string, reason: StopReason = "closed-by-us", code = 1000): Promise<ChannelSession> {
@@ -259,8 +286,8 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
         ),
       );
 
-    if (frame.direction === "open" && frame.handshake) {
-      this.stream.publish({ sessionId, type: "open", handshake: frame.handshake });
+    if (frame.direction === "open") {
+      this.stream.publish({ sessionId, type: "open", handshake: session.conversation.handshake });
       entry.writes = entry.writes.then(() => this.sessions.save(entry.session));
     }
     for (const message of added) this.stream.publish({ sessionId, type: "message", message });

@@ -10,7 +10,7 @@ import type { ChannelMessage } from "@eq/runner-core";
  * de `conversation.ts` para por qué eso es estructural y no una nota.
  */
 export type ChannelProgressEvent =
-  | { sessionId: string; type: "open"; handshake: { status: number; headers: Record<string, string> } }
+  | { sessionId: string; type: "open"; handshake: { status: number; headers: Record<string, string> } | null }
   | { sessionId: string; type: "message"; message: ChannelMessage }
   | { sessionId: string; type: "finished"; status: string; stopReason: string | null };
 

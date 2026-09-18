@@ -64,6 +64,11 @@ import {
 } from "@/modules/monitors/monitors.module";
 import { CHANNEL_REPOSITORY, CHANNEL_SESSION_REPOSITORY } from "@/modules/channels/domain/ports";
 import { ChannelsController } from "@/modules/channels/presentation/channels.controller";
+import { GrpcChannelsController } from "@/modules/channels/presentation/grpc.controller";
+import { CHANNEL_PROTO_REPOSITORY } from "@/modules/channels/domain/grpc";
+import { GRPC_TRANSPORT, GrpcChannelTransport } from "@/modules/channels/infrastructure/grpc-transport";
+import { GrpcSessionPlanner } from "@/modules/channels/application/grpc";
+import { InMemoryChannelProtoRepository } from "./in-memory-protos";
 import { CHANNEL_TRANSPORT, WsChannelTransport } from "@/modules/channels/infrastructure/ws-transport";
 import { ChannelProgressStream } from "@/modules/channels/infrastructure/channel-progress.stream";
 import { ChannelSessionRegistry } from "@/modules/channels/infrastructure/session-registry";
@@ -289,6 +294,7 @@ export type TestContext = {
     monitors: InMemoryMonitorRepository;
     channels: InMemoryChannelRepository;
     channelSessions: InMemoryChannelSessionRepository;
+    channelProtos: InMemoryChannelProtoRepository;
   };
   http: StubSafeFetch;
   /** Los sockets de los canales: guionizados por URL, y los que no, al transporte de verdad. */
@@ -332,6 +338,7 @@ export async function createTestApp(): Promise<TestContext> {
     monitors: new InMemoryMonitorRepository(),
     channels: new InMemoryChannelRepository(),
     channelSessions: new InMemoryChannelSessionRepository(),
+    channelProtos: new InMemoryChannelProtoRepository(),
   };
   const mailer = new RecordingMailer();
   // Lo que no se guioniza sale por el transporte de verdad, con la misma política de red que el
@@ -366,6 +373,7 @@ export async function createTestApp(): Promise<TestContext> {
       DocSitesController,
       MonitorsController,
       ChannelsController,
+      GrpcChannelsController,
       RolesController,
       SecurityRunsController,
       PerformanceController,
@@ -431,6 +439,10 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: CHANNEL_REPOSITORY, useValue: repositories.channels },
       { provide: CHANNEL_SESSION_REPOSITORY, useValue: repositories.channelSessions },
       { provide: CHANNEL_TRANSPORT, useValue: channels },
+      { provide: CHANNEL_PROTO_REPOSITORY, useValue: repositories.channelProtos },
+      // gRPC sin guion: las pruebas llaman a un servidor de verdad en loopback, como las de socket.
+      { provide: GRPC_TRANSPORT, useValue: new GrpcChannelTransport({ ...env, ALLOW_PRIVATE_TARGETS: true }) },
+      GrpcSessionPlanner,
       ChannelProgressStream,
       ChannelSessionRegistry,
       // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the

@@ -696,6 +696,8 @@ export class ChannelEndpointEntity {
   @Column({ type: "jsonb", default: () => "'{}'" }) expectations: unknown;
   /** Las tramas guardadas para no reteclear la de auth en cada sesión. */
   @Column({ type: "jsonb", default: () => "'[]'" }) messages: unknown;
+  /** Servicio, método, mensaje y plazo de un canal gRPC. `null` en los demás protocolos. */
+  @Column({ type: "jsonb", nullable: true }) grpc: unknown;
   @Column({ type: "int", default: 0 }) orderIndex: number;
   @Column({ type: "timestamptz" }) createdAt: Date;
   @Column({ type: "timestamptz" }) updatedAt: Date;
@@ -739,6 +741,15 @@ export class ChannelMessageEntity {
   @Column({ type: "int" }) bytes: number;
   @Column({ type: "boolean", default: false }) truncated: boolean;
   @Column({ type: "text", default: "" }) body: string;
+}
+
+/** Un `.proto` de un canal gRPC: se guardan para que una corrida o un monitor no tengan que volver a subirlos. */
+@Entity({ name: "channel_proto_files" })
+export class ChannelProtoFileEntity {
+  @PrimaryColumn("uuid") channelId: string;
+  @PrimaryColumn({ type: "varchar", length: 300 }) path: string;
+  @Column({ type: "text" }) content: string;
+  @Column({ type: "int" }) bytes: number;
 }
 
 /** A role of the API a project tests. The `access` section is derived from these rows. */
@@ -906,7 +917,7 @@ export const ENTITIES = [
   MockServerEntity, MockCallEntity,
   DocSiteEntity,
   MonitorEntity, MonitorExecutionEntity,
-  ChannelEndpointEntity, ChannelSessionEntity, ChannelMessageEntity,
+  ChannelEndpointEntity, ChannelSessionEntity, ChannelMessageEntity, ChannelProtoFileEntity,
   RoleEntity, RolePermissionEntity, RoleRuleEntity,
   SecurityRunEntity,
   PerformancePlanEntity, PerformanceRunEntity,

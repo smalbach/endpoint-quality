@@ -32,7 +32,9 @@ import { SECRET_PARAMS } from "@/modules/endpoints/application/commands/auth-bri
 import { redactBody } from "@/modules/endpoints/domain/examples";
 import { resolveVariables } from "@/modules/environments/domain/model";
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
-import { MAX_SAVED_MESSAGE_BYTES, effectiveLimits } from "../../domain/model";
+import { SECRET_HEADER } from "@/modules/endpoints/domain/examples";
+import type { Environment } from "@/modules/environments/domain/model";
+import { MAX_SAVED_MESSAGE_BYTES, effectiveLimits, type Channel } from "../../domain/model";
 import {
   CHANNEL_REPOSITORY,
   CHANNEL_SESSION_REPOSITORY,
@@ -42,6 +44,7 @@ import {
 import { isFinished, startSession } from "../../domain/session";
 import { ChannelSessionRegistry } from "../../infrastructure/session-registry";
 import { viewSession, type ChannelSessionView } from "../views";
+import { GrpcSessionPlanner } from "../grpc";
 import { ceilingsOf } from "./manage-channels";
 
 export class OpenChannelSessionCommand implements ICommand {
@@ -64,6 +67,7 @@ export class OpenChannelSessionHandler implements ICommandHandler<OpenChannelSes
     @Inject(CLOCK) private readonly clock: ClockPort,
     @Inject(ENV) private readonly env: Env,
     private readonly registry: ChannelSessionRegistry,
+    private readonly grpc: GrpcSessionPlanner,
   ) {}
 
   async execute(command: OpenChannelSessionCommand): Promise<ChannelSessionView> {
@@ -71,45 +75,26 @@ export class OpenChannelSessionHandler implements ICommandHandler<OpenChannelSes
     const channel = await this.channels.findById(project.id, command.channelId);
     if (!channel) throw new NotFoundError("El canal no existe", "channel-not-found");
 
-    const environment = command.environmentId ? await this.environments.findById(command.environmentId) : null;
-    if (command.environmentId && (!environment || environment.projectId !== project.id))
-      throw new NotFoundError("El entorno no existe", "environment-not-found");
-
-    const values = environment
-      ? resolveVariables(environment.variables, (payload) => this.cipher.decrypt(payload))
-      : {};
-    const variables = withEnvironmentNamespace(values);
-    const interpolate = (value: string) => interpolateText(value, variables);
-
-    // Los valores de las variables sensibles: lo primero que se tapa en cada mensaje.
-    const secrets = environment
-      ? Object.entries(environment.variables)
-          .filter(([, variable]) => variable.sensitive)
-          .map(([name]) => values[name] ?? "")
-          .filter(Boolean)
-      : [];
-
-    let url = interpolate(channel.url);
-    const headers: Record<string, string> = {};
-    for (const header of channel.headers) {
-      if (header.enabled && header.name.trim()) headers[header.name.trim()] = interpolate(header.value);
-    }
-
-    const unresolved = unresolvedVariables([url, headers]);
-    if (unresolved.length) {
-      throw new InvalidInputError(
-        `Variables sin valor: ${unresolved.join(", ")}`,
-        unresolved.map((name) => ({
-          field: "environmentId",
-          detail: `{{${name}}} no tiene valor${environment ? ` en «${environment.name}»` : ": elige un entorno"}`,
-        })),
-        "unresolved-variables",
-      );
-    }
-
-    if (channel.auth && channel.auth.type !== "none" && channel.auth.type !== "inherit") {
-      url = this.sign(channel.auth, url, headers, interpolate, secrets);
-    }
+    const { environment, url, headers, secrets, interpolate } = await resolveChannelTarget(
+      { environments: this.environments, cipher: this.cipher },
+      project.id,
+      channel,
+      command.environmentId,
+    );
+    const limits = effectiveLimits(channel.limits, ceilingsOf(this.env));
+    const readOnly = environment ? !environment.writesAllowed : false;
+    // Un canal gRPC trae su propia apertura; el registro le pasa las mismas escuchas que a un socket.
+    const open =
+      channel.protocol === "grpc"
+        ? await this.grpc.prepare(channel, {
+            url,
+            headers,
+            interpolate,
+            limits,
+            readOnly,
+            environmentName: environment?.name ?? "",
+          })
+        : undefined;
 
     const session = startSession({
       id: randomUUID(),
@@ -124,72 +109,144 @@ export class OpenChannelSessionHandler implements ICommandHandler<OpenChannelSes
       url,
       headers,
       subprotocols: channel.subprotocols,
-      limits: effectiveLimits(channel.limits, ceilingsOf(this.env)),
+      limits,
       rules: {
         secrets,
         // La segunda red: los campos que se llaman como una credencial y los JWT por su forma, que
         // es lo que tapa un token que el servidor inventa y que ninguna variable conocía.
         redact: redactMessage,
+        // Y en las cabeceras de la apertura y los trailers, por nombre: la lista de siempre.
+        secretHeader: SECRET_HEADER,
       },
       expect: channel.expectations,
-      readOnly: environment ? !environment.writesAllowed : false,
+      readOnly,
       environmentName: environment?.name ?? "",
+      open,
     });
     return viewSession(started, this.registry.owns(started.id));
   }
+}
 
-  /**
-   * La autenticación, firmada y puesta donde toque: cabecera o query.
-   *
-   * La query no es un detalle en un socket: un navegador **no puede** poner cabeceras en un
-   * WebSocket, así que las APIs de verdad aceptan el token en `?access_token=`. Va a la URL, que no
-   * se guarda en ninguna parte —la sesión no tiene columna de URL— y cuyo valor entra en la lista
-   * de secretos igual que el de una cabecera.
-   *
-   * Lo que necesita pedir algo al servidor antes de firmar —el reto de Digest, un token de OAuth 2.0
-   * que todavía no existe— no se hace aquí, y se dice en vez de abrir sin credencial.
-   */
-  private sign(
-    auth: RequestAuth,
-    url: string,
-    headers: Record<string, string>,
-    interpolate: (value: string) => string,
-    secrets: string[],
-  ): string {
-    const resolved: RequestAuth = {
-      type: auth.type,
-      params: Object.fromEntries(Object.entries(auth.params).map(([key, value]) => [key, interpolate(value)])),
-    };
-    for (const [key, value] of Object.entries(resolved.params)) {
-      if (SECRET_PARAMS.has(key) && value) secrets.push(value);
-    }
-    const signed = signAuth(resolved, { method: "GET", url, headers });
-    if (signed.unsupported || signed.needsChallenge) {
-      throw new InvalidInputError(
-        "La autenticación de este canal no se puede firmar para un WebSocket",
-        [
-          {
-            field: "auth",
-            detail:
-              signed.unsupported ??
-              "Este tipo necesita pedir un reto al servidor antes de firmar, y un upgrade no tiene cómo",
-          },
-        ],
-        "channel-auth-unsupported",
-      );
-    }
-    for (const pair of signed.headers) {
-      headers[pair.name] = pair.value;
-      secrets.push(pair.value);
-    }
-    if (!signed.query.length) return url;
-    const withQuery = new URL(url);
-    for (const pair of signed.query) {
-      withQuery.searchParams.set(pair.name, pair.value);
-      secrets.push(pair.value);
-    }
-    return withQuery.toString();
+/**
+ * Lo que un canal necesita para abrir, resuelto contra el entorno: URL, cabeceras firmadas, los
+ * secretos contra los que se tapa cada mensaje, y cómo interpolar lo que llegue después.
+ *
+ * Fuera del manejador porque abrir no es lo único que lo necesita: la reflexión de un canal gRPC
+ * habla con el mismo servidor, con la misma metadata y la misma credencial, y dos maneras de
+ * resolverlas serían dos respuestas a «¿con qué me conecto?».
+ */
+export async function resolveChannelTarget(
+  deps: { environments: EnvironmentRepositoryPort; cipher: SecretCipherPort },
+  projectId: string,
+  channel: Channel,
+  environmentId: string | null,
+): Promise<{
+  environment: Environment | null;
+  url: string;
+  headers: Record<string, string>;
+  secrets: string[];
+  interpolate: (value: string) => string;
+}> {
+  const environment = environmentId ? await deps.environments.findById(environmentId) : null;
+  if (environmentId && (!environment || environment.projectId !== projectId))
+    throw new NotFoundError("El entorno no existe", "environment-not-found");
+
+  const values = environment ? resolveVariables(environment.variables, (payload) => deps.cipher.decrypt(payload)) : {};
+  const variables = withEnvironmentNamespace(values);
+  const interpolate = (value: string) => interpolateText(value, variables);
+
+  // Los valores de las variables sensibles: lo primero que se tapa en cada mensaje.
+  const secrets = environment
+    ? Object.entries(environment.variables)
+        .filter(([, variable]) => variable.sensitive)
+        .map(([name]) => values[name] ?? "")
+        .filter(Boolean)
+    : [];
+
+  let url = interpolate(channel.url);
+  const headers: Record<string, string> = {};
+  for (const header of channel.headers) {
+    if (header.enabled && header.name.trim()) headers[header.name.trim()] = interpolate(header.value);
   }
+
+  const unresolved = unresolvedVariables([url, headers]);
+  if (unresolved.length) {
+    throw new InvalidInputError(
+      `Variables sin valor: ${unresolved.join(", ")}`,
+      unresolved.map((name) => ({
+        field: "environmentId",
+        detail: `{{${name}}} no tiene valor${environment ? ` en «${environment.name}»` : ": elige un entorno"}`,
+      })),
+      "unresolved-variables",
+    );
+  }
+
+  if (channel.auth && channel.auth.type !== "none" && channel.auth.type !== "inherit") {
+    url = sign(channel.auth, url, headers, interpolate, secrets, channel.protocol);
+  }
+  return { environment, url, headers, secrets, interpolate };
+}
+
+/**
+ * La autenticación, firmada y puesta donde toque: cabecera o query.
+ *
+ * La query no es un detalle en un socket: un navegador **no puede** poner cabeceras en un
+ * WebSocket, así que las APIs de verdad aceptan el token en `?access_token=`. Va a la URL, que no
+ * se guarda en ninguna parte —la sesión no tiene columna de URL— y cuyo valor entra en la lista
+ * de secretos igual que el de una cabecera.
+ *
+ * Lo que necesita pedir algo al servidor antes de firmar —el reto de Digest, un token de OAuth 2.0
+ * que todavía no existe— no se hace aquí, y se dice en vez de abrir sin credencial.
+ */
+function sign(
+  auth: RequestAuth,
+  url: string,
+  headers: Record<string, string>,
+  interpolate: (value: string) => string,
+  secrets: string[],
+  protocol: Channel["protocol"],
+): string {
+  const resolved: RequestAuth = {
+    type: auth.type,
+    params: Object.fromEntries(Object.entries(auth.params).map(([key, value]) => [key, interpolate(value)])),
+  };
+  for (const [key, value] of Object.entries(resolved.params)) {
+    if (SECRET_PARAMS.has(key) && value) secrets.push(value);
+  }
+  // gRPC es un POST de HTTP/2; lo que firma una autenticación de esta lista no depende de la URL.
+  const signed = signAuth(resolved, { method: protocol === "grpc" ? "POST" : "GET", url, headers });
+  if (signed.unsupported || signed.needsChallenge) {
+    throw new InvalidInputError(
+      "La autenticación de este canal no se puede firmar al abrir",
+      [
+        {
+          field: "auth",
+          detail:
+            signed.unsupported ??
+            "Este tipo necesita pedir un reto al servidor antes de firmar, y un upgrade no tiene cómo",
+        },
+      ],
+      "channel-auth-unsupported",
+    );
+  }
+  for (const pair of signed.headers) {
+    headers[pair.name] = pair.value;
+    secrets.push(pair.value);
+  }
+  if (!signed.query.length) return url;
+  // Una llamada gRPC no tiene query: la ruta es `/paquete.Servicio/Metodo`.
+  if (protocol === "grpc")
+    throw new InvalidInputError(
+      "En gRPC la clave va en la metadata",
+      [{ field: "auth", detail: "Una llamada gRPC no tiene query: pon la clave de API en una cabecera" }],
+      "channel-auth-unsupported",
+    );
+  const withQuery = new URL(url);
+  for (const pair of signed.query) {
+    withQuery.searchParams.set(pair.name, pair.value);
+    secrets.push(pair.value);
+  }
+  return withQuery.toString();
 }
 
 /**

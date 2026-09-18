@@ -14,7 +14,11 @@ import type { Channel } from "../../domain/model";
 import type { ChannelRepositoryPort, ChannelSessionRepositoryPort } from "../../domain/ports";
 import type { ChannelSession, SessionStatus } from "../../domain/session";
 
-const toChannel = (row: ChannelEndpointEntity): Channel => row as unknown as Channel;
+// `grpc` con su `null` explícito: una fila de antes de la columna no la trae, y `undefined` no es un canal.
+const toChannel = (row: ChannelEndpointEntity): Channel => ({
+  ...(row as unknown as Channel),
+  grpc: (row.grpc as Channel["grpc"]) ?? null,
+});
 
 @Injectable()
 export class TypeOrmChannelRepository implements ChannelRepositoryPort {
@@ -72,6 +76,7 @@ export class TypeOrmChannelSessionRepository implements ChannelSessionRepository
           openedAtMs: conversation.openedAtMs,
           closedAtMs: conversation.closedAtMs,
           closeReason: conversation.closeReason,
+          trailers: conversation.trailers,
         },
         verdict: session.verdict,
         stopReason: session.stopReason,
@@ -140,6 +145,7 @@ type StoredCounters = Conversation["counters"] & {
   openedAtMs?: number | null;
   closedAtMs?: number | null;
   closeReason?: string;
+  trailers?: Record<string, string> | null;
 };
 
 function toSession(row: ChannelSessionEntity): ChannelSession {
@@ -158,6 +164,7 @@ function toSession(row: ChannelSessionEntity): ChannelSession {
       closedAtMs: counters.closedAtMs ?? null,
       closeCode: row.closeCode,
       closeReason: counters.closeReason ?? "",
+      trailers: counters.trailers ?? null,
       stopped: (row.stopReason as Conversation["stopped"]) ?? null,
       counters: {
         sent: counters.sent ?? 0,

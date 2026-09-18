@@ -1,5 +1,5 @@
 /**
- * Un canal: lo que un proyecto prueba cuando lo que prueba no es una petición. Hoy un WebSocket.
+ * Un canal: lo que un proyecto prueba cuando lo que prueba no es una petición: un WebSocket o gRPC.
  *
  * Es un agregado hermano de `Endpoint` y no un tipo de él. El motivo entero está en la migración
  * `1700000028000-Channels`; aquí basta con saber lo que eso compra: el mock, la documentación
@@ -21,11 +21,20 @@ import {
 } from "@eq/runner-core";
 
 import { authProblems, type EndpointHeader } from "@/modules/endpoints/domain/model";
-import { storableParams } from "@/modules/workflows/domain/postman-auth";
+import { SECRET_HEADER } from "@/modules/endpoints/domain/examples";
+import { redactAuth, storableParams } from "@/modules/workflows/domain/postman-auth";
+import {
+  DEFAULT_GRPC_SETTINGS,
+  grpcExpectationProblems,
+  grpcSettingsProblems,
+  grpcUrlProblems,
+  metadataKeyProblem,
+  type GrpcSettings,
+} from "./grpc";
 
 type Problem = { field: string; detail: string };
 
-export const CHANNEL_PROTOCOLS = ["ws"] as const;
+export const CHANNEL_PROTOCOLS = ["ws", "grpc"] as const;
 export type ChannelProtocol = (typeof CHANNEL_PROTOCOLS)[number];
 
 export const MAX_CHANNEL_NAME = 120;
@@ -81,6 +90,8 @@ export type Channel = {
   limits: ChannelLimits;
   expectations: ChannelExpectation;
   messages: SavedMessage[];
+  /** Solo en un canal gRPC: servicio, método, mensaje y plazo. `null` en los demás. */
+  grpc: GrpcSettings | null;
   orderIndex: number;
   createdAt: Date;
   updatedAt: Date;
@@ -124,6 +135,8 @@ export function effectiveLimits(limits: ChannelLimits, ceilings: ChannelCeilings
 }
 
 export type ChannelInput = {
+  /** Solo al crear: un canal no cambia de protocolo, porque todo lo demás depende de él. */
+  protocol?: ChannelProtocol;
   name?: string;
   url?: string;
   subprotocols?: string[];
@@ -132,6 +145,7 @@ export type ChannelInput = {
   limits?: Partial<ChannelLimits>;
   expectations?: ChannelExpectation;
   messages?: SavedMessage[];
+  grpc?: Partial<GrpcSettings>;
 };
 
 const LIMIT_TEXT: Record<keyof ChannelLimits, string> = {
@@ -142,9 +156,17 @@ const LIMIT_TEXT: Record<keyof ChannelLimits, string> = {
   idleMs: "ms sin mensajes",
 };
 
-export function channelProblems(input: ChannelInput, ceilings: ChannelCeilings): Problem[] {
+export function channelProblems(
+  input: ChannelInput,
+  ceilings: ChannelCeilings,
+  protocol: ChannelProtocol = input.protocol ?? "ws",
+): Problem[] {
   const problems: Problem[] = [];
   const problem = (field: string, detail: string) => problems.push({ field, detail });
+  const grpc = protocol === "grpc";
+
+  if (!(CHANNEL_PROTOCOLS as readonly string[]).includes(protocol))
+    problem("protocol", `Uno de ${CHANNEL_PROTOCOLS.join(", ")}`);
 
   if (input.name !== undefined) {
     const name = typeof input.name === "string" ? input.name.trim() : "";
@@ -152,7 +174,13 @@ export function channelProblems(input: ChannelInput, ceilings: ChannelCeilings):
     else if (name.length > MAX_CHANNEL_NAME) problem("name", `Como mucho ${MAX_CHANNEL_NAME} caracteres`);
   }
 
-  if (input.url !== undefined) problems.push(...urlProblems(input.url));
+  if (input.url !== undefined) problems.push(...urlProblems(input.url, protocol));
+
+  if (grpc && input.subprotocols?.length) problem("subprotocols", "Los subprotocolos son de WebSocket");
+  if (input.grpc !== undefined) {
+    if (grpc) problems.push(...grpcSettingsProblems(input.grpc));
+    else problem("grpc", "Los ajustes de gRPC son de un canal gRPC");
+  }
 
   if (input.subprotocols !== undefined) {
     if (!Array.isArray(input.subprotocols)) problem("subprotocols", "Los subprotocolos son una lista");
@@ -171,8 +199,10 @@ export function channelProblems(input: ChannelInput, ceilings: ChannelCeilings):
       if (input.headers.length > MAX_CHANNEL_HEADERS) problem("headers", `Como mucho ${MAX_CHANNEL_HEADERS}`);
       input.headers.forEach((header, index) => {
         const name = typeof header?.name === "string" ? header.name.trim() : "";
+        const metadataProblem = grpc && name ? metadataKeyProblem(name) : null;
         if (!name || !HEADER_NAME.test(name)) problem(`headers.${index}.name`, "No es un nombre de cabecera válido");
-        else if (RESERVED_HEADERS.has(name.toLowerCase()))
+        else if (metadataProblem) problem(`headers.${index}.name`, metadataProblem);
+        else if (!grpc && RESERVED_HEADERS.has(name.toLowerCase()))
           problem(`headers.${index}.name`, `${name} la pone el protocolo, no se escribe a mano`);
         if (typeof header?.value !== "string" || /[\r\n]/.test(header.value))
           problem(`headers.${index}.value`, "Una cabecera es texto y no lleva saltos de línea");
@@ -191,7 +221,10 @@ export function channelProblems(input: ChannelInput, ceilings: ChannelCeilings):
     }
   }
 
-  if (input.expectations !== undefined) problems.push(...expectationProblems(input.expectations));
+  if (input.expectations !== undefined) {
+    problems.push(...expectationProblems(input.expectations, grpc));
+    if (grpc) problems.push(...grpcExpectationProblems(input.expectations));
+  }
 
   if (input.messages !== undefined) {
     if (!Array.isArray(input.messages)) problem("messages", "Las tramas guardadas son una lista");
@@ -218,11 +251,12 @@ export function channelProblems(input: ChannelInput, ceilings: ChannelCeilings):
  * lleve lo que ninguna URL lleva. La guarda de red vuelve a mirar todo al conectar, con la URL ya
  * resuelta: esto es para decirlo antes, no para proteger nada.
  */
-function urlProblems(value: unknown): Problem[] {
+function urlProblems(value: unknown, protocol: ChannelProtocol): Problem[] {
   if (typeof value !== "string" || !value.trim()) return [{ field: "url", detail: "Falta la URL" }];
   const url = value.trim();
   if (url.length > MAX_CHANNEL_URL) return [{ field: "url", detail: `Como mucho ${MAX_CHANNEL_URL} caracteres` }];
   if (/\s/.test(url)) return [{ field: "url", detail: "Una URL no lleva espacios" }];
+  if (protocol === "grpc") return grpcUrlProblems(url);
   if (url.includes("{{")) return [];
   let parsed: URL;
   try {
@@ -246,14 +280,17 @@ function urlProblems(value: unknown): Problem[] {
  * es lo correcto en ejecución—, pero guardarlas es guardar una comprobación que nunca puede pasar, y
  * eso se dice aquí.
  */
-function expectationProblems(expect: ChannelExpectation): Problem[] {
+function expectationProblems(expect: ChannelExpectation, grpc = false): Problem[] {
   const problems: Problem[] = [];
   const problem = (field: string, detail: string) => problems.push({ field, detail });
   if (typeof expect !== "object" || expect === null) return [{ field: "expectations", detail: "Es un objeto" }];
 
   if (expect.minMessages !== undefined && (!Number.isInteger(expect.minMessages) || expect.minMessages < 0))
     problem("expectations.minMessages", "Un número entero, cero o más");
+  if (!grpc && expect.status !== undefined)
+    problem("expectations.status", "El estado es de una llamada gRPC; un WebSocket afirma su código de cierre");
   if (
+    !grpc &&
     expect.closeCode !== undefined &&
     (!Number.isInteger(expect.closeCode) || expect.closeCode < 1000 || expect.closeCode > 4999)
   )
@@ -287,23 +324,28 @@ function expectationProblems(expect: ChannelExpectation): Problem[] {
 export function blankChannel(fields: {
   id: string;
   projectId: string;
+  protocol?: ChannelProtocol;
   name: string;
   url: string;
   now: Date;
   by: string;
 }): Channel {
+  const protocol = fields.protocol ?? "ws";
   return {
     id: fields.id,
     projectId: fields.projectId,
-    protocol: "ws",
+    protocol,
     name: fields.name.trim(),
     url: fields.url.trim(),
     subprotocols: [],
     headers: [],
     auth: null,
     limits: { ...DEFAULT_LIMITS },
-    expectations: {},
+    // Una llamada gRPC que termina en `INTERNAL` no puede salir en verde porque nadie pidió nada: el
+    // estado OK se afirma desde el principio, a la vista y quitable, como cualquier otra afirmación.
+    expectations: protocol === "grpc" ? { status: 0 } : {},
     messages: [],
+    grpc: protocol === "grpc" ? { ...DEFAULT_GRPC_SETTINGS } : null,
     orderIndex: 0,
     createdAt: fields.now,
     updatedAt: fields.now,
@@ -319,16 +361,41 @@ export function withChanges(channel: Channel, input: ChannelInput, now: Date, by
     ...(input.name !== undefined ? { name: input.name.trim() } : {}),
     ...(input.url !== undefined ? { url: input.url.trim() } : {}),
     ...(input.subprotocols !== undefined ? { subprotocols: input.subprotocols } : {}),
-    ...(input.headers !== undefined ? { headers: input.headers } : {}),
+    ...(input.headers !== undefined ? { headers: input.headers.map(storableHeader) } : {}),
     // La misma regla que un endpoint, y por la misma función: un criterio distinto para guardar la
     // autenticación de un canal sería una segunda respuesta a «¿qué se guarda de una credencial?».
+    // `redactAuth` primero: un secreto escrito a mano se guarda vacío, como en un endpoint.
     ...(input.auth !== undefined
-      ? { auth: input.auth ? { type: input.auth.type, params: storableParams(input.auth) } : null }
+      ? {
+          auth: input.auth ? { type: input.auth.type, params: storableParams(redactAuth(input.auth).auth) } : null,
+        }
       : {}),
     ...(input.limits !== undefined ? { limits: { ...channel.limits, ...input.limits } } : {}),
     ...(input.expectations !== undefined ? { expectations: input.expectations } : {}),
     ...(input.messages !== undefined ? { messages: input.messages } : {}),
+    ...(input.grpc !== undefined && channel.grpc ? { grpc: { ...channel.grpc, ...input.grpc } } : {}),
     updatedAt: now,
     updatedBy: by,
   };
+}
+
+const VARIABLE = /\{\{\s*[A-Za-z_][A-Za-z0-9_.-]*\s*\}\}/g;
+/** Lo que queda de un valor sin sus variables y que no es secreto: el esquema de `Authorization`. */
+const SCHEME_ONLY = /^(?:bearer|basic|token|bot)?\s*$/i;
+
+/**
+ * Una cabecera —o una clave de metadata— que se puede guardar.
+ *
+ * La regla de la autenticación, aplicada a las cabeceras: una que se llama como una credencial
+ * (`authorization`, `x-api-key`, `*-token`…) y trae un valor escrito a mano se guarda **vacía**, que
+ * es la marca de que falta. `{{token}}` sí se queda: eso no es el secreto, es dónde está, y ese sitio
+ * sí lo cifra. `Bearer {{token}}` también, porque lo escrito a mano es solo el esquema. La columna es
+ * un `jsonb` sin cifrar, y una cabecera `Authorization: Bearer eyJ…` ahí es la credencial en claro
+ * que el entorno existe para no tener.
+ */
+export function storableHeader(header: EndpointHeader): EndpointHeader {
+  const value = header.value.trim();
+  if (!value || !SECRET_HEADER.test(header.name.trim())) return header;
+  if (value.includes("{{") && SCHEME_ONLY.test(value.replace(VARIABLE, "").trim())) return header;
+  return { ...header, value: "" };
 }
