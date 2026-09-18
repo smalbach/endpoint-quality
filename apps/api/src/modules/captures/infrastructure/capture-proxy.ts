@@ -27,6 +27,8 @@
  * 6. **Nada en claro llega a la tabla.** Lo que se graba se tapa antes de guardarlo
  *    (`captureItemFrom`), y la `Proxy-Authorization` —el token de la propia sesión— ni se reenvía
  *    ni se graba.
+ * 7. **Túneles, solo a puertos web.** Un `CONNECT` va a 443, 80 u 8443 salvo que el despliegue diga
+ *    otra lista (`CAPTURE_CONNECT_PORTS`). Otro puerto es un 403, grabado como rechazado.
  *
  * ## HTTPS: el túnel, sin mirar dentro
  *
@@ -80,6 +82,8 @@ export type CaptureProxyOptions = {
   maxForwardBodyBytes: number;
   /** Cuánto aguanta un túnel callado antes de cortarse. */
   tunnelIdleMs: number;
+  /** Los puertos a los que se abre túnel. Otro puerto es un 403, grabado como rechazado. */
+  connectPorts: ReadonlySet<number>;
 };
 
 /** El nombre con el que el navegador pregunta por la credencial. */
@@ -408,6 +412,17 @@ export class CaptureProxy {
       error: null,
       ...patch,
     });
+
+    // Un túnel es un cable TCP: sin esta lista, el token valdría para hablar con un servidor de
+    // correo o con cualquier servicio de una IP pública. Se graba para que la pantalla diga por qué.
+    if (!this.options.connectPorts.has(port)) {
+      this.record(
+        session,
+        tunnel({ error: `el puerto ${port} no está permitido para túneles (CAPTURE_CONNECT_PORTS)` }),
+      );
+      client.end(`HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`);
+      return;
+    }
 
     let address: string;
     try {

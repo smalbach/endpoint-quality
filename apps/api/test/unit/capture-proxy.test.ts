@@ -70,6 +70,8 @@ async function harness(
     now: () => clock.now,
     maxForwardBodyBytes: 100_000,
     tunnelIdleMs: 2_000,
+    // El destino de prueba escucha en un puerto cualquiera: se añade al 443 de siempre.
+    connectPorts: new Set([443, targetPort]),
     hooks: {
       onExchange: (_session, exchange) => exchanges.push(exchange),
       onStop: (_session, reason) => stops.push(reason),
@@ -234,6 +236,19 @@ describe("el proxy de captura", () => {
       assert.equal(tunnel.requestBody.length, 0);
       assert.equal(tunnel.responseBody.length, 0);
       assert.deepEqual(tunnel.requestHeaders, {});
+    } finally {
+      await h.proxy.close();
+    }
+  });
+
+  test("un CONNECT a un puerto que no es de la web es un 403, grabado como rechazado", async () => {
+    const h = await harness();
+    try {
+      assert.equal(await connectVia(h.port, "127.0.0.1:25", TOKEN), "HTTP/1.1 403 Forbidden");
+      assert.equal(await connectVia(h.port, "ejemplo.test:6379", TOKEN), "HTTP/1.1 403 Forbidden");
+      assert.equal(h.exchanges.length, 2);
+      assert.match(h.exchanges[0].error ?? "", /puerto 25 no está permitido/);
+      assert.equal(h.exchanges[1].url, "https://ejemplo.test:6379");
     } finally {
       await h.proxy.close();
     }

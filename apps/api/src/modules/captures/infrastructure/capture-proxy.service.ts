@@ -43,6 +43,7 @@ export class CaptureProxyService implements OnApplicationBootstrap, OnModuleDest
       now: () => clock.now(),
       maxForwardBodyBytes: env.MAX_RESPONSE_BYTES,
       tunnelIdleMs: TUNNEL_IDLE_MS,
+      connectPorts: new Set(env.CAPTURE_CONNECT_PORTS),
       hooks: {
         onExchange: (session, exchange) =>
           this.enqueue(session.id, async () => {
