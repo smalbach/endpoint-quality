@@ -103,6 +103,22 @@ describe("la pantalla de monitores", () => {
     expect(screen.getByText(/Le toca el/)).toBeTruthy();
   });
 
+  test("la tarjeta dice qué corre: el canal con su protocolo, el flujo por su nombre o la matriz", async () => {
+    answers({
+      monitors: [
+        monitor({ id: "m1", name: "socket", plan: { environmentId: "env-1", channel: { channelId: "c1" } } }),
+        monitor({ id: "m2", name: "alta", plan: { environmentId: "env-1", workflowId: "w1" } }),
+        monitor({ id: "m3", name: "todo", plan: { environmentId: "env-1" } }),
+        monitor({ id: "m4", name: "huérfano", plan: { environmentId: "env-1", channel: { channelId: "borrado" } } }),
+      ],
+    });
+    draw();
+    await waitFor(() => expect(screen.getByText(/Corre el canal «eco» · WebSocket/)).toBeTruthy());
+    expect(screen.getByText(/Corre el flujo «el alta»/)).toBeTruthy();
+    expect(screen.getByText(/Corre la matriz del contrato/)).toBeTruthy();
+    expect(screen.getByText(/Corre un canal que ya no existe/)).toBeTruthy();
+  });
+
   test("un monitor pausado no le toca nunca, y lo dice así", async () => {
     answers({ monitors: [monitor({ enabled: false, nextRunAt: null })] });
     draw();
