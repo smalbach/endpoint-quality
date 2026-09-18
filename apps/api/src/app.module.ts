@@ -20,6 +20,7 @@ import { MocksModule } from "./modules/mocks/mocks.module";
 import { DocsModule } from "./modules/docs/docs.module";
 import { MonitorsModule } from "./modules/monitors/monitors.module";
 import { ChannelsModule } from "./modules/channels/channels.module";
+import { CapturesModule } from "./modules/captures/captures.module";
 import { RolesModule } from "./modules/roles/roles.module";
 import { SecurityRunsModule } from "./modules/security-runs/security-runs.module";
 import { PerformanceModule } from "./modules/performance/performance.module";
@@ -55,6 +56,7 @@ import { HealthController } from "./shared/health.controller";
     DocsModule,
     MonitorsModule,
     ChannelsModule,
+    CapturesModule,
     RolesModule,
     SecurityRunsModule,
     PerformanceModule,

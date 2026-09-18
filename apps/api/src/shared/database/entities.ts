@@ -741,6 +741,50 @@ export class ChannelMessageEntity {
   @Column({ type: "text", default: "" }) body: string;
 }
 
+/**
+ * Una sesión de captura: el proxy abierto para un proyecto, con su token y sus topes.
+ *
+ * Del token solo el hash, como de un token de API: se enseña una vez al abrir la sesión. El
+ * razonamiento entero está en `captures/infrastructure/capture-proxy.ts`.
+ */
+@Entity({ name: "capture_sessions" })
+export class CaptureSessionEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Column({ type: "varchar", length: 20 }) status: string;
+  @Column({ type: "varchar", length: 64 }) tokenHash: string;
+  @Column({ type: "jsonb" }) limits: unknown;
+  @Column({ type: "int", default: 0 }) itemCount: number;
+  @Column({ type: "timestamptz" }) startedAt: Date;
+  @Column({ type: "timestamptz" }) expiresAt: Date;
+  @Column({ type: "timestamptz", nullable: true }) stoppedAt: Date | null;
+  @Column({ type: "varchar", length: 30, nullable: true }) stopReason: string | null;
+  @Column("uuid") startedBy: string;
+}
+
+/** Una petición grabada por el proxy, **ya tapada**: ver `captures/domain/model.ts`. */
+@Entity({ name: "capture_items" })
+export class CaptureItemEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Column("uuid") sessionId: string;
+  @Column("uuid") projectId: string;
+  @Column({ type: "int" }) seq: number;
+  @Column({ type: "timestamptz" }) at: Date;
+  @Column({ type: "varchar", length: 16 }) method: string;
+  @Column({ type: "varchar", length: 4000 }) url: string;
+  @Column({ type: "int", nullable: true }) status: number | null;
+  @Column({ type: "boolean", default: false }) encrypted: boolean;
+  @Column({ type: "jsonb" }) requestHeaders: Record<string, string>;
+  @Column({ type: "text", default: "" }) requestBody: string;
+  @Column({ type: "boolean", default: false }) requestBodyTruncated: boolean;
+  @Column({ type: "jsonb" }) responseHeaders: Record<string, string>;
+  @Column({ type: "text", default: "" }) responseBody: string;
+  @Column({ type: "boolean", default: false }) responseBodyTruncated: boolean;
+  @Column({ type: "varchar", length: 200, default: "" }) responseContentType: string;
+  @Column({ type: "int", default: 0 }) durationMs: number;
+  @Column({ type: "varchar", length: 500, nullable: true }) error: string | null;
+}
+
 /** A role of the API a project tests. The `access` section is derived from these rows. */
 @Entity({ name: "project_roles" })
 export class RoleEntity {
@@ -907,6 +951,7 @@ export const ENTITIES = [
   DocSiteEntity,
   MonitorEntity, MonitorExecutionEntity,
   ChannelEndpointEntity, ChannelSessionEntity, ChannelMessageEntity,
+  CaptureSessionEntity, CaptureItemEntity,
   RoleEntity, RolePermissionEntity, RoleRuleEntity,
   SecurityRunEntity,
   PerformancePlanEntity, PerformanceRunEntity,

@@ -44,6 +44,11 @@ import { InMemoryDocSiteRepository } from "./in-memory-doc-sites";
 import { InMemoryMonitorRepository } from "./in-memory-monitors";
 import { InMemoryChannelRepository, InMemoryChannelSessionRepository } from "./in-memory-channels";
 import { StubChannelTransport } from "./stub-channel-transport";
+import { InMemoryCaptureRepository } from "./in-memory-captures";
+import { CAPTURE_REPOSITORY } from "@/modules/captures/domain/ports";
+import { CapturesController } from "@/modules/captures/presentation/captures.controller";
+import { CaptureProxyService } from "@/modules/captures/infrastructure/capture-proxy.service";
+import { CAPTURE_COMMAND_HANDLERS, CAPTURE_QUERY_HANDLERS } from "@/modules/captures/captures.module";
 import { ENDPOINT_REPOSITORY, EXAMPLE_REPOSITORY } from "@/modules/endpoints/domain/ports";
 import { EndpointsController } from "@/modules/endpoints/presentation/endpoints.controller";
 import { MOCK_REPOSITORY } from "@/modules/mocks/domain/ports";
@@ -254,6 +259,10 @@ export const TEST_ENV: NodeJS.ProcessEnv = {
   JWT_REFRESH_SECRET: "b".repeat(48),
   ACCESS_TOKEN_TTL: "15m",
   REFRESH_TOKEN_TTL_DAYS: "30",
+  // El proxy de captura encendido en un puerto libre y solo en loopback. Escucha únicamente mientras
+  // una prueba tiene una sesión abierta.
+  CAPTURE_PROXY_PORT: "0",
+  CAPTURE_PROXY_HOST: "127.0.0.1",
 };
 
 export type TestContext = {
@@ -289,6 +298,7 @@ export type TestContext = {
     monitors: InMemoryMonitorRepository;
     channels: InMemoryChannelRepository;
     channelSessions: InMemoryChannelSessionRepository;
+    captures: InMemoryCaptureRepository;
   };
   http: StubSafeFetch;
   /** Los sockets de los canales: guionizados por URL, y los que no, al transporte de verdad. */
@@ -332,6 +342,7 @@ export async function createTestApp(): Promise<TestContext> {
     monitors: new InMemoryMonitorRepository(),
     channels: new InMemoryChannelRepository(),
     channelSessions: new InMemoryChannelSessionRepository(),
+    captures: new InMemoryCaptureRepository(),
   };
   const mailer = new RecordingMailer();
   // Lo que no se guioniza sale por el transporte de verdad, con la misma política de red que el
@@ -366,6 +377,7 @@ export async function createTestApp(): Promise<TestContext> {
       DocSitesController,
       MonitorsController,
       ChannelsController,
+      CapturesController,
       RolesController,
       SecurityRunsController,
       PerformanceController,
@@ -433,6 +445,8 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: CHANNEL_TRANSPORT, useValue: channels },
       ChannelProgressStream,
       ChannelSessionRegistry,
+      { provide: CAPTURE_REPOSITORY, useValue: repositories.captures },
+      CaptureProxyService,
       // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the
       // repository is ciphertext, and a pass-through would make that assertion meaningless.
       { provide: SECRET_CIPHER, useValue: new AesGcmSecretCipher(Buffer.alloc(32, 9).toString("base64")) },
@@ -468,6 +482,8 @@ export async function createTestApp(): Promise<TestContext> {
       ...MONITOR_EVENT_HANDLERS,
       ...CHANNEL_COMMAND_HANDLERS,
       ...CHANNEL_QUERY_HANDLERS,
+      ...CAPTURE_COMMAND_HANDLERS,
+      ...CAPTURE_QUERY_HANDLERS,
       ...ROLE_COMMAND_HANDLERS,
       ...ROLE_QUERY_HANDLERS,
       ...SECURITY_RUN_COMMAND_HANDLERS,

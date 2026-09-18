@@ -41,6 +41,7 @@ import {
   SendChannelMessageDto,
   UpdateChannelDto,
 } from "@/modules/channels/presentation/dto/channels.dto";
+import { ImportCaptureDto } from "@/modules/captures/presentation/dto/captures.dto";
 import type { OpenAPIObject } from "@nestjs/swagger";
 
 import {
@@ -192,6 +193,7 @@ const DTOS = [
   UpdateChannelDto,
   OpenChannelSessionDto,
   SendChannelMessageDto,
+  ImportCaptureDto,
   CreatePlanDto,
   UpdatePlanDto,
   StartPerformanceRunDto,
