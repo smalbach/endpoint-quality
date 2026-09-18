@@ -11,12 +11,19 @@
  */
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { lookup } from "node:dns/promises";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import { createServer as createTlsServer, type Server as TlsServer } from "node:https";
 import { type AddressInfo } from "node:net";
+import { resolve } from "node:path";
+import { getCACertificates, setDefaultCACertificates } from "node:tls";
+import { fetch as pinnedFetch } from "undici";
 
 import {
   BlockedTargetError,
   isBlockedAddress,
+  pinnedAgent,
   resolveTarget,
   safeFetch,
   type SafeFetchPolicy,
@@ -242,5 +249,68 @@ describe("contra un servidor real", () => {
 
   test("un servidor que no responde se corta por timeout", async () => {
     await assert.rejects(safeFetch(`${origin}/slow`, { ...selfHosted, timeoutMs: 200 }), /sin respuesta en 200 ms/);
+  });
+});
+
+/**
+ * HTTPS de verdad: un certificado emitido para un nombre, y una CA de prueba en la que se confía
+ * solo durante este bloque.
+ *
+ * Es el caso que la guarda rompía sin que ninguna prueba lo viera —todas eran HTTP en loopback—:
+ * fijaba la IP **escribiéndola en la URL**, así que TLS comparaba el certificado con la IP y ningún
+ * servidor HTTPS con un certificado normal contestaba. Ahora la IP va en el `lookup` de la conexión
+ * y el nombre se queda en la URL.
+ *
+ * `test/fixtures/tls` tiene la CA (sin su clave, que no se guardó) y un certificado para
+ * `localhost` y `no-existe.invalid`. Solo sirven aquí.
+ */
+describe("contra un servidor HTTPS con certificado para un nombre", () => {
+  let server: TlsServer;
+  let port: number;
+  let address: string;
+  let family: number;
+  const defaults = getCACertificates("default");
+
+  function fixture(name: string): string {
+    let directory = __dirname;
+    while (!existsSync(resolve(directory, "test/fixtures/tls", name))) directory = resolve(directory, "..");
+    return readFileSync(resolve(directory, "test/fixtures/tls", name), "utf8");
+  }
+
+  before(async () => {
+    setDefaultCACertificates([...defaults, fixture("ca.pem")]);
+    // La misma resolución que hará la guarda, para escuchar justo donde va a conectar.
+    ({ address, family } = await lookup("localhost"));
+    server = createTlsServer({ cert: fixture("localhost.pem"), key: fixture("localhost.key") }, (request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ host: request.headers.host }));
+    });
+    await new Promise<void>((done) => server.listen(0, address, done));
+    port = (server.address() as AddressInfo).port;
+  });
+
+  after(async () => {
+    setDefaultCACertificates(defaults);
+    await new Promise<void>((done) => server.close(() => done()));
+  });
+
+  test("el certificado se valida contra el nombre, y la conexión va a la IP comprobada", async () => {
+    const result = await safeFetch(`https://localhost:${port}/ok`, selfHosted);
+    assert.equal(result.status, 200);
+    assert.equal(JSON.parse(result.body).host, `localhost:${port}`);
+  });
+
+  test("la dirección fijada gana al nombre: uno que no resuelve llega igual", async () => {
+    // `.invalid` no resuelve nunca: si la conexión preguntara al DNS, fallaría aquí.
+    const response = await pinnedFetch(`https://no-existe.invalid:${port}/ok`, {
+      dispatcher: pinnedAgent(address, family),
+    });
+    assert.equal(response.status, 200);
+  });
+
+  test("la verificación sigue puesta: un certificado que no es de esa dirección se rechaza, con el motivo", async () => {
+    // El certificado no lleva la IP; pedirla por la IP es lo que antes pasaba con todo HTTPS.
+    const literal = family === 6 ? `[${address}]` : address;
+    await assert.rejects(safeFetch(`https://${literal}:${port}/ok`, selfHosted), /altnames|certificate/i);
   });
 });

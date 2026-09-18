@@ -18,7 +18,10 @@
  *     around a check performed only once, so redirects are followed by hand, one at a time.
  *  3. **Connect to the IP that was checked.** Checking a name, then letting the HTTP client
  *     resolve it again, leaves a window in which the second answer differs — DNS rebinding. The
- *     request goes to the literal address, with `Host` set to the original name.
+ *     address is pinned **in the connection's lookup**, and the name stays in the URL: TLS checks
+ *     the certificate against the name (SNI), which is what a certificate is issued for. Writing
+ *     the address into the URL instead — what this did before — pinned just as well and failed
+ *     every HTTPS server with a real certificate, because `https://199.232.157.51` matches none.
  *  4. **Cap what comes back.** A URL that streams forever is a denial of service that needs no
  *     private address at all.
  *
@@ -27,7 +30,8 @@
  * defaults to false, so a hosted deployment is safe unless somebody deliberately opens it.
  */
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
+import { Agent, fetch as pinnedFetch } from "undici";
 import { cookieHeaderFor, type Cookie } from "@eq/runner-core";
 
 export type SafeFetchPolicy = {
@@ -288,90 +292,120 @@ export async function safeFetch(
     const started = Date.now();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), policy.timeoutMs);
+    // Un agente por salto, con la dirección comprobada fija en su `lookup`: la conexión no vuelve a
+    // preguntar al DNS —la ventana del rebinding sigue cerrada— y el nombre sigue en la URL, que es
+    // contra lo que TLS valida el certificado.
+    const agent = pinnedAgent(address, family);
 
-    let response: Response;
     try {
-      // The request goes to the address that was checked, with `Host` carrying the original
-      // name. Re-resolving the hostname here would reopen the DNS rebinding window that
-      // checking the IP was supposed to close.
-      const literalHost = family === 6 ? `[${address}]` : address;
-      const direct = new URL(url.toString());
-      direct.hostname = literalHost;
-      const headers: Record<string, string> = {
-        Accept: "application/json, application/yaml, text/yaml, */*",
-        ...options.headers,
-        Host: url.host,
+      let response: Awaited<ReturnType<typeof pinnedFetch>>;
+      try {
+        const headers: Record<string, string> = {
+          Accept: "application/json, application/yaml, text/yaml, */*",
+          // `Host` lo pone la URL. Uno escrito a mano mandaría la petición a un nombre y el
+          // certificado de otro.
+          ...Object.fromEntries(
+            Object.entries(options.headers ?? {}).filter(([name]) => name.toLowerCase() !== "host"),
+          ),
+        };
+        // Las cookies de *este* salto: una redirección a otro host no lleva las del anterior.
+        const cookieHeader =
+          options.jar && !wroteCookie ? cookieHeaderFor(url.toString(), options.jar, Date.now()) : "";
+        if (cookieHeader) headers.Cookie = cookieHeader;
+        response = await pinnedFetch(url, {
+          method,
+          headers,
+          ...(body === undefined ? {} : { body }),
+          redirect: "manual",
+          signal: controller.signal,
+          dispatcher: agent,
+        });
+      } catch (error) {
+        if (controller.signal.aborted) throw new BlockedTargetError(current, `sin respuesta en ${policy.timeoutMs} ms`);
+        throw new BlockedTargetError(current, failureOf(error));
+      } finally {
+        clearTimeout(timeout);
+      }
+
+      setCookie.push(...response.headers.getSetCookie());
+
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.get("location");
+        if (!location) throw new BlockedTargetError(current, `redirección ${response.status} sin cabecera Location`);
+        // `307` y `308` conservan el método y el cuerpo, así que seguirlas sobre una escritura sería
+        // repetir esa escritura en una dirección que nadie eligió — indistinguible, desde aquí, de un
+        // intento de que borremos algo en otro sitio. Eso se sigue rechazando.
+        if (!["GET", "HEAD", "OPTIONS"].includes(method) && (response.status === 307 || response.status === 308)) {
+          throw new BlockedTargetError(
+            current,
+            `redirección ${response.status} sobre un ${method}: no se reenvía una escritura`,
+          );
+        }
+        // `301`, `302` y `303` sobre una escritura se siguen **como un GET sin cuerpo**, que es lo
+        // que hace cualquier navegador y lo que la RFC 9110 exige para el 303. No es repetir la
+        // escritura: es leer en la dirección nueva, y sin esto un login que contesta 302 —el caso
+        // normal de una API con cookies— no se puede seguir hasta el final.
+        if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+          method = "GET";
+          body = undefined;
+        }
+        current = new URL(location, url).toString();
+        continue;
+      }
+
+      // The split is taken here, between `fetch` resolving — which is the headers having arrived —
+      // and the body having been read. Those are the two halves of a slow response and they have
+      // different owners.
+      const headersAt = Date.now();
+      const raw = await readCapped(response, policy.maxResponseBytes, current);
+      const readAt = Date.now();
+      const asBytes = options.responseAs === "bytes";
+      return {
+        status: response.status,
+        headers: {
+          ...Object.fromEntries(response.headers.entries()),
+          // `entries()` devuelve una entrada por cada `Set-Cookie`, así que `fromEntries` se queda
+          // **con la última** y pierde las demás: una captura que leyera `set-cookie` estaría
+          // leyendo una cookie que no es la que buscaba. Aquí van todas, unidas como las une la
+          // propia plataforma, y quien necesite precisión usa `setCookie`.
+          ...(setCookie.length ? { "set-cookie": setCookie.join(", ") } : {}),
+        },
+        setCookie,
+        body: asBytes ? "" : new TextDecoder().decode(raw),
+        ...(asBytes ? { bytes: raw } : {}),
+        finalUrl: url.toString(),
+        durationMs: readAt - started,
+        timing: { dnsMs, ttfbMs: headersAt - started, downloadMs: readAt - headersAt },
       };
-      // Las cookies de *este* salto: una redirección a otro host no lleva las del anterior.
-      const cookieHeader = options.jar && !wroteCookie ? cookieHeaderFor(url.toString(), options.jar, Date.now()) : "";
-      if (cookieHeader) headers.Cookie = cookieHeader;
-      response = await fetch(direct, {
-        method,
-        headers,
-        ...(body === undefined ? {} : { body }),
-        redirect: "manual",
-        signal: controller.signal,
-      });
-    } catch (error) {
-      if (controller.signal.aborted) throw new BlockedTargetError(current, `sin respuesta en ${policy.timeoutMs} ms`);
-      throw new BlockedTargetError(current, error instanceof Error ? error.message : "la petición falló");
     } finally {
-      clearTimeout(timeout);
+      // Cortado y no esperado: en una redirección el cuerpo no se lee, y esperar a que se vacíe
+      // sería esperar a un servidor que no tiene por qué terminar.
+      agent.destroy().catch(() => undefined);
     }
-
-    setCookie.push(...response.headers.getSetCookie());
-
-    if ([301, 302, 303, 307, 308].includes(response.status)) {
-      const location = response.headers.get("location");
-      if (!location) throw new BlockedTargetError(current, `redirección ${response.status} sin cabecera Location`);
-      // `307` y `308` conservan el método y el cuerpo, así que seguirlas sobre una escritura sería
-      // repetir esa escritura en una dirección que nadie eligió — indistinguible, desde aquí, de un
-      // intento de que borremos algo en otro sitio. Eso se sigue rechazando.
-      if (!["GET", "HEAD", "OPTIONS"].includes(method) && (response.status === 307 || response.status === 308)) {
-        throw new BlockedTargetError(
-          current,
-          `redirección ${response.status} sobre un ${method}: no se reenvía una escritura`,
-        );
-      }
-      // `301`, `302` y `303` sobre una escritura se siguen **como un GET sin cuerpo**, que es lo
-      // que hace cualquier navegador y lo que la RFC 9110 exige para el 303. No es repetir la
-      // escritura: es leer en la dirección nueva, y sin esto un login que contesta 302 —el caso
-      // normal de una API con cookies— no se puede seguir hasta el final.
-      if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
-        method = "GET";
-        body = undefined;
-      }
-      current = new URL(location, url).toString();
-      continue;
-    }
-
-    // The split is taken here, between `fetch` resolving — which is the headers having arrived —
-    // and the body having been read. Those are the two halves of a slow response and they have
-    // different owners.
-    const headersAt = Date.now();
-    const raw = await readCapped(response, policy.maxResponseBytes, current);
-    const readAt = Date.now();
-    const asBytes = options.responseAs === "bytes";
-    return {
-      status: response.status,
-      headers: {
-        ...Object.fromEntries(response.headers.entries()),
-        // `entries()` devuelve una entrada por cada `Set-Cookie`, así que `fromEntries` se queda
-        // **con la última** y pierde las demás: una captura que leyera `set-cookie` estaría
-        // leyendo una cookie que no es la que buscaba. Aquí van todas, unidas como las une la
-        // propia plataforma, y quien necesite precisión usa `setCookie`.
-        ...(setCookie.length ? { "set-cookie": setCookie.join(", ") } : {}),
-      },
-      setCookie,
-      body: asBytes ? "" : new TextDecoder().decode(raw),
-      ...(asBytes ? { bytes: raw } : {}),
-      finalUrl: url.toString(),
-      durationMs: readAt - started,
-      timing: { dnsMs, ttfbMs: headersAt - started, downloadMs: readAt - headersAt },
-    };
   }
 
   throw new BlockedTargetError(rawUrl, `más de ${policy.maxRedirects} redirecciones`);
+}
+
+/**
+ * Un agente que conecta siempre a `address`, pregunte por el nombre que pregunte.
+ *
+ * El `lookup` es el de `net.connect`, que con `autoSelectFamily` pide la lista entera (`all`) y sin
+ * ella una sola dirección: se contestan las dos formas con la misma dirección, la comprobada.
+ */
+export function pinnedAgent(address: string, family: number): Agent {
+  const lookup: LookupFunction = (_hostname, options, callback) => {
+    if (options.all) callback(null, [{ address, family }]);
+    else callback(null, address, family);
+  };
+  return new Agent({ connect: { lookup } });
+}
+
+/** El motivo que da `fetch`: «fetch failed» no dice nada, y su `cause` —el certificado, el reset— sí. */
+function failureOf(error: unknown): string {
+  if (!(error instanceof Error)) return "la petición falló";
+  const cause = (error as Error & { cause?: unknown }).cause;
+  return cause instanceof Error && cause.message ? `${error.message}: ${cause.message}` : error.message;
 }
 
 /**
@@ -384,7 +418,11 @@ export async function safeFetch(
  * It hands back the bytes and lets the caller decide whether to decode them, because that is the
  * one decision this function cannot make for a `.zip`.
  */
-async function readCapped(response: Response, maxBytes: number, target: string): Promise<Uint8Array> {
+async function readCapped(
+  response: { body: ReadableStream<Uint8Array> | null },
+  maxBytes: number,
+  target: string,
+): Promise<Uint8Array> {
   const reader = response.body?.getReader();
   if (!reader) return new Uint8Array(0);
   const chunks: Uint8Array[] = [];
