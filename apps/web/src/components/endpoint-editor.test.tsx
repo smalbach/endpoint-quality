@@ -130,6 +130,23 @@ describe("el editor de endpoints", () => {
     expect(request.pathParameters).toEqual([{ name: "id", value: "7" }]);
   });
 
+  test("el modo GraphQL abre su editor y «Enviar» manda la operación y sus variables", async () => {
+    mount();
+    await screen.findByDisplayValue("/users/{id}");
+    fireEvent.click(screen.getByRole("button", { name: "Body" }));
+    fireEvent.click(screen.getByRole("button", { name: "GraphQL" }));
+    // Se carga aparte: la primera vez tarda lo que tarda el import.
+    const query = await screen.findByLabelText("Operación GraphQL");
+    fireEvent.change(query, { target: { value: "{ me { id } }" } });
+    fireEvent.change(screen.getByLabelText("Variables GraphQL"), { target: { value: '{"a": 1}' } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+
+    await waitFor(() => expect(call.mock.calls.some(([path]) => path === `${BASE}/endpoints/send`)).toBe(true));
+    const sent = call.mock.calls.find(([path]) => path === `${BASE}/endpoints/send`)!;
+    const request = JSON.parse((sent[1].body as FormData).get("request") as string);
+    expect(request.body).toMatchObject({ mode: "graphql", text: "{ me { id } }", variables: '{"a": 1}' });
+  });
+
   test("la consola enseña lo que imprimió y probó cada script, y la cabecera cuenta las pruebas", async () => {
     mount();
     await screen.findByDisplayValue("/users/{id}");

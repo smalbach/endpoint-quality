@@ -12,7 +12,7 @@
  * - scripts run on «Enviar», each in a process of its own; «Consola» shows what they printed and tested,
  *   with every secret masked.
  */
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "@/lib/api";
@@ -80,9 +80,13 @@ const BODY_MODES: { value: EndpointBodyMode; label: string }[] = [
   { value: "form-data", label: "form-data" },
   { value: "x-www-form-urlencoded", label: "x-www-form-urlencoded" },
   { value: "binary", label: "binary" },
+  { value: "graphql", label: "GraphQL" },
 ];
 
 const PARAMETER_TYPES = ["string", "number", "boolean", "uuid", "array"] as const;
+
+/** El cuerpo GraphQL trae `graphql` (~150 kB): se carga cuando alguien lo abre, no con el editor. */
+const GraphqlBodyEditor = lazy(() => import("@/components/graphql-body-editor"));
 
 export function EndpointEditor({
   base,
@@ -192,6 +196,21 @@ export function EndpointEditor({
       }
     },
   });
+
+  /**
+   * La introspección de un cuerpo GraphQL, por el mismo «Enviar»: entorno, cabeceras, autenticación
+   * y script previo de la petición —el que suele conseguir el token—. El posterior no: sus tests son
+   * sobre la respuesta de la operación, y correrlos sobre el esquema daría fallos que no lo son.
+   */
+  const introspect = (query: string) =>
+    api<SentRequestView>(`${base}/endpoints/send`, {
+      method: "POST",
+      body: sendForm(
+        { ...draft, body: { ...draft.body, mode: "graphql", text: query, variables: "" }, postResponseScript: "" },
+        environment?.id ?? null,
+        NO_FILES,
+      ),
+    });
 
   const canSend = canEdit && draft.path.trim().length > 0 && missing.length === 0 && !send.isPending;
   const keyHandlers = useRef({ save: () => {}, send: () => {} });
@@ -342,6 +361,7 @@ export function EndpointEditor({
             setFiles={setFiles}
             variables={variableNames}
             disabled={!canEdit}
+            introspect={introspect}
           />
         )}
 
@@ -800,6 +820,7 @@ function BodyTab({
   setFiles,
   variables,
   disabled,
+  introspect,
 }: {
   draft: EndpointDraft;
   set: (patch: Partial<EndpointDraft>) => void;
@@ -807,6 +828,7 @@ function BodyTab({
   setFiles: (files: ChosenFiles) => void;
   variables: string[];
   disabled: boolean;
+  introspect: (query: string) => Promise<SentRequestView>;
 }) {
   const toast = useToast();
   const body = draft.body ?? EMPTY_BODY;
@@ -851,6 +873,21 @@ function BodyTab({
       </div>
 
       {body.mode === "none" && <p className="text-[11px] text-slate-500">Esta petición no lleva cuerpo.</p>}
+
+      {body.mode === "graphql" && (
+        <Suspense fallback={<p className="text-[11px] text-slate-500">Cargando el editor GraphQL…</p>}>
+          <GraphqlBodyEditor
+            query={body.text}
+            variables={body.variables ?? ""}
+            onChange={setBody}
+            variableNames={variables}
+            disabled={disabled}
+            method={draft.method}
+            schemaKey={draft.path.trim()}
+            introspect={introspect}
+          />
+        </Suspense>
+      )}
 
       {(body.mode === "json" || body.mode === "raw") && (
         <div>

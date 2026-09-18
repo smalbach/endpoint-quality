@@ -217,6 +217,42 @@ describe("la página publicada", () => {
     expect(screen.getByText(/curl/).textContent).toContain("?page=2");
   });
 
+  test("una operación GraphQL sale con sus variables, y el código manda {query, variables} con el tapado como marcador", async () => {
+    call.mockReset();
+    call.mockResolvedValue(
+      page({
+        groups: [
+          {
+            tag: "Pedidos",
+            endpoints: [
+              endpoint({
+                method: "POST",
+                path: "/graphql",
+                url: "https://api.ejemplo.com/graphql",
+                pathParameters: [],
+                body: {
+                  mode: "graphql",
+                  contentType: "application/json",
+                  text: "query { pedidos { id } }",
+                  fields: [],
+                  masked: ["token"],
+                  variables: '{\n  "token": "••••••••"\n}',
+                },
+              }),
+            ],
+          },
+        ],
+      }),
+    );
+    draw();
+    expect(await screen.findByText(/Operación GraphQL/)).toBeTruthy();
+    expect(screen.getByText("query { pedidos { id } }")).toBeTruthy();
+    const curl = screen.getByText(/curl/).textContent ?? "";
+    expect(curl).toContain('"query": "query { pedidos { id } }"');
+    expect(curl).toContain('"token": "{{token}}"');
+    expect(curl).not.toContain("••••");
+  });
+
   test("los cuerpos de ejemplo salen cuando vienen, con su estado", async () => {
     call.mockReset();
     call.mockResolvedValue(

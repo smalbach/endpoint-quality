@@ -148,10 +148,7 @@ export function savePayload(draft: EndpointDraft) {
     pathParameters: draft.pathParameters,
     query: named(draft.query),
     headers: named(draft.headers),
-    body: {
-      ...draft.body,
-      fields: named(draft.body.fields).map((field) => (field.kind === "file" ? { ...field, value: "" } : field)),
-    },
+    body: bodyPayload(draft.body),
     requiresAuth: draft.requiresAuth,
     auth: { type: draft.auth.type, params: storableParams(draft.auth) },
     tags: parseTags(draft.tags),
@@ -159,6 +156,39 @@ export function savePayload(draft: EndpointDraft) {
     preRequestScript: draft.preRequestScript,
     postResponseScript: draft.postResponseScript,
   };
+}
+
+/**
+ * El cuerpo que se guarda. `variables` solo cuando hay algo, igual que en el servidor: sin esto,
+ * borrar las variables dejaba `""` frente al `undefined` guardado y el endpoint salía como cambiado.
+ */
+function bodyPayload(body: EndpointBodyView): EndpointBodyView {
+  const { variables, ...rest } = body;
+  return {
+    ...rest,
+    fields: body.fields
+      .filter((field) => field.name.trim())
+      .map((field) => (field.kind === "file" ? { ...field, value: "" } : field)),
+    ...(variables?.trim() ? { variables } : {}),
+  };
+}
+
+/**
+ * El cuerpo JSON de una operación GraphQL, legible: `{query, variables}`. Unas variables que no son
+ * JSON todavía —una `{{plantilla}}` sensible sin sustituir— se escriben tal cual dentro del objeto,
+ * que es lo que va a viajar en cuanto tengan valor.
+ */
+export function graphqlJson(query: string, variables: string): string {
+  const trimmed = variables.trim();
+  if (!trimmed) return JSON.stringify({ query }, null, 2);
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+      return JSON.stringify({ query, variables: parsed }, null, 2);
+  } catch {
+    // Cae a la forma de texto.
+  }
+  return `{\n  "query": ${JSON.stringify(query)},\n  "variables": ${trimmed}\n}`;
 }
 
 export function isDirty(draft: EndpointDraft, saved: EndpointDraft | null): boolean {
@@ -282,12 +312,35 @@ export function snapshotRequest(
   const base = substitute(context.baseUrl || "{{baseUrl}}").replace(/\/+$/, "");
   const query = new URLSearchParams();
   for (const row of payload.query) if (row.enabled) query.append(row.name, substitute(row.value));
+  const source = payload.body;
+  // Un `GET` de GraphQL lleva la operación en la query, que es lo que manda «Enviar»: el fragmento
+  // tiene que hacer lo mismo o deja de ser la petición que se probó.
+  const graphqlOverGet = source.mode === "graphql" && (payload.method === "GET" || payload.method === "HEAD");
+  if (graphqlOverGet) {
+    query.append("query", substitute(source.text));
+    const variables = substitute(source.variables ?? "").trim();
+    if (variables) {
+      let compact = variables;
+      try {
+        compact = JSON.stringify(JSON.parse(variables));
+      } catch {
+        // Con una plantilla sensible dentro no es JSON todavía; va como está.
+      }
+      query.append("variables", compact);
+    }
+  }
   const url = `${/^https?:\/\//i.test(path) ? "" : base}${path}${query.size ? `?${query.toString()}` : ""}`;
 
-  const source = payload.body;
   const enabled = source.fields.filter((field) => field.enabled);
   let body: SnippetBody = { kind: "none" };
-  if (source.mode === "json" || source.mode === "raw") {
+  if (source.mode === "graphql" && !graphqlOverGet) {
+    body = {
+      kind: "text",
+      text: graphqlJson(substitute(source.text), substitute(source.variables ?? "")),
+      contentType: "application/json",
+      json: true,
+    };
+  } else if (source.mode === "json" || source.mode === "raw") {
     body = {
       kind: "text",
       text: substitute(source.text),

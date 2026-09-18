@@ -147,6 +147,44 @@ describe("variables y cURL", () => {
     );
   });
 
+  test("GraphQL: por POST el cURL manda {query, variables}; por GET, en la query como «Enviar»", () => {
+    const operation = {
+      ...EMPTY_BODY,
+      mode: "graphql" as const,
+      text: "query ($id: ID!) { user(id: $id) { name } }",
+      variables: '{"id": "{{userId}}"}',
+    };
+    const posted = snapshotRequest(draft({ method: "POST", path: "/graphql", body: operation }), {
+      baseUrl: "{{host}}",
+      variables,
+      files: NO_FILES,
+    });
+    expect(posted.body).toEqual({
+      kind: "text",
+      text: JSON.stringify({ query: operation.text, variables: { id: "42" } }, null, 2),
+      contentType: "application/json",
+      json: true,
+    });
+
+    const got = snapshotRequest(draft({ method: "GET", path: "/graphql", body: operation }), {
+      baseUrl: "{{host}}",
+      variables,
+      files: NO_FILES,
+    });
+    expect(got.body).toEqual({ kind: "none" });
+    const search = new URL(got.url).searchParams;
+    expect(search.get("query")).toBe(operation.text);
+    expect(search.get("variables")).toBe('{"id":"42"}');
+  });
+
+  test("unas variables vacías no se guardan: borrarlas no deja el endpoint como cambiado", () => {
+    const saved = draft({ body: { ...EMPTY_BODY, mode: "graphql", text: "{ a }" } });
+    const typed = draft({ body: { ...EMPTY_BODY, mode: "graphql", text: "{ a }", variables: "  " } });
+    expect(savePayload(typed).body).not.toHaveProperty("variables");
+    expect(isDirty(typed, saved)).toBe(false);
+    expect(savePayload(draft({ body: { ...saved.body, variables: '{"a": 1}' } })).body.variables).toBe('{"a": 1}');
+  });
+
   test("un cuerpo JSON se indenta, el resto se deja como vino", () => {
     expect(prettyBody('{"a":1}')).toEqual({ text: '{\n  "a": 1\n}', json: true });
     expect(prettyBody("<x/>")).toEqual({ text: "<x/>", json: false });

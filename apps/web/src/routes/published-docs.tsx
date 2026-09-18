@@ -35,6 +35,7 @@ import {
   type SnippetRequest,
 } from "@/lib/snippets";
 import { MASKED_VALUE } from "@/lib/env-variables";
+import { graphqlJson } from "@/lib/endpoint-draft";
 import type { DocEndpointView, DocPageView, RequestAuthView } from "@/lib/types";
 
 const KEY_STORE = "eq.doc-key.";
@@ -140,6 +141,16 @@ function snippetBodyOf(endpoint: DocEndpointView): SnippetBody {
   if (body.mode === "x-www-form-urlencoded")
     return { kind: "form", fields: body.fields.map((field) => ({ name: field.name, value: field.value })) };
   if (body.mode === "binary") return { kind: "binary", filename: "el-fichero" };
+  if (body.mode === "graphql") {
+    // Por GET la operación va en la URL (ver `urlWithQuery`) y no hay cuerpo.
+    if (graphqlOverGet(endpoint)) return { kind: "none" };
+    return {
+      kind: "text",
+      text: graphqlJson(body.text, bodyWithPlaceholders(body.variables ?? "", body.masked)),
+      contentType: "application/json",
+      json: true,
+    };
+  }
   return {
     kind: "text",
     text: body.mode === "json" ? bodyWithPlaceholders(body.text, body.masked) : body.text,
@@ -148,12 +159,21 @@ function snippetBodyOf(endpoint: DocEndpointView): SnippetBody {
   };
 }
 
+const graphqlOverGet = (endpoint: DocEndpointView): boolean =>
+  endpoint.body?.mode === "graphql" && (endpoint.method === "GET" || endpoint.method === "HEAD");
+
 /** La URL con los parámetros de consulta que la documentación enseña, para que el código se pegue. */
 function urlWithQuery(endpoint: DocEndpointView): string {
   const pairs = endpoint.query.filter((row) => row.example !== "");
-  if (!pairs.length) return endpoint.url;
-  const query = pairs.map((row) => `${encodeURIComponent(row.name)}=${row.example}`).join("&");
-  return `${endpoint.url}${endpoint.url.includes("?") ? "&" : "?"}${query}`;
+  const parts = pairs.map((row) => `${encodeURIComponent(row.name)}=${row.example}`);
+  // Una operación GraphQL por GET va en la query, que es como la manda «Enviar».
+  if (graphqlOverGet(endpoint) && endpoint.body) {
+    parts.push(`query=${encodeURIComponent(endpoint.body.text)}`);
+    const variables = bodyWithPlaceholders(endpoint.body.variables ?? "", endpoint.body.masked).trim();
+    if (variables) parts.push(`variables=${encodeURIComponent(variables)}`);
+  }
+  if (!parts.length) return endpoint.url;
+  return `${endpoint.url}${endpoint.url.includes("?") ? "&" : "?"}${parts.join("&")}`;
 }
 
 function snippetOf(endpoint: DocEndpointView): SnippetRequest {
@@ -373,12 +393,20 @@ function EndpointSection({ endpoint }: { endpoint: DocEndpointView }) {
       {endpoint.body && (
         <div className="space-y-1">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-            Cuerpo · {endpoint.body.contentType}
+            {endpoint.body.mode === "graphql" ? "Operación GraphQL" : "Cuerpo"} · {endpoint.body.contentType}
           </p>
           {endpoint.body.text && (
             <pre className="overflow-x-auto rounded-lg bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-slate-100">
               {endpoint.body.text}
             </pre>
+          )}
+          {endpoint.body.variables && (
+            <>
+              <p className="text-[11px] text-slate-400">Variables</p>
+              <pre className="overflow-x-auto rounded-lg bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-slate-100">
+                {endpoint.body.variables}
+              </pre>
+            </>
           )}
           {endpoint.body.fields.length > 0 && (
             <ul className="space-y-0.5 text-xs font-mono text-slate-700">

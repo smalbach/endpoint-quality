@@ -1452,6 +1452,22 @@ function GraphqlInspector({
                   La credencial obtenida en el login viajará a esta URL. Úsalo solo con hosts de confianza.
                 </p>
               )}
+              <div className="mt-3 border-t border-slate-100 pt-3">
+                <Field
+                  label="Autenticación"
+                  info={
+                    "Los mismos tipos que Postman, firmados sobre el POST de la operación. Un secreto tiene que ser una {{variable}}: el documento del flujo no los cifra, el entorno sí. Heredar deja la llamada como está."
+                  }
+                >
+                  <AuthEditor
+                    auth={call.auth ?? { type: "inherit", params: {} }}
+                    onChange={(auth: RequestAuthView) => setCall({ auth: auth.type === "inherit" ? undefined : auth })}
+                    variables={variables}
+                    disabled={!canEdit}
+                    inheritHint="La llamada va como está: solo la sesión, si la has marcado arriba."
+                  />
+                </Field>
+              </div>
               <div className="mt-3 grid gap-3 @3xl:grid-cols-2">
                 <Field label="Query" info={"El documento GraphQL: query o mutation, con sus $variables declaradas. Ejemplo: query Widget($id: ID!) { widget(id: $id) { id } }."}>
                   <textarea
