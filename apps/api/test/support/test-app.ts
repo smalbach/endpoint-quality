@@ -70,6 +70,7 @@ import {
 import { CHANNEL_REPOSITORY, CHANNEL_SESSION_REPOSITORY } from "@/modules/channels/domain/ports";
 import { ChannelsController } from "@/modules/channels/presentation/channels.controller";
 import { CHANNEL_TRANSPORT, WsChannelTransport } from "@/modules/channels/infrastructure/ws-transport";
+import { MQTT_TRANSPORT, MqttChannelTransport } from "@/modules/channels/infrastructure/mqtt-transport";
 import { ChannelProgressStream } from "@/modules/channels/infrastructure/channel-progress.stream";
 import { ChannelSessionRegistry } from "@/modules/channels/infrastructure/session-registry";
 import { CHANNEL_COMMAND_HANDLERS, CHANNEL_QUERY_HANDLERS } from "@/modules/channels/channels.module";
@@ -443,6 +444,8 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: CHANNEL_REPOSITORY, useValue: repositories.channels },
       { provide: CHANNEL_SESSION_REPOSITORY, useValue: repositories.channelSessions },
       { provide: CHANNEL_TRANSPORT, useValue: channels },
+      // MQTT sin guion: las pruebas hablan con un broker en proceso en loopback, como las de socket.
+      { provide: MQTT_TRANSPORT, useValue: new MqttChannelTransport({ ...env, ALLOW_PRIVATE_TARGETS: true }) },
       ChannelProgressStream,
       ChannelSessionRegistry,
       { provide: CAPTURE_REPOSITORY, useValue: repositories.captures },

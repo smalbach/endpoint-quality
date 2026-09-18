@@ -41,6 +41,14 @@ import type {
   RequestAuthView,
 } from "@/lib/types";
 import { AuthEditor } from "@/components/auth-editor";
+import { MqttChannelSettings } from "@/components/mqtt-channel-settings";
+import {
+  BLANK_PUBLISH,
+  MessageRoute,
+  MqttPublishFields,
+  publishTopicHint,
+  type MqttPublishDraft,
+} from "@/components/mqtt-publish";
 import { EndpointsTabs } from "@/components/endpoints-tabs";
 import { ConfirmDialog, Modal } from "@/components/overlay";
 import { RequestFieldsEditor } from "@/components/request-fields-editor";
@@ -99,8 +107,8 @@ export function ChannelsPage() {
             <div className="mt-6 text-center">
               <p className="text-sm font-medium text-slate-700">Ningún canal todavía</p>
               <p className="mt-1 text-xs text-slate-500">
-                Un canal es un WebSocket: una URL <code>ws://</code> o <code>wss://</code>, lo que se le manda y lo que
-                se espera oír.
+                Un canal es un WebSocket (<code>wss://</code>) o un broker MQTT (<code>mqtts://</code>): lo que se le
+                manda y lo que se espera oír.
               </p>
             </div>
           ) : (
@@ -178,8 +186,13 @@ function NewChannelModal({
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
+  const [protocol, setProtocol] = useState<ChannelView["protocol"]>("ws");
   const create = useMutation({
-    mutationFn: () => api<ChannelView>(`${base}/channels`, { method: "POST", body: { name, url } }),
+    mutationFn: () =>
+      api<ChannelView>(`${base}/channels`, {
+        method: "POST",
+        body: protocol === "mqtt" ? { protocol, name, url } : { name, url },
+      }),
     onSuccess: (channel) => {
       void queryClient.invalidateQueries({ queryKey: ["channels", projectId] });
       onCreated(channel);
@@ -191,7 +204,7 @@ function NewChannelModal({
   return (
     <Modal
       title="Nuevo canal"
-      description="Un WebSocket del proyecto. La URL puede llevar {{variables}}: se resuelven contra el entorno activo al conectar."
+      description="Un WebSocket o un broker MQTT del proyecto. La URL puede llevar {{variables}}: se resuelven contra el entorno activo al conectar."
       onClose={onClose}
       footer={
         <>
@@ -205,13 +218,27 @@ function NewChannelModal({
       }
     >
       <div className="space-y-3">
+        <Field label="Protocolo" error={problemOf("protocol")}>
+          <select
+            className={inputClass}
+            value={protocol}
+            onChange={(event) => setProtocol(event.target.value as ChannelView["protocol"])}
+          >
+            <option value="ws">WebSocket</option>
+            <option value="mqtt">MQTT</option>
+          </select>
+        </Field>
         <Field label="Nombre" error={problemOf("name")}>
           <input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} />
         </Field>
         <Field label="URL" error={problemOf("url")}>
           <input
             className={cn(inputClass, "font-mono")}
-            placeholder="wss://api.ejemplo.com/socket o {{wsBase}}/socket"
+            placeholder={
+              protocol === "mqtt"
+                ? "mqtts://broker.ejemplo.com:8883 o {{broker}}"
+                : "wss://api.ejemplo.com/socket o {{wsBase}}/socket"
+            }
             value={url}
             onChange={(event) => setUrl(event.target.value)}
           />
@@ -283,6 +310,15 @@ function ChannelPanel({
       <div className="min-h-0 flex-1 overflow-y-auto">
         {tab === "conversation" ? (
           <Conversation base={base} channel={channel} environment={environment} canEdit={canEdit} />
+        ) : channel.protocol === "mqtt" ? (
+          <MqttChannelSettings
+            base={base}
+            projectId={projectId}
+            channel={channel}
+            variables={Object.keys(environment?.variables ?? {})}
+            canEdit={canEdit}
+            onRemoved={onRemoved}
+          />
         ) : (
           <ChannelSettings
             base={base}
@@ -326,6 +362,9 @@ function Conversation({
   const [filter, setFilter] = useState<MessageFilter>({ text: "", direction: "all" });
   /** El nombre con el que se guarda el borrador en la biblioteca; `null` mientras no se pide. */
   const [savingAs, setSavingAs] = useState<string | null>(null);
+  // Solo en MQTT: a qué tema se publica. Un WebSocket no manda nada de esto.
+  const mqtt = channel.protocol === "mqtt";
+  const [publish, setPublish] = useState<MqttPublishDraft>(BLANK_PUBLISH);
   const bottom = useRef<HTMLDivElement>(null);
 
   const setSessionId = (id: string | null) =>
@@ -401,7 +440,10 @@ function Conversation({
   });
   const send = useMutation({
     mutationFn: (text: string) =>
-      api(`${base}/channels/sessions/${sessionId}/messages`, { method: "POST", body: { text } }),
+      api(`${base}/channels/sessions/${sessionId}/messages`, {
+        method: "POST",
+        body: mqtt ? { text, ...publish } : { text },
+      }),
     onSuccess: () => setDraft(""),
     onError: (error) => toast.error(message(error)),
   });
@@ -428,7 +470,13 @@ function Conversation({
   });
 
   const open = session !== null && !isOver(session);
-  const canSend = canEdit && open && session.live && Boolean(draft.trim()) && !send.isPending;
+  const canSend =
+    canEdit &&
+    open &&
+    session.live &&
+    Boolean(draft.trim()) &&
+    !send.isPending &&
+    (!mqtt || publishTopicHint(publish.topic) === null);
   const rows = useMemo(() => visibleMessages(messages), [messages]);
   const shown = useMemo(() => filterMessages(rows, filter), [rows, filter]);
   // El hueco se mide contra el mensaje anterior **de la conversación**, no contra el anterior que
@@ -529,6 +577,7 @@ function Conversation({
                   <span>{row.direction === "out" ? "enviado" : row.direction === "in" ? "recibido" : "error"}</span>
                   <span>{gap(row.atMs, previousAt.get(row.seq) ?? null)}</span>
                   {row.kind === "binary" && <span>binario · {row.bytes} B</span>}
+                  <MessageRoute message={row} />
                 </div>
                 <pre className="whitespace-pre-wrap break-words font-mono">{prettyBody(row.body)}</pre>
                 {row.truncated && (
@@ -551,7 +600,10 @@ function Conversation({
                 <button
                   key={saved.name}
                   type="button"
-                  onClick={() => setDraft(saved.body)}
+                  onClick={() => {
+                    setDraft(saved.body);
+                    if (mqtt && saved.topic) setPublish({ ...publish, topic: saved.topic });
+                  }}
                   className="rounded-full border border-slate-200 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
                 >
                   {saved.name}
@@ -559,6 +611,7 @@ function Conversation({
               ))}
             </div>
           )}
+          {mqtt && <MqttPublishFields value={publish} onChange={setPublish} />}
           <div className="flex gap-2">
             <textarea
               aria-label="Mensaje"
@@ -656,7 +709,7 @@ function SessionHeader({ session, maxMessages }: { session: ChannelSessionView; 
       <p className="text-slate-600">
         {session.counters.sent} enviados · {session.counters.received} recibidos ·{" "}
         {session.counters.bytesIn.toLocaleString("es")} bytes recibidos
-        {session.handshake && ` · upgrade ${session.handshake.status}`}
+        {session.handshake && ` · ${session.handshake.via ?? "upgrade"} ${session.handshake.status}`}
         {over && session.stopReason && (
           <>
             {" "}

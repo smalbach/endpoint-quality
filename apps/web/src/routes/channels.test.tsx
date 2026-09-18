@@ -40,6 +40,7 @@ const channel = (patch: Partial<ChannelView> = {}): ChannelView => ({
   limits: { maxMessages: 200, maxBytes: 1_048_576, maxMessageBytes: 65_536, maxDurationMs: 30_000, idleMs: 10_000 },
   expectations: {},
   messages: [],
+  mqtt: null,
   orderIndex: 0,
   createdAt: "2026-03-01T10:00:00.000Z",
   updatedAt: "2026-03-01T10:00:00.000Z",

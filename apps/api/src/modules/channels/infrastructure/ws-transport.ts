@@ -12,13 +12,18 @@ import { Inject, Injectable } from "@nestjs/common";
 import { ENV, type Env } from "@/shared/config/env";
 import { policyFromEnv } from "@/shared/http/safe-fetch.provider";
 import { openSafeSocket, type SafeSocketOptions, type SocketListeners } from "@/shared/http/safe-socket";
+import type { MqttPublish } from "../domain/mqtt";
 
 export const CHANNEL_TRANSPORT = Symbol("CHANNEL_TRANSPORT");
 
-/** Un socket abierto, visto desde la sesión: mandar y cerrar. Lo demás llega por las escuchas. */
+/**
+ * Un socket abierto, visto desde la sesión: mandar y cerrar. Lo demás llega por las escuchas.
+ *
+ * `publish` solo lo lleva un canal MQTT (tema, QoS, `retain`); un WebSocket lo ignora.
+ */
 export type OpenChannel = {
-  handshake: { status: number; headers: Record<string, string> };
-  send(text: string): void;
+  handshake: { status: number; headers: Record<string, string>; via?: string };
+  send(text: string, publish?: MqttPublish): void;
   close(code: number, reason: string): void;
 };
 

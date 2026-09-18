@@ -1,5 +1,6 @@
 /**
- * Un canal: lo que un proyecto prueba cuando lo que prueba no es una petición. Hoy un WebSocket.
+ * Un canal: lo que un proyecto prueba cuando lo que prueba no es una petición. Un WebSocket o un
+ * broker MQTT (lo propio de MQTT vive en `mqtt.ts`).
  *
  * Es un agregado hermano de `Endpoint` y no un tipo de él. El motivo entero está en la migración
  * `1700000028000-Channels`; aquí basta con saber lo que eso compra: el mock, la documentación
@@ -14,6 +15,7 @@ import {
   CONVERSATION_CHECK_SOURCES,
   CHECK_OPERATORS,
   MESSAGE_MATCHES,
+  topicFilterProblem,
   type ChannelExpectation,
   type ChannelLimits,
   type RequestAuth,
@@ -21,11 +23,19 @@ import {
 } from "@eq/runner-core";
 
 import { authProblems, type EndpointHeader } from "@/modules/endpoints/domain/model";
-import { storableParams } from "@/modules/workflows/domain/postman-auth";
+import { redactAuth, storableParams } from "@/modules/workflows/domain/postman-auth";
+import {
+  DEFAULT_MQTT,
+  brokerUrlProblems,
+  mergedSettings,
+  protocolProblems,
+  type MqttQos,
+  type MqttSettings,
+} from "./mqtt";
 
 type Problem = { field: string; detail: string };
 
-export const CHANNEL_PROTOCOLS = ["ws"] as const;
+export const CHANNEL_PROTOCOLS = ["ws", "mqtt"] as const;
 export type ChannelProtocol = (typeof CHANNEL_PROTOCOLS)[number];
 
 export const MAX_CHANNEL_NAME = 120;
@@ -65,8 +75,12 @@ const RESERVED_HEADERS = new Set([
   "sec-websocket-protocol",
 ]);
 
-/** Una trama guardada, con nombre, para no reteclear la de auth en cada sesión. */
-export type SavedMessage = { name: string; body: string };
+/**
+ * Una trama guardada, con nombre, para no reteclear la de auth en cada sesión.
+ *
+ * En MQTT lleva además a dónde se publica: una trama sin tema no se puede mandar.
+ */
+export type SavedMessage = { name: string; body: string; topic?: string; qos?: MqttQos; retain?: boolean };
 
 export type Channel = {
   id: string;
@@ -81,6 +95,8 @@ export type Channel = {
   limits: ChannelLimits;
   expectations: ChannelExpectation;
   messages: SavedMessage[];
+  /** Solo en un canal MQTT: el broker, la sesión y las suscripciones. `null` en un WebSocket. */
+  mqtt: MqttSettings | null;
   orderIndex: number;
   createdAt: Date;
   updatedAt: Date;
@@ -124,6 +140,8 @@ export function effectiveLimits(limits: ChannelLimits, ceilings: ChannelCeilings
 }
 
 export type ChannelInput = {
+  /** Solo al crear: un canal no cambia de protocolo. Al cambiarlo, lo pone quien valida. */
+  protocol?: ChannelProtocol;
   name?: string;
   url?: string;
   subprotocols?: string[];
@@ -132,6 +150,7 @@ export type ChannelInput = {
   limits?: Partial<ChannelLimits>;
   expectations?: ChannelExpectation;
   messages?: SavedMessage[];
+  mqtt?: Partial<MqttSettings> | null;
 };
 
 const LIMIT_TEXT: Record<keyof ChannelLimits, string> = {
@@ -152,7 +171,11 @@ export function channelProblems(input: ChannelInput, ceilings: ChannelCeilings):
     else if (name.length > MAX_CHANNEL_NAME) problem("name", `Como mucho ${MAX_CHANNEL_NAME} caracteres`);
   }
 
-  if (input.url !== undefined) problems.push(...urlProblems(input.url));
+  if (input.protocol !== undefined && !(CHANNEL_PROTOCOLS as readonly string[]).includes(input.protocol))
+    problem("protocol", `Uno de ${CHANNEL_PROTOCOLS.join(", ")}`);
+  if (input.url !== undefined)
+    problems.push(...(input.protocol === "mqtt" ? brokerUrlProblems(input.url) : urlProblems(input.url)));
+  problems.push(...protocolProblems(input));
 
   if (input.subprotocols !== undefined) {
     if (!Array.isArray(input.subprotocols)) problem("subprotocols", "Los subprotocolos son una lista");
@@ -278,6 +301,10 @@ function expectationProblems(expect: ChannelExpectation): Problem[] {
           problem(`${field}.match.at`, `Uno de ${MESSAGE_MATCHES.join(", ")}`);
         if (check?.match?.index !== undefined && (!Number.isInteger(check.match.index) || check.match.index < 0))
           problem(`${field}.match.index`, "Una posición: un entero, cero o más");
+        if (check?.match?.topic !== undefined) {
+          const topicProblem = topicFilterProblem(check.match.topic);
+          if (topicProblem) problem(`${field}.match.topic`, topicProblem);
+        }
       });
     }
   }
@@ -291,11 +318,13 @@ export function blankChannel(fields: {
   url: string;
   now: Date;
   by: string;
+  protocol?: ChannelProtocol;
 }): Channel {
+  const protocol = fields.protocol ?? "ws";
   return {
     id: fields.id,
     projectId: fields.projectId,
-    protocol: "ws",
+    protocol,
     name: fields.name.trim(),
     url: fields.url.trim(),
     subprotocols: [],
@@ -304,6 +333,7 @@ export function blankChannel(fields: {
     limits: { ...DEFAULT_LIMITS },
     expectations: {},
     messages: [],
+    mqtt: protocol === "mqtt" ? { ...DEFAULT_MQTT } : null,
     orderIndex: 0,
     createdAt: fields.now,
     updatedAt: fields.now,
@@ -322,12 +352,17 @@ export function withChanges(channel: Channel, input: ChannelInput, now: Date, by
     ...(input.headers !== undefined ? { headers: input.headers } : {}),
     // La misma regla que un endpoint, y por la misma función: un criterio distinto para guardar la
     // autenticación de un canal sería una segunda respuesta a «¿qué se guarda de una credencial?».
+    // `redactAuth` primero: una contraseña escrita a mano se guarda vacía y solo una `{{variable}}`
+    // se queda. Sin esto, la de un broker MQTT —y el token de un WebSocket— iban en claro al `jsonb`.
     ...(input.auth !== undefined
-      ? { auth: input.auth ? { type: input.auth.type, params: storableParams(input.auth) } : null }
+      ? {
+          auth: input.auth ? { type: input.auth.type, params: storableParams(redactAuth(input.auth).auth) } : null,
+        }
       : {}),
     ...(input.limits !== undefined ? { limits: { ...channel.limits, ...input.limits } } : {}),
     ...(input.expectations !== undefined ? { expectations: input.expectations } : {}),
     ...(input.messages !== undefined ? { messages: input.messages } : {}),
+    ...(input.mqtt && channel.protocol === "mqtt" ? { mqtt: mergedSettings(channel.mqtt, input.mqtt) } : {}),
     updatedAt: now,
     updatedBy: by,
   };

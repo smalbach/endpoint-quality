@@ -82,7 +82,12 @@ export class ChannelsController {
     @Param("sessionId") sessionId: string,
     @Body() body: SendChannelMessageDto,
   ) {
-    await this.commandBus.execute(new SendChannelMessageCommand(organizationId, projectId, sessionId, body.text));
+    // El tema, la QoS y el `retain` solo existen en MQTT; en un WebSocket no se mandan y no viajan.
+    const publish =
+      body.topic !== undefined ? { topic: body.topic, qos: body.qos ?? 0, retain: body.retain ?? false } : undefined;
+    await this.commandBus.execute(
+      new SendChannelMessageCommand(organizationId, projectId, sessionId, body.text, publish),
+    );
     return { accepted: true };
   }
 

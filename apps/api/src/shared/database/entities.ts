@@ -696,6 +696,8 @@ export class ChannelEndpointEntity {
   @Column({ type: "jsonb", default: () => "'{}'" }) expectations: unknown;
   /** Las tramas guardadas para no reteclear la de auth en cada sesión. */
   @Column({ type: "jsonb", default: () => "'[]'" }) messages: unknown;
+  /** Solo en un canal MQTT: broker, sesión y suscripciones. Ver `1700000029000-ChannelMqtt`. */
+  @Column({ type: "jsonb", nullable: true }) mqtt: unknown;
   @Column({ type: "int", default: 0 }) orderIndex: number;
   @Column({ type: "timestamptz" }) createdAt: Date;
   @Column({ type: "timestamptz" }) updatedAt: Date;
@@ -739,6 +741,10 @@ export class ChannelMessageEntity {
   @Column({ type: "int" }) bytes: number;
   @Column({ type: "boolean", default: false }) truncated: boolean;
   @Column({ type: "text", default: "" }) body: string;
+  /** Solo MQTT: el tema (ya tapado), la QoS y el `retain`. Nulos en un WebSocket. */
+  @Column({ type: "text", nullable: true }) topic: string | null;
+  @Column({ type: "smallint", nullable: true }) qos: number | null;
+  @Column({ type: "boolean", nullable: true }) retain: boolean | null;
 }
 
 /**
