@@ -41,6 +41,7 @@ import {
   SendChannelMessageDto,
   UpdateChannelDto,
 } from "@/modules/channels/presentation/dto/channels.dto";
+import { ReflectGrpcDto, SaveProtosDto } from "@/modules/channels/presentation/dto/grpc.dto";
 import { ImportCaptureDto } from "@/modules/captures/presentation/dto/captures.dto";
 import type { OpenAPIObject } from "@nestjs/swagger";
 
@@ -195,6 +196,8 @@ const DTOS = [
   UpdateChannelDto,
   OpenChannelSessionDto,
   SendChannelMessageDto,
+  SaveProtosDto,
+  ReflectGrpcDto,
   ImportCaptureDto,
   CreatePlanDto,
   UpdatePlanDto,

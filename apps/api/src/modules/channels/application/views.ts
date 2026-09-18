@@ -29,6 +29,8 @@ export type ChannelSessionView = {
   counters: ChannelSession["conversation"]["counters"];
   closeCode: number | null;
   closeReason: string;
+  /** Los trailers de una llamada gRPC, ya tapados. `null` en un WebSocket. */
+  trailers: Record<string, string> | null;
   stopReason: ChannelSession["stopReason"];
   verdict: ChannelSession["verdict"];
   openedAt: string;
@@ -48,6 +50,7 @@ export function viewSession(session: ChannelSession, live: boolean, messages?: C
     counters: session.conversation.counters,
     closeCode: session.conversation.closeCode,
     closeReason: session.conversation.closeReason,
+    trailers: session.conversation.trailers,
     stopReason: session.stopReason,
     verdict: session.verdict,
     openedAt: session.openedAt.toISOString(),

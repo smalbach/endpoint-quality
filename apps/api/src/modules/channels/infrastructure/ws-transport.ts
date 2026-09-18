@@ -22,9 +22,33 @@ export const CHANNEL_TRANSPORT = Symbol("CHANNEL_TRANSPORT");
  * `publish` solo lo lleva un canal MQTT (tema, QoS, `retain`); un WebSocket lo ignora.
  */
 export type OpenChannel = {
-  handshake: { status: number; headers: Record<string, string>; via?: string };
+  handshake?: { status: number; headers: Record<string, string>; via?: string };
   send(text: string, publish?: MqttPublish): void;
   close(code: number, reason: string): void;
+  /**
+   * Si el protocolo puede mandar este texto, **antes** de anotarlo: lanza con el motivo si no.
+   *
+   * Un WebSocket manda cualquier texto y no lo necesita. Una llamada gRPC solo manda JSON que encaje
+   * con el tipo de entrada, y solo si el método recibe un stream: sin esto, la transcripción tendría
+   * un «enviado» que nunca salió.
+   */
+  check?(text: string): void;
+  /** Terminar de mandar sin cerrar: el medio cierre de un stream de gRPC. Quien no lo tiene, no lo trae. */
+  end?(): void;
+};
+
+/**
+ * Lo que la sesión escucha de cualquier protocolo: lo de un socket, más lo que un socket no tiene.
+ *
+ * - `onSent`: un mensaje que salió **sin** pasar por `send` —la petición de una llamada unaria, que
+ *   viaja con la propia llamada— y que la transcripción tiene que contar igual.
+ * - Los trailers en el cierre: donde una llamada gRPC dice su estado y lo que quiera añadir.
+ * - Una apertura sin handshake: la conexión está hecha aunque el servidor aún no haya contestado.
+ */
+export type ChannelListeners = Omit<SocketListeners, "onClose" | "onOpen"> & {
+  onOpen?: (handshake?: { status: number; headers: Record<string, string>; via?: string }) => void;
+  onClose: (code: number, reason: string, trailers?: Record<string, string>) => void;
+  onSent?: (text: string) => void;
 };
 
 export interface ChannelTransportPort {

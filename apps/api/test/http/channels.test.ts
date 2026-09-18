@@ -431,6 +431,7 @@ describe("una sesión viva en otra instancia", () => {
         closedAtMs: null,
         closeCode: null,
         closeReason: "",
+        trailers: null,
         stopped: null,
         counters: { sent: 0, received: 0, bytesIn: 0, bytesOut: 0 },
       },

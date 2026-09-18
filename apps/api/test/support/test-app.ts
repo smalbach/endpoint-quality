@@ -69,6 +69,11 @@ import {
 } from "@/modules/monitors/monitors.module";
 import { CHANNEL_REPOSITORY, CHANNEL_SESSION_REPOSITORY } from "@/modules/channels/domain/ports";
 import { ChannelsController } from "@/modules/channels/presentation/channels.controller";
+import { GrpcChannelsController } from "@/modules/channels/presentation/grpc.controller";
+import { CHANNEL_PROTO_REPOSITORY } from "@/modules/channels/domain/grpc";
+import { GRPC_TRANSPORT, GrpcChannelTransport } from "@/modules/channels/infrastructure/grpc-transport";
+import { GrpcSessionPlanner } from "@/modules/channels/application/grpc";
+import { InMemoryChannelProtoRepository } from "./in-memory-protos";
 import { CHANNEL_TRANSPORT, WsChannelTransport } from "@/modules/channels/infrastructure/ws-transport";
 import { MQTT_TRANSPORT, MqttChannelTransport } from "@/modules/channels/infrastructure/mqtt-transport";
 import { ChannelProgressStream } from "@/modules/channels/infrastructure/channel-progress.stream";
@@ -300,6 +305,7 @@ export type TestContext = {
     monitors: InMemoryMonitorRepository;
     channels: InMemoryChannelRepository;
     channelSessions: InMemoryChannelSessionRepository;
+    channelProtos: InMemoryChannelProtoRepository;
     captures: InMemoryCaptureRepository;
     forks: InMemoryProjectForkRepository;
   };
@@ -345,6 +351,7 @@ export async function createTestApp(): Promise<TestContext> {
     monitors: new InMemoryMonitorRepository(),
     channels: new InMemoryChannelRepository(),
     channelSessions: new InMemoryChannelSessionRepository(),
+    channelProtos: new InMemoryChannelProtoRepository(),
     captures: new InMemoryCaptureRepository(),
   };
   const forks = new InMemoryProjectForkRepository(repositories);
@@ -382,6 +389,7 @@ export async function createTestApp(): Promise<TestContext> {
       DocSitesController,
       MonitorsController,
       ChannelsController,
+      GrpcChannelsController,
       CapturesController,
       RolesController,
       SecurityRunsController,
@@ -451,6 +459,10 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: CHANNEL_TRANSPORT, useValue: channels },
       // MQTT sin guion: las pruebas hablan con un broker en proceso en loopback, como las de socket.
       { provide: MQTT_TRANSPORT, useValue: new MqttChannelTransport({ ...env, ALLOW_PRIVATE_TARGETS: true }) },
+      { provide: CHANNEL_PROTO_REPOSITORY, useValue: repositories.channelProtos },
+      // gRPC sin guion: las pruebas llaman a un servidor de verdad en loopback, como las de socket.
+      { provide: GRPC_TRANSPORT, useValue: new GrpcChannelTransport({ ...env, ALLOW_PRIVATE_TARGETS: true }) },
+      GrpcSessionPlanner,
       ChannelProgressStream,
       ChannelSessionRegistry,
       { provide: CAPTURE_REPOSITORY, useValue: repositories.captures },

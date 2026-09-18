@@ -41,6 +41,7 @@ const channel = (patch: Partial<ChannelView> = {}): ChannelView => ({
   expectations: {},
   messages: [],
   mqtt: null,
+  grpc: null,
   orderIndex: 0,
   createdAt: "2026-03-01T10:00:00.000Z",
   updatedAt: "2026-03-01T10:00:00.000Z",
@@ -67,6 +68,7 @@ const session = (patch: Partial<ChannelSessionView> = {}): ChannelSessionView =>
   counters: { sent: 0, received: 0, bytesIn: 0, bytesOut: 0 },
   closeCode: null,
   closeReason: "",
+  trailers: null,
   stopReason: null,
   verdict: null,
   openedAt: "2026-03-01T10:00:00.000Z",
@@ -248,5 +250,82 @@ describe("la pantalla de canales", () => {
     show();
     fireEvent.click(await screen.findByRole("button", { name: "Configuración" }));
     expect(await screen.findByText(/va sin cifrar/)).toBeTruthy();
+  });
+});
+
+describe("un canal gRPC", () => {
+  const grpcChannel = channel({
+    protocol: "grpc",
+    name: "tienda",
+    url: "grpcs://api.ejemplo.com:443",
+    expectations: { status: 0 },
+    grpc: { source: "proto", service: "demo.v1.Shop", method: "GetItem", message: "{}", deadlineMs: null },
+  });
+
+  test("se crea eligiendo el protocolo, y la URL es la de gRPC", async () => {
+    can.edit = true;
+    answers({ channels: [] });
+    show("/p/p1/channels");
+    fireEvent.click(await screen.findByRole("button", { name: "Nuevo canal" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    fireEvent.change(dialog.getByRole("combobox"), { target: { value: "grpc" } });
+    fireEvent.change(dialog.getAllByRole("textbox")[0], { target: { value: "tienda" } });
+    fireEvent.change(dialog.getAllByRole("textbox")[1], { target: { value: "{{grpcBase}}" } });
+    fireEvent.click(dialog.getByRole("button", { name: "Crear" }));
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/channels", {
+        method: "POST",
+        body: { protocol: "grpc", name: "tienda", url: "{{grpcBase}}" },
+      }),
+    );
+  });
+
+  test("se invoca, y una llamada terminada dice su estado por el nombre y sus trailers", async () => {
+    can.edit = true;
+    answers({
+      channels: [grpcChannel],
+      session: session({
+        status: "closed",
+        closeCode: 5,
+        closeReason: "no existe",
+        trailers: { "x-region": "eu", "x-session-token": "••••••••" },
+        stopReason: "closed-by-peer",
+        handshake: { status: 200, headers: {} },
+      }),
+    });
+    show("/p/p1/channels?c=c1&s=s1");
+    expect(await screen.findByText(/estado NOT_FOUND \(5\) «no existe»/)).toBeTruthy();
+    expect(screen.queryByText(/upgrade 200/)).toBeNull();
+    const trailers = within(screen.getByLabelText("Trailers"));
+    expect(trailers.getByText("x-session-token")).toBeTruthy();
+    expect(trailers.getByText("••••••••")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Invocar" })).toBeTruthy();
+  });
+
+  test("la configuración enseña el método en vez de los subprotocolos, y afirma el estado", async () => {
+    can.edit = true;
+    answers({ channels: [grpcChannel] });
+    call.mockImplementation(async (path: string, options?: { method?: string }) => {
+      if (path.endsWith("/environments")) return [];
+      if (path.endsWith("/channels") && !options?.method) return { channels: [grpcChannel] };
+      if (path.endsWith("/channels/c1")) return { ...grpcChannel, sessions: [] };
+      if (path.endsWith("/grpc")) return { files: [], services: [], problem: null };
+      return grpcChannel;
+    });
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Configuración" }));
+    expect(await screen.findByText("Metadata")).toBeTruthy();
+    expect(screen.queryByText("Subprotocolos")).toBeNull();
+    expect((screen.getByLabelText(/^Estado esperado/) as HTMLInputElement).value).toBe("0");
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith(
+        "/orgs/o/projects/p1/channels/c1",
+        expect.objectContaining({
+          method: "PATCH",
+          body: expect.objectContaining({ expectations: { status: 0 }, grpc: grpcChannel.grpc, subprotocols: [] }),
+        }),
+      ),
+    );
   });
 });

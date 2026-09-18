@@ -13,6 +13,8 @@ import {
   applyFrame,
   blankConversation,
   evaluateConversation,
+  GRPC_STATUS_NAMES,
+  grpcStatusName,
   maskSecrets,
   type ChannelLimits,
   type Conversation,
@@ -318,5 +320,74 @@ describe("las respuestas HTTP de siempre no cambian", () => {
     });
     assert.equal(assertion.pass, true);
     assert.equal(assertion.label, "status es 200");
+  });
+});
+
+describe("una llamada gRPC, que cierra con un estado y unos trailers", () => {
+  const SECRET = "tk-grpc-no-debe-salir-91ab";
+  const rules: RedactionRules = { secrets: [SECRET], secretHeader: /^(authorization|set-cookie|.*-token)$/i };
+
+  test("los trailers se guardan tapados: por nombre y por valor, antes de llegar a la fila", () => {
+    const { conversation } = play(
+      [
+        open(),
+        {
+          direction: "close",
+          atMs: 3,
+          closeCode: 16,
+          closeReason: `token ${SECRET} caducado`,
+          trailers: { "x-session-token": "abc123", "x-debug": `vio ${SECRET}`, "x-region": "eu" },
+        },
+      ],
+      LIMITS,
+      rules,
+    );
+    assert.deepEqual(conversation.trailers, {
+      "x-session-token": "••••••••",
+      "x-debug": "vio ••••••••",
+      "x-region": "eu",
+    });
+    assert.ok(!conversation.closeReason.includes(SECRET), conversation.closeReason);
+  });
+
+  test("las cabeceras de la apertura se tapan con la misma regla", () => {
+    const { conversation } = play(
+      [{ direction: "open", atMs: 0, handshake: { status: 200, headers: { "set-cookie": "s=1", via: SECRET } } }],
+      LIMITS,
+      rules,
+    );
+    assert.deepEqual(conversation.handshake?.headers, { "set-cookie": "••••••••", via: "••••••••" });
+    // Y un WebSocket sin trailers sigue sin ellos: `null`, no `{}`.
+    assert.equal(conversation.trailers, null);
+  });
+
+  test("el estado esperado se afirma con su nombre, y el detalle trae el del servidor", () => {
+    const { conversation } = play([
+      { direction: "open", atMs: 0, handshake: { status: 200, headers: {}, via: "inicio de la llamada" } },
+      { direction: "close", atMs: 5, closeCode: 14, closeReason: "sin backend", trailers: {} },
+    ]);
+    const verdict = evaluateConversation({ expect: { status: 0 }, conversation });
+    assert.equal(verdict.ok, false);
+    assert.equal(verdict.failure, "check");
+    assert.deepEqual(
+      verdict.assertions.map((assertion) => [assertion.label, assertion.pass, assertion.detail]),
+      [
+        ["Conexión", true, "abierta (200 en el inicio de la llamada)"],
+        ["Estado OK (0)", false, "terminó con UNAVAILABLE (14): sin backend"],
+      ],
+    );
+  });
+
+  test("una llamada que no terminó no pasa el estado, y lo dice", () => {
+    const { conversation } = play([open(), incoming(1, "{}")]);
+    const [, status] = evaluateConversation({ expect: { status: 0 }, conversation }).assertions;
+    assert.equal(status.pass, false);
+    assert.equal(status.detail, "la llamada no llegó a terminar");
+  });
+
+  test("los nombres siguen el estándar: el número es la posición", () => {
+    assert.equal(GRPC_STATUS_NAMES[4], "DEADLINE_EXCEEDED");
+    assert.equal(GRPC_STATUS_NAMES[16], "UNAUTHENTICATED");
+    assert.equal(grpcStatusName(99), "desconocido (99)");
   });
 });

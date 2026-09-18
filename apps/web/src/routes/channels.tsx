@@ -1,5 +1,5 @@
 /**
- * Canales: probar un WebSocket, que no es una petición sino una conversación.
+ * Canales: probar un WebSocket o un servicio gRPC, que no son una petición sino una conversación.
  *
  * La lista a la izquierda y el canal abierto a la derecha, en la misma sección que los endpoints —
  * una pestaña más— porque para quien prueba una API los dos son «lo que se le manda». El canal
@@ -38,6 +38,7 @@ import type {
   ChannelSessionView,
   ChannelView,
   Environment,
+  GrpcSettingsView,
   RequestAuthView,
 } from "@/lib/types";
 import { AuthEditor } from "@/components/auth-editor";
@@ -49,6 +50,7 @@ import {
   publishTopicHint,
   type MqttPublishDraft,
 } from "@/components/mqtt-publish";
+import { GrpcChannelForm } from "@/components/grpc-channel-form";
 import { EndpointsTabs } from "@/components/endpoints-tabs";
 import { ConfirmDialog, Modal } from "@/components/overlay";
 import { RequestFieldsEditor } from "@/components/request-fields-editor";
@@ -107,8 +109,8 @@ export function ChannelsPage() {
             <div className="mt-6 text-center">
               <p className="text-sm font-medium text-slate-700">Ningún canal todavía</p>
               <p className="mt-1 text-xs text-slate-500">
-                Un canal es un WebSocket (<code>wss://</code>) o un broker MQTT (<code>mqtts://</code>): lo que se le
-                manda y lo que se espera oír.
+                Un canal es un WebSocket (<code>wss://</code>), un broker MQTT (<code>mqtts://</code>) o un servicio
+                gRPC (<code>grpcs://</code>): lo que se le manda y lo que se espera oír.
               </p>
             </div>
           ) : (
@@ -123,7 +125,14 @@ export function ChannelsPage() {
                       channel.id === selected ? "bg-slate-900 text-white" : "hover:bg-slate-50",
                     )}
                   >
-                    <span className="block truncate text-sm font-medium">{channel.name}</span>
+                    <span className="flex items-center gap-1.5 truncate text-sm font-medium">
+                      {channel.protocol === "grpc" && (
+                        <span className="rounded bg-violet-100 px-1 text-[10px] font-semibold text-violet-700">
+                          gRPC
+                        </span>
+                      )}
+                      {channel.name}
+                    </span>
                     <span
                       className={cn(
                         "block truncate font-mono text-[11px]",
@@ -191,7 +200,7 @@ function NewChannelModal({
     mutationFn: () =>
       api<ChannelView>(`${base}/channels`, {
         method: "POST",
-        body: protocol === "mqtt" ? { protocol, name, url } : { name, url },
+        body: protocol === "ws" ? { name, url } : { protocol, name, url },
       }),
     onSuccess: (channel) => {
       void queryClient.invalidateQueries({ queryKey: ["channels", projectId] });
@@ -204,7 +213,7 @@ function NewChannelModal({
   return (
     <Modal
       title="Nuevo canal"
-      description="Un WebSocket o un broker MQTT del proyecto. La URL puede llevar {{variables}}: se resuelven contra el entorno activo al conectar."
+      description="Un WebSocket, un broker MQTT o un servicio gRPC del proyecto. La URL puede llevar {{variables}}: se resuelven contra el entorno activo al conectar."
       onClose={onClose}
       footer={
         <>
@@ -226,6 +235,7 @@ function NewChannelModal({
           >
             <option value="ws">WebSocket</option>
             <option value="mqtt">MQTT</option>
+            <option value="grpc">gRPC</option>
           </select>
         </Field>
         <Field label="Nombre" error={problemOf("name")}>
@@ -237,7 +247,9 @@ function NewChannelModal({
             placeholder={
               protocol === "mqtt"
                 ? "mqtts://broker.ejemplo.com:8883 o {{broker}}"
-                : "wss://api.ejemplo.com/socket o {{wsBase}}/socket"
+                : protocol === "grpc"
+                  ? "grpcs://api.ejemplo.com:443 o {{grpcBase}}"
+                  : "wss://api.ejemplo.com/socket o {{wsBase}}/socket"
             }
             value={url}
             onChange={(event) => setUrl(event.target.value)}
@@ -325,6 +337,7 @@ function ChannelPanel({
             projectId={projectId}
             channel={channel}
             variables={Object.keys(environment?.variables ?? {})}
+            environmentId={environment?.id ?? null}
             canEdit={canEdit}
             onRemoved={onRemoved}
           />
@@ -468,6 +481,12 @@ function Conversation({
     },
     onError: (error) => toast.error(message(error)),
   });
+  // El medio cierre de un stream gRPC: «ya no mando más», y el servidor contesta lo que le quede.
+  const end = useMutation({
+    mutationFn: () => api(`${base}/channels/sessions/${sessionId}/end`, { method: "POST", body: {} }),
+    onError: (error) => toast.error(message(error)),
+  });
+  const grpc = channel.protocol === "grpc";
 
   const open = session !== null && !isOver(session);
   const canSend =
@@ -492,11 +511,16 @@ function Conversation({
         {open ? (
           <>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
-              <span className="size-1.5 rounded-full bg-emerald-500" /> Conectado
+              <span className="size-1.5 rounded-full bg-emerald-500" /> {grpc ? "En curso" : "Conectado"}
             </span>
+            {canEdit && session.live && grpc && (
+              <Button variant="ghost" className="h-8 text-xs" onClick={() => end.mutate()} disabled={end.isPending}>
+                Terminar envío
+              </Button>
+            )}
             {canEdit && session.live && (
               <Button variant="ghost" className="h-8 text-xs" onClick={() => close.mutate()} disabled={close.isPending}>
-                Desconectar
+                {grpc ? "Cancelar llamada" : "Desconectar"}
               </Button>
             )}
             {!session.live && (
@@ -508,7 +532,7 @@ function Conversation({
         ) : (
           canEdit && (
             <Button className="h-8 text-xs" onClick={() => connect.mutate()} disabled={connect.isPending}>
-              {connect.isPending ? "Conectando…" : "Conectar"}
+              {connect.isPending ? (grpc ? "Invocando…" : "Conectando…") : grpc ? "Invocar" : "Conectar"}
             </Button>
           )
         )}
@@ -523,7 +547,7 @@ function Conversation({
         </span>
       </div>
 
-      {session && <SessionHeader session={session} maxMessages={channel.limits.maxMessages} />}
+      {session && <SessionHeader session={session} maxMessages={channel.limits.maxMessages} grpc={grpc} />}
 
       {rows.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
@@ -616,7 +640,11 @@ function Conversation({
             <textarea
               aria-label="Mensaje"
               className={cn(inputClass, "min-h-16 flex-1 font-mono text-xs")}
-              placeholder='{"type":"ping"} — Ctrl+Enter para enviar'
+              placeholder={
+                grpc
+                  ? '{"name": "…"} — JSON del tipo de entrada, Ctrl+Enter para enviar'
+                  : '{"type":"ping"} — Ctrl+Enter para enviar'
+              }
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
@@ -693,6 +721,28 @@ function Conversation({
   );
 }
 
+/** Los estados de gRPC por su nombre: el número es la posición en el estándar. */
+const GRPC_STATUS = [
+  "OK",
+  "CANCELLED",
+  "UNKNOWN",
+  "INVALID_ARGUMENT",
+  "DEADLINE_EXCEEDED",
+  "NOT_FOUND",
+  "ALREADY_EXISTS",
+  "PERMISSION_DENIED",
+  "RESOURCE_EXHAUSTED",
+  "FAILED_PRECONDITION",
+  "ABORTED",
+  "OUT_OF_RANGE",
+  "UNIMPLEMENTED",
+  "INTERNAL",
+  "UNAVAILABLE",
+  "DATA_LOSS",
+  "UNAUTHENTICATED",
+];
+const grpcStatusName = (code: number): string => `${GRPC_STATUS[code] ?? "desconocido"} (${code})`;
+
 const statusText = (session: ChannelSessionView): string =>
   !isOver(session)
     ? "abierta"
@@ -702,14 +752,22 @@ const statusText = (session: ChannelSessionView): string =>
         ? "no llegó a abrir"
         : "en rojo";
 
-function SessionHeader({ session, maxMessages }: { session: ChannelSessionView; maxMessages: number }) {
+function SessionHeader({
+  session,
+  maxMessages,
+  grpc = false,
+}: {
+  session: ChannelSessionView;
+  maxMessages: number;
+  grpc?: boolean;
+}) {
   const over = isOver(session);
   return (
     <div className="rounded-xl border border-slate-200 p-3 text-xs">
       <p className="text-slate-600">
         {session.counters.sent} enviados · {session.counters.received} recibidos ·{" "}
         {session.counters.bytesIn.toLocaleString("es")} bytes recibidos
-        {session.handshake && ` · ${session.handshake.via ?? "upgrade"} ${session.handshake.status}`}
+        {session.handshake && !grpc && ` · ${session.handshake.via ?? "upgrade"} ${session.handshake.status}`}
         {over && session.stopReason && (
           <>
             {" "}
@@ -718,8 +776,23 @@ function SessionHeader({ session, maxMessages }: { session: ChannelSessionView; 
         )}
         {over &&
           session.closeCode !== null &&
-          ` · cierre ${session.closeCode}${session.closeReason ? ` «${session.closeReason}»` : ""}`}
+          (grpc
+            ? ` · estado ${grpcStatusName(session.closeCode)}${session.closeReason ? ` «${session.closeReason}»` : ""}`
+            : ` · cierre ${session.closeCode}${session.closeReason ? ` «${session.closeReason}»` : ""}`)}
       </p>
+      {grpc && session.trailers && Object.keys(session.trailers).length > 0 && (
+        <dl
+          className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 font-mono text-[11px] text-slate-500"
+          aria-label="Trailers"
+        >
+          {Object.entries(session.trailers).map(([name, value]) => (
+            <div key={name} className="contents">
+              <dt>{name}</dt>
+              <dd className="truncate">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
       {over && session.verdict && (
         <div className="mt-2">
           {session.verdict.assertions.map((assertion) => (
@@ -734,14 +807,16 @@ function SessionHeader({ session, maxMessages }: { session: ChannelSessionView; 
 /**
  * La configuración del canal.
  *
- * Sin «protocolo» elegible: hoy un canal es un WebSocket, y un desplegable con una sola opción es
- * una pregunta que no pregunta nada.
+ * El protocolo se elige al crear y no aquí: un canal no cambia de protocolo, porque su URL, sus
+ * cabeceras y lo que afirma dependen de él. Lo que es de un solo protocolo —subprotocolos en un
+ * WebSocket; definición, método, mensaje y plazo en gRPC— solo sale en el suyo.
  */
 function ChannelSettings({
   base,
   projectId,
   channel,
   variables,
+  environmentId,
   canEdit,
   onRemoved,
 }: {
@@ -749,6 +824,7 @@ function ChannelSettings({
   projectId: string;
   channel: ChannelView;
   variables: string[];
+  environmentId: string | null;
   canEdit: boolean;
   onRemoved: () => void;
 }) {
@@ -764,6 +840,9 @@ function ChannelSettings({
   const [limits, setLimits] = useState(channel.limits);
   const [minMessages, setMinMessages] = useState(channel.expectations.minMessages?.toString() ?? "");
   const [closeCode, setCloseCode] = useState(channel.expectations.closeCode?.toString() ?? "");
+  const grpc = channel.protocol === "grpc";
+  const [grpcSettings, setGrpcSettings] = useState<GrpcSettingsView | null>(channel.grpc);
+  const [status, setStatus] = useState(channel.expectations.status?.toString() ?? "");
   const [saved, setSaved] = useState(channel.messages);
   const [removing, setRemoving] = useState(false);
 
@@ -775,19 +854,22 @@ function ChannelSettings({
         body: {
           name,
           url,
-          subprotocols: subprotocols
-            .split(",")
-            .map((value) => value.trim())
-            .filter(Boolean),
+          subprotocols: grpc
+            ? []
+            : subprotocols
+                .split(",")
+                .map((value) => value.trim())
+                .filter(Boolean),
           headers: headers.filter((row) => row.name.trim()),
           auth: auth.type === "none" ? null : auth,
           limits,
           expectations: {
             ...channel.expectations,
             minMessages: number(minMessages),
-            closeCode: number(closeCode),
+            ...(grpc ? { status: number(status) } : { closeCode: number(closeCode) }),
           },
           messages: saved.filter((row) => row.name.trim()),
+          ...(grpc && grpcSettings ? { grpc: grpcSettings } : {}),
         },
       }),
     onSuccess: () => {
@@ -843,30 +925,47 @@ function ChannelSettings({
           />
         </Field>
       </div>
-      {url.trim().startsWith("ws://") && !/^ws:\/\/(localhost|127\.|\[::1\])/.test(url.trim()) && (
-        <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          <code>ws://</code> va sin cifrar: cualquier credencial que mande este canal viaja en claro por la red. Contra
-          un servidor que no es el tuyo, usa <code>wss://</code>.
-        </p>
+      {(url.trim().startsWith("ws://") || url.trim().startsWith("grpc://")) &&
+        !/^(ws|grpc):\/\/(localhost|127\.|\[::1\])/.test(url.trim()) && (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <code>{grpc ? "grpc://" : "ws://"}</code> va sin cifrar: cualquier credencial que mande este canal viaja en
+            claro por la red. Contra un servidor que no es el tuyo, usa <code>{grpc ? "grpcs://" : "wss://"}</code>.
+          </p>
+        )}
+
+      {grpc && grpcSettings ? (
+        <GrpcChannelForm
+          base={base}
+          channelId={channel.id}
+          value={grpcSettings}
+          onChange={setGrpcSettings}
+          canEdit={canEdit}
+          environmentId={environmentId}
+          problemOf={problemOf}
+        />
+      ) : (
+        <Field
+          label="Subprotocolos"
+          hint="Separados por comas, en orden de preferencia. El servidor elige uno."
+          error={problemOf("subprotocols")}
+        >
+          <input
+            className={cn(inputClass, "font-mono")}
+            value={subprotocols}
+            disabled={!canEdit}
+            placeholder="graphql-ws, v1.chat"
+            onChange={(event) => setSubprotocols(event.target.value)}
+          />
+        </Field>
       )}
 
-      <Field
-        label="Subprotocolos"
-        hint="Separados por comas, en orden de preferencia. El servidor elige uno."
-        error={problemOf("subprotocols")}
-      >
-        <input
-          className={cn(inputClass, "font-mono")}
-          value={subprotocols}
-          disabled={!canEdit}
-          placeholder="graphql-ws, v1.chat"
-          onChange={(event) => setSubprotocols(event.target.value)}
-        />
-      </Field>
-
       <RequestFieldsEditor
-        label="Cabeceras del upgrade"
-        hint="Las del propio protocolo —Host, Upgrade, Sec-WebSocket-*— las pone la conexión."
+        label={grpc ? "Metadata" : "Cabeceras del upgrade"}
+        hint={
+          grpc
+            ? "Claves en minúsculas; las grpc-* y las de HTTP/2 las pone la llamada. Una credencial va como {{variable}}: escrita a mano no se guarda."
+            : "Las del propio protocolo —Host, Upgrade, Sec-WebSocket-*— las pone la conexión."
+        }
         rows={headers}
         problems={headerProblems}
         namePlaceholder="Nombre"
@@ -921,19 +1020,37 @@ function ChannelSettings({
             onChange={(event) => setMinMessages(event.target.value)}
           />
         </Field>
-        <Field
-          label="Código de cierre esperado"
-          hint="1000 es «se despidió»; 1006, «se murió»."
-          error={problemOf("expectations.closeCode")}
-        >
-          <input
-            type="number"
-            className={inputClass}
-            value={closeCode}
-            disabled={!canEdit}
-            onChange={(event) => setCloseCode(event.target.value)}
-          />
-        </Field>
+        {grpc ? (
+          <Field
+            label="Estado esperado"
+            hint="0 es OK; vacío, no se afirma el estado. 5 es NOT_FOUND; 14, UNAVAILABLE."
+            error={problemOf("expectations.status")}
+          >
+            <input
+              type="number"
+              min={0}
+              max={16}
+              className={inputClass}
+              value={status}
+              disabled={!canEdit}
+              onChange={(event) => setStatus(event.target.value)}
+            />
+          </Field>
+        ) : (
+          <Field
+            label="Código de cierre esperado"
+            hint="1000 es «se despidió»; 1006, «se murió»."
+            error={problemOf("expectations.closeCode")}
+          >
+            <input
+              type="number"
+              className={inputClass}
+              value={closeCode}
+              disabled={!canEdit}
+              onChange={(event) => setCloseCode(event.target.value)}
+            />
+          </Field>
+        )}
       </div>
 
       <div>

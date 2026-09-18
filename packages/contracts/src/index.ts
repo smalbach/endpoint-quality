@@ -1429,10 +1429,10 @@ export type MonitorListView = { monitors: (MonitorView & { recent: MonitorExecut
 
 export type MonitorHistoryView = { monitor: MonitorView; executions: MonitorExecutionView[] };
 
-// Canales (WebSocket y MQTT)
+// Canales (WebSocket, MQTT y gRPC)
 
 /**
- * Un canal: lo que se prueba cuando no es una petición. Hoy un WebSocket.
+ * Un canal: lo que se prueba cuando no es una petición: un WebSocket, un broker MQTT o un servicio gRPC.
  *
  * Hermano de un endpoint y no un tipo de él: la matriz, el mock, la documentación publicada y el
  * resto de lectores de endpoints no ven canales, por construcción.
@@ -1459,6 +1459,8 @@ export type ChannelCheckView = {
 export type ChannelExpectationView = {
   minMessages?: number;
   closeCode?: number;
+  /** El estado gRPC esperado al terminar la llamada: 0 es OK. Solo en un canal gRPC. */
+  status?: number;
   firstMessageBudgetMs?: number;
   checks?: ChannelCheckView[];
 };
@@ -1474,9 +1476,19 @@ export type MqttSettingsView = {
   subscriptions: { topic: string; qos: 0 | 1 | 2 }[];
 };
 
+/** Servicio, método, mensaje y plazo de un canal gRPC. */
+export type GrpcSettingsView = {
+  source: "proto" | "reflection";
+  service: string;
+  method: string;
+  /** JSON con `{{variables}}`. */
+  message: string;
+  deadlineMs: number | null;
+};
+
 export type ChannelView = {
   id: string;
-  protocol: "ws" | "mqtt";
+  protocol: "ws" | "mqtt" | "grpc";
   name: string;
   /** Con `{{variables}}` si hace falta: se resuelve contra el entorno al abrir. */
   url: string;
@@ -1489,6 +1501,8 @@ export type ChannelView = {
   messages: { name: string; body: string; topic?: string; qos?: 0 | 1 | 2; retain?: boolean }[];
   /** Solo en un canal MQTT. */
   mqtt: MqttSettingsView | null;
+  /** Solo en un canal gRPC; `null` en los demás. */
+  grpc: GrpcSettingsView | null;
   orderIndex: number;
   createdAt: string;
   updatedAt: string;
@@ -1520,6 +1534,8 @@ export type ChannelSessionView = {
   counters: { sent: number; received: number; bytesIn: number; bytesOut: number };
   closeCode: number | null;
   closeReason: string;
+  /** Los trailers de una llamada gRPC, ya tapados. `null` en un WebSocket. */
+  trailers: Record<string, string> | null;
   /** Por qué se dejó de escuchar. Alcanzar un tope no es un error: es un hecho de la sesión. */
   stopReason: string | null;
   verdict: {
@@ -1536,6 +1552,26 @@ export type ChannelSessionView = {
 
 export type ChannelListView = { channels: ChannelView[] };
 export type ChannelDetailView = ChannelView & { sessions: ChannelSessionView[] };
+
+/** Un método de un servicio gRPC, como lo enseña el selector. */
+export type GrpcMethodView = {
+  name: string;
+  requestType: string;
+  responseType: string;
+  clientStreaming: boolean;
+  serverStreaming: boolean;
+  /** Declarado `NO_SIDE_EFFECTS`: el único que se invoca en un entorno sin escrituras. */
+  readOnly: boolean;
+  /** El mensaje de entrada con sus valores por omisión, en JSON con sangría. */
+  example: string;
+};
+
+/** Lo que el selector sabe de la definición: los `.proto` guardados —sin contenido— y sus servicios. */
+export type GrpcSchemaView = {
+  files: { path: string; bytes: number }[];
+  services: { name: string; methods: GrpcMethodView[] }[];
+  problem: string | null;
+};
 
 /** La página publicada, tal y como la lee quien abre la URL: sin sesión y sin cuenta aquí. */
 export type DocPageView = {

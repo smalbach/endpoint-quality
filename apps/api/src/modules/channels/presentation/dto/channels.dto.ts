@@ -17,10 +17,11 @@ import {
   type ChannelProtocol,
   type SavedMessage,
 } from "../../domain/model";
+import type { GrpcSettings } from "../../domain/grpc";
 import type { MqttQos, MqttSettings } from "../../domain/mqtt";
 
 export class CreateChannelDto {
-  /** Ausente es `ws`, que es lo que eran todos los canales antes de MQTT. */
+  /** Ausente es `ws`, que es lo que eran todos los canales antes de MQTT y gRPC. */
   @IsOptional() @IsIn(CHANNEL_PROTOCOLS) protocol?: ChannelProtocol;
   @IsString() @MaxLength(MAX_CHANNEL_NAME) name: string;
   @IsString() @MaxLength(MAX_CHANNEL_URL) url: string;
@@ -31,6 +32,7 @@ export class CreateChannelDto {
   @IsOptional() @IsObject() expectations?: ChannelExpectation;
   @IsOptional() @IsArray() messages?: SavedMessage[];
   @IsOptional() @IsObject() mqtt?: Partial<MqttSettings>;
+  @IsOptional() @IsObject() grpc?: Partial<GrpcSettings>;
 }
 
 export class UpdateChannelDto {
@@ -44,6 +46,7 @@ export class UpdateChannelDto {
   @IsOptional() @IsObject() expectations?: ChannelExpectation;
   @IsOptional() @IsArray() messages?: SavedMessage[];
   @IsOptional() @IsObject() mqtt?: Partial<MqttSettings>;
+  @IsOptional() @IsObject() grpc?: Partial<GrpcSettings>;
 }
 
 export class OpenChannelSessionDto {
