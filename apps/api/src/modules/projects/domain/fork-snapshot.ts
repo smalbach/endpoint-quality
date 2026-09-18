@@ -2,11 +2,13 @@ import type { ConfigSection, WorkflowDocument } from "@eq/runner-core";
 
 import { endpointKey, type Endpoint } from "@/modules/endpoints/domain/model";
 import type { Environment, EnvironmentVariables } from "@/modules/environments/domain/model";
+import type { Channel } from "@/modules/channels/domain/model";
 import type { ConfigRow } from "@/modules/config/domain/ports";
 import type { Role } from "@/modules/roles/domain/model";
 import type { RequestTemplateRow, SuiteRow, WorkflowRow } from "@/modules/workflows/domain/model";
 import { redactAuth, withoutLiteralSecrets } from "@/modules/workflows/domain/postman-auth";
 import { emptySnapshot, type ForkSnapshot, type JsonValue, type MergeKind } from "./fork-merge";
+import { storableChannel } from "./copying";
 import { emptyLineage, LINKED_KINDS, type Lineage, type LinkedKind, type ProjectContents } from "./fork";
 
 /**
@@ -27,6 +29,7 @@ const emptyKeyMap = (): KeyMap => ({
   template: new Map(),
   workflow: new Map(),
   suite: new Map(),
+  channel: new Map(),
   environment: new Map(),
   role: new Map(),
   section: new Map(),
@@ -50,6 +53,8 @@ const NAMED: Record<LinkedKind, (contents: ProjectContents) => { id: string; nam
   template: (contents) => contents.templates,
   workflow: (contents) => contents.workflows,
   suite: (contents) => contents.suites,
+  // Por protocolo y nombre: un canal MQTT y uno WebSocket que se llaman igual no son el mismo canal.
+  channel: (contents) => contents.channels.map((row) => ({ id: row.id, name: `${row.protocol} ${row.name}` })),
   environment: (contents) => contents.environments,
   role: (contents) => contents.roles,
 };
@@ -169,6 +174,9 @@ export function linkedDefinition(definition: WorkflowDocument, keys: KeyMap): Wo
       ...(step.subflow
         ? { subflow: { ...step.subflow, workflowId: keys.workflow.get(step.subflow.workflowId) ?? DANGLING } }
         : {}),
+      ...(step.channel
+        ? { channel: { ...step.channel, channelId: keys.channel.get(step.channel.channelId) ?? DANGLING } }
+        : {}),
     })),
   };
 }
@@ -250,6 +258,28 @@ export function roleContent(role: Role, contents: ProjectContents, keys: KeyMap)
   });
 }
 
+/**
+ * Un canal, con lo que guardarlo deja —cabeceras y autenticación sin literales— y sus `.proto`
+ * ordenados por ruta. Fuera quedan sus sesiones y mensajes, que son de quien conversó.
+ */
+export function channelContent(channel: Channel, contents: ProjectContents): JsonValue {
+  const clean = storableChannel(channel);
+  return json({
+    protocol: clean.protocol,
+    name: clean.name,
+    url: clean.url,
+    subprotocols: clean.subprotocols,
+    headers: clean.headers,
+    auth: clean.auth,
+    limits: clean.limits,
+    expectations: clean.expectations,
+    messages: clean.messages,
+    mqtt: clean.mqtt,
+    grpc: clean.grpc,
+    protos: [...(contents.channelProtos[channel.id] ?? [])].sort((a, b) => a.path.localeCompare(b.path)),
+  });
+}
+
 /** Una sección es su documento. No hay secretos en ninguna: son muestras, reglas y textos. */
 export const sectionContent = (row: ConfigRow): JsonValue => json(row.data ?? null);
 
@@ -273,6 +303,12 @@ export function snapshotOf(contents: ProjectContents, keys: KeyMap): ForkSnapsho
   }
   for (const suite of contents.suites) {
     snapshot.suite[keys.suite.get(suite.id)!] = { label: suite.name, content: suiteContent(suite, keys) };
+  }
+  for (const channel of contents.channels) {
+    snapshot.channel[keys.channel.get(channel.id)!] = {
+      label: `${channel.protocol} · ${channel.name}`,
+      content: channelContent(channel, contents),
+    };
   }
   for (const environment of contents.environments) {
     snapshot.environment[keys.environment.get(environment.id)!] = {

@@ -15,11 +15,20 @@ import { createHash } from "node:crypto";
  */
 
 /**
- * En el orden en que se enseñan. Suites, roles y secciones llegaron después que los otros cuatro:
+ * En el orden en que se enseñan. Suites, canales, roles y secciones llegaron después que los otros:
  * al bifurcar ya se copiaban, pero no se comparaban, y un rol arreglado en el original había que
  * repetirlo a mano en cada bifurcación —justo lo que bifurcar venía a quitar—.
  */
-export const MERGE_KINDS = ["endpoint", "template", "workflow", "suite", "environment", "role", "section"] as const;
+export const MERGE_KINDS = [
+  "endpoint",
+  "template",
+  "workflow",
+  "suite",
+  "channel",
+  "environment",
+  "role",
+  "section",
+] as const;
 export type MergeKind = (typeof MERGE_KINDS)[number];
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -35,6 +44,7 @@ export const emptySnapshot = (): ForkSnapshot => ({
   template: {},
   workflow: {},
   suite: {},
+  channel: {},
   environment: {},
   role: {},
   section: {},
@@ -43,7 +53,7 @@ export const emptySnapshot = (): ForkSnapshot => ({
 /**
  * Una foto con todos los tipos, aunque se guardara cuando había menos.
  *
- * Una bifurcación anterior a las suites, los roles y las secciones tiene una foto común sin ellos.
+ * Una bifurcación anterior a las suites, los canales, los roles y las secciones tiene una foto común sin ellos.
  * Leída tal cual, cada suite de los dos lados sería «añadida en los dos» —`same` si coinciden, un
  * conflicto si no—, que es lo honrado: no se sabe qué tenían en común, y la primera sincronización
  * deja la foto completa.

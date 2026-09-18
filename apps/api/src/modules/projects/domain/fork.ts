@@ -1,5 +1,7 @@
 import type { ConfigSection } from "@eq/runner-core";
 
+import type { Channel } from "@/modules/channels/domain/model";
+import type { ProtoFile } from "@/modules/channels/domain/grpc";
 import type { ConfigRow } from "@/modules/config/domain/ports";
 import type { Endpoint } from "@/modules/endpoints/domain/model";
 import type { Environment } from "@/modules/environments/domain/model";
@@ -18,11 +20,18 @@ import type { Project } from "./model";
  * ruta, en los dos proyectos; las secciones tampoco, que se llaman igual en todos.
  */
 export type LineagePair = { parentId: string; forkId: string };
-export const LINKED_KINDS = ["template", "workflow", "suite", "environment", "role"] as const;
+export const LINKED_KINDS = ["template", "workflow", "suite", "channel", "environment", "role"] as const;
 export type LinkedKind = (typeof LINKED_KINDS)[number];
 export type Lineage = Record<LinkedKind, LineagePair[]>;
 
-export const emptyLineage = (): Lineage => ({ template: [], workflow: [], suite: [], environment: [], role: [] });
+export const emptyLineage = (): Lineage => ({
+  template: [],
+  workflow: [],
+  suite: [],
+  channel: [],
+  environment: [],
+  role: [],
+});
 
 /**
  * El linaje con todos los tipos. Uno guardado antes de que las suites y los roles se compararan no
@@ -66,6 +75,10 @@ export type ProjectContents = {
   workflows: WorkflowRow[];
   datasets: DatasetRow[];
   suites: SuiteRow[];
+  /** Sin sesiones ni mensajes: son de quien conversó, como las corridas. */
+  channels: Channel[];
+  /** Los `.proto` de cada canal gRPC, por id de canal. */
+  channelProtos: Record<string, ProtoFile[]>;
   environments: Environment[];
   roles: Role[];
   rolePermissions: RolePermission[];
@@ -90,6 +103,8 @@ export type ForkWritePlan = {
   workflows: { save: WorkflowRow[]; remove: string[] };
   datasets: { save: DatasetRow[]; remove: string[] };
   suites: { save: SuiteRow[]; remove: string[] };
+  /** Los canales se borran en blando, como en su módulo; los `.proto` de cada uno se reemplazan enteros. */
+  channels: { save: Channel[]; remove: string[]; protos: { channelId: string; files: ProtoFile[] }[] };
   environments: { save: Environment[]; remove: string[] };
   /**
    * Los roles, y los permisos de los que se reescriben: se borran los que tenían (`clear`) y se

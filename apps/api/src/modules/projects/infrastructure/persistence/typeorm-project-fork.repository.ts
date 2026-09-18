@@ -4,6 +4,8 @@ import { In, IsNull, Repository } from "typeorm";
 
 import { ConflictError } from "@/shared/errors/domain-error";
 import {
+  ChannelEndpointEntity,
+  ChannelProtoFileEntity,
   EndpointEntity,
   EnvironmentEntity,
   ForkMergeRequestEntity,
@@ -78,6 +80,13 @@ export class TypeOrmProjectForkRepository implements ProjectForkRepositoryPort {
         await manager.delete(RequestTemplateEntity, { projectId, id: In(plan.templates.remove) });
       if (plan.suites.remove.length)
         await manager.delete(WorkflowSuiteEntity, { projectId, id: In(plan.suites.remove) });
+      // En blando, como los borra su módulo: sus sesiones siguen apuntando a la fila.
+      if (plan.channels.remove.length)
+        await manager.update(
+          ChannelEndpointEntity,
+          { projectId, id: In(plan.channels.remove), deletedAt: IsNull() },
+          { deletedAt: plan.at },
+        );
       if (plan.environments.remove.length)
         await manager.delete(EnvironmentEntity, { projectId, id: In(plan.environments.remove) });
       // Sus permisos y reglas se van con él, por la cascada de la migración.
@@ -99,6 +108,20 @@ export class TypeOrmProjectForkRepository implements ProjectForkRepositoryPort {
         await manager.save(plan.datasets.save.map((row) => manager.create(WorkflowDatasetEntity, row)));
       if (plan.suites.save.length)
         await manager.save(plan.suites.save.map((row) => manager.create(WorkflowSuiteEntity, row)));
+      if (plan.channels.save.length)
+        await manager.save(
+          plan.channels.save.map((row) =>
+            manager.create(ChannelEndpointEntity, row as unknown as ChannelEndpointEntity),
+          ),
+        );
+      for (const { channelId, files } of plan.channels.protos) {
+        await manager.delete(ChannelProtoFileEntity, { channelId });
+        if (files.length)
+          await manager.insert(
+            ChannelProtoFileEntity,
+            files.map((file) => ({ channelId, ...file, bytes: Buffer.byteLength(file.content, "utf8") })),
+          );
+      }
       if (plan.environments.save.length)
         await manager.save(plan.environments.save.map((row) => manager.create(EnvironmentEntity, row)));
       if (plan.roles.save.length) await manager.save(plan.roles.save.map((row) => manager.create(RoleEntity, row)));

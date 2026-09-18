@@ -16,7 +16,14 @@ import {
   type ForkSnapshot,
   type JsonValue,
 } from "@/modules/projects/domain/fork-merge";
-import { forkKeys, parentKeys, snapshotOf, environmentContent } from "@/modules/projects/domain/fork-snapshot";
+import {
+  channelContent,
+  forkKeys,
+  linkedDefinition,
+  parentKeys,
+  snapshotOf,
+  environmentContent,
+} from "@/modules/projects/domain/fork-snapshot";
 import { completeLineage, emptyLineage, type ProjectContents } from "@/modules/projects/domain/fork";
 import { keepTargetSecrets } from "@/modules/projects/application/fork-sync";
 
@@ -175,6 +182,8 @@ const contents = (partial: Partial<ProjectContents>): ProjectContents => ({
   workflows: [],
   datasets: [],
   suites: [],
+  channels: [],
+  channelProtos: {},
   environments: [],
   roles: [],
   rolePermissions: [],
@@ -396,6 +405,7 @@ describe("suites, roles y secciones", () => {
   test("una foto común de antes de estos tipos se completa: lo que coincide sale igual, lo que no, en conflicto", () => {
     const legacy = { endpoint: {}, template: {}, workflow: {}, environment: {} } as unknown as ForkSnapshot;
     assert.deepEqual(Object.keys(withAllKinds(legacy)).sort(), [
+      "channel",
       "endpoint",
       "environment",
       "role",
@@ -409,5 +419,71 @@ describe("suites, roles y secciones", () => {
     assert.equal(one(legacy, a, a).status, "same");
     assert.equal(one(legacy, a, b).status, "conflict");
     assert.deepEqual(completeLineage({ template: [], workflow: [], environment: [] } as never).role, []);
+  });
+});
+
+const channelRow = (id: string, name: string, protocol: "ws" | "mqtt" | "grpc", token: string) =>
+  ({
+    id,
+    projectId: "p",
+    protocol,
+    name,
+    url: "wss://x.example.com",
+    subprotocols: [],
+    headers: [{ name: "Authorization", value: token ? `Bearer ${token}` : "", enabled: true }],
+    auth: { type: "bearer", params: { token } },
+    limits: {},
+    expectations: {},
+    messages: [],
+    mqtt: null,
+    grpc: null,
+    orderIndex: 0,
+    createdAt: at,
+    updatedAt: at,
+    updatedBy: null,
+    deletedAt: null,
+  }) as unknown as ProjectContents["channels"][number];
+
+describe("canales", () => {
+  test("un canal se compara sin sus secretos: un literal y el hueco de la copia son el mismo canal", () => {
+    const withSecret = contents({ channels: [channelRow("c1", "eco", "ws", "literal")] });
+    const emptied = contents({ channels: [channelRow("c2", "eco", "ws", "")] });
+    const a = canonicalJson(channelContent(withSecret.channels[0]!, withSecret));
+    assert.equal(a, canonicalJson(channelContent(emptied.channels[0]!, emptied)));
+    assert.ok(!a.includes("literal"));
+  });
+
+  test("los .proto van en el canal, ordenados por ruta", () => {
+    const grpc = contents({
+      channels: [channelRow("g1", "tienda", "grpc", "")],
+      channelProtos: {
+        g1: [
+          { path: "b.proto", content: "b" },
+          { path: "a.proto", content: "a" },
+        ],
+      },
+    });
+    const content = channelContent(grpc.channels[0]!, grpc) as { protos: { path: string }[] };
+    assert.deepEqual(
+      content.protos.map((file) => file.path),
+      ["a.proto", "b.proto"],
+    );
+  });
+
+  test("se emparejan por protocolo y nombre, y el nodo canal de un flujo se nombra por la clave", () => {
+    const parent = contents({ channels: [channelRow("c1", "eco", "ws", ""), channelRow("m1", "eco", "mqtt", "")] });
+    const fork = contents({ channels: [channelRow("f1", "eco", "mqtt", "")] });
+    const { keys } = forkKeys(fork, emptyLineage(), parent);
+    assert.equal(keys.channel.get("f1"), "m1");
+    const definition = linkedDefinition(
+      { steps: [{ id: "s", kind: "channel", channel: { channelId: "f1" } }] } as never,
+      keys,
+    );
+    assert.equal(definition.steps[0]!.channel!.channelId, "m1");
+    const dangling = linkedDefinition(
+      { steps: [{ id: "s", kind: "channel", channel: { channelId: "otro" } }] } as never,
+      keys,
+    );
+    assert.equal(dangling.steps[0]!.channel!.channelId, "(no existe)");
   });
 });

@@ -2103,6 +2103,7 @@ export type ForkCreatedView = {
     requestTemplates: number;
     workflows: number;
     suites: number;
+    channels: number;
     environments: number;
     roles: number;
     sections: number;
@@ -2110,7 +2111,8 @@ export type ForkCreatedView = {
   skipped: { what: string; detail: string }[];
 };
 
-export type ForkMergeKind = "endpoint" | "template" | "workflow" | "suite" | "environment" | "role" | "section";
+export type ForkMergeKind =
+  "endpoint" | "template" | "workflow" | "suite" | "channel" | "environment" | "role" | "section";
 export type ForkChange = "none" | "added" | "modified" | "deleted";
 /** `incoming` se aplica, `kept` se queda en el destino, `same` coincide y `conflict` pide elegir. */
 export type ForkDiffStatus = "incoming" | "kept" | "same" | "conflict";

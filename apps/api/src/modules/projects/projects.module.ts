@@ -44,6 +44,7 @@ import { GetImportPreviewHandler } from "./application/queries/import-preview";
 import { SetProjectArchivedHandler, UpdateProjectHandler } from "./application/commands/update-project";
 import { DeleteProjectHandler } from "./application/commands/delete-project";
 import { RunsModule } from "@/modules/runs/runs.module";
+import { ChannelsModule } from "@/modules/channels/channels.module";
 import { GetProjectHandler, ListProjectsHandler } from "./application/queries/list-projects";
 import { ProjectsController } from "./presentation/projects.controller";
 
@@ -103,6 +104,8 @@ export const PROJECT_ADAPTERS = [
     forwardRef(() => PerformanceModule),
     // The project list shows the health of each project's latest run.
     forwardRef(() => RunsModule),
+    // Bifurcar y sincronizar llevan los canales y sus `.proto`.
+    forwardRef(() => ChannelsModule),
     AuthModule,
     IamModule,
   ],

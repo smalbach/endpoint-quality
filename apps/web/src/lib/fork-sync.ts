@@ -12,6 +12,7 @@ export const KIND_LABELS: Record<ForkDiffEntryView["kind"], string> = {
   template: "Pruebas",
   workflow: "Flujos",
   suite: "Suites",
+  channel: "Canales",
   environment: "Entornos",
   role: "Roles",
   section: "Secciones de configuración",

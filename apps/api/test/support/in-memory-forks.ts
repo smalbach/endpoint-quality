@@ -10,6 +10,8 @@ import type { ConfigRepositoryPort } from "@/modules/config/domain/ports";
 import type { EndpointRepositoryPort } from "@/modules/endpoints/domain/ports";
 import type { EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
 import type { RoleRepositoryPort } from "@/modules/roles/domain/ports";
+import type { ChannelRepositoryPort } from "@/modules/channels/domain/ports";
+import type { ChannelProtoRepositoryPort } from "@/modules/channels/domain/grpc";
 import type { WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
 
 /**
@@ -80,6 +82,8 @@ export class InMemoryProjectForkRepository implements ProjectForkRepositoryPort 
       roles: RoleRepositoryPort;
       config: ConfigRepositoryPort;
       mergeRequests: MergeRequestRepositoryPort;
+      channels: ChannelRepositoryPort;
+      channelProtos: ChannelProtoRepositoryPort;
     },
   ) {}
 
@@ -138,12 +142,17 @@ export class InMemoryProjectForkRepository implements ProjectForkRepositoryPort 
 
   private async write(plan: ForkWritePlan): Promise<void> {
     const projectId = plan.targetProjectId;
-    const { endpoints, workflows, environments, projects, roles, config, mergeRequests } = this.deps;
+    const { endpoints, workflows, environments, projects, roles, config, mergeRequests, channels, channelProtos } =
+      this.deps;
     await endpoints.softDelete(projectId, plan.endpoints.remove, plan.at);
     for (const id of plan.datasets.remove) await workflows.deleteDataset(projectId, id);
     for (const id of plan.workflows.remove) await workflows.deleteWorkflow(projectId, id);
     for (const id of plan.templates.remove) await workflows.deleteTemplate(projectId, id);
     for (const id of plan.suites.remove) await workflows.deleteSuite(projectId, id);
+    for (const id of plan.channels.remove) {
+      const channel = await channels.findById(projectId, id);
+      if (channel) await channels.save({ ...channel, deletedAt: plan.at });
+    }
     for (const id of plan.environments.remove) await environments.remove(id);
     for (const id of plan.roles.remove) await roles.remove(projectId, id);
     for (const section of plan.sections.remove) await config.deleteSection(projectId, section);
@@ -152,6 +161,8 @@ export class InMemoryProjectForkRepository implements ProjectForkRepositoryPort 
     for (const row of plan.workflows.save) await workflows.saveWorkflow(row);
     for (const row of plan.datasets.save) await workflows.saveDataset(row);
     for (const row of plan.suites.save) await workflows.saveSuite(row);
+    for (const row of plan.channels.save) await channels.save(row);
+    for (const { channelId, files } of plan.channels.protos) await channelProtos.replace(channelId, files);
     for (const row of plan.environments.save) await environments.save(row);
     for (const row of plan.roles.save) await roles.save(row);
     const cleared = new Set(plan.roles.permissions.clear);

@@ -322,6 +322,7 @@ const APPLIED_LABELS: Record<keyof ForkSyncOutcomeView["applied"], string> = {
   template: "pruebas",
   workflow: "flujos",
   suite: "suites",
+  channel: "canales",
   environment: "entornos",
   role: "roles",
   section: "secciones",

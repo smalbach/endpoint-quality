@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import type { EnvironmentVariables } from "@/modules/environments/domain/model";
+import { storableHeader, type Channel } from "@/modules/channels/domain/model";
+import { redactAuth, storableParams } from "@/modules/workflows/domain/postman-auth";
 
 /**
  * Las dos reglas que comparten todas las formas de llevar algo de un proyecto a otro: bifurcar,
@@ -34,4 +36,19 @@ export function uniqueName(name: string, taken: Set<string>): string {
     if (!taken.has(candidate)) return candidate;
   }
   return `${base} ${randomUUID().slice(0, 8)}`;
+}
+
+/**
+ * Un canal tal como puede salir de su proyecto: con las cabeceras y la autenticación que guardarlo
+ * habría dejado —`storableHeader` y `redactAuth`, las mismas funciones que al guardar—.
+ *
+ * Una fila guardada ya pasó por ahí; se vuelve a pasar porque una fila de antes de esa regla puede
+ * traer un secreto, y una copia es el peor momento para duplicarlo.
+ */
+export function storableChannel(channel: Channel): Channel {
+  return {
+    ...channel,
+    headers: channel.headers.map(storableHeader),
+    auth: channel.auth ? { type: channel.auth.type, params: storableParams(redactAuth(channel.auth).auth) } : null,
+  };
 }

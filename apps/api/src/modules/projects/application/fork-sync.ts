@@ -11,6 +11,9 @@ import type { Environment, EnvironmentVariables } from "@/modules/environments/d
 import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
 import type { DatasetRow, RequestTemplateRow, SuiteRow, WorkflowRow } from "@/modules/workflows/domain/model";
 import { ROLE_REPOSITORY, type RoleRepositoryPort } from "@/modules/roles/domain/ports";
+import { CHANNEL_REPOSITORY, type ChannelRepositoryPort } from "@/modules/channels/domain/ports";
+import { CHANNEL_PROTO_REPOSITORY, type ChannelProtoRepositoryPort } from "@/modules/channels/domain/grpc";
+import { storableHeader, type Channel } from "@/modules/channels/domain/model";
 import type { Role, RolePermission, RoleRule } from "@/modules/roles/domain/model";
 import { deriveAccess, readAccess } from "@/modules/roles/domain/derive-access";
 import { isSecretParam, redactAuth, withoutLiteralSecrets } from "@/modules/workflows/domain/postman-auth";
@@ -42,7 +45,7 @@ import {
   type Resolutions,
 } from "../domain/fork-merge";
 import { forkKeys, parentKeys, snapshotOf, syncedSection, type KeyMap } from "../domain/fork-snapshot";
-import { uniqueName } from "../domain/copying";
+import { storableChannel, uniqueName } from "../domain/copying";
 import { ownedProject } from "./commands/update-project";
 
 /** `pull`: del original a la bifurcación. `merge`: de la bifurcación al original. */
@@ -90,6 +93,8 @@ export class ForkSync {
     @Inject(ENVIRONMENT_REPOSITORY) private readonly environments: EnvironmentRepositoryPort,
     @Inject(ROLE_REPOSITORY) private readonly roles: RoleRepositoryPort,
     @Inject(CONFIG_REPOSITORY) private readonly config: ConfigRepositoryPort,
+    @Inject(CHANNEL_REPOSITORY) private readonly channels: ChannelRepositoryPort,
+    @Inject(CHANNEL_PROTO_REPOSITORY) private readonly protos: ChannelProtoRepositoryPort,
   ) {}
 
   async contents(projectId: string): Promise<ProjectContents> {
@@ -116,7 +121,18 @@ export class ForkSync {
       this.roles.listRules(projectId),
       this.config.listSections(projectId),
     ]);
+    const channels = await this.channels.listByProject(projectId);
+    // Solo los de gRPC tienen `.proto`; preguntar por los demás sería una consulta por canal para nada.
+    const channelProtos = Object.fromEntries(
+      await Promise.all(
+        channels
+          .filter((channel) => channel.protocol === "grpc")
+          .map(async (channel) => [channel.id, await this.protos.list(channel.id)] as const),
+      ),
+    );
     return {
+      channels,
+      channelProtos,
       endpoints,
       templates,
       workflows,
@@ -215,7 +231,7 @@ export class ForkSync {
   }
 }
 
-type Row = Endpoint | RequestTemplateRow | WorkflowRow | SuiteRow | Environment | Role | ConfigRow;
+type Row = Endpoint | RequestTemplateRow | WorkflowRow | SuiteRow | Channel | Environment | Role | ConfigRow;
 
 /** El id de una fila en su proyecto. Una sección no tiene: su nombre hace de id. */
 const idOf = (row: Row): string => ("id" in row ? row.id : row.section);
@@ -232,6 +248,7 @@ function rowsByKey(contents: ProjectContents, keys: KeyMap): Record<MergeKind, M
     template: index("template", contents.templates),
     workflow: index("workflow", contents.workflows),
     suite: index("suite", contents.suites),
+    channel: index("channel", contents.channels),
     environment: index("environment", contents.environments),
     role: index("role", contents.roles),
     section: new Map(
@@ -291,8 +308,11 @@ class PlanBuilder {
     this.dragWorkflows();
     this.guardWorkflowRemovals();
     this.dragTemplates();
+    this.dragChannels();
     const workflows = this.workflowRows();
     this.guardTemplateRemovals(workflows);
+    this.guardChannelRemovals(workflows);
+    const channels = this.channelRows();
     const templates = this.templateRows();
     const suites = this.suiteRows();
     const environments = this.environmentRows();
@@ -324,6 +344,7 @@ class PlanBuilder {
       workflows: { save: workflows, remove: removed("workflow") },
       datasets,
       suites: { save: suites, remove: removed("suite") },
+      channels: { ...channels, remove: removed("channel") },
       environments: { save: environments, remove: removed("environment") },
       roles: { save: roles, remove: removed("role"), permissions, rules },
       sections: { save: sections, remove: removed("section") as ConfigSection[] },
@@ -367,6 +388,88 @@ class PlanBuilder {
         });
       }
     }
+  }
+
+  /**
+   * Lo mismo con los canales: un flujo que llega con un nodo canal trae el canal si el destino no lo
+   * tendrá. Un nodo que apunta a un canal que no existe falla al correr con «El canal ya no existe».
+   */
+  private dragChannels(): void {
+    for (const key of this.writes.workflow) {
+      const workflow = this.source.workflow.get(key) as WorkflowRow;
+      for (const step of workflow.definition.steps) {
+        if (!step.channel) continue;
+        const channelKey = this.comparison.source.keys.channel.get(step.channel.channelId);
+        if (!channelKey || !this.source.channel.has(channelKey)) continue;
+        if (this.targetIds.channel.has(channelKey) && !this.removals.channel.has(channelKey)) continue;
+        if (this.writes.channel.has(channelKey)) continue;
+        this.removals.channel.delete(channelKey);
+        this.writes.channel.add(channelKey);
+        if (!this.targetIds.channel.has(channelKey)) this.targetIds.channel.set(channelKey, randomUUID());
+        this.skipped.push({
+          what: "canal",
+          detail: `${(this.source.channel.get(channelKey) as Channel).name}: vino con el flujo ${workflow.name}, que lo usa`,
+        });
+      }
+    }
+  }
+
+  /** Un canal que algún flujo del destino seguirá usando después del plan no se borra. */
+  private guardChannelRemovals(written: WorkflowRow[]): void {
+    const writtenIds = new Set(written.map((row) => row.id));
+    const remaining = [
+      ...written,
+      ...this.comparison.target.contents.workflows.filter((row) => {
+        const key = this.comparison.target.keys.workflow.get(row.id)!;
+        return !writtenIds.has(row.id) && !this.removals.workflow.has(key);
+      }),
+    ];
+    const used = new Set(remaining.flatMap((row) => row.definition.steps.map((step) => step.channel?.channelId)));
+    for (const key of [...this.removals.channel]) {
+      const row = this.target.channel.get(key) as Channel;
+      if (!used.has(row.id)) continue;
+      this.removals.channel.delete(key);
+      this.skipped.push({ what: "canal", detail: `${row.name}: no se borró, un flujo lo usa` });
+    }
+  }
+
+  /**
+   * Los canales, con la regla de los secretos de los entornos: **el destino conserva los suyos**. Lo
+   * que llega viene sin literales —`storableChannel`—, y donde trae un hueco y el destino tenía algo,
+   * se queda lo del destino: una cabecera con el mismo nombre, un parámetro de la autenticación del
+   * mismo tipo. Los `.proto` de un canal gRPC viajan con él, enteros.
+   */
+  private channelRows(): Omit<ForkWritePlan["channels"], "remove"> {
+    const save: Channel[] = [];
+    const protos: ForkWritePlan["channels"]["protos"] = [];
+    let orderIndex =
+      this.comparison.target.contents.channels.reduce((max, row) => Math.max(max, row.orderIndex), -1) + 1;
+    for (const key of this.writes.channel) {
+      const source = storableChannel(this.source.channel.get(key) as Channel);
+      const current = this.target.channel.get(key) as Channel | undefined;
+      const id = this.targetIds.channel.get(key)!;
+      const kept = new Map((current?.headers ?? []).map((header) => [header.name.toLowerCase(), header.value]));
+      save.push({
+        ...source,
+        id,
+        projectId: this.comparison.target.project.id,
+        headers: source.headers.map((header) =>
+          header.value === "" && kept.get(header.name.toLowerCase())
+            ? storableHeader({ ...header, value: kept.get(header.name.toLowerCase())! })
+            : header,
+        ),
+        auth: source.auth ? keepTargetSecrets(source.auth, current?.auth ?? undefined) : null,
+        orderIndex: current?.orderIndex ?? orderIndex++,
+        createdAt: current?.createdAt ?? this.now,
+        updatedAt: this.now,
+        updatedBy: this.actorId,
+        deletedAt: null,
+      });
+      const sourceId = idOf(this.source.channel.get(key)!);
+      if (source.protocol === "grpc")
+        protos.push({ channelId: id, files: this.comparison.source.contents.channelProtos[sourceId] ?? [] });
+    }
+    return { save, protos };
   }
 
   private endpointRows(): Endpoint[] {
@@ -439,6 +542,16 @@ class PlanBuilder {
           const key = keys.template.get(step.requestTemplateId);
           const id = key ? this.targetIds.template.get(key) : undefined;
           if (id) next = { ...next, requestTemplateId: id };
+        }
+        if (step.channel) {
+          const key = keys.channel.get(step.channel.channelId);
+          const id = key && !this.removals.channel.has(key) ? this.targetIds.channel.get(key) : undefined;
+          if (id) next = { ...next, channel: { ...step.channel, channelId: id } };
+          else
+            this.skipped.push({
+              what: "canal",
+              detail: `${workflow.name}: el paso ${step.id} usa un canal que no está en el destino`,
+            });
         }
         if (step.subflow) {
           const key = keys.workflow.get(step.subflow.workflowId);
