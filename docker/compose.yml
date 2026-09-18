@@ -81,6 +81,11 @@ services:
       RETENTION_BODIES_DAYS: ${RETENTION_BODIES_DAYS:-30}
       RETENTION_RUNS_DAYS: ${RETENTION_RUNS_DAYS:-365}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:${EQ_WEB_PORT:-8080}}
+      # El proxy de «Capturar tráfico». Vacío = apagado. Para encenderlo hay que definir el puerto
+      # y publicarlo en `ports` (p. ej. "8888:8888"): no se publica aquí para no reservar un puerto
+      # del anfitrión en las instalaciones que no lo usan.
+      CAPTURE_PROXY_PORT: ${CAPTURE_PROXY_PORT:-}
+      CAPTURE_PROXY_PUBLIC_HOST: ${CAPTURE_PROXY_PUBLIC_HOST:-localhost}
     ports: ["${EQ_API_PORT:-3001}:3001"]
     healthcheck:
       # `web` hace proxy de `/api/` contra esto, y el seed de la demo lo espera. Sin healthcheck,

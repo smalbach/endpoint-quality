@@ -96,6 +96,38 @@ export const envSchema = z.object({
   CHANNEL_MAX_OPEN: z.coerce.number().int().min(1).max(1000).default(20),
 
   /**
+   * El proxy de captura: **apagado si no hay puerto**.
+   *
+   * Un proxy es justo lo que la guarda de red existe para no ser, así que no se abre por omisión:
+   * quien lo quiere lo pide poniendo el puerto. Aun así solo escucha mientras hay alguna sesión
+   * abierta, con su token y su caducidad (ver `captures/infrastructure/capture-proxy.ts`). `0` pide
+   * un puerto libre cualquiera, que es lo que usan las pruebas.
+   *
+   * `CAPTURE_PROXY_HOST` es dónde escucha —`0.0.0.0` para que llegue un móvil de la misma red o el
+   * puerto publicado de un contenedor— y `CAPTURE_PROXY_PUBLIC_HOST` lo que la pantalla dice que se
+   * configure en el dispositivo; sin él, la pantalla usa el nombre con el que se abrió la aplicación.
+   */
+  // Vacía cuenta como ausente: `z.coerce` convertiría `""` en `0`, y un `CAPTURE_PROXY_PORT=` en un
+  // fichero de entorno encendería el proxy en un puerto cualquiera en vez de dejarlo apagado.
+  CAPTURE_PROXY_PORT: z.preprocess(
+    (value) => (typeof value === "string" && !value.trim() ? undefined : value),
+    z.coerce.number().int().min(0).max(65_535).optional(),
+  ),
+  CAPTURE_PROXY_HOST: z.string().min(1).default("0.0.0.0"),
+  CAPTURE_PROXY_PUBLIC_HOST: z.string().min(1).optional(),
+  /** Cuánto dura una sesión como mucho. Se cierra sola al llegar, la usen o no. */
+  CAPTURE_SESSION_MINUTES: z.coerce.number().int().min(1).max(240).default(30),
+  /** Cuántas peticiones graba una sesión antes de cerrarse sola. */
+  CAPTURE_MAX_REQUESTS: z.coerce.number().int().min(1).max(10_000).default(500),
+  /** Cuánto se guarda de cada cuerpo. Lo que pasa por el proxy no se corta: se corta lo guardado. */
+  CAPTURE_MAX_BODY_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1024)
+    .max(1024 * 1024)
+    .default(64 * 1024),
+
+  /**
    * The most cases one run may produce.
    *
    * Every ceiling in this product is local — 500 rows in a dataset, 50 flows in a suite, 200

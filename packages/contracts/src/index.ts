@@ -962,6 +962,69 @@ export type ImportAnythingResult = {
 };
 
 /**
+ * Capturar tráfico: una sesión del proxy de captura, sin su token.
+ *
+ * El token se enseña una vez, en `CaptureStartedView`, y no vuelve a salir por ninguna ruta.
+ */
+export type CaptureSessionView = {
+  id: string;
+  status: "active" | "stopped";
+  stopReason: "manual" | "expired" | "request-limit" | "replaced" | "restart" | null;
+  itemCount: number;
+  limits: { durationMs: number; maxRequests: number; maxBodyBytes: number };
+  startedAt: string;
+  expiresAt: string;
+  stoppedAt: string | null;
+};
+
+/** Una petición grabada, en la lista en vivo: sin cuerpos, que son lo que pesa. */
+export type CaptureItemSummaryView = {
+  id: string;
+  seq: number;
+  at: string;
+  method: string;
+  /** Con los valores de la query que son credenciales ya tapados. */
+  url: string;
+  host: string;
+  /** `null` en un túnel HTTPS y en una petición que no llegó a contestar. */
+  status: number | null;
+  /** Un túnel HTTPS: solo se sabe a qué `host:puerto` iba. */
+  encrypted: boolean;
+  contentType: string;
+  durationMs: number;
+  error: string | null;
+  /** Por qué el import la tiraría —el mismo filtro que un HAR—, o `null` cuando entraría. */
+  noise: string | null;
+};
+
+/** Una petición grabada, entera. Las credenciales llegan tapadas: se taparon al grabarla. */
+export type CaptureItemView = CaptureItemSummaryView & {
+  requestHeaders: Record<string, string>;
+  requestBody: string;
+  requestBodyTruncated: boolean;
+  responseHeaders: Record<string, string>;
+  responseBody: string;
+  responseBodyTruncated: boolean;
+};
+
+/** Dónde se configura el proxy en el dispositivo. `host` es `null` cuando lo decide la pantalla. */
+export type CaptureProxyView = { host: string | null; port: number; username: string };
+
+/** La captura de un proyecto: si está activada en este despliegue, y sus sesiones recientes. */
+export type CaptureOverviewView = {
+  enabled: boolean;
+  /** Con el puerto configurado; `null` si la captura está apagada. */
+  proxy: CaptureProxyView | null;
+  sessions: CaptureSessionView[];
+};
+
+/** Lo que contesta abrir una sesión: **la única vez** que sale el token. */
+export type CaptureStartedView = { session: CaptureSessionView; token: string; proxy: CaptureProxyView };
+
+/** Una página de la lista en vivo: lo que llegó después del cursor. */
+export type CapturePageView = { session: CaptureSessionView; items: CaptureItemSummaryView[] };
+
+/**
  * What importing a Postman environment answers.
  *
  * Counts for what came in, and words for what needs a person: a secret with no value, a name that
