@@ -39,6 +39,7 @@ import type {
   ChannelView,
   Environment,
   GrpcSettingsView,
+  SocketIoSettingsView,
   RequestAuthView,
 } from "@/lib/types";
 import { AuthEditor } from "@/components/auth-editor";
@@ -54,6 +55,16 @@ import {
   type MqttPublishDraft,
 } from "@/components/mqtt-publish";
 import { GrpcChannelForm } from "@/components/grpc-channel-form";
+import {
+  BLANK_EMIT,
+  DEFAULT_SOCKETIO,
+  EventRoute,
+  SocketIoEmitFields,
+  SocketIoSettingsForm,
+  emitBody,
+  eventNameHint,
+  type SocketIoEmitDraft,
+} from "@/components/socketio-channel";
 import { EndpointsTabs } from "@/components/endpoints-tabs";
 import { ConfirmDialog, Modal } from "@/components/overlay";
 import { RequestFieldsEditor } from "@/components/request-fields-editor";
@@ -132,6 +143,11 @@ export function ChannelsPage() {
                       {channel.protocol === "grpc" && (
                         <span className="rounded bg-violet-100 px-1 text-[10px] font-semibold text-violet-700">
                           gRPC
+                        </span>
+                      )}
+                      {channel.protocol === "socketio" && (
+                        <span className="rounded bg-sky-100 px-1 text-[10px] font-semibold text-sky-700">
+                          Socket.IO
                         </span>
                       )}
                       {channel.name}
@@ -216,7 +232,7 @@ function NewChannelModal({
   return (
     <Modal
       title="Nuevo canal"
-      description="Un WebSocket, un broker MQTT o un servicio gRPC del proyecto. La URL puede llevar {{variables}}: se resuelven contra el entorno activo al conectar."
+      description="Un WebSocket, un broker MQTT, un servicio gRPC o un servidor Socket.IO del proyecto. La URL puede llevar {{variables}}: se resuelven contra el entorno activo al conectar."
       onClose={onClose}
       footer={
         <>
@@ -239,6 +255,7 @@ function NewChannelModal({
             <option value="ws">WebSocket</option>
             <option value="mqtt">MQTT</option>
             <option value="grpc">gRPC</option>
+            <option value="socketio">Socket.IO</option>
           </select>
         </Field>
         <Field label="Nombre" error={problemOf("name")}>
@@ -252,7 +269,9 @@ function NewChannelModal({
                 ? "mqtts://broker.ejemplo.com:8883 o {{broker}}"
                 : protocol === "grpc"
                   ? "grpcs://api.ejemplo.com:443 o {{grpcBase}}"
-                  : "wss://api.ejemplo.com/socket o {{wsBase}}/socket"
+                  : protocol === "socketio"
+                    ? "https://chat.ejemplo.com o {{sioBase}}"
+                    : "wss://api.ejemplo.com/socket o {{wsBase}}/socket"
             }
             value={url}
             onChange={(event) => setUrl(event.target.value)}
@@ -383,6 +402,9 @@ function Conversation({
   const [publish, setPublish] = useState<MqttPublishDraft>(BLANK_PUBLISH);
   // Solo en un WebSocket: el borrador son bytes escritos en base64 o hexadecimal, y sale en binario.
   const [encoding, setEncoding] = useState<"text" | "base64" | "hex">("text");
+  // Solo en Socket.IO: el evento que se emite, el acuse y los argumentos de más.
+  const socketio = channel.protocol === "socketio";
+  const [emit, setEmit] = useState<SocketIoEmitDraft>(BLANK_EMIT);
   const bottom = useRef<HTMLDivElement>(null);
 
   const setSessionId = (id: string | null) =>
@@ -462,9 +484,11 @@ function Conversation({
         method: "POST",
         body: mqtt
           ? { text, ...publishBody(publish, channel.mqtt?.version ?? 4) }
-          : encoding !== "text"
-            ? { text, encoding }
-            : { text },
+          : socketio
+            ? emitBody(text, emit)
+            : encoding !== "text"
+              ? { text, encoding }
+              : { text },
       }),
     onSuccess: () => setDraft(""),
     onError: (error) => toast.error(message(error)),
@@ -509,7 +533,8 @@ function Conversation({
     canEdit &&
     open &&
     session.live &&
-    Boolean(draft.trim()) &&
+    // En Socket.IO un evento sin argumentos es un envío válido: lo que no puede faltar es su nombre.
+    (socketio ? eventNameHint(emit.event) === null : Boolean(draft.trim())) &&
     !send.isPending &&
     (!mqtt || publishTopicHint(publish.topic) === null) &&
     binaryHint(draft, encoding) === null;
@@ -629,6 +654,7 @@ function Conversation({
                   <span>{gap(row.atMs, previousAt.get(row.seq) ?? null)}</span>
                   {row.kind === "binary" && <span>binario · {row.bytes} B</span>}
                   <MessageRoute message={row} />
+                  <EventRoute message={row} />
                 </div>
                 <pre className="whitespace-pre-wrap break-words font-mono">{prettyBody(row.body)}</pre>
                 <MessageProperties message={row} />
@@ -655,6 +681,7 @@ function Conversation({
                   onClick={() => {
                     setDraft(saved.body);
                     if (mqtt && saved.topic) setPublish({ ...publish, topic: saved.topic });
+                    if (socketio && saved.event) setEmit({ ...emit, event: saved.event });
                   }}
                   className="rounded-full border border-slate-200 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
                 >
@@ -671,6 +698,7 @@ function Conversation({
             />
           )}
           {mqtt && <MqttPublishFields value={publish} onChange={setPublish} version={channel.mqtt?.version ?? 4} />}
+          {socketio && <SocketIoEmitFields value={emit} onChange={setEmit} />}
           {channel.protocol === "ws" && (
             <div className="flex items-center gap-2 text-xs text-slate-600">
               <label className="flex items-center gap-1.5">
@@ -696,7 +724,9 @@ function Conversation({
               placeholder={
                 grpc
                   ? '{"name": "…"} — JSON del tipo de entrada, Ctrl+Enter para enviar'
-                  : '{"type":"ping"} — Ctrl+Enter para enviar'
+                  : socketio
+                    ? '{"texto":"hola"} — el argumento del evento (texto o JSON), Ctrl+Enter para emitir'
+                    : '{"type":"ping"} — Ctrl+Enter para enviar'
               }
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
@@ -718,7 +748,7 @@ function Conversation({
                 Guardar en la biblioteca
               </Button>
               <Button disabled={!canSend} onClick={() => send.mutate(draft)}>
-                Enviar
+                {socketio ? "Emitir" : "Enviar"}
               </Button>
             </div>
           </div>
@@ -896,6 +926,11 @@ function ChannelSettings({
   const [closeCode, setCloseCode] = useState(channel.expectations.closeCode?.toString() ?? "");
   const grpc = channel.protocol === "grpc";
   const [grpcSettings, setGrpcSettings] = useState<GrpcSettingsView | null>(channel.grpc);
+  const socketio = channel.protocol === "socketio";
+  const [socketioSettings, setSocketioSettings] = useState<SocketIoSettingsView>({
+    ...DEFAULT_SOCKETIO,
+    ...channel.socketio,
+  });
   const [status, setStatus] = useState(channel.expectations.status?.toString() ?? "");
   const [saved, setSaved] = useState(channel.messages);
   const [removing, setRemoving] = useState(false);
@@ -908,22 +943,29 @@ function ChannelSettings({
         body: {
           name,
           url,
-          subprotocols: grpc
-            ? []
-            : subprotocols
-                .split(",")
-                .map((value) => value.trim())
-                .filter(Boolean),
+          subprotocols:
+            grpc || socketio
+              ? []
+              : subprotocols
+                  .split(",")
+                  .map((value) => value.trim())
+                  .filter(Boolean),
           headers: headers.filter((row) => row.name.trim()),
           auth: auth.type === "none" ? null : auth,
           limits,
           expectations: {
             ...channel.expectations,
             minMessages: number(minMessages),
-            ...(grpc ? { status: number(status) } : { closeCode: number(closeCode) }),
+            ...(grpc ? { status: number(status) } : socketio ? {} : { closeCode: number(closeCode) }),
           },
-          messages: saved.filter((row) => row.name.trim()),
+          messages: saved
+            .filter((row) => row.name.trim())
+            // Una trama de Socket.IO sin evento se guarda sin él; con uno, con el que tenga.
+            .map(({ event, ...row }) => (socketio && event?.trim() ? { ...row, event: event.trim() } : row)),
           ...(grpc && grpcSettings ? { grpc: grpcSettings } : {}),
+          ...(socketio
+            ? { socketio: { ...socketioSettings, events: socketioSettings.events.filter((event) => event.trim()) } }
+            : {}),
         },
       }),
     onSuccess: () => {
@@ -995,6 +1037,14 @@ function ChannelSettings({
           onChange={setGrpcSettings}
           canEdit={canEdit}
           environmentId={environmentId}
+          problemOf={problemOf}
+        />
+      ) : socketio ? (
+        <SocketIoSettingsForm
+          value={socketioSettings}
+          onChange={setSocketioSettings}
+          disabled={!canEdit}
+          variables={variables}
           problemOf={problemOf}
         />
       ) : (
@@ -1090,7 +1140,7 @@ function ChannelSettings({
               onChange={(event) => setStatus(event.target.value)}
             />
           </Field>
-        ) : (
+        ) : socketio ? null : (
           <Field
             label="Código de cierre esperado"
             hint="1000 es «se despidió»; 1006, «se murió»."
@@ -1124,6 +1174,18 @@ function ChannelSettings({
                   setSaved(saved.map((item, at) => (at === index ? { ...item, name: event.target.value } : item)))
                 }
               />
+              {socketio && (
+                <input
+                  aria-label={`Evento de la trama ${index + 1}`}
+                  className={cn(inputClass, "w-32 font-mono text-xs")}
+                  placeholder="evento"
+                  value={row.event ?? ""}
+                  disabled={!canEdit}
+                  onChange={(event) =>
+                    setSaved(saved.map((item, at) => (at === index ? { ...item, event: event.target.value } : item)))
+                  }
+                />
+              )}
               <textarea
                 aria-label={`Cuerpo de la trama ${index + 1}`}
                 className={cn(inputClass, "min-h-9 flex-1 font-mono text-xs")}

@@ -51,6 +51,7 @@ export type {
   ChannelCheckView,
   MqttSettingsView,
   GrpcSettingsView,
+  SocketIoSettingsView,
   GrpcMethodView,
   GrpcSchemaView,
   CaptureSource,
