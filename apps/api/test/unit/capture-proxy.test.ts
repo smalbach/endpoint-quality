@@ -61,8 +61,14 @@ type Harness = {
   exchanges: RawExchange[];
   stops: CaptureStopReason[];
   clock: { now: Date };
+  /** Parar desde fuera: se apunta en la «tabla» y se deja de atender, como hace el servicio. */
+  stop: (reason: CaptureStopReason) => void;
 };
 
+/**
+ * Un proxy con una «tabla» de una sola sesión. Hace de `CaptureProxyStore` lo justo para probar el
+ * proxy solo: la cuenta y el tope de verdad, con la base, están en `capture-proxy-service.test.ts`.
+ */
 async function harness(
   policy = OPEN,
   limits = { durationMs: 60_000, maxRequests: 50, maxBodyBytes: 1_024 },
@@ -71,6 +77,14 @@ async function harness(
   const exchanges: RawExchange[] = [];
   const stops: CaptureStopReason[] = [];
   const clock = { now: new Date("2026-03-01T10:00:00Z") };
+  const session: ProxySession = {
+    id: "s1",
+    projectId: "p1",
+    expiresAt: new Date(clock.now.getTime() + limits.durationMs),
+    limits,
+  };
+  const tokenHash = hashOpaqueToken(TOKEN);
+  let ended: CaptureStopReason | null = null;
   const proxy = new CaptureProxy({
     policy,
     now: () => clock.now,
@@ -78,23 +92,29 @@ async function harness(
     tunnelIdleMs: 2_000,
     // El destino de prueba escucha en un puerto cualquiera: se añade al 443 de siempre.
     connectPorts: new Set([443, targetPort]),
-    hooks: {
-      onExchange: (_session, exchange) => exchanges.push(exchange),
-      onStop: (_session, reason) => stops.push(reason),
+    store: {
+      lookup: async (hash) => (hash !== tokenHash ? null : ended ? { ended } : { session }),
+      record: async (_session, exchange) => {
+        if (ended) return { open: false };
+        exchanges.push(exchange);
+        if (exchanges.length < limits.maxRequests) return { open: true };
+        ended = "request-limit";
+        stops.push(ended);
+        return { open: false };
+      },
+      expire: async () => {
+        ended = "expired";
+        stops.push(ended);
+      },
     },
     ...extra,
   });
   const port = await proxy.listen(0, "127.0.0.1");
-  const session: ProxySession = {
-    id: "s1",
-    projectId: "p1",
-    tokenHash: hashOpaqueToken(TOKEN),
-    expiresAt: new Date(clock.now.getTime() + limits.durationMs),
-    limits,
-    recorded: 0,
+  const stop = (reason: CaptureStopReason) => {
+    ended = reason;
+    proxy.stop(session.id);
   };
-  proxy.open(session);
-  return { proxy, port, exchanges, stops, clock };
+  return { proxy, port, exchanges, stops, clock, stop };
 }
 
 const basic = (token: string) => `Basic ${Buffer.from(`captura:${token}`).toString("base64")}`;
@@ -301,7 +321,7 @@ describe("el proxy de captura", () => {
       assert.equal(answer.status, 407);
       assert.match(answer.body, /expired/);
       assert.deepEqual(h.stops, ["expired"]);
-      assert.equal(h.proxy.liveCount(), 0);
+      assert.deepEqual(h.proxy.knownSessions(), []);
     } finally {
       await h.proxy.close();
     }
@@ -310,7 +330,7 @@ describe("el proxy de captura", () => {
   test("parar desde fuera invalida el token al momento", async () => {
     const h = await harness();
     try {
-      h.proxy.stop("s1", "manual");
+      h.stop("manual");
       const answer = await viaProxy(h.port, `http://127.0.0.1:${targetPort}/x`, {
         headers: { "Proxy-Authorization": basic(TOKEN) },
       });
@@ -352,7 +372,7 @@ describe("el proxy de captura", () => {
   test("el token de una sesión ya cerrada no cuenta como intento", async () => {
     const h = await harness(OPEN, undefined, { authFailureLimit: { max: 2, windowMs: 60_000 } });
     try {
-      h.proxy.stop("s1", "manual");
+      h.stop("manual");
       for (let index = 0; index < 4; index += 1) {
         const answer = await viaProxy(h.port, `http://127.0.0.1:${targetPort}/x`, {
           headers: { "Proxy-Authorization": basic(TOKEN) },

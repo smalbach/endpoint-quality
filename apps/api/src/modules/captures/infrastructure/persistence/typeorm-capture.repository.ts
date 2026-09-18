@@ -1,9 +1,9 @@
 import { Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { In, MoreThan, Repository } from "typeorm";
+import { In, LessThanOrEqual, MoreThan, Repository } from "typeorm";
 
 import { CaptureItemEntity, CaptureSessionEntity } from "@/shared/database/entities";
-import type { CaptureItem, CaptureSession } from "../../domain/model";
+import type { CaptureItem, CaptureSession, CaptureStopReason } from "../../domain/model";
 import type { CaptureRepositoryPort } from "../../domain/ports";
 
 const toSession = (row: CaptureSessionEntity): CaptureSession => row as unknown as CaptureSession;
@@ -38,6 +38,49 @@ export class TypeOrmCaptureRepository implements CaptureRepositoryPort {
   async removeSession(projectId: string, id: string): Promise<boolean> {
     const result = await this.sessions.delete({ id, projectId });
     return (result.affected ?? 0) > 0;
+  }
+
+  async findSessionByTokenHash(tokenHash: string): Promise<CaptureSession | null> {
+    const row = await this.sessions.findOne({ where: { tokenHash } });
+    return row ? toSession(row) : null;
+  }
+
+  async stopSession(projectId: string, id: string, reason: CaptureStopReason, at: Date): Promise<boolean> {
+    const result = await this.sessions.update(
+      { id, projectId, status: "active" },
+      { status: "stopped", stopReason: reason, stoppedAt: at },
+    );
+    return (result.affected ?? 0) > 0;
+  }
+
+  async expireDue(now: Date): Promise<number> {
+    const result = await this.sessions.update(
+      { status: "active", expiresAt: LessThanOrEqual(now) },
+      { status: "stopped", stopReason: "expired", stoppedAt: now },
+    );
+    return result.affected ?? 0;
+  }
+
+  async appendNext(item: Omit<CaptureItem, "seq">, maxRequests: number): Promise<number | null> {
+    return this.sessions.manager.transaction(async (manager) => {
+      // El `UPDATE` bloquea la fila de la sesión hasta el final de la transacción: la siguiente
+      // petición, venga de la instancia que venga, espera aquí a que esta esté escrita.
+      const bumped = await manager
+        .createQueryBuilder()
+        .update(CaptureSessionEntity)
+        .set({ itemCount: () => `"itemCount" + 1` })
+        .where(`"id" = :id AND "projectId" = :projectId AND "status" = 'active' AND "itemCount" < :max`, {
+          id: item.sessionId,
+          projectId: item.projectId,
+          max: maxRequests,
+        })
+        .returning(`"itemCount"`)
+        .execute();
+      const seq = (bumped.raw as { itemCount: number }[])[0]?.itemCount;
+      if (seq === undefined) return null;
+      await manager.insert(CaptureItemEntity, { ...item, seq } as unknown as CaptureItemEntity);
+      return seq;
+    });
   }
 
   /** Un `insert` y no un `save`: la fila nace y no se vuelve a tocar nunca. */

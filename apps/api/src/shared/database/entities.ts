@@ -814,7 +814,7 @@ export class CaptureSessionEntity {
   @PrimaryColumn("uuid") id: string;
   @Index() @Column("uuid") projectId: string;
   @Column({ type: "varchar", length: 20 }) status: string;
-  @Column({ type: "varchar", length: 64 }) tokenHash: string;
+  @Index({ unique: true }) @Column({ type: "varchar", length: 64 }) tokenHash: string;
   @Column({ type: "jsonb" }) limits: unknown;
   @Column({ type: "int", default: 0 }) itemCount: number;
   @Column({ type: "timestamptz" }) startedAt: Date;

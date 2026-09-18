@@ -42,11 +42,15 @@
  * proyecto no tiene, y hacerlo a medias —con la clave en disco o en una columna sin cifrar— sería
  * peor que no tenerlo.
  *
- * ## Una instancia
+ * ## Varias instancias
  *
- * El registro de sesiones vive en memoria del proceso que las abrió, igual que los sockets de un
- * canal. Con varias instancias detrás de un balanceador el puerto del proxy tiene que llegar a la
- * instancia que abrió la sesión; aquí no se reparte nada.
+ * El proxy no tiene registro propio: la credencial se busca por su hash en la tabla
+ * (`CaptureProxyStore.lookup`), así que el puerto del proxy puede caer en cualquier instancia de la
+ * API, no solo en la que abrió la sesión. Una credencial buena se recuerda un segundo, y la
+ * caducidad se mira en cada petición: lo único que puede llegar con ese retraso es un «Parar» de
+ * otra instancia, y la sincronización del servicio corta además las conexiones abiertas de la sesión
+ * parada. La cuenta de lo grabado y el tope se llevan en la tabla con un incremento atómico
+ * (`store.record`), no aquí: dos instancias no pueden pasarse del tope entre las dos.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { connect as netConnect, type Socket } from "node:net";
@@ -57,32 +61,38 @@ import { hashOpaqueToken } from "@/shared/crypto/opaque-token";
 import type { CaptureLimits, CaptureStopReason, RawExchange } from "../domain/model";
 import { AuthFailureLimiter, DEFAULT_AUTH_FAILURE_LIMIT, type AuthFailureLimit } from "./auth-failure-limiter";
 
-/** Una sesión viva, como la ve el proxy. */
+/** Una sesión abierta, como la ve el proxy. El token no está: se busca por su hash. */
 export type ProxySession = {
   id: string;
   projectId: string;
-  tokenHash: string;
   expiresAt: Date;
   limits: CaptureLimits;
-  /** Cuántas lleva grabadas; al llegar a `limits.maxRequests` se cierra. */
-  recorded: number;
 };
 
-type LiveSession = ProxySession & { sockets: Set<Socket>; timer: NodeJS.Timeout | null };
+/** Lo que la tabla dice de un hash: la sesión abierta, que terminó y por qué, o que no existe. */
+export type SessionLookup = { session: ProxySession } | { ended: CaptureStopReason } | null;
 
 /** Por qué no se atiende una petición: sin credencial que valga (407) o con demasiados intentos (429). */
 type Refusal = { status: 407; refused: string } | { status: 429; refused: string; retryAfter: number };
 
-export type CaptureProxyHooks = {
-  /** Una petición o un túnel, en bruto. Quien lo recibe lo tapa antes de guardarlo. */
-  onExchange: (session: ProxySession, exchange: RawExchange) => void;
-  /** El proxy cerró una sesión por su cuenta: caducó o llegó al tope. */
-  onStop: (session: ProxySession, reason: CaptureStopReason) => void;
+/**
+ * Donde viven las sesiones y lo grabado. El proxy no guarda nada propio: lo que sabe de una sesión
+ * lo pregunta aquí, y así cualquier instancia de la API atiende el token de cualquier otra.
+ */
+export type CaptureProxyStore = {
+  lookup: (tokenHash: string) => Promise<SessionLookup>;
+  /**
+   * Graba una petición o un túnel, en bruto: quien lo recibe lo tapa antes de guardarlo. `open`
+   * dice si la sesión admite más; `false` es que con esta llegó al tope, o que ya estaba cerrada.
+   */
+  record: (session: ProxySession, exchange: RawExchange) => Promise<{ open: boolean }>;
+  /** Se usó una sesión pasada su hora: se apunta que terminó. */
+  expire: (session: ProxySession) => Promise<void>;
 };
 
 export type CaptureProxyOptions = {
   policy: SafeFetchPolicy;
-  hooks: CaptureProxyHooks;
+  store: CaptureProxyStore;
   now: () => Date;
   /** El cuerpo más grande que se **reenvía**. Uno mayor es un 413: el proxy lo tiene entero en memoria. */
   maxForwardBodyBytes: number;
@@ -92,7 +102,14 @@ export type CaptureProxyOptions = {
   connectPorts: ReadonlySet<number>;
   /** Cuántas credenciales malas se aguantan por IP. Por omisión, 20 por minuto. */
   authFailureLimit?: AuthFailureLimit;
+  /** Cuánto se recuerda una credencial buena sin volver a la tabla. Como mucho 2 s; por omisión, 1 s. */
+  authCacheMs?: number;
 };
+
+/** Cuánto se recuerda una credencial buena, por omisión. Es lo que tarda en llegar un «Parar» de otra instancia. */
+export const AUTH_CACHE_MS = 1_000;
+/** Cuántas credenciales se recuerdan a la vez. */
+const MAX_CACHED_SESSIONS = 1_000;
 
 /** El nombre con el que el navegador pregunta por la credencial. */
 export const PROXY_REALM = "Captura de endpoint-quality";
@@ -120,16 +137,19 @@ const HOP_BY_HOP = new Set([
 
 export class CaptureProxy {
   private server: Server | null = null;
-  private readonly sessions = new Map<string, LiveSession>();
-  /** Los tokens de sesiones ya cerradas, para poder decir «terminó» en vez de «no existe». */
-  private readonly ended = new Map<string, CaptureStopReason>();
-
+  /** Las credenciales buenas recordadas, por hash, con cuándo se leyeron de la tabla. */
+  private readonly cache = new Map<string, { session: ProxySession; at: number }>();
+  /** Las conexiones abiertas de cada sesión en este proceso, para cortarlas al pararla. */
+  private readonly sockets = new Map<string, Set<Socket>>();
   private readonly failures: AuthFailureLimiter;
+  private readonly authCacheMs: number;
+  private starting: Promise<number> | null = null;
 
   constructor(private readonly options: CaptureProxyOptions) {
     this.failures = new AuthFailureLimiter(options.authFailureLimit ?? DEFAULT_AUTH_FAILURE_LIMIT, () =>
       options.now().getTime(),
     );
+    this.authCacheMs = Math.min(2_000, Math.max(0, options.authCacheMs ?? AUTH_CACHE_MS));
   }
 
   get listening(): boolean {
@@ -141,17 +161,15 @@ export class CaptureProxy {
     return address && typeof address === "object" ? address.port : null;
   }
 
-  liveCount(): number {
-    return this.sessions.size;
-  }
-
-  isLive(sessionId: string): boolean {
-    return [...this.sessions.values()].some((session) => session.id === sessionId);
-  }
-
   /** Empieza a escuchar. Devuelve el puerto de verdad, que es otro cuando se pidió el 0. */
-  async listen(port: number, host: string): Promise<number> {
-    if (this.server) return this.port!;
+  listen(port: number, host: string): Promise<number> {
+    if (this.server) return Promise.resolve(this.port!);
+    // Dos llamadas seguidas —la sincronización y una sesión nueva— abren un solo servidor.
+    this.starting ??= this.start(port, host).finally(() => (this.starting = null));
+    return this.starting;
+  }
+
+  private async start(port: number, host: string): Promise<number> {
     const server = createServer({ requestTimeout: this.options.policy.timeoutMs * 2 });
     // Un tope de conexiones: el proxy está autenticado, pero el apretón de manos TCP no.
     server.maxConnections = 256;
@@ -181,52 +199,46 @@ export class CaptureProxy {
   async close(): Promise<void> {
     const server = this.server;
     this.server = null;
-    for (const session of this.sessions.values()) this.release(session);
-    this.sessions.clear();
+    for (const id of [...this.sockets.keys()]) this.cut(id);
+    this.cache.clear();
     if (!server) return;
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 
-  /** Da de alta una sesión. El token llega ya como hash: el proxy nunca ve uno en claro guardado. */
-  open(session: ProxySession): void {
-    const live: LiveSession = { ...session, sockets: new Set(), timer: null };
-    const remaining = session.expiresAt.getTime() - this.options.now().getTime();
-    // El reloj de verdad cierra la sesión aunque nadie vuelva a usarla; la comprobación al
-    // autenticar cubre el reloj de las pruebas y cualquier desfase del temporizador.
-    live.timer = setTimeout(() => this.end(live, "expired", true), Math.max(0, remaining));
-    live.timer.unref();
-    this.sessions.set(session.tokenHash, live);
+  /**
+   * Las sesiones que tienen algo en este proceso: conexiones abiertas o una credencial recordada.
+   * Es lo que la sincronización compara con la tabla para cortar lo que otra instancia paró.
+   */
+  knownSessions(): string[] {
+    return [...new Set([...this.sockets.keys(), ...[...this.cache.values()].map((entry) => entry.session.id)])];
   }
 
-  /** Cierra una sesión desde fuera —«Parar», o que se abrió otra—: el token deja de servir ya. */
-  stop(sessionId: string, reason: CaptureStopReason): void {
-    const live = [...this.sessions.values()].find((session) => session.id === sessionId);
-    if (live) this.end(live, reason, false);
+  /**
+   * Cierra una sesión en este proceso: olvida su credencial y corta sus conexiones. Lo que dice la
+   * tabla lo escribe quien la paró; aquí solo se deja de atenderla ya, sin esperar a la caché.
+   */
+  stop(sessionId: string): void {
+    for (const [hash, entry] of this.cache) if (entry.session.id === sessionId) this.cache.delete(hash);
+    this.cut(sessionId);
   }
 
-  private end(session: LiveSession, reason: CaptureStopReason, notify: boolean): void {
-    if (!this.sessions.delete(session.tokenHash)) return;
-    this.ended.set(session.tokenHash, reason);
-    // Acotado: es solo para dar un mensaje mejor, y no puede crecer sin fin.
-    if (this.ended.size > 1000) this.ended.delete(this.ended.keys().next().value!);
-    this.release(session);
-    if (notify) this.options.hooks.onStop(session, reason);
-  }
-
-  private release(session: LiveSession): void {
-    if (session.timer) clearTimeout(session.timer);
-    for (const socket of session.sockets) socket.destroy();
-    session.sockets.clear();
+  private cut(sessionId: string): void {
+    const open = this.sockets.get(sessionId);
+    this.sockets.delete(sessionId);
+    for (const socket of open ?? []) socket.destroy();
   }
 
   /**
    * La sesión a la que pertenece una petición, o por qué no hay ninguna.
    *
-   * Se busca por el hash del token y no comparando uno a uno: un `Map` sobre el hash de 256 bits
-   * no filtra por tiempo cuánto se parecía el token a uno bueno.
+   * Se busca por el hash del token —en la tabla, a través de `store.lookup`— y no comparando uno a
+   * uno: una búsqueda por el hash de 256 bits no filtra por tiempo cuánto se parecía el token a uno
+   * bueno. La respuesta se recuerda `authCacheMs` como mucho, y la caducidad se mira en **cada**
+   * petición con la fecha recordada: lo único que puede llegar tarde es un «Parar» de otra
+   * instancia, y llega tarde como mucho eso.
    */
-  private authenticate(request: IncomingMessage): LiveSession | Refusal {
+  private async authenticate(request: IncomingMessage): Promise<ProxySession | Refusal> {
     const ip = request.socket.remoteAddress ?? "desconocida";
     // Antes de mirar la credencial: pasado el tope, ni hash ni búsqueda (ver `auth-failure-limiter.ts`).
     const retryAfter = this.failures.blocked(ip);
@@ -240,36 +252,71 @@ export class CaptureProxy {
     const token = tokenFrom(request.headers["proxy-authorization"]);
     if (!token) return { status: 407, refused: "Falta la credencial de la sesión de captura" };
     const hash = hashOpaqueToken(token);
-    const session = this.sessions.get(hash);
-    if (!session) {
-      const reason = this.ended.get(hash);
-      // El token de una sesión ya cerrada no es adivinar: es un móvil que sigue mandando lo de
-      // antes. Contarlo dejaría esa IP sin poder usar la sesión nueva durante un minuto.
-      if (!reason) this.failures.failed(ip);
-      return {
-        status: 407,
-        refused: reason ? `La sesión de captura terminó (${reason})` : "La credencial no es de ninguna sesión abierta",
-      };
+
+    let session: ProxySession;
+    const cached = this.cache.get(hash);
+    if (cached && Date.now() - cached.at < this.authCacheMs) session = cached.session;
+    else {
+      this.cache.delete(hash);
+      let found: SessionLookup;
+      try {
+        found = await this.options.store.lookup(hash);
+      } catch {
+        return { status: 407, refused: "No se pudo comprobar la credencial: vuelve a intentarlo" };
+      }
+      if (!found || "ended" in found) {
+        // El token de una sesión ya cerrada no es adivinar: es un móvil que sigue mandando lo de
+        // antes. Contarlo dejaría esa IP sin poder usar la sesión nueva durante un minuto.
+        if (!found) this.failures.failed(ip);
+        return {
+          status: 407,
+          refused: found
+            ? `La sesión de captura terminó (${found.ended})`
+            : "La credencial no es de ninguna sesión abierta",
+        };
+      }
+      session = found.session;
+      // Acotado: una caché que crece con cada sesión distinta no puede crecer sin fin.
+      if (this.cache.size >= MAX_CACHED_SESSIONS) this.cache.delete(this.cache.keys().next().value!);
+      this.cache.set(hash, { session, at: Date.now() });
     }
+
     if (session.expiresAt.getTime() <= this.options.now().getTime()) {
-      this.end(session, "expired", true);
+      this.stop(session.id);
+      await this.options.store.expire(session).catch(() => undefined);
       return { status: 407, refused: "La sesión de captura terminó (expired)" };
     }
     return session;
   }
 
-  /** Graba lo visto y, si con esto llega al tope, cierra la sesión. */
-  private record(session: LiveSession, exchange: RawExchange): void {
-    if (!this.sessions.has(session.tokenHash)) return;
-    session.recorded += 1;
-    this.options.hooks.onExchange(session, exchange);
-    if (session.recorded >= session.limits.maxRequests) this.end(session, "request-limit", true);
+  /**
+   * Graba lo visto. Se espera a que esté escrito antes de dar la respuesta por terminada, para que
+   * lo que el cliente ya recibió esté en la lista. Si con esto la sesión llegó al tope —o ya estaba
+   * cerrada—, se corta al terminar de contestar.
+   */
+  private async record(session: ProxySession, exchange: RawExchange): Promise<boolean> {
+    try {
+      const { open } = await this.options.store.record(session, exchange);
+      if (!open) {
+        for (const [hash, entry] of this.cache) if (entry.session.id === session.id) this.cache.delete(hash);
+      }
+      return open;
+    } catch {
+      // Una escritura que falla no puede tumbar la petición de quien está usando su aplicación.
+      return true;
+    }
   }
 
-  private track(session: LiveSession, socket: Socket): void {
-    if (session.sockets.has(socket)) return;
-    session.sockets.add(socket);
-    socket.once("close", () => session.sockets.delete(socket));
+  private track(session: ProxySession, socket: Socket): void {
+    let open = this.sockets.get(session.id);
+    if (!open) this.sockets.set(session.id, (open = new Set()));
+    if (open.has(socket)) return;
+    open.add(socket);
+    socket.once("close", () => {
+      const current = this.sockets.get(session.id);
+      current?.delete(socket);
+      if (current && !current.size) this.sockets.delete(session.id);
+    });
   }
 
   /* ---------------------------------------------------------------- *
@@ -278,7 +325,7 @@ export class CaptureProxy {
 
   private async onRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
     response.on("error", () => undefined);
-    const session = this.authenticate(request);
+    const session = await this.authenticate(request);
     if ("refused" in session) {
       request.resume();
       return challenge(response, session);
@@ -335,8 +382,8 @@ export class CaptureProxy {
       resolved = await resolveTarget(target, this.options.policy);
     } catch (error) {
       const why = error instanceof BlockedTargetError ? error.message : "no se pudo resolver el destino";
-      this.record(session, exchange({ error: why }));
-      return plain(response, 403, why);
+      const open = await this.record(session, exchange({ error: why }));
+      return plain(response, 403, why, open ? undefined : () => this.stop(session.id));
     }
 
     const agent = pinnedAgent(resolved.address, resolved.family);
@@ -371,11 +418,11 @@ export class CaptureProxy {
         }
         if (!response.write(chunk)) await new Promise((resolve) => response.once("drain", resolve));
       }
-      response.end();
 
       const truncated = total > cap;
       const encoding = String(upstream.headers["content-encoding"] ?? "");
-      this.record(
+      // Se graba antes de cerrar la respuesta: lo que el cliente ya tiene está en la lista.
+      const open = await this.record(
         session,
         exchange({
           status: upstream.statusCode,
@@ -385,11 +432,20 @@ export class CaptureProxy {
           durationMs: Date.now() - started,
         }),
       );
+      // Con esta llegó al tope: la sesión se corta, pero después de terminar de contestar esta.
+      response.end(open ? undefined : () => this.stop(session.id));
     } catch (error) {
       const why = error instanceof Error ? error.message : "el destino no contestó";
-      if (!response.headersSent) plain(response, 502, `El destino no contestó: ${why}`);
-      else response.destroy();
-      this.record(session, exchange({ error: `el destino no contestó: ${why}`, durationMs: Date.now() - started }));
+      const open = await this.record(
+        session,
+        exchange({ error: `el destino no contestó: ${why}`, durationMs: Date.now() - started }),
+      );
+      const then = open ? undefined : () => this.stop(session.id);
+      if (!response.headersSent) plain(response, 502, `El destino no contestó: ${why}`, then);
+      else {
+        response.destroy();
+        then?.();
+      }
     } finally {
       agent.destroy().catch(() => undefined);
     }
@@ -401,7 +457,7 @@ export class CaptureProxy {
 
   private async onConnect(request: IncomingMessage, client: Socket, head: Buffer): Promise<void> {
     client.on("error", () => undefined);
-    const session = this.authenticate(request);
+    const session = await this.authenticate(request);
     if ("refused" in session) {
       client.end(
         session.status === 429
@@ -446,12 +502,11 @@ export class CaptureProxy {
     // Un túnel es un cable TCP: sin esta lista, el token valdría para hablar con un servidor de
     // correo o con cualquier servicio de una IP pública. Se graba para que la pantalla diga por qué.
     if (!this.options.connectPorts.has(port)) {
-      this.record(
+      const open = await this.record(
         session,
         tunnel({ error: `el puerto ${port} no está permitido para túneles (CAPTURE_CONNECT_PORTS)` }),
       );
-      client.end(`HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`);
-      return;
+      return refuse(client, "403 Forbidden", open ? undefined : () => this.stop(session.id));
     }
 
     let address: string;
@@ -459,9 +514,8 @@ export class CaptureProxy {
       ({ address } = await resolveTarget(`${url}/`, this.options.policy));
     } catch (error) {
       const why = error instanceof BlockedTargetError ? error.message : "no se pudo resolver el destino";
-      this.record(session, tunnel({ error: why }));
-      client.end(`HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`);
-      return;
+      const open = await this.record(session, tunnel({ error: why }));
+      return refuse(client, "403 Forbidden", open ? undefined : () => this.stop(session.id));
     }
 
     const started = Date.now();
@@ -477,7 +531,9 @@ export class CaptureProxy {
       if (head.length) upstream.write(head);
       upstream.pipe(client);
       client.pipe(upstream);
-      this.record(session, tunnel({ durationMs: Date.now() - started }));
+      void this.record(session, tunnel({ durationMs: Date.now() - started })).then((more) => {
+        if (!more) this.stop(session.id);
+      });
     });
     const cut = () => {
       upstream.destroy();
@@ -485,7 +541,7 @@ export class CaptureProxy {
     };
     upstream.on("timeout", () => {
       if (!open) {
-        this.record(session, tunnel({ error: "el destino no contestó a tiempo" }));
+        void this.record(session, tunnel({ error: "el destino no contestó a tiempo" }));
         client.end("HTTP/1.1 504 Gateway Timeout\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
       }
       cut();
@@ -494,7 +550,7 @@ export class CaptureProxy {
     client.on("close", () => upstream.destroy());
     upstream.on("error", (error) => {
       if (!open) {
-        this.record(session, tunnel({ error: `el destino no contestó: ${error.message}` }));
+        void this.record(session, tunnel({ error: `el destino no contestó: ${error.message}` }));
         client.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
       } else client.destroy();
     });
@@ -530,10 +586,18 @@ function challenge(response: ServerResponse, refusal: Refusal): void {
   response.end(refusal.refused);
 }
 
-function plain(response: ServerResponse, status: number, message: string): void {
-  if (response.headersSent) return void response.destroy();
+function plain(response: ServerResponse, status: number, message: string, then?: () => void): void {
+  if (response.headersSent) {
+    response.destroy();
+    return then?.();
+  }
   response.writeHead(status, { "Content-Type": "text/plain; charset=utf-8", "X-Capture-Proxy": "refused" });
-  response.end(message);
+  response.end(message, then);
+}
+
+/** Un túnel que no se abre: la línea de estado y se cierra. */
+function refuse(client: Socket, status: string, then?: () => void): void {
+  client.end(`HTTP/1.1 ${status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`, then);
 }
 
 /** Pares de `rawHeaders`, con el nombre como lo escribió el cliente. Uno repetido, unido por comas. */

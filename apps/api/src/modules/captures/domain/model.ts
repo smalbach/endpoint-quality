@@ -42,8 +42,9 @@ export type CaptureStatus = (typeof CAPTURE_STATUSES)[number];
  * - `request-limit`: llegó al tope de peticiones.
  * - `replaced`: se abrió otra en el mismo proyecto. Una por proyecto: dos sesiones vivas son dos
  *   tokens válidos y una lista partida en dos.
- * - `restart`: la API se reinició. El proxy vive en el proceso y el registro de tokens en memoria,
- *   así que una sesión «activa» en la tabla sin proceso detrás no está activa.
+ * - `restart`: la API se reinició. Solo en filas antiguas: cuando el registro de tokens vivía en
+ *   memoria, un reinicio dejaba sin proceso las sesiones abiertas. Ahora el token se busca en la
+ *   tabla y una sesión sobrevive al reinicio, así que no se escribe más; se conserva para leerlas.
  */
 export const CAPTURE_STOP_REASONS = ["manual", "expired", "request-limit", "replaced", "restart"] as const;
 export type CaptureStopReason = (typeof CAPTURE_STOP_REASONS)[number];

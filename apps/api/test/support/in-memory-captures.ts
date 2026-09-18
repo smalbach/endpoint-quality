@@ -1,4 +1,4 @@
-import type { CaptureItem, CaptureSession } from "@/modules/captures/domain/model";
+import type { CaptureItem, CaptureSession, CaptureStopReason } from "@/modules/captures/domain/model";
 import type { CaptureRepositoryPort } from "@/modules/captures/domain/ports";
 
 export class InMemoryCaptureRepository implements CaptureRepositoryPort {
@@ -35,6 +35,39 @@ export class InMemoryCaptureRepository implements CaptureRepositoryPort {
     // Lo que en Postgres hace el `ON DELETE CASCADE`.
     for (const [key, item] of this.items) if (item.sessionId === id) this.items.delete(key);
     return true;
+  }
+
+  async findSessionByTokenHash(tokenHash: string) {
+    const row = [...this.sessions.values()].find((session) => session.tokenHash === tokenHash);
+    return row ? structuredClone(row) : null;
+  }
+
+  async stopSession(projectId: string, id: string, reason: CaptureStopReason, at: Date) {
+    const row = this.sessions.get(id);
+    if (!row || row.projectId !== projectId || row.status !== "active") return false;
+    // Solo esas tres columnas, como el `UPDATE` condicional de Postgres.
+    Object.assign(row, { status: "stopped", stopReason: reason, stoppedAt: at });
+    return true;
+  }
+
+  async expireDue(now: Date) {
+    let expired = 0;
+    for (const row of this.sessions.values()) {
+      if (row.status !== "active" || row.expiresAt.getTime() > now.getTime()) continue;
+      Object.assign(row, { status: "stopped", stopReason: "expired", stoppedAt: now });
+      expired += 1;
+    }
+    return expired;
+  }
+
+  /** Sin `await` entre leer y subir la cuenta: en un solo hilo, eso ya es atómico. */
+  async appendNext(item: Omit<CaptureItem, "seq">, maxRequests: number) {
+    const row = this.sessions.get(item.sessionId);
+    if (!row || row.projectId !== item.projectId || row.status !== "active" || row.itemCount >= maxRequests)
+      return null;
+    row.itemCount += 1;
+    this.items.set(item.id, structuredClone({ ...item, seq: row.itemCount }));
+    return row.itemCount;
   }
 
   async appendItem(item: CaptureItem) {

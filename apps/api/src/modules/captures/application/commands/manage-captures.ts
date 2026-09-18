@@ -64,13 +64,7 @@ export class StartCaptureHandler implements ICommandHandler<StartCaptureCommand,
     // Una por proyecto: la que siguiera abierta se cierra antes de dar un token nuevo.
     for (const previous of await this.captures.listSessions(project.id, 20)) {
       if (previous.status !== "active") continue;
-      await this.proxy.stop(previous.id, "replaced");
-      await this.captures.saveSession({
-        ...previous,
-        status: "stopped",
-        stopReason: "replaced",
-        stoppedAt: this.clock.now(),
-      });
+      await this.proxy.stop(previous, "replaced");
     }
 
     const token = generateOpaqueToken();
@@ -95,7 +89,7 @@ export class StartCaptureHandler implements ICommandHandler<StartCaptureCommand,
       port = await this.proxy.open(session);
     } catch (error) {
       // Una sesión que no llegó a escuchar no queda «activa» en la lista.
-      await this.captures.saveSession({ ...session, status: "stopped", stopReason: "manual", stoppedAt: now });
+      await this.captures.stopSession(session.projectId, session.id, "manual", now);
       throw error;
     }
     return {
@@ -119,7 +113,6 @@ export class StopCaptureHandler implements ICommandHandler<StopCaptureCommand, C
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(CAPTURE_REPOSITORY) private readonly captures: CaptureRepositoryPort,
-    @Inject(CLOCK) private readonly clock: ClockPort,
     private readonly proxy: CaptureProxyService,
   ) {}
 
@@ -130,13 +123,10 @@ export class StopCaptureHandler implements ICommandHandler<StopCaptureCommand, C
     // Parar dos veces no es un error: el segundo «Parar» llega de una pantalla que no se enteró.
     if (current.status !== "active") return viewCaptureSession(current);
 
-    await this.proxy.stop(current.id, "manual");
-    // Se relee después de vaciar la cola: la cuenta de lo capturado la ha ido subiendo el proxy.
-    const latest = (await this.captures.findSession(project.id, current.id)) ?? current;
-    if (latest.status !== "active") return viewCaptureSession(latest);
-    const stopped: CaptureSession = { ...latest, status: "stopped", stopReason: "manual", stoppedAt: this.clock.now() };
-    await this.captures.saveSession(stopped);
-    return viewCaptureSession(stopped);
+    // Cierra con un `UPDATE` condicional: si el proxy la cerró antes por el tope, se queda ese motivo.
+    await this.proxy.stop(current, "manual");
+    // Se relee después: la cuenta de lo capturado la ha ido subiendo el proxy, en esta instancia o en otra.
+    return viewCaptureSession((await this.captures.findSession(project.id, current.id)) ?? current);
   }
 }
 
@@ -166,7 +156,7 @@ export class DeleteCaptureHandler implements ICommandHandler<DeleteCaptureComman
     const project = await writableProject(this.projects, command.organizationId, command.projectId);
     const current = await this.captures.findSession(project.id, command.sessionId);
     if (!current) throw notFound();
-    await this.proxy.stop(current.id, "manual");
+    await this.proxy.stop(current, "manual");
     await this.captures.removeSession(project.id, current.id);
   }
 }
