@@ -90,6 +90,39 @@ describe("validación del destino", () => {
     }
   });
 
+  test("una IPv4 disfrazada de IPv6 se bloquea también cuando `new URL` la normaliza", async () => {
+    // El agujero que esto cierra, comprobado contra la pila desplegada antes de arreglarlo:
+    // `new URL("http://[::ffff:127.0.0.1]/")` deja el nombre en `::ffff:7f00:1` —hexadecimal, no
+    // los cuatro números con puntos—, así que la comprobación de la mapeada no lo veía nunca y el
+    // servidor leía loopback y `169.254.169.254` con la guarda puesta. La prueba que había pasaba
+    // porque le daba a la función la forma con puntos, que es la única que esa ruta no produce.
+    await assert.rejects(resolveTarget("http://[::ffff:127.0.0.1]/x", hosted), /loopback/);
+    await assert.rejects(resolveTarget("http://[::ffff:169.254.169.254]/latest/meta-data/", hosted), /link-local/);
+    await assert.rejects(resolveTarget("http://[::7f00:1]/x", hosted), /loopback/);
+    await assert.rejects(resolveTarget("http://[64:ff9b::a9fe:a9fe]/x", hosted), /link-local/);
+    // Y una IPv6 pública sigue pasando: la defensa no puede ser «toda IPv6 fuera».
+    assert.equal((await resolveTarget("http://[2606:4700:4700::1111]/x", hosted)).family, 6);
+  });
+
+  test("pedir otro esquema abre ese y **no** ensancha el de los demás", async () => {
+    // La prueba que de verdad importa del parámetro: que un llamante que pide `ws:` no le abre
+    // `ws:` a los catorce llamantes que no lo pidieron. Lo contrario —una lista global a la que se
+    // le van añadiendo esquemas— es como esto se rompe callado.
+    await assert.rejects(resolveTarget("ws://1.1.1.1/socket", hosted), /esquema ws: no permitido/);
+    const resolved = await resolveTarget("ws://1.1.1.1/socket", hosted, { schemes: ["ws:", "wss:"] });
+    assert.equal(resolved.address, "1.1.1.1");
+    // Y quien pide `ws:` no obtiene `http:` de regalo: la lista es la que pidió, no la suya más.
+    await assert.rejects(resolveTarget("http://1.1.1.1/x", hosted, { schemes: ["ws:", "wss:"] }), /no permitido/);
+  });
+
+  test("un esquema nuevo no se salta ninguna de las otras reglas", async () => {
+    // Lo que hace que parametrizar la lista sea seguro: todo lo demás sigue siendo el mismo código.
+    const sockets = { schemes: ["ws:", "wss:"] };
+    await assert.rejects(resolveTarget("ws://169.254.169.254/socket", hosted, sockets), /link-local/);
+    await assert.rejects(resolveTarget("ws://[::ffff:127.0.0.1]/socket", hosted, sockets), /loopback/);
+    await assert.rejects(resolveTarget("wss://user:clave@1.1.1.1/socket", hosted, sockets), /credenciales/);
+  });
+
   test("una URL con credenciales se rechaza", async () => {
     await assert.rejects(resolveTarget("http://user:pass@1.1.1.1/openapi.json", hosted), /credenciales/);
   });

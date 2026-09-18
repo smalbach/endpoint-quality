@@ -139,6 +139,15 @@ export function isBlockedAddress(address: string): { blocked: boolean; why?: str
     // would let `::ffff:169.254.169.254` straight through.
     const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(normalized);
     if (mapped) return isBlockedAddress(mapped[1]);
+    // Y el mismo disfraz escrito en hexadecimal, que es la forma en la que llega de verdad.
+    //
+    // Esto era un agujero, y comprobado contra la pila: `new URL("http://[::ffff:127.0.0.1]/")`
+    // **normaliza** el nombre a `::ffff:7f00:1`, así que la línea de arriba —que busca los cuatro
+    // números con puntos— no lo veía nunca. Solo acertaba cuando alguien llamaba a esta función
+    // con la cadena escrita a mano, que es exactamente lo que hacía su prueba. Por esa puerta se
+    // leía loopback y `169.254.169.254` con la guarda puesta.
+    const embedded = embeddedV4(normalized);
+    if (embedded) return isBlockedAddress(embedded);
     if (normalized === "::" || normalized === "::1") return { blocked: true, why: "loopback IPv6" };
     if (normalized.startsWith("fe80")) return { blocked: true, why: "link-local IPv6" };
     if (/^f[cd]/.test(normalized)) return { blocked: true, why: "unique local IPv6" };
@@ -147,10 +156,50 @@ export function isBlockedAddress(address: string): { blocked: boolean; why?: str
   return { blocked: true, why: "no es una dirección IP" };
 }
 
-/** Validates the URL and resolves it to the address the request will actually go to. */
+/**
+ * La IPv4 que lleva dentro una IPv6, cuando la lleva.
+ *
+ * Tres prefijos, y los tres significan «esto acaba en una IPv4»:
+ *
+ * - `::ffff:a:b` — la mapeada, que es como un sistema con doble pila escribe una IPv4.
+ * - `::a:b` — la compatible, retirada hace años pero que las bibliotecas siguen resolviendo.
+ * - `64:ff9b::a:b` — NAT64, el prefijo con el que una red traduce a IPv4 al salir.
+ *
+ * Se decide por el prefijo y no por «parece que acaba en algo»: una IPv6 normal también termina en
+ * dos grupos hexadecimales, y tratarlos como IPv4 bloquearía direcciones públicas legítimas. Lo que
+ * devuelve vuelve a `isBlockedAddress`, que es quien tiene la lista: aquí no se decide nada, solo
+ * se le quita el disfraz.
+ */
+function embeddedV4(normalized: string): string | null {
+  const groups = /^(?:::ffff:|::|64:ff9b::)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(normalized);
+  if (!groups) return null;
+  const high = Number.parseInt(groups[1], 16);
+  const low = Number.parseInt(groups[2], 16);
+  return [(high >> 8) & 0xff, high & 0xff, (low >> 8) & 0xff, low & 0xff].join(".");
+}
+
+/**
+ * Los esquemas que acepta una llamada que no diga otra cosa.
+ *
+ * Es una lista blanca y no una negra por el motivo que dice el comentario de abajo. Vive aquí
+ * arriba para que se vea que el defecto no cambia cuando alguien pide otra: `resolveTarget` sin
+ * tercer argumento sigue siendo exactamente lo que era.
+ */
+const DEFAULT_SCHEMES = ["http:", "https:"] as const;
+
+/**
+ * Validates the URL and resolves it to the address the request will actually go to.
+ *
+ * `schemes` existe porque hay más de un protocolo que sale de aquí: un `ws://` es un GET con
+ * `Upgrade`, así que las cuatro reglas de la cabecera valen tal cual y lo único que sobra es la
+ * lista blanca. Se parametriza **esto** y no se copia el resto: una segunda lista de rangos
+ * privados, o un segundo sitio donde se resuelve el nombre, sería el fallo. Quien pide un esquema
+ * nuevo pide solo eso; las reglas son las mismas.
+ */
 export async function resolveTarget(
   rawUrl: string,
   policy: SafeFetchPolicy,
+  options: { schemes?: readonly string[] } = {},
 ): Promise<{ url: URL; address: string; family: number }> {
   let url: URL;
   try {
@@ -160,8 +209,11 @@ export async function resolveTarget(
   }
   // `file:`, `gopher:` and friends are not oversights to be handled later — they are the other
   // half of SSRF, and an allowlist is the only way to be sure a new scheme does not appear.
-  if (!["http:", "https:"].includes(url.protocol))
-    throw new BlockedTargetError(rawUrl, `esquema ${url.protocol} no permitido, solo http y https`);
+  const schemes = options.schemes ?? DEFAULT_SCHEMES;
+  if (!schemes.includes(url.protocol)) {
+    const names = schemes.map((scheme) => scheme.replace(":", "")).join(" y ");
+    throw new BlockedTargetError(rawUrl, `esquema ${url.protocol} no permitido, solo ${names}`);
+  }
   if (url.username || url.password) throw new BlockedTargetError(rawUrl, "las credenciales en la URL no se aceptan");
 
   const hostname = url.hostname.replace(/^\[|\]$/g, "");
