@@ -8,7 +8,7 @@
  */
 import type { StepGraphql } from "./graphql.ts";
 import { valueAtPath, type RuntimeVariables } from "./variables.ts";
-import type { StepCheck } from "./checks.ts";
+import type { ResponseCheck } from "./checks.ts";
 import type { ScenarioAuth } from "./types.ts";
 import type { StepNotify } from "./notify.ts";
 
@@ -105,7 +105,7 @@ export type StepRetry = {
 export type StepCondition = {
   /** The step whose response decides. Must be in `dependsOn`. */
   from: string;
-  check: StepCheck;
+  check: ResponseCheck;
 };
 
 /**
@@ -512,7 +512,7 @@ export type WorkflowStep = {
   dependsOn?: string[];
   captures?: WorkflowCapture[];
   /** What this step's author claims about the response, beyond what the contract already says. */
-  checks?: StepCheck[];
+  checks?: ResponseCheck[];
   retry?: StepRetry;
   onError?: StepOnError;
   /** Where the node sits on the canvas. **The engine never reads it** — it is stored beside the

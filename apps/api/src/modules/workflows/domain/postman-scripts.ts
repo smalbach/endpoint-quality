@@ -4,7 +4,7 @@
  * What people write in those scripts is a short list repeated everywhere: «el estado es 201», «el
  * cuerpo trae un id», «tardó menos de 300 ms», «guarda el id para el siguiente». All four are
  * *claims about a response* and this product already has a first-class way to say each one — a
- * {@link StepCheck} and a {@link WorkflowCapture} — which a person can read in the inspector, edit
+ * {@link ResponseCheck} and a {@link WorkflowCapture} — which a person can read in the inspector, edit
  * without writing code, and see named one by one in the report. A script node would run the same
  * assertions and show one green line.
  *
@@ -18,10 +18,10 @@
  *
  * Pure text in, plain data out. Nothing here executes a line of what it reads.
  */
-import type { CheckOperator, CheckSource, StepCheck, WorkflowCapture } from "@eq/runner-core";
+import type { CheckOperator, ResponseCheckSource, ResponseCheck, WorkflowCapture } from "@eq/runner-core";
 
 export type ScriptTranslation = {
-  checks: StepCheck[];
+  checks: ResponseCheck[];
   captures: WorkflowCapture[];
   /** The first statement this could not read, said in words, or null when all of it was read. */
   untranslatable: string | null;
@@ -39,7 +39,7 @@ export function translatePostmanScript(code: string): ScriptTranslation {
   const units = readUnits(stripComments(code));
   if (typeof units === "string") return { checks: [], captures: [], untranslatable: units };
 
-  const checks: StepCheck[] = [];
+  const checks: ResponseCheck[] = [];
   const captures: WorkflowCapture[] = [];
   /**
    * The names bound to the response body, each with the path it points at.
@@ -280,7 +280,7 @@ export function splitStatements(chunk: string): string[] {
 
 /** What a statement turned into: a check, a capture, nothing at all, or — as `null` — a statement
  * this cannot read, which is what sends the whole script to a `script` node untouched. */
-type Read = StepCheck | WorkflowCapture | "ignored" | null;
+type Read = ResponseCheck | WorkflowCapture | "ignored" | null;
 
 /** `pm.environment.set`, and the three other stores Postman offers. All four write a name the rest
  * of the run reads, which is exactly what a capture is; where the value is stored beyond the run is
@@ -492,7 +492,10 @@ function readResponseAssertion(tail: string, label: string | null): Read {
 }
 
 /** Where the value being judged comes from, when this can tell. */
-function subjectOf(actual: string, bodyNames: Map<string, string>): { source: CheckSource; path?: string } | null {
+function subjectOf(
+  actual: string,
+  bodyNames: Map<string, string>,
+): { source: ResponseCheckSource; path?: string } | null {
   const text = actual.trim();
   if (/^pm\s*\.\s*response\s*\.\s*(code|status|statusCode)$/.test(text)) return { source: "status" };
   if (/^pm\s*\.\s*response\s*\.\s*responseTime$/.test(text)) return { source: "durationMs" };
@@ -619,7 +622,7 @@ function readExpect(actual: string, tail: string, label: string | null, bodyName
 
 /** The test's name becomes the check's label, which is what the report shows. A loose assertion
  * has none, and `labelFor` in the engine writes one from the check itself. */
-function withLabel(check: Omit<StepCheck, "label">, label: string | null): StepCheck {
+function withLabel(check: Omit<ResponseCheck, "label">, label: string | null): ResponseCheck {
   return label?.trim() ? { label: label.trim().slice(0, 120), ...check } : check;
 }
 

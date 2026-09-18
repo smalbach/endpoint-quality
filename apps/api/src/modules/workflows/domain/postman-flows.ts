@@ -32,7 +32,7 @@ import {
   FETCH_METHODS,
   type FetchMethod,
   type RequestBody,
-  type StepCheck,
+  type ResponseCheck,
   type StepFetch,
   type WorkflowCapture,
   type WorkflowDocument,
@@ -75,7 +75,7 @@ export type PostmanStepDraft = {
   /** What the flow calls the node. */
   label: string;
   source: StepSource;
-  checks: StepCheck[];
+  checks: ResponseCheck[];
   captures: WorkflowCapture[];
   /** The `prerequest` code, verbatim, or empty. */
   prerequest: string;
@@ -92,7 +92,7 @@ export type PostmanStepDraft = {
  * disagree with it.
  */
 export function readItemScripts(item: PostmanItem): {
-  checks: StepCheck[];
+  checks: ResponseCheck[];
   captures: WorkflowCapture[];
   expectedStatus: number | null;
   /** The `test` code to keep verbatim, or empty when it was fully translated. */

@@ -24,7 +24,7 @@
  * `skipped` y quien exporta lo lee. La alternativa —un fichero que parece completo y ha perdido la
  * mitad del grafo— es peor que no poder exportar.
  */
-import type { RequestBody, WorkflowDocument, WorkflowStep, StepCheck, WorkflowCapture } from "@eq/runner-core";
+import type { RequestBody, WorkflowDocument, WorkflowStep, ResponseCheck, WorkflowCapture } from "@eq/runner-core";
 import { orderWorkflowSteps } from "@eq/runner-core";
 
 import type { ProjectBundle } from "./project-bundle";
@@ -568,7 +568,7 @@ function languageFor(contentType: string): string {
  * `status` usa `pm.response.to.have.status`, que es la forma que escribe un humano y la que el
  * lector reconoce primero. El resto sale como `pm.expect`, con el mismo `chai` que trae Postman.
  */
-export function checkLines(checks: StepCheck[]): string[] {
+export function checkLines(checks: ResponseCheck[]): string[] {
   return checks.flatMap((check) => {
     const title = JSON.stringify(check.label || describe(check));
     const body = assertionOf(check);
@@ -576,7 +576,7 @@ export function checkLines(checks: StepCheck[]): string[] {
   });
 }
 
-function assertionOf(check: StepCheck): string | null {
+function assertionOf(check: ResponseCheck): string | null {
   const value = () => JSON.stringify(check.value ?? null);
   if (check.source === "status") {
     if (check.operator === "equals") return `pm.response.to.have.status(${Number(check.value) || 0})`;
@@ -593,7 +593,7 @@ function assertionOf(check: StepCheck): string | null {
 }
 
 /** El encadenado de `chai` que dice cada operador. */
-function chai(check: StepCheck): string {
+function chai(check: ResponseCheck): string {
   const value = JSON.stringify(check.value ?? null);
   switch (check.operator) {
     case "equals":
@@ -624,7 +624,7 @@ function chai(check: StepCheck): string {
 }
 
 /** Un nombre para una comprobación que no lo trae, porque `pm.test` exige uno. */
-function describe(check: StepCheck): string {
+function describe(check: ResponseCheck): string {
   const subject =
     check.source === "status"
       ? "el estado"

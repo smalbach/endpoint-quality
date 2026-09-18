@@ -18,9 +18,45 @@ import type { ActualResponse } from "./assertions.ts";
 import type { Assertion } from "./types.ts";
 import { valueAtPath } from "./variables.ts";
 
-/** Where the value being judged comes from. */
-export const CHECK_SOURCES = ["status", "body", "header", "durationMs"] as const;
+/**
+ * Where the value being judged comes from.
+ *
+ * `message` y `messageCount` son de una conversación (`conversation.ts`) y no de una respuesta: allí
+ * no hay estado ni cabeceras, hay N cuerpos. Son una extensión de este motor y no un segundo motor,
+ * así que los doce operadores, las rutas al JSON y las etiquetas generadas valen igual.
+ */
+export const RESPONSE_CHECK_SOURCES = ["status", "body", "header", "durationMs"] as const;
+export type ResponseCheckSource = (typeof RESPONSE_CHECK_SOURCES)[number];
+
+/**
+ * Las fuentes de una conversación, en su propia lista y no dentro de la de arriba.
+ *
+ * Separadas porque la de arriba es un **contrato**: el esquema de un flujo la valida, se exporta y
+ * se compara entre versiones. Añadirle `message` la habría ensanchado en silencio, y un paso HTTP
+ * habría aceptado —y guardado, y exportado— una comprobación sobre mensajes que nunca va a tener.
+ * El motor evalúa las dos; cada sitio valida la suya.
+ */
+export const CONVERSATION_CHECK_SOURCES = ["message", "messageCount"] as const;
+export const CHECK_SOURCES = [...RESPONSE_CHECK_SOURCES, ...CONVERSATION_CHECK_SOURCES] as const;
 export type CheckSource = (typeof CHECK_SOURCES)[number];
+
+/**
+ * Cuál de los mensajes, cuando hay muchos.
+ *
+ * `first`, `last` o una posición miran uno. `any` y `all` aplican el operador a **cada** mensaje y
+ * combinan, que es lo que hace expresable «algún mensaje trae `type: "pong"`» — la comprobación que
+ * de verdad se escribe contra un socket, y que sin esto no se podía decir.
+ */
+export const MESSAGE_MATCHES = ["first", "last", "any", "all"] as const;
+export type MessageMatch = { at: (typeof MESSAGE_MATCHES)[number]; index?: number };
+
+/**
+ * Lo que una comprobación necesita saber de un mensaje, y nada más.
+ *
+ * Estructural a propósito: `ChannelMessage` encaja sin que este fichero lo importe, así que la
+ * dependencia va en una sola dirección —la conversación usa este motor, no al revés—.
+ */
+export type CheckMessage = { seq: number; body: string };
 
 export const CHECK_OPERATORS = [
   "equals",
@@ -38,11 +74,11 @@ export const CHECK_OPERATORS = [
 ] as const;
 export type CheckOperator = (typeof CHECK_OPERATORS)[number];
 
-export type StepCheck = {
+export type StepCheck<Source extends CheckSource = CheckSource> = {
   /** What to call it in the report. Generated from the rest when it is not given, because naming
    * twelve checks by hand is how people stop writing the twelfth. */
   label?: string;
-  source: CheckSource;
+  source: Source;
   /** A dot path into the JSON body, or the name of a header. Ignored by `status` and `durationMs`. */
   path?: string;
   operator: CheckOperator;
@@ -50,16 +86,29 @@ export type StepCheck = {
   value?: unknown;
   /** `warning` records the check and does not fail the case. Absent means it fails it. */
   severity?: "error" | "warning";
+  /** Solo para `message`: cuál de ellos. Ausente es `last`, que es el que suele contestar. */
+  match?: MessageMatch;
 };
 
-/** What a check was actually run against: the response, plus what only the runner knows. */
-export type CheckContext = { response: ActualResponse; durationMs: number };
+/** Lo que admite un paso de un flujo HTTP: las fuentes de una respuesta, y ninguna más. */
+export type ResponseCheck = StepCheck<ResponseCheckSource>;
+
+/**
+ * What a check was actually run against: the response, plus what only the runner knows.
+ *
+ * `messages` son los **recibidos**, y solo de una conversación. Los enviados no se comprueban: los
+ * escribió quien escribe la comprobación, y afirmar algo sobre ellos es afirmarlo sobre uno mismo.
+ */
+export type CheckContext = { response: ActualResponse; durationMs: number; messages?: CheckMessage[] };
 
 export function evaluateChecks(checks: StepCheck[], context: CheckContext): Assertion[] {
   return checks.map((check) => evaluateCheck(check, context));
 }
 
 function evaluateCheck(check: StepCheck, context: CheckContext): Assertion {
+  if (check.source === "message" && (check.match?.at === "any" || check.match?.at === "all")) {
+    return evaluateAcrossMessages(check, context.messages ?? []);
+  }
   const actual = actualFor(check, context);
   let pass: boolean;
   try {
@@ -82,10 +131,76 @@ function evaluateCheck(check: StepCheck, context: CheckContext): Assertion {
   };
 }
 
+/**
+ * `any` y `all`: el operador contra cada mensaje, y la combinación.
+ *
+ * **Sin mensajes, las dos fallan.** `all` sobre una lista vacía es verdad en lógica y mentira en un
+ * informe: «todos los mensajes traen `ok: true`» en verde, cuando no llegó ninguno, es la marca que
+ * no afirma nada que este motor existe para no poner.
+ */
+function evaluateAcrossMessages(check: StepCheck, messages: CheckMessage[]): Assertion {
+  const severity = check.severity ? { severity: check.severity } : {};
+  if (messages.length === 0) {
+    return { label: labelFor(check), pass: false, ...severity, detail: "No llegó ningún mensaje" };
+  }
+  let matching: number;
+  try {
+    matching = messages.filter((message) =>
+      applyOperator(check.operator, messageValue(message, check.path), check.value),
+    ).length;
+  } catch (caught) {
+    return {
+      label: labelFor(check),
+      pass: false,
+      ...severity,
+      detail: caught instanceof Error ? caught.message : "La comprobación no se pudo evaluar",
+    };
+  }
+  const pass = check.match?.at === "all" ? matching === messages.length : matching > 0;
+  return { label: labelFor(check), pass, ...severity, detail: `${matching} de ${messages.length} mensajes cumplen` };
+}
+
+/**
+ * El valor de un mensaje: su JSON si lo es, su texto si no.
+ *
+ * Un mensaje de socket no trae `Content-Type`, así que se prueba a leerlo. Si no es JSON, una ruta
+ * no puede apuntar a nada dentro y el valor es el texto entero — que es con lo que `contains` y
+ * `matches` tienen que trabajar.
+ */
+function messageValue(message: CheckMessage, path: string | undefined): unknown {
+  let parsed: unknown = message.body;
+  try {
+    parsed = JSON.parse(message.body);
+  } catch {
+    return path ? undefined : message.body;
+  }
+  return path ? valueAtPath(parsed, path) : parsed;
+}
+
+/** El mensaje que miran `first`, `last` y una posición. */
+function pickMessage(messages: CheckMessage[], match: MessageMatch | undefined): CheckMessage | undefined {
+  if (match?.index !== undefined) return messages[match.index];
+  return match?.at === "first" ? messages[0] : messages[messages.length - 1];
+}
+
 /** `where` is what the check points at, and it is half of every label and every message. */
 function where(check: StepCheck): string {
   if (check.source === "status") return "status";
   if (check.source === "durationMs") return "duración";
+  if (check.source === "messageCount") return "mensajes recibidos";
+  if (check.source === "message") {
+    const which =
+      check.match?.index !== undefined
+        ? `mensaje ${check.match.index}`
+        : check.match?.at === "any"
+          ? "algún mensaje"
+          : check.match?.at === "all"
+            ? "todos los mensajes"
+            : check.match?.at === "first"
+              ? "primer mensaje"
+              : "último mensaje";
+    return check.path ? `${which} · ${check.path}` : which;
+  }
   if (check.source === "header") return `cabecera ${check.path ?? ""}`.trim();
   return check.path ? `body.${check.path}` : "body";
 }
@@ -113,8 +228,14 @@ function labelFor(check: StepCheck): string {
   return `${where(check)} ${OPERATOR_TEXT[check.operator]}${operand}`;
 }
 
-function actualFor(check: StepCheck, { response, durationMs }: CheckContext): unknown {
+function actualFor(check: StepCheck, { response, durationMs, messages = [] }: CheckContext): unknown {
   switch (check.source) {
+    case "messageCount":
+      return messages.length;
+    case "message": {
+      const message = pickMessage(messages, check.match);
+      return message ? messageValue(message, check.path) : undefined;
+    }
     case "status":
       return response.status;
     case "durationMs":

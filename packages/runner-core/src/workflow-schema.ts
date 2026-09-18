@@ -17,7 +17,7 @@ import { scenarioCredentialSchema } from "./schema.ts";
 import type { WorkflowStep } from "./workflows.ts";
 import { VARIABLE_NAME } from "./variables.ts";
 import { GRAPHQL_OPERATION_NAME, graphqlVariablesProblem } from "./graphql.ts";
-import { CHECK_OPERATORS, CHECK_SOURCES } from "./checks.ts";
+import { CHECK_OPERATORS, RESPONSE_CHECK_SOURCES } from "./checks.ts";
 import { stepNotifySchema } from "./notify.ts";
 import { mockBodyProblem } from "./mock.ts";
 import {
@@ -130,7 +130,7 @@ const WITHOUT_OPERAND = ["exists", "not_exists", "is_array", "is_not_empty"];
 export const stepCheckSchema = z
   .object({
     label: z.string().max(120).optional(),
-    source: z.enum(CHECK_SOURCES),
+    source: z.enum(RESPONSE_CHECK_SOURCES),
     path: z.string().max(500).optional(),
     operator: z.enum(CHECK_OPERATORS),
     value: jsonValue.optional(),
