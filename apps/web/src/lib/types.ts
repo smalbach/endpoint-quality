@@ -49,6 +49,7 @@ export type {
   ChannelLimitsView,
   ChannelExpectationView,
   ChannelCheckView,
+  MqttSettingsView,
   CaptureSource,
   CoverageView,
   CurrentUser,
