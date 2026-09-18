@@ -1,6 +1,6 @@
 import type { RunCaseViewOf, RunOf, RunReportOf, RunReportStep, RunViewOf } from "@eq/contracts";
 
-import { Inject } from "@nestjs/common";
+import { Inject, Optional } from "@nestjs/common";
 import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
 
 import { NotFoundError } from "@/shared/errors/domain-error";
@@ -10,6 +10,7 @@ import type { Run, RunCase, RunStep } from "../../domain/model";
 import { isFinished } from "../../domain/model";
 import { RUN_QUEUE, RUN_REPOSITORY, type RunQueuePort, type RunRepositoryPort } from "../../domain/ports";
 import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
+import { CHANNEL_REPOSITORY, type ChannelRepositoryPort } from "@/modules/channels/domain/ports";
 import { describeSource, loadCatalog } from "./describe-source";
 
 export class ListRunsQuery implements IQuery {
@@ -46,12 +47,13 @@ export class ListRunsHandler implements IQueryHandler<ListRunsQuery, RunRow[]> {
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(RUN_REPOSITORY) private readonly runs: RunRepositoryPort,
     @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
+    @Optional() @Inject(CHANNEL_REPOSITORY) private readonly channels: ChannelRepositoryPort | null = null,
   ) {}
   async execute(query: ListRunsQuery): Promise<RunRow[]> {
     const project = await ownedProject(this.projects, query.organizationId, query.projectId);
     const [runs, catalog] = await Promise.all([
       this.runs.listForProject(project.id, Math.min(100, Math.max(1, query.limit))),
-      loadCatalog(this.workflows, project.id),
+      loadCatalog(this.workflows, project.id, this.channels),
     ]);
     return runs.map((run) => ({ ...run, source: describeSource(run, catalog) }));
   }
@@ -71,6 +73,7 @@ export class GetRunHandler implements IQueryHandler<GetRunQuery, RunView> {
     @Inject(RUN_REPOSITORY) private readonly runs: RunRepositoryPort,
     @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
     @Inject(RUN_QUEUE) private readonly queue: RunQueuePort,
+    @Optional() @Inject(CHANNEL_REPOSITORY) private readonly channels: ChannelRepositoryPort | null = null,
   ) {}
   async execute(query: GetRunQuery): Promise<RunView> {
     const project = await ownedProject(this.projects, query.organizationId, query.projectId);
@@ -78,7 +81,7 @@ export class GetRunHandler implements IQueryHandler<GetRunQuery, RunView> {
     if (!run || run.projectId !== project.id) throw new NotFoundError("La corrida no existe", "run-not-found");
     const [cases, catalog, paused] = await Promise.all([
       this.runs.listCases(run.id),
-      loadCatalog(this.workflows, project.id),
+      loadCatalog(this.workflows, project.id, this.channels),
       // Read from the queue because the pause lives there: a page opened while the run waits has to
       // show the «siguiente» button without having seen the event that announced it.
       isFinished(run.status) ? null : this.queue.pausedAt(run.id),
@@ -138,6 +141,7 @@ export class GetRunReportHandler implements IQueryHandler<GetRunReportQuery, Run
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(RUN_REPOSITORY) private readonly runs: RunRepositoryPort,
     @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
+    @Optional() @Inject(CHANNEL_REPOSITORY) private readonly channels: ChannelRepositoryPort | null = null,
   ) {}
   async execute(query: GetRunReportQuery): Promise<RunReport> {
     const project = await ownedProject(this.projects, query.organizationId, query.projectId);
@@ -149,7 +153,7 @@ export class GetRunReportHandler implements IQueryHandler<GetRunReportQuery, Run
     const [cases, steps, catalog] = await Promise.all([
       this.runs.listCases(run.id),
       this.runs.listStepsForRun(run.id),
-      loadCatalog(this.workflows, project.id),
+      loadCatalog(this.workflows, project.id, this.channels),
     ]);
     const byCase = new Map<string, RunStep[]>();
     for (const step of steps) byCase.set(step.runCaseId, [...(byCase.get(step.runCaseId) ?? []), step]);

@@ -72,6 +72,8 @@ function answers(
     if (options?.method === "POST") return Promise.resolve(monitor());
     if (path.endsWith("/monitors")) return Promise.resolve({ monitors: [monitor()], ...list });
     if (path.endsWith("/environments")) return Promise.resolve(environments);
+    if (path.endsWith("/channels"))
+      return Promise.resolve({ channels: [{ id: "c1", name: "eco", protocol: "websocket", messages: [] }] });
     return Promise.resolve({ workflows: [{ id: "w1", name: "el alta" }], suites: [] });
   });
 }
@@ -270,6 +272,28 @@ describe("la pantalla de monitores", () => {
 
     fireEvent.change(dialog.getByLabelText("Flujo"), { target: { value: "w1" } });
     expect(dialog.getByRole("button", { name: "Crear" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  test("un monitor puede vigilar un canal sin flujo, con su guion o con los mensajes guardados", async () => {
+    answers({ monitors: [] });
+    draw();
+    await waitFor(() => expect(screen.getByText("Crear un monitor")).toBeTruthy());
+    fireEvent.click(screen.getByText("Crear un monitor"));
+    const dialog = within(await screen.findByRole("dialog"));
+
+    fireEvent.change(dialog.getByLabelText(/Nombre/), { target: { value: "el socket" } });
+    fireEvent.change(dialog.getByLabelText("Qué corre"), { target: { value: "channel" } });
+    expect(dialog.getByRole("button", { name: "Crear" }).hasAttribute("disabled")).toBe(true);
+    await waitFor(() => expect(dialog.getByRole("option", { name: "eco · WEBSOCKET" })).toBeTruthy());
+    fireEvent.change(dialog.getByLabelText("Canal"), { target: { value: "c1" } });
+    expect(dialog.getByLabelText("Mandar los mensajes guardados del canal, en orden")).toBeTruthy();
+    fireEvent.click(dialog.getByRole("button", { name: "Crear" }));
+
+    await waitFor(() => {
+      const post = call.mock.calls.find(([, options]) => options?.method === "POST");
+      expect(post).toBeTruthy();
+      expect(post![1].body.plan).toEqual({ environmentId: "env-1", channel: { channelId: "c1" } });
+    });
   });
 
   test("crear manda el horario y el plan que se eligieron", async () => {

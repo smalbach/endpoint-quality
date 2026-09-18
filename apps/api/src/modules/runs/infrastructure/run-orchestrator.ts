@@ -126,6 +126,13 @@ export class RunOrchestrator {
   }
 
   private async walk(run: Run, context: ExecutionContext): Promise<void> {
+    if (run.plan.channel) {
+      // Un canal sin flujo es un flujo de un nodo que no se guarda: el mismo `walkFlows`, el mismo
+      // `channelStep`, la misma apertura. Un camino propio acabaría juzgando la conversación de otra
+      // manera que el nodo, y el monitor diría verde donde el flujo diría rojo.
+      await this.walkFlows(run, context, [channelOnlyFlow(run)], new Map(), [null]);
+      return;
+    }
     if (run.plan.workflowId || run.plan.suiteId) {
       // Read with the project id, so a flow that belongs to another tenant is indistinguishable
       // from one that does not exist. `StartRunHandler` already refused these at 422; getting here
@@ -2003,3 +2010,24 @@ function controlCaseFields(step: WorkflowStep): { operationId: string; method: s
 }
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * El flujo de un plan con canal: un solo nodo `channel`, en memoria.
+ *
+ * El id es el del canal, así que el caso se llama `workflow:<canal>:channel` y se lee como lo que es
+ * —«este canal, ejecutado»— en vez de apuntar a un flujo que no existe.
+ */
+function channelOnlyFlow(run: Run): WorkflowRow {
+  const channel = run.plan.channel as NonNullable<Run["plan"]["channel"]>;
+  return {
+    id: channel.channelId,
+    projectId: run.projectId,
+    name: "Canal",
+    description: null,
+    status: "ready",
+    definition: { steps: [{ id: "channel", kind: "channel", channel }] } as WorkflowRow["definition"],
+    createdAt: run.startedAt,
+    updatedAt: run.startedAt,
+    updatedBy: run.triggeredBy,
+  };
+}

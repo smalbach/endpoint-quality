@@ -31,7 +31,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { NOTIFY_CHANNELS, type NotifyChannel } from "@eq/runner-core";
+import { NOTIFY_CHANNELS, type NotifyChannel, type StepChannel } from "@eq/runner-core";
 import { describeSchedule, nextOccurrence, scheduleProblems, type MonitorSchedule } from "./schedule";
 
 /** Local, como en el resto de dominios de este producto. */
@@ -147,6 +147,11 @@ export type MonitorPlan = {
   environmentId: string;
   workflowId?: string;
   suiteId?: string;
+  /**
+   * Un canal sin flujo: el socket, el broker o el servicio gRPC vigilado directamente. El mismo
+   * bloque que el nodo `channel` —canal y guion opcional—, así que se ejecuta y se juzga igual.
+   */
+  channel?: StepChannel;
   datasetId?: string;
   operationIds?: string[];
   labels?: string[];
@@ -279,6 +284,10 @@ export function monitorProblems(input: MonitorInput, { requireAll = false } = {}
       problems.push({ field: "plan.environmentId", detail: "Un monitor corre contra un entorno concreto" });
     if (input.plan.workflowId && input.plan.suiteId)
       problems.push({ field: "plan.suiteId", detail: "Una corrida ejecuta un flujo o una suite, no las dos" });
+    // El guion y la pertenencia del canal se comprueban con el proyecto a mano (ver el handler);
+    // aquí solo lo que se ve sin leer nada: que no venga mezclado con un flujo.
+    if (input.plan.channel && (input.plan.workflowId || input.plan.suiteId || input.plan.datasetId))
+      problems.push({ field: "plan.channel", detail: "Un monitor vigila un canal, un flujo o una suite, no varios" });
   } else if (requireAll) {
     problems.push({ field: "plan.environmentId", detail: "Un monitor corre contra un entorno concreto" });
   }

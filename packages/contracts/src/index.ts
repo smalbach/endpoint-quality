@@ -700,7 +700,9 @@ export type RunSource =
       /** How many times the flow was walked. `1` with no dataset. */
       rows: number;
     }
-  | { kind: "suite"; suiteId: string; name: string | null; flowNames: (string | null)[] };
+  | { kind: "suite"; suiteId: string; name: string | null; flowNames: (string | null)[] }
+  /** Un canal ejecutado sin flujo: la corrida de un monitor de canal. Un solo caso. */
+  | { kind: "channel"; channelId: string; name: string | null };
 
 export type RunOf<T> = {
   id: string;
@@ -1392,6 +1394,8 @@ export type MonitorPlanView = {
   delayMs?: number;
   concurrency?: number;
   stopOnFailure?: boolean;
+  /** Un canal en lugar de un flujo: el mismo bloque que el nodo `channel`. */
+  channel?: StepChannelView;
 };
 
 /**

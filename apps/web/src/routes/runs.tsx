@@ -105,6 +105,7 @@ function sourceLabel(source: RunSource): string {
     if (!source.datasetId) return flow;
     return `${flow} · ${source.datasetName ?? "(datos eliminados)"}, ${source.rows} filas`;
   }
+  if (source.kind === "channel") return `Canal ${source.name ?? "(eliminado)"}`;
   // The labels come first because they are what somebody typed. «Matriz · crítico» says what the
   // run was *asked for*; the operation count says how big the answer was that day.
   const parts = [
