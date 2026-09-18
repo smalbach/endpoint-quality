@@ -16,6 +16,7 @@ import { Inject } from "@nestjs/common";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 import {
   interpolateText,
+  publishTopicProblem,
   signAuth,
   unresolvedVariables,
   withEnvironmentNamespace,
@@ -33,6 +34,7 @@ import { redactBody } from "@/modules/endpoints/domain/examples";
 import { resolveVariables } from "@/modules/environments/domain/model";
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
 import { MAX_SAVED_MESSAGE_BYTES, effectiveLimits } from "../../domain/model";
+import { mqttSessionPlan, planProblems, type MqttPublish } from "../../domain/mqtt";
 import {
   CHANNEL_REPOSITORY,
   CHANNEL_SESSION_REPOSITORY,
@@ -95,7 +97,14 @@ export class OpenChannelSessionHandler implements ICommandHandler<OpenChannelSes
       if (header.enabled && header.name.trim()) headers[header.name.trim()] = interpolate(header.value);
     }
 
-    const unresolved = unresolvedVariables([url, headers]);
+    // MQTT: usuario y contraseña salen de la autenticación `basic`, y la contraseña entra aquí en la
+    // lista de secretos —ver `mqttSessionPlan`—. No se «firma»: no hay upgrade que firmar.
+    const mqtt =
+      channel.protocol === "mqtt" && channel.mqtt
+        ? mqttSessionPlan(channel.mqtt, channel.auth, interpolate, secrets, () => randomUUID().slice(0, 8))
+        : undefined;
+
+    const unresolved = unresolvedVariables([url, headers, mqtt ?? null]);
     if (unresolved.length) {
       throw new InvalidInputError(
         `Variables sin valor: ${unresolved.join(", ")}`,
@@ -107,7 +116,10 @@ export class OpenChannelSessionHandler implements ICommandHandler<OpenChannelSes
       );
     }
 
-    if (channel.auth && channel.auth.type !== "none" && channel.auth.type !== "inherit") {
+    const planned = mqtt ? planProblems(mqtt) : [];
+    if (planned.length) throw new InvalidInputError("Las suscripciones no son válidas con este entorno", planned);
+
+    if (!mqtt && channel.auth && channel.auth.type !== "none" && channel.auth.type !== "inherit") {
       url = this.sign(channel.auth, url, headers, interpolate, secrets);
     }
 
@@ -134,6 +146,7 @@ export class OpenChannelSessionHandler implements ICommandHandler<OpenChannelSes
       expect: channel.expectations,
       readOnly: environment ? !environment.writesAllowed : false,
       environmentName: environment?.name ?? "",
+      ...(mqtt ? { mqtt } : {}),
     });
     return viewSession(started, this.registry.owns(started.id));
   }
@@ -220,6 +233,8 @@ export class SendChannelMessageCommand implements ICommand {
     readonly projectId: string,
     readonly sessionId: string,
     readonly text: string,
+    /** Solo en MQTT: a qué tema, con qué QoS y si se retiene. */
+    readonly publish?: MqttPublish,
   ) {}
 }
 
@@ -241,7 +256,10 @@ export class SendChannelMessageHandler implements ICommandHandler<SendChannelMes
         { field: "text", detail: `Texto, como mucho ${MAX_SAVED_MESSAGE_BYTES / 1024} KB` },
       ]);
     }
-    await this.registry.send(session.id, command.text);
+    const topicProblem = command.publish ? publishTopicProblem(command.publish.topic) : null;
+    if (topicProblem)
+      throw new InvalidInputError("El mensaje no es válido", [{ field: "topic", detail: topicProblem }]);
+    await this.registry.send(session.id, command.text, command.publish);
   }
 }
 

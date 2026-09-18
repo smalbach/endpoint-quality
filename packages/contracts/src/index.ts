@@ -1356,7 +1356,7 @@ export type MonitorListView = { monitors: (MonitorView & { recent: MonitorExecut
 
 export type MonitorHistoryView = { monitor: MonitorView; executions: MonitorExecutionView[] };
 
-// Canales (WebSocket)
+// Canales (WebSocket y MQTT)
 
 /**
  * Un canal: lo que se prueba cuando no es una petición. Hoy un WebSocket.
@@ -1379,7 +1379,8 @@ export type ChannelCheckView = {
   operator: string;
   value?: unknown;
   severity?: "error" | "warning";
-  match?: { at: "first" | "last" | "any" | "all"; index?: number };
+  /** `topic`: solo los mensajes de ese tema MQTT (con `+` y `#`) antes de elegir cuál. */
+  match?: { at: "first" | "last" | "any" | "all"; index?: number; topic?: string };
 };
 
 export type ChannelExpectationView = {
@@ -1389,9 +1390,20 @@ export type ChannelExpectationView = {
   checks?: ChannelCheckView[];
 };
 
+/** Lo propio de un canal MQTT. Usuario y contraseña van en `auth` como `basic`. */
+export type MqttSettingsView = {
+  /** 4 es 3.1.1 y 5 es 5.0. */
+  version: 4 | 5;
+  /** Vacío: se inventa uno por sesión. */
+  clientId: string;
+  keepaliveSec: number;
+  cleanSession: boolean;
+  subscriptions: { topic: string; qos: 0 | 1 | 2 }[];
+};
+
 export type ChannelView = {
   id: string;
-  protocol: "ws";
+  protocol: "ws" | "mqtt";
   name: string;
   /** Con `{{variables}}` si hace falta: se resuelve contra el entorno al abrir. */
   url: string;
@@ -1400,8 +1412,10 @@ export type ChannelView = {
   auth: { type: string; params: Record<string, string> } | null;
   limits: ChannelLimitsView;
   expectations: ChannelExpectationView;
-  /** Tramas guardadas, para no reteclear la de auth en cada sesión. */
-  messages: { name: string; body: string }[];
+  /** Tramas guardadas, para no reteclear la de auth en cada sesión. En MQTT, con su tema. */
+  messages: { name: string; body: string; topic?: string; qos?: 0 | 1 | 2; retain?: boolean }[];
+  /** Solo en un canal MQTT. */
+  mqtt: MqttSettingsView | null;
   orderIndex: number;
   createdAt: string;
   updatedAt: string;
@@ -1417,6 +1431,10 @@ export type ChannelMessageView = {
   /** El tamaño real: `body` puede venir recortado, y entonces `truncated` lo dice. */
   bytes: number;
   truncated: boolean;
+  /** Solo MQTT: el tema (ya tapado), la QoS y si venía retenido. */
+  topic?: string;
+  qos?: 0 | 1 | 2;
+  retain?: boolean;
 };
 
 export type ChannelSessionView = {
@@ -1424,7 +1442,8 @@ export type ChannelSessionView = {
   channelId: string;
   environmentId: string | null;
   status: "connecting" | "open" | "closed" | "error";
-  handshake: { status: number; headers: Record<string, string> } | null;
+  /** `via`: qué paso contestó la apertura —`CONNACK` en MQTT—; ausente es el `upgrade`. */
+  handshake: { status: number; headers: Record<string, string>; via?: string } | null;
   counters: { sent: number; received: number; bytesIn: number; bytesOut: number };
   closeCode: number | null;
   closeReason: string;

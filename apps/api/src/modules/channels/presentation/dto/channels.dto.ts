@@ -6,13 +6,22 @@
  * DTO que dice `@IsObject()` y nada más deja pasar cualquier cosa dentro, y un campo que el tipo de
  * TypeScript promete texto y llega como objeto acababa en un 500 con traza de Node.
  */
-import { IsArray, IsObject, IsOptional, IsString, IsUUID, MaxLength } from "class-validator";
+import { IsArray, IsBoolean, IsIn, IsObject, IsOptional, IsString, IsUUID, MaxLength } from "class-validator";
 import type { ChannelExpectation, ChannelLimits, RequestAuth } from "@eq/runner-core";
 
 import type { EndpointHeader } from "@/modules/endpoints/domain/model";
-import { MAX_CHANNEL_NAME, MAX_CHANNEL_URL, type SavedMessage } from "../../domain/model";
+import {
+  CHANNEL_PROTOCOLS,
+  MAX_CHANNEL_NAME,
+  MAX_CHANNEL_URL,
+  type ChannelProtocol,
+  type SavedMessage,
+} from "../../domain/model";
+import type { MqttQos, MqttSettings } from "../../domain/mqtt";
 
 export class CreateChannelDto {
+  /** Ausente es `ws`, que es lo que eran todos los canales antes de MQTT. */
+  @IsOptional() @IsIn(CHANNEL_PROTOCOLS) protocol?: ChannelProtocol;
   @IsString() @MaxLength(MAX_CHANNEL_NAME) name: string;
   @IsString() @MaxLength(MAX_CHANNEL_URL) url: string;
   @IsOptional() @IsArray() subprotocols?: string[];
@@ -21,6 +30,7 @@ export class CreateChannelDto {
   @IsOptional() @IsObject() limits?: Partial<ChannelLimits>;
   @IsOptional() @IsObject() expectations?: ChannelExpectation;
   @IsOptional() @IsArray() messages?: SavedMessage[];
+  @IsOptional() @IsObject() mqtt?: Partial<MqttSettings>;
 }
 
 export class UpdateChannelDto {
@@ -33,6 +43,7 @@ export class UpdateChannelDto {
   @IsOptional() @IsObject() limits?: Partial<ChannelLimits>;
   @IsOptional() @IsObject() expectations?: ChannelExpectation;
   @IsOptional() @IsArray() messages?: SavedMessage[];
+  @IsOptional() @IsObject() mqtt?: Partial<MqttSettings>;
 }
 
 export class OpenChannelSessionDto {
@@ -42,4 +53,8 @@ export class OpenChannelSessionDto {
 
 export class SendChannelMessageDto {
   @IsString() text: string;
+  /** Solo en MQTT, y ahí obligatorio: a qué tema se publica. */
+  @IsOptional() @IsString() topic?: string;
+  @IsOptional() @IsIn([0, 1, 2]) qos?: MqttQos;
+  @IsOptional() @IsBoolean() retain?: boolean;
 }

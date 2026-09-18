@@ -21,17 +21,19 @@
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { performance } from "node:perf_hooks";
-import { Inject, Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
 import type { ChannelExpectation, ChannelLimits, RawFrame, RedactionRules, StopReason } from "@eq/runner-core";
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { ENV, type Env } from "@/shared/config/env";
-import { ConflictError } from "@/shared/errors/domain-error";
+import { ConflictError, InvalidInputError } from "@/shared/errors/domain-error";
 import { BlockedTargetError } from "@/shared/http/safe-fetch";
 import { HandshakeRejectedError } from "@/shared/http/safe-socket";
+import type { MqttPublish, MqttSessionPlan } from "../domain/mqtt";
 import { CHANNEL_SESSION_REPOSITORY, type ChannelSessionRepositoryPort } from "../domain/ports";
 import { closeSession, isFinished, isStale, onFrame, onTick, type ChannelSession } from "../domain/session";
 import { ChannelProgressStream } from "./channel-progress.stream";
+import { MQTT_TRANSPORT, type MqttTransportPort } from "./mqtt-transport";
 import { CHANNEL_TRANSPORT, type ChannelTransportPort, type OpenChannel } from "./ws-transport";
 
 /** Cada cuánto se mira el reloj de las sesiones vivas. Decide la precisión de los topes de tiempo. */
@@ -57,6 +59,8 @@ export type SessionPlan = {
   readOnly: boolean;
   /** Para decirlo con su nombre cuando alguien intente mandar. */
   environmentName: string;
+  /** Solo en un canal MQTT: con qué se conecta. Su presencia es lo que elige el transporte. */
+  mqtt?: MqttSessionPlan;
 };
 
 type Live = {
@@ -90,6 +94,7 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
     @Inject(CLOCK) private readonly clock: ClockPort,
     @Inject(ENV) private readonly env: Env,
     private readonly stream: ChannelProgressStream,
+    @Optional() @Inject(MQTT_TRANSPORT) private readonly mqtt: MqttTransportPort | null = null,
   ) {}
 
   onModuleInit(): void {
@@ -130,7 +135,7 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
     await this.sessions.save(session);
 
     try {
-      entry.channel = await this.transport.open(
+      entry.channel = await this.transportFor(session.id, entry).open(
         plan.url,
         {
           headers: plan.headers,
@@ -181,17 +186,25 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
    * Mandar un mensaje. Se anota **antes** de mandarlo, y anotado ya tapado: lo que sale en vivo y lo
    * que se guarda es el mensaje redactado; el texto crudo solo lo ve el socket.
    */
-  async send(sessionId: string, text: string): Promise<void> {
+  async send(sessionId: string, text: string, publish?: MqttPublish): Promise<void> {
     const entry = this.live.get(sessionId);
     if (!entry?.channel) throw this.notHere(sessionId);
+    // Antes que la escritura: un mensaje sin tema en MQTT, o con tema en un WebSocket, no se anota.
+    if (Boolean(entry.plan.mqtt) !== Boolean(publish)) {
+      throw new InvalidInputError("El mensaje no es válido", [
+        entry.plan.mqtt
+          ? { field: "topic", detail: "En MQTT se publica en un tema" }
+          : { field: "topic", detail: "Un WebSocket no tiene temas" },
+      ]);
+    }
     if (entry.plan.readOnly) {
       throw new ConflictError(
         `El entorno «${entry.plan.environmentName}» no permite escrituras: en él se escucha, pero no se manda. Actívalas en sus ajustes para mandar mensajes`,
         "writes-not-allowed",
       );
     }
-    this.frame(sessionId, { direction: "out", atMs: this.at(entry), body: text });
-    entry.channel.send(text);
+    this.frame(sessionId, { direction: "out", atMs: this.at(entry), body: text, ...publish });
+    entry.channel.send(text, publish);
     await entry.writes;
   }
 
@@ -236,6 +249,33 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
       // Un latido que falla no puede tumbar el proceso: el siguiente lo intenta otra vez.
       this.logger.error(`El latido de las sesiones falló: ${error instanceof Error ? error.message : error}`);
     }
+  }
+
+  /**
+   * El transporte de esta sesión: el de WebSocket, o uno que conecta al broker MQTT.
+   *
+   * El de MQTT tiene la forma del de WebSocket para que abrir sea una sola línea para los dos, y no
+   * usa las opciones del upgrade ni las escuchas de bytes: conecta con el plan de la sesión y
+   * entrega tramas ya con tema. Las tramas llegan sin hora y se les pone aquí, con el mismo reloj
+   * que a las de un socket: a partir de ahí son tramas como las demás.
+   */
+  private transportFor(sessionId: string, entry: Live): ChannelTransportPort {
+    const plan = entry.plan.mqtt;
+    if (!plan) return this.transport;
+    return { open: () => this.openMqtt(sessionId, entry, plan) };
+  }
+
+  private openMqtt(sessionId: string, entry: Live, plan: MqttSessionPlan): Promise<OpenChannel> {
+    if (!this.mqtt) throw new Error("Esta instancia no tiene transporte MQTT");
+    return this.mqtt.open(
+      entry.plan.url,
+      {
+        ...plan,
+        maxMessageBytes: entry.plan.limits.maxMessageBytes,
+        connectTimeoutMs: Math.min(entry.plan.limits.maxDurationMs, this.env.REQUEST_TIMEOUT_MS),
+      },
+      (frame) => this.frame(sessionId, { ...frame, atMs: this.at(entry) }),
+    );
   }
 
   private at(entry: Live): number {

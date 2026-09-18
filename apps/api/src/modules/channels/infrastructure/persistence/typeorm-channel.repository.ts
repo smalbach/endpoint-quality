@@ -115,6 +115,10 @@ export class TypeOrmChannelSessionRepository implements ChannelSessionRepository
       bytes: row.bytes,
       truncated: row.truncated,
       body: row.body,
+      // Solo si los hay: un mensaje de WebSocket sale igual que antes, sin tres campos nulos.
+      ...(row.topic !== null ? { topic: row.topic } : {}),
+      ...(row.qos !== null ? { qos: row.qos as 0 | 1 | 2 } : {}),
+      ...(row.retain !== null ? { retain: row.retain } : {}),
     }));
   }
 

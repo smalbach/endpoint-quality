@@ -1,5 +1,5 @@
 /**
- * Los canales: lo que un proyecto prueba cuando no es una petición. Hoy WebSocket.
+ * Los canales: lo que un proyecto prueba cuando no es una petición. WebSocket y MQTT.
  *
  * No importa `SpecsModule` —a diferencia de los monitores— porque un socket no sale por `SAFE_FETCH`:
  * sale por `safe-socket.ts`, con la política leída de `policyFromEnv`, que es el mismo sitio del que
@@ -20,6 +20,7 @@ import {
   TypeOrmChannelSessionRepository,
 } from "./infrastructure/persistence/typeorm-channel.repository";
 import { CHANNEL_TRANSPORT, WsChannelTransport } from "./infrastructure/ws-transport";
+import { MQTT_TRANSPORT, MqttChannelTransport } from "./infrastructure/mqtt-transport";
 import { ChannelProgressStream } from "./infrastructure/channel-progress.stream";
 import { ChannelSessionRegistry } from "./infrastructure/session-registry";
 import {
@@ -42,6 +43,7 @@ export const CHANNEL_ADAPTERS = [
   { provide: CHANNEL_REPOSITORY, useClass: TypeOrmChannelRepository },
   { provide: CHANNEL_SESSION_REPOSITORY, useClass: TypeOrmChannelSessionRepository },
   { provide: CHANNEL_TRANSPORT, useClass: WsChannelTransport },
+  { provide: MQTT_TRANSPORT, useClass: MqttChannelTransport },
   ChannelProgressStream,
   ChannelSessionRegistry,
 ];
