@@ -232,6 +232,8 @@ describe("de vuelta a Postman", () => {
     );
     const folder = exported.collection.item[0] as { item: { request: Record<string, unknown> }[] };
     const request = folder.item[0]!.request;
+    // Con el nombre de la operación, no con la URL que comparten todas.
+    assert.equal((folder.item[0] as unknown as { name: string }).name, "Usuario");
     assert.equal(request.method, "POST");
     assert.deepEqual(request.body, { mode: "graphql", graphql: { query: QUERY, variables: '{"id": "7"}' } });
     assert.equal((request.auth as { type: string }).type, "bearer");

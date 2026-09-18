@@ -128,7 +128,7 @@ export class ImportPostmanFlowsHandler implements ICommandHandler<
       : [];
     if (!operations.length) {
       notes.push(
-        "El proyecto no tiene contrato activo, así que cada petición entra como nodo «fetch» con su URL escrita.",
+        "El proyecto no tiene contrato activo, así que cada petición entra como nodo «fetch» (o «graphql», si lo es) con su URL escrita.",
       );
     }
 

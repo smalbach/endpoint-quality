@@ -374,9 +374,10 @@ function graphqlItem(step: WorkflowStep, skipped: PostmanExport["skipped"], labe
       what: label,
       detail: "acepta respuestas con errors, y Postman no juzga eso: al volver, fallará con ellos",
     });
-  const [path] = call.url.split("?");
+  // El id del nodo y no la URL: todas las operaciones comparten la misma, y el id es el nombre que
+  // la petición tenía al importarse —`Pais` entró como `pais`—, así que la ida y vuelta no lo cambia.
   return {
-    name: `GQL ${call.operationName || path}`,
+    name: call.operationName || step.id,
     request: {
       method: "POST",
       header: headerList(call.headers ?? {}, call.disabledHeaders ?? {}, skipped, label),
