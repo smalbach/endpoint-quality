@@ -1,6 +1,11 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { Subject, filter, map, type Observable } from "rxjs";
 import type { ChannelMessage } from "@eq/runner-core";
+
+import { INSTANCE_BUS, type InstanceBusPort } from "@/shared/bus/instance-bus";
+import { InMemoryInstanceBus } from "@/shared/bus/in-memory-instance-bus";
+
+const CHANNEL_PROGRESS_TOPIC = "channel-session.progress";
 
 /**
  * Lo que sale en vivo de una sesión.
@@ -15,19 +20,24 @@ export type ChannelProgressEvent =
   | { sessionId: string; type: "finished"; status: string; stopReason: string | null };
 
 /**
- * Por proceso, y sin relé a propósito.
+ * Por el bus entre instancias.
  *
- * Una corrida sobrevive a caer en otra instancia porque su estado está en Postgres; el socket de una
- * sesión es un descriptor de **este** proceso y no se puede relevar. Quien sigue una sesión desde
- * otra instancia recibe un 409 que nombra la dueña, en vez de una vista en vivo que no vuelve a
- * emitir nunca.
+ * El socket de una sesión es un descriptor de **un** proceso y no se puede mover; lo que sí se puede
+ * mover es lo que sale de él. La dueña publica cada trama ya redactada y quien sigue la sesión desde
+ * otra instancia la recibe igual que si estuviera al lado: antes de esto, eso era un 409.
  */
 @Injectable()
 export class ChannelProgressStream {
   private readonly events = new Subject<ChannelProgressEvent>();
+  private readonly bus: InstanceBusPort;
+
+  constructor(@Optional() @Inject(INSTANCE_BUS) bus: InstanceBusPort | null = null) {
+    this.bus = bus ?? new InMemoryInstanceBus();
+    this.bus.subscribe<ChannelProgressEvent>(CHANNEL_PROGRESS_TOPIC, (event) => this.events.next(event));
+  }
 
   publish(event: ChannelProgressEvent): void {
-    this.events.next(event);
+    this.bus.publish(CHANNEL_PROGRESS_TOPIC, event);
   }
 
   forSession(sessionId: string): Observable<{ data: unknown; type: string }> {

@@ -27,6 +27,8 @@ import { MAX_JSON_BODY } from "@/shared/http/body-limits";
 
 import { ENV, type Env, loadEnv } from "@/shared/config/env";
 import { CLOCK, FixedClock } from "@/shared/clock/clock.port";
+import { INSTANCE_BUS, type InstanceBusPort } from "@/shared/bus/instance-bus";
+import { InMemoryInstanceBus } from "@/shared/bus/in-memory-instance-bus";
 import { PASSWORD_HASHER, FastTestPasswordHasher } from "@/shared/crypto/password-hasher";
 import { ProblemDetailsFilter } from "@/shared/errors/problem-details.filter";
 import { ACCESS_TOKEN_SERVICE } from "@/modules/auth/domain/access-token";
@@ -149,8 +151,6 @@ import { WORKFLOW_REPOSITORY } from "@/modules/workflows/domain/ports";
 import { WORKFLOW_COMMAND_HANDLERS, WORKFLOW_QUERY_HANDLERS } from "@/modules/workflows/workflows.module";
 import { WorkflowsController } from "@/modules/workflows/presentation/workflows.controller";
 import { REQUEST_PREVIEWER, RUN_QUEUE, RUN_REPOSITORY } from "@/modules/runs/domain/ports";
-import { PROGRESS_RELAY } from "@/modules/runs/domain/progress";
-import { InProcessRelay } from "@/modules/runs/infrastructure/progress/in-process-relay";
 import { RunsController } from "@/modules/runs/presentation/runs.controller";
 import { RequestPreviewController } from "@/modules/runs/presentation/request-preview.controller";
 import { RUN_COMMAND_HANDLERS, RUN_PROJECTORS, RUN_QUERY_HANDLERS } from "@/modules/runs/runs.module";
@@ -323,6 +323,8 @@ export type TestContext = {
   mailer: RecordingMailer;
   /** Lets a test await the queue instead of polling for a run to finish. */
   queue: InMemoryRunQueue;
+  /** El bus de esta instancia: propio, o el del hub que comparte con otra aplicación de prueba. */
+  bus: InstanceBusPort;
   close(): Promise<void>;
 };
 
@@ -334,12 +336,21 @@ export async function createTestApp(
      * necesita una prueba que quiere ver la negativa.
      */
     channelPrivateTargets?: boolean;
+    /**
+     * Otra instancia de la misma API: sus repositorios —la misma base de datos— y su reloj. Con
+     * `bus` en el mismo hub, es lo que un balanceador tiene detrás: dos procesos que solo comparten
+     * Postgres y Redis.
+     */
+    sibling?: TestContext;
+    /** El bus de esta instancia. Sin él, uno en memoria para ella sola: un despliegue de un proceso. */
+    bus?: InstanceBusPort;
   } = {},
 ): Promise<TestContext> {
   const env = loadEnv(TEST_ENV);
   const channelEnv = { ...env, ALLOW_PRIVATE_TARGETS: options.channelPrivateTargets ?? true };
-  const clock = new FixedClock(new Date("2026-03-01T10:00:00.000Z"));
-  const repositories = {
+  const clock = options.sibling?.clock ?? new FixedClock(new Date("2026-03-01T10:00:00.000Z"));
+  const bus = options.bus ?? new InMemoryInstanceBus();
+  const repositories = options.sibling?.repositories ?? {
     users: new InMemoryUserRepository(),
     refreshTokens: new InMemoryRefreshTokenRepository(),
     apiTokens: new InMemoryApiTokenRepository(),
@@ -372,7 +383,7 @@ export async function createTestApp(
     captures: new InMemoryCaptureRepository(),
     mergeRequests: new InMemoryMergeRequestRepository(),
   };
-  const forks = new InMemoryProjectForkRepository(repositories);
+  const forks = options.sibling?.repositories.forks ?? new InMemoryProjectForkRepository(repositories);
   const allRepositories = { ...repositories, forks };
   const mailer = new RecordingMailer();
   // Lo que no se guioniza sale por el transporte de verdad, con la misma política de red que el
@@ -387,7 +398,7 @@ export async function createTestApp(
     timeoutMs: 5_000,
     maxResponseBytes: env.MAX_RESPONSE_BYTES,
   });
-  const queue = new InMemoryRunQueue();
+  const queue = new InMemoryRunQueue(bus);
 
   const moduleRef = await Test.createTestingModule({
     imports: [CqrsModule.forRoot(), JwtModule.register({})],
@@ -418,6 +429,7 @@ export async function createTestApp(
     providers: [
       { provide: ENV, useValue: env },
       { provide: CLOCK, useValue: clock },
+      { provide: INSTANCE_BUS, useValue: bus },
       { provide: PASSWORD_HASHER, useClass: FastTestPasswordHasher },
       { provide: ACCESS_TOKEN_SERVICE, useClass: JwtAccessTokenService },
       { provide: USER_REPOSITORY, useValue: repositories.users },
@@ -435,9 +447,6 @@ export async function createTestApp(
       { provide: SAFE_FETCH, useValue: http },
       { provide: RUN_REPOSITORY, useValue: repositories.runs },
       { provide: RUN_QUEUE, useValue: queue },
-      // El relé de un solo proceso, que es el que corre la suite: no hace nada, y no hacer nada
-      // es lo correcto cuando el sujeto en memoria ya alcanza a todos los seguidores que hay.
-      { provide: PROGRESS_RELAY, useClass: InProcessRelay },
       CaseExecutor,
       ExecutionContextFactory,
       { provide: REQUEST_PREVIEWER, useClass: RequestPreviewer },
@@ -592,6 +601,7 @@ export async function createTestApp(
     channels,
     mailer,
     queue,
+    bus,
     close: async () => {
       // Superagent leaves keep-alive sockets behind, and `close()` waits for connections to end.
       // Dropping them first is what keeps a finished suite from hanging at exit.

@@ -4,6 +4,9 @@ import { SECRET_CIPHER } from "./crypto/secret-cipher";
 import { SecretCipherProvider } from "./crypto/secret-cipher.provider";
 import { ENV, type Env } from "./config/env";
 import { BrevoMailer, LogMailer, MAILER } from "./mail/mailer";
+import { INSTANCE_BUS } from "./bus/instance-bus";
+import { InMemoryInstanceBus } from "./bus/in-memory-instance-bus";
+import { RedisInstanceBus } from "./bus/redis-instance-bus";
 
 /**
  * The cross-cutting providers every module needs and none owns.
@@ -38,7 +41,15 @@ import { BrevoMailer, LogMailer, MAILER } from "./mail/mailer";
           ? new BrevoMailer(env.BREVO_API_KEY, { email: env.MAIL_FROM, name: env.MAIL_FROM_NAME })
           : new LogMailer(),
     },
+    // Lo que une a las instancias: el progreso en vivo, las órdenes a un socket que tiene otra y las
+    // señales de las colas en memoria. Sin `REDIS_URL` no hay otras instancias a las que hablar, y el
+    // bus en memoria es exactamente eso; con él, todas las que apunten al mismo Redis se oyen.
+    {
+      provide: INSTANCE_BUS,
+      inject: [ENV],
+      useFactory: (env: Env) => (env.REDIS_URL ? new RedisInstanceBus(env.REDIS_URL) : new InMemoryInstanceBus()),
+    },
   ],
-  exports: [CLOCK, SECRET_CIPHER, MAILER],
+  exports: [CLOCK, SECRET_CIPHER, MAILER, INSTANCE_BUS],
 })
 export class SharedModule {}

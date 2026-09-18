@@ -172,8 +172,9 @@ export class ChannelsController {
    * misma regla que el de una corrida, y por el mismo motivo: sin ella, quien llega tarde se queda
    * esperando un evento que no va a llegar.
    *
-   * Una sesión viva **en otra instancia** es un 409 y no un stream vacío. Su socket es un descriptor
-   * de otro proceso; un stream desde aquí no emitiría nunca, y parecería una sesión callada.
+   * Una sesión viva **en otra instancia** se sigue igual: su dueña publica por el bus y lo que sale
+   * del socket llega aquí. Solo es un 409 cuando esa dueña no contesta —murió, o no hay bus entre las
+   * dos—: un stream desde aquí no emitiría nunca, y parecería una sesión callada.
    */
   @Sse("sessions/:sessionId/stream")
   @SkipThrottle()
@@ -208,7 +209,7 @@ export class ChannelsController {
     if (!over && !session.live) {
       live.unsubscribe();
       throw new ConflictError(
-        "Esta sesión está abierta en otra instancia de la API, y su socket no se puede seguir desde aquí",
+        "Esta sesión está abierta en otra instancia de la API que no contesta, y su socket no se puede seguir desde aquí",
         "channel-session-not-here",
       );
     }

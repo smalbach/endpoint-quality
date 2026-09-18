@@ -423,7 +423,14 @@ export class SendChannelMessageHandler implements ICommandHandler<SendChannelMes
         ? userPropertiesProblems(command.publish.userProperties, "userProperties")
         : [];
     if (propertyProblems.length) throw new InvalidInputError("El mensaje no es válido", propertyProblems);
-    await this.registry.send(session.id, command.text, command.publish, command.binary);
+    // Esté donde esté el socket: si lo tiene otra instancia viva, la orden va a ella por el bus.
+    await this.registry.route(session, {
+      op: "send",
+      sessionId: session.id,
+      text: command.text,
+      publish: command.publish,
+      binary: command.binary,
+    });
   }
 }
 
@@ -449,7 +456,7 @@ export class CloseChannelSessionHandler implements ICommandHandler<CloseChannelS
     if (!session) throw new NotFoundError("La sesión no existe", "channel-session-not-found");
     // Cerrar una que ya terminó no es un error: el resultado que se pedía ya está.
     if (isFinished(session)) return viewSession(session, false);
-    return viewSession(await this.registry.close(session.id), false);
+    return viewSession(await this.registry.route(session, { op: "close", sessionId: session.id }), false);
   }
 }
 
@@ -487,8 +494,8 @@ export class ChangeChannelSubscriptionHandler implements ICommandHandler<
     if (!session) throw new NotFoundError("La sesión no existe", "channel-session-not-found");
     if (isFinished(session)) throw new ConflictError("La sesión ya terminó", "channel-session-finished");
     return command.action === "subscribe"
-      ? this.registry.subscribe(session.id, command.topic, command.qos)
-      : this.registry.unsubscribe(session.id, command.topic);
+      ? this.registry.route(session, { op: "subscribe", sessionId: session.id, topic: command.topic, qos: command.qos })
+      : this.registry.route(session, { op: "unsubscribe", sessionId: session.id, topic: command.topic });
   }
 }
 

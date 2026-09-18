@@ -14,12 +14,11 @@
  * 3. **El latido y el segador.** Cada instancia late por sus sesiones, y cualquiera cierra las que
  *    llevan tres latidos sin dueño. La dueña es justo la que no puede cerrarlas: se murió.
  *
- * Una sesión que pertenece a otra instancia no se puede usar desde esta, y se dice con un 409 que
- * la nombra. Relevar un socket entre procesos no existe; fingirlo sería una vista en vivo que no
- * vuelve a emitir y un «Enviar» que falla la mitad de las veces.
+ * Una sesión cuyo socket tiene otra instancia se usa **a través** de ella: el socket no se mueve, se
+ * mueven las órdenes (`route`, por el bus, con respuesta y plazo) y lo que sale de él (el stream en
+ * vivo, también por el bus). Solo cuando su dueña dejó de latir es un 409: nadie puede usar ya ese
+ * socket, y el segador cerrará la fila.
  */
-import { randomUUID } from "node:crypto";
-import { hostname } from "node:os";
 import { performance } from "node:perf_hooks";
 import { Inject, Injectable, Logger, Optional, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
 import {
@@ -34,6 +33,8 @@ import {
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { ENV, type Env } from "@/shared/config/env";
+import { INSTANCE_BUS, InstanceUnreachableError, type InstanceBusPort } from "@/shared/bus/instance-bus";
+import { InMemoryInstanceBus } from "@/shared/bus/in-memory-instance-bus";
 import { ConflictError, DomainError, InvalidInputError } from "@/shared/errors/domain-error";
 import { BlockedTargetError } from "@/shared/http/safe-fetch";
 import { HandshakeRejectedError } from "@/shared/http/safe-socket";
@@ -75,6 +76,32 @@ export function decodeBinary(text: string, encoding: BinaryEncoding): Buffer {
 
 /** Lo que contesta una suscripción a mitad de sesión: la QoS concedida, o `null` y el motivo. */
 export type MqttSubscriptionResult = { topic: string; granted: number | null; detail: string };
+
+/**
+ * Una orden a una sesión abierta, tal como viaja por el bus hasta la instancia que tiene su socket.
+ * Lleva solo datos: el texto se interpola allí, con el entorno que guarda el plan de la sesión.
+ */
+export type SessionCommand =
+  | { op: "send"; sessionId: string; text: string; publish?: MqttPublish; binary?: BinaryEncoding }
+  | { op: "subscribe"; sessionId: string; topic: string; qos: MqttQos }
+  | { op: "unsubscribe"; sessionId: string; topic: string }
+  | { op: "end"; sessionId: string }
+  | { op: "close"; sessionId: string }
+  /** ¿La tienes? Lo que se pregunta antes de abrir un stream que, si no, no emitiría nunca. */
+  | { op: "ping"; sessionId: string };
+
+type SessionCommandResults = {
+  send: void;
+  subscribe: MqttSubscriptionResult;
+  unsubscribe: MqttSubscriptionResult;
+  end: void;
+  close: ChannelSession;
+  ping: boolean;
+};
+
+const SESSION_COMMAND_TOPIC = "channel-session.command";
+/** Una pregunta de sí o no a otra instancia: si tarda más que esto, para quien espera es que no. */
+const PING_TIMEOUT_MS = 2_000;
 
 const noTopics = () => new ConflictError("Solo una sesión MQTT tiene temas a los que suscribirse", "channel-no-topics");
 
@@ -159,8 +186,12 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
   private readonly closing = new Map<string, Promise<ChannelSession | null>>();
   private timers: NodeJS.Timeout[] = [];
 
-  /** Quién soy, para la fila. Con un trozo aleatorio: dos procesos con el mismo pid tras reiniciar no son el mismo. */
-  readonly instance = `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
+  /**
+   * Quién soy, para la fila: el mismo nombre con el que el bus me encuentra, que es lo que deja a
+   * otra instancia mandarme una orden para una sesión mía.
+   */
+  readonly instance: string;
+  private readonly bus: InstanceBusPort;
 
   constructor(
     @Inject(CHANNEL_SESSION_REPOSITORY) private readonly sessions: ChannelSessionRepositoryPort,
@@ -169,7 +200,13 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
     @Inject(ENV) private readonly env: Env,
     private readonly stream: ChannelProgressStream,
     @Optional() @Inject(MQTT_TRANSPORT) private readonly mqtt: MqttTransportPort | null = null,
-  ) {}
+    @Optional() @Inject(INSTANCE_BUS) bus: InstanceBusPort | null = null,
+  ) {
+    this.bus = bus ?? new InMemoryInstanceBus();
+    this.instance = this.bus.instanceId;
+    // Las órdenes que otra instancia recibió para una sesión cuyo socket tengo yo.
+    this.bus.handle<SessionCommand, unknown>(SESSION_COMMAND_TOPIC, (command) => this.local(command));
+  }
 
   onModuleInit(): void {
     // `unref`: un reloj de sesiones no puede ser lo que mantiene vivo un proceso que se está yendo.
@@ -435,6 +472,91 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
     return closed;
   }
 
+  /**
+   * Una orden a una sesión, **esté donde esté su socket**.
+   *
+   * Si es mía, se hace aquí. Si es de otra instancia que sigue latiendo, se le manda por el bus y se
+   * espera su respuesta —con sus errores de dominio intactos: un 422 allí es un 422 aquí—. Si su
+   * dueña dejó de latir no se le pide nada: el segador la cerrará, y hasta entonces es el 409 de
+   * siempre, que es la verdad —nadie puede usar ese socket—.
+   */
+  async route<C extends SessionCommand>(session: ChannelSession, command: C): Promise<SessionCommandResults[C["op"]]> {
+    if (this.live.has(session.id) || !this.reachable(session))
+      return (await this.local(command)) as SessionCommandResults[C["op"]];
+    let result: unknown;
+    try {
+      result = await this.bus.request(session.ownerInstance, SESSION_COMMAND_TOPIC, command);
+    } catch (error) {
+      if (!(error instanceof InstanceUnreachableError)) throw error;
+      throw new ConflictError(
+        `La instancia que tiene el socket de la sesión ${session.id} (${session.ownerInstance}) no contestó: ${error.message}`,
+        "channel-session-not-here",
+      );
+    }
+    // Lo cerrado viaja como JSON y sus fechas llegan como texto: se relee la fila, que la dueña ya
+    // guardó antes de contestar.
+    if (command.op === "close")
+      return ((await this.sessions.findById(session.projectId, session.id)) ??
+        session) as SessionCommandResults[C["op"]];
+    return result as SessionCommandResults[C["op"]];
+  }
+
+  /**
+   * Si una sesión se puede usar desde aquí: la tengo yo, o la tiene otra instancia que sigue viva.
+   * Es lo que la vista llama `live`, y lo que decide si su stream abre o es un 409.
+   */
+  usable(session: ChannelSession): boolean {
+    return this.live.has(session.id) || this.reachable(session);
+  }
+
+  /**
+   * Lo mismo que `usable`, pero **preguntándole** a la dueña: un latido reciente dice que su proceso
+   * vive, no que el bus llegue hasta él. Es lo que decide si un stream abre o es un 409, porque un
+   * stream a una dueña que no oye nada no emitiría nunca y parecería una sesión callada.
+   */
+  async answers(session: ChannelSession): Promise<boolean> {
+    if (this.live.has(session.id)) return true;
+    if (!this.reachable(session)) return false;
+    try {
+      return await this.bus.request<boolean>(
+        session.ownerInstance,
+        SESSION_COMMAND_TOPIC,
+        {
+          op: "ping",
+          sessionId: session.id,
+        } satisfies SessionCommand,
+        PING_TIMEOUT_MS,
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  /** De otra instancia, abierta y con latido reciente: hay alguien a quien pedirle las cosas. */
+  private reachable(session: ChannelSession): boolean {
+    return (
+      !isFinished(session) && session.ownerInstance !== this.instance && !isStale(session, this.clock.now(), BEAT_MS)
+    );
+  }
+
+  /** Lo que una orden hace en la instancia que tiene el socket. */
+  private async local(command: SessionCommand): Promise<unknown> {
+    switch (command.op) {
+      case "send":
+        return this.send(command.sessionId, command.text, command.publish, command.binary);
+      case "subscribe":
+        return this.subscribe(command.sessionId, command.topic, command.qos);
+      case "unsubscribe":
+        return this.unsubscribe(command.sessionId, command.topic);
+      case "end":
+        return this.end(command.sessionId);
+      case "close":
+        return this.close(command.sessionId);
+      case "ping":
+        return this.live.has(command.sessionId);
+    }
+  }
+
   /** El reloj de las sesiones vivas. Público para que las pruebas lo muevan sin esperar un segundo. */
   async tick(): Promise<void> {
     for (const [id, entry] of this.live) {
@@ -525,7 +647,13 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
       this.stream.publish({ sessionId, type: "open", handshake: session.conversation.handshake });
       entry.writes = entry.writes.then(() => this.sessions.save(entry.session));
     }
-    for (const message of added) this.stream.publish({ sessionId, type: "message", message });
+    // Después de guardarlos, y no antes: quien sigue la sesión desde **otra** instancia lee su
+    // instantánea de la fila, y un mensaje emitido antes de estar en ella podía caer en el hueco entre
+    // leer y empezar a oír. Así, lo que no oyó ya estaba en lo que leyó.
+    if (added.length)
+      entry.writes = entry.writes.finally(() => {
+        for (const message of added) this.stream.publish({ sessionId, type: "message", message });
+      });
 
     // Un cierre del otro lado ya no tiene socket que cerrar; un tope sí.
     if (stop) void this.finish(sessionId, stop, null, frame.direction === "close" ? null : 1000);

@@ -69,6 +69,9 @@ services:
       PORT: 3001
       DATABASE_URL: postgres://eq:eq@postgres:5432/endpoint_quality
       QUEUE_DRIVER: ${QUEUE_DRIVER:-memory}
+      # También el bus entre instancias: con varias réplicas detrás de un balanceador, el progreso en
+      # vivo y las órdenes a una sesión de canal cruzan por aquí. Sin el perfil `redis` la API lo dice
+      # una vez en el registro y sigue como una sola instancia.
       REDIS_URL: redis://redis:6379
       # Sin valor por defecto a propósito: la API se niega a arrancar sin ellos, en vez de
       # firmar con un secreto que está en un repositorio público.

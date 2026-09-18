@@ -1,6 +1,11 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 
+import { INSTANCE_BUS, type InstanceBusPort } from "@/shared/bus/instance-bus";
+import { InMemoryInstanceBus } from "@/shared/bus/in-memory-instance-bus";
 import type { PerformanceRunQueuePort } from "../domain/ports";
+
+type PerformanceSignal = { runId: string; kind: "cancel" | "settled" };
+const PERFORMANCE_SIGNAL_TOPIC = "performance-run.signal";
 
 /**
  * One performance run at a time, in this process.
@@ -9,6 +14,9 @@ import type { PerformanceRunQueuePort } from "../domain/ports";
  * the target, so running two at once would measure their contention rather than the API, and a
  * single-instance in-memory queue is honest about the deployment it belongs to. Cancellation is a
  * flag the executor reads at each boundary; a request in flight is not interrupted.
+ *
+ * El indicador llega por el bus a todas las instancias, porque el «Cancelar» puede entrar por una
+ * que no es la que tiene la carga en marcha —o en su fila—.
  */
 @Injectable()
 export class InMemoryPerformanceRunQueue implements PerformanceRunQueuePort {
@@ -16,6 +24,12 @@ export class InMemoryPerformanceRunQueue implements PerformanceRunQueuePort {
   private readonly cancelled = new Set<string>();
   private handler: ((runId: string) => Promise<void>) | null = null;
   private draining = false;
+  private readonly bus: InstanceBusPort;
+
+  constructor(@Optional() @Inject(INSTANCE_BUS) bus: InstanceBusPort | null = null) {
+    this.bus = bus ?? new InMemoryInstanceBus();
+    this.bus.subscribe<PerformanceSignal>(PERFORMANCE_SIGNAL_TOPIC, (signal) => this.apply(signal));
+  }
 
   process(handler: (runId: string) => Promise<void>): void {
     this.handler = handler;
@@ -27,6 +41,14 @@ export class InMemoryPerformanceRunQueue implements PerformanceRunQueuePort {
   }
 
   async cancel(runId: string): Promise<void> {
+    this.bus.publish(PERFORMANCE_SIGNAL_TOPIC, { runId, kind: "cancel" } satisfies PerformanceSignal);
+  }
+
+  private apply({ runId, kind }: PerformanceSignal): void {
+    if (kind === "settled") {
+      this.cancelled.delete(runId);
+      return;
+    }
     this.cancelled.add(runId);
     // A run still queued never starts: drop it so cancel is immediate rather than «after it runs».
     const index = this.pending.indexOf(runId);
@@ -44,13 +66,13 @@ export class InMemoryPerformanceRunQueue implements PerformanceRunQueuePort {
       while (this.pending.length) {
         const runId = this.pending.shift()!;
         if (this.cancelled.has(runId)) {
-          this.cancelled.delete(runId);
+          this.bus.publish(PERFORMANCE_SIGNAL_TOPIC, { runId, kind: "settled" } satisfies PerformanceSignal);
           continue;
         }
         try {
           await this.handler(runId);
         } finally {
-          this.cancelled.delete(runId);
+          this.bus.publish(PERFORMANCE_SIGNAL_TOPIC, { runId, kind: "settled" } satisfies PerformanceSignal);
         }
       }
     } finally {
