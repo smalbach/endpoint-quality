@@ -96,8 +96,12 @@ async function finished(sessionId: string) {
   return read.body;
 }
 
+/** Los mensajes con su JSON; un evento —el medio cierre— es una frase nuestra y va tal cual. */
 const directions = (session: { messages: { direction: string; body: string }[] }) =>
-  session.messages.map((message) => [message.direction, JSON.parse(message.body)]);
+  session.messages.map((message) => [
+    message.direction,
+    message.direction === "event" ? message.body : JSON.parse(message.body),
+  ]);
 
 before(async () => {
   context = await createTestApp();
@@ -228,6 +232,14 @@ describe("una llamada", () => {
       ["out", { item_id: "42", count: 2 }],
       ["in", { name: "item 42", price: { units: "5", currency: "EUR" } }],
     ]);
+    // Los bytes son los del protobuf en el cable, no los del JSON: `item_id` y `count` son 4 + 2, y la
+    // respuesta 9 del nombre más 9 del precio.
+    assert.deepEqual(
+      session.messages.map((message: { bytes: number }) => message.bytes),
+      [6, 18],
+    );
+    assert.equal(session.counters.bytesOut, 6);
+    assert.equal(session.counters.bytesIn, 18);
     assert.equal(session.handshake.headers["x-server"], "demo");
     // Los trailers, tapados por nombre: `x-session-token` suena a credencial.
     assert.equal(session.trailers["x-session-token"], "••••••••");
@@ -308,7 +320,13 @@ describe("una llamada", () => {
       ["in", { name: "eco hola", price: null }],
       ["out", { name: "42" }],
       ["in", { name: "eco 42", price: null }],
+      ["event", "fin del envío: el cliente cerró su mitad del stream"],
     ]);
+    // El medio cierre es un evento: ni enviado ni recibido.
+    assert.equal(session.counters.sent, 2);
+    assert.equal(session.counters.received, 2);
+    // Y lo enviado cuenta los bytes de protobuf: `{"name":"hola"}` son 15 en JSON y 6 en el cable.
+    assert.equal(session.messages[0].bytes, 6);
   });
 
   test("stream de cliente: los mensajes se cuentan y la respuesta llega al terminar el envío", async () => {

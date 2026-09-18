@@ -211,8 +211,16 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
 
     const listeners: ChannelListeners = {
       onOpen: (handshake) => this.frame(session.id, { direction: "open", atMs: this.at(entry), handshake }),
-      onSent: (text) => this.frame(session.id, { direction: "out", atMs: this.at(entry), body: text }),
-      onMessage: (data, binary) =>
+      onSent: (text, wireBytes) =>
+        this.frame(session.id, {
+          direction: "out",
+          atMs: this.at(entry),
+          body: text,
+          ...(wireBytes !== undefined ? { bytes: wireBytes } : {}),
+        }),
+      // Como una suscripción MQTT: queda en la transcripción y no cuenta como enviado ni recibido.
+      onEvent: (text) => this.frame(session.id, { direction: "event", atMs: this.at(entry), body: text }),
+      onMessage: (data, binary, wireBytes) =>
         this.frame(session.id, {
           direction: "in",
           atMs: this.at(entry),
@@ -220,7 +228,7 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
           // Lo binario entra como hexadecimal de lo que quepa: guardar la trama entera es el
           // mismo motivo por el que un ejemplo tiene tope de cuerpo.
           body: binary ? data.subarray(0, 256).toString("hex") : data.toString("utf8"),
-          bytes: data.byteLength,
+          bytes: wireBytes ?? data.byteLength,
         }),
       onClose: (code, reason, trailers) =>
         this.frame(session.id, {
@@ -359,10 +367,12 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
       topic: topic ?? publish.topic,
       ...(properties?.length ? { userProperties: properties } : {}),
     };
+    const wireBytes = entry.channel.wireBytes?.(wire);
     this.frame(sessionId, {
       direction: "out",
       atMs: this.at(entry),
       body: wire,
+      ...(wireBytes !== undefined ? { bytes: wireBytes } : {}),
       ...(wirePublish ? { topic: wirePublish.topic, qos: wirePublish.qos, retain: wirePublish.retain } : {}),
       // Se anotan como las cabeceras: tapadas por nombre y por valor dentro de `applyFrame`.
       ...(properties?.length

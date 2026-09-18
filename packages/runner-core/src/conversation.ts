@@ -292,7 +292,10 @@ export function applyFrame(
 
   const raw = frame.body ?? "";
   const bytes = frame.bytes ?? byteLength(raw);
-  const truncated = bytes > limits.maxMessageBytes;
+  // El texto también se mira: un mensaje gRPC cuenta los bytes del cable, y su JSON —lo que se
+  // guarda— puede pasar del tope aunque el cable no. El tope del cuerpo es del cuerpo.
+  const truncated =
+    bytes > limits.maxMessageBytes || (frame.kind !== "binary" && byteLength(raw) > limits.maxMessageBytes);
   // Se tapa **antes** de recortar, por dos motivos y los dos silenciosos. Un token que el corte
   // parte por la mitad ya no coincide con su valor, así que la redacción por valor no lo encuentra
   // y se guarda media credencial en claro. Y un JSON cortado no se parsea, así que la redacción

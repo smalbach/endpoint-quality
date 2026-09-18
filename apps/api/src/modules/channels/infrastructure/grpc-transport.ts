@@ -192,6 +192,17 @@ export class GrpcChannelTransport implements GrpcTransportPort {
       throw error;
     }
     const { definition } = call.method;
+    // Los bytes de un mensaje son los del cable: el protobuf serializado, no el JSON que se enseña.
+    // Los topes (`maxBytes`, `maxMessageBytes`) y los contadores hablan de lo que viajó —y grpc-js ya
+    // corta por el tamaño del cable—; contar el JSON, que con los nombres de campo suele ocupar más,
+    // cortaba por «demasiados bytes» una conversación que en el cable cabía.
+    const wireSizes = new WeakMap<object, number>();
+    const responseDeserialize = (buffer: Buffer): object => {
+      const value = definition.responseDeserialize(buffer) as object;
+      if (value && typeof value === "object") wireSizes.set(value, buffer.byteLength);
+      return value;
+    };
+    const wireOf = (value: object): number => definition.requestSerialize(value).byteLength;
     const clientStreaming = definition.requestStream;
     const serverStreaming = definition.responseStream;
     const options: CallOptions = call.deadlineMs ? { deadline: Date.now() + call.deadlineMs } : {};
@@ -215,6 +226,7 @@ export class GrpcChannelTransport implements GrpcTransportPort {
           call.decode(text);
         },
         send: (text) => (stream as ClientWritableStream<object>).write(call.decode(text)),
+        wireBytes: (text) => wireOf(call.decode(text)),
         end: () => {
           if (!clientStreaming)
             throw new ConflictError(
@@ -224,6 +236,9 @@ export class GrpcChannelTransport implements GrpcTransportPort {
           if (halfClosed) return;
           halfClosed = true;
           (stream as ClientWritableStream<object>).end();
+          // Un evento y no un mensaje: no viaja nada que contar, pero en la transcripción se tiene que
+          // ver cuándo terminó de mandar el cliente, que es lo que desbloquea la respuesta de un stream.
+          listeners.onEvent?.("fin del envío: el cliente cerró su mitad del stream");
         },
         close: () => {
           finished = true;
@@ -249,7 +264,7 @@ export class GrpcChannelTransport implements GrpcTransportPort {
         if (connected || finished) return;
         connected = true;
         listeners.onOpen?.();
-        if (call.request) listeners.onSent?.(call.request.text);
+        if (call.request) listeners.onSent?.(call.request.text, wireOf(call.request.value as object));
         if (settled) return;
         settled = true;
         clearTimeout(timer);
@@ -258,9 +273,9 @@ export class GrpcChannelTransport implements GrpcTransportPort {
       const onData = (value: object) => {
         if (finished) return;
         ready();
-        // El JSON del mensaje ya decodificado: es lo que se lee y lo que se comprueba. `bytes` cuenta
-        // ese texto, no los bytes de protobuf del cable, que no le dicen nada a quien lee.
-        listeners.onMessage(Buffer.from(JSON.stringify(value)), false);
+        // El JSON del mensaje ya decodificado es lo que se lee y lo que se comprueba; `bytes`, lo que
+        // ocupó en el cable (ver `wireSizes`).
+        listeners.onMessage(Buffer.from(JSON.stringify(value)), false, wireSizes.get(value));
       };
       const onStatus = (status: StatusObject) => {
         if (finished) return;
@@ -278,7 +293,7 @@ export class GrpcChannelTransport implements GrpcTransportPort {
         if (!error && value) onData(value);
       };
 
-      const { path, requestSerialize, responseDeserialize } = definition;
+      const { path, requestSerialize } = definition;
       let started: AnyCall;
       try {
         if (!clientStreaming && !serverStreaming)
