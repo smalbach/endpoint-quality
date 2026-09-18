@@ -14,7 +14,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { parseEndpointFile } from "@/modules/endpoints/domain/import-endpoints";
+import { parseEndpointFile, pendingFileNotes } from "@/modules/endpoints/domain/import-endpoints";
 import type { EndpointFormField } from "@/modules/endpoints/domain/model";
 import { toPostmanExport } from "@/modules/projects/domain/postman-export";
 import type { ProjectBundle } from "@/modules/projects/domain/project-bundle";
@@ -130,16 +130,69 @@ describe("lo que sale vuelve a entrar", () => {
     ]);
     const [draft] = parseEndpointFile("postman", JSON.stringify(exported.collection)).drafts;
     assert.equal(draft.body?.mode, "form-data");
-    // El fichero vuelve como un campo con su nombre y sin valor: el lector no distingue aún la
-    // fila `file`, y el nombre es lo único que había que conservar.
+    // El fichero vuelve **como fichero**, en su sitio y sin bytes —antes volvía como un campo de
+    // texto vacío, que manda otra cosa—, y el import dice que hay que elegirlo.
     assert.deepEqual(
-      draft.body?.fields?.map((field) => [field.name, field.value, field.enabled]),
+      draft.body?.fields?.map((field) => [field.name, field.value, field.kind, field.enabled]),
       [
-        ["titulo", "Factura {{mes}}", true],
-        ["adjunto", "", true],
-        ["borrador", "si", false],
+        ["titulo", "Factura {{mes}}", "text", true],
+        ["borrador", "si", "text", false],
+        ["adjunto", "", "file", true],
       ],
     );
+    assert.deepEqual(pendingFileNotes(draft), [
+      "POST /subidas: el campo «adjunto» es un fichero — hay que elegir el fichero",
+    ]);
+  });
+
+  test("una petición guardada no manda un fichero como texto vacío", () => {
+    const exported = exportEndpoints("form-data", [
+      text("titulo", "x"),
+      { name: "adjunto", value: "", kind: "file", enabled: true },
+    ]);
+    const read = readPostmanCollection(JSON.stringify(exported.collection));
+    // El motor no tiene los bytes: la fila de fichero no entra en lo que se manda, y el endpoint la
+    // conserva por `formRows`.
+    assert.deepEqual(read?.items[0].request.body, { type: "form-data", fields: { titulo: "x" }, disabledFields: {} });
+    assert.deepEqual(
+      read?.items[0].request.formRows?.map((row) => [row.name, row.kind]),
+      [
+        ["titulo", "text"],
+        ["adjunto", "file"],
+      ],
+    );
+  });
+
+  test("un formulario de Insomnia con un fichero vuelve también como fichero", () => {
+    const insomnia = {
+      _type: "export",
+      resources: [
+        {
+          _id: "req_1",
+          _type: "request",
+          name: "Subir",
+          method: "POST",
+          url: "https://api.tienda.test/subidas",
+          body: {
+            mimeType: "multipart/form-data",
+            params: [
+              { name: "foto", type: "file", fileName: "/Users/ana/foto.png" },
+              { name: "nota", value: "hola" },
+            ],
+          },
+        },
+      ],
+    };
+    const [draft] = parseEndpointFile("insomnia", JSON.stringify(insomnia)).drafts;
+    assert.deepEqual(
+      draft.body?.fields?.map((field) => [field.name, field.value, field.kind]),
+      [
+        ["foto", "", "file"],
+        ["nota", "hola", "text"],
+      ],
+    );
+    // La ruta del disco de quien lo eligió no entra.
+    assert.doesNotMatch(JSON.stringify(draft), /Users\/ana/);
   });
 
   test("un endpoint `urlencoded` vuelve como `urlencoded`", () => {

@@ -29,6 +29,7 @@ import {
   type EndpointDraft,
   type ImportFileFormat,
   type ImportSkip,
+  pendingFileNotes,
 } from "../../domain/import-endpoints";
 import { assertUnique, takenKeys, writableProject } from "./manage-endpoints";
 import { contractKeysOf } from "../queries/list-endpoints";
@@ -46,6 +47,8 @@ export type ImportEndpointsResult = {
    * como «esto funcionaba sin credencial».
    */
   examples: { imported: number; redacted: string[] };
+  /** Lo que entró pero pide algo antes de enviarse: los ficheros de un formulario, sin bytes. */
+  notes: string[];
 };
 
 export class ImportEndpointFileCommand implements ICommand {
@@ -163,6 +166,7 @@ export class ImportEndpointFileHandler implements ICommandHandler<ImportEndpoint
       imported: rows.map(({ id, method, path }) => ({ id, method, path })),
       skipped,
       examples: { imported: examples.length, redacted: [...redacted] },
+      notes: accepted.flatMap(pendingFileNotes),
     };
   }
 }

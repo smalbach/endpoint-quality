@@ -264,6 +264,8 @@ export class ImportAnythingHandler implements ICommandHandler<ImportAnythingComm
             // ellos. Sin esto la pantalla contaba «12 nuevos» y dejaba a la persona buscándolos
             // en una lista, que es el paso que el import venía a quitar.
             endpoints: endpoints.imported.map(({ id, method, path }) => ({ id, method, path })),
+            // Un campo de fichero de un formulario entra sin bytes: se dice cuál hay que elegir.
+            ...(endpoints.notes.length ? { notes: endpoints.notes } : {}),
           });
         } catch (error) {
           results.push({ target: "endpoints", name: piece.name, summary: null, error: message(error) });
