@@ -28,8 +28,18 @@ import {
 } from "@/lib/workflow-notify";
 import { subflowChoices, variablesWrittenBy } from "@/lib/workflow-subflow";
 import { mockBodyProblem, mockSampleBody, type MockView } from "@/lib/mock-draft";
+import {
+  PROTOCOL_LABEL,
+  channelNodeProblems,
+  channelSampleBody,
+  effectiveScript,
+  untilText,
+  type ChannelNodeView,
+} from "@/lib/channel-node-draft";
+import { ChannelScriptEditor } from "@/components/channel-script-editor";
 import type {
   CaptureSource,
+  ChannelView,
   Environment,
   RequestAuthView,
   RequestTemplateView,
@@ -105,9 +115,12 @@ export function WorkflowInspector({
   onDelete,
   running,
   flows = [],
+  channels = [],
 }: {
   /** Every flow of the project, for the subflow node's selector. */
   flows?: WorkflowView[];
+  /** Every channel of the project, for the channel node's selector. */
+  channels?: ChannelView[];
   /** `/orgs/x/projects/y`. Passed down rather than rebuilt here: the panel below sends a real
    * request, and a second place that assembles this path is a second place to get it wrong. */
   base: string;
@@ -213,6 +226,15 @@ export function WorkflowInspector({
         />
       ) : kind === "mock" ? (
         <MockInspector step={step} variables={variables} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
+      ) : kind === "channel" ? (
+        <ChannelInspector
+          step={step}
+          channels={channels}
+          variables={variables}
+          canEdit={canEdit}
+          onChange={onChange}
+          onRemove={onRemove}
+        />
       ) : kind === "schema" ? (
         <SchemaInspector step={step} steps={steps} canEdit={canEdit} onChange={onChange} onRemove={onRemove} />
       ) : kind === "subflow" ? (
@@ -2108,6 +2130,191 @@ function MockInspector({
           label: "Capturas",
           count: step.captures?.length,
           content: <CapturesTab step={step} canEdit={canEdit} sampleBody={mockSampleBody(mock)} onChange={onChange} />,
+        },
+        {
+          id: "failure",
+          label: "Si falla",
+          marked: failureSet(step),
+          content: <FailureEditor step={step} canEdit={canEdit} retries={false} onChange={onChange} />,
+        },
+      ]}
+    />
+  );
+}
+
+/**
+ * A channel node: which channel it runs, what it sends, and when the conversation is over. What the
+ * channel expects is not edited here — it is the channel's, and its verdict is the case's.
+ */
+function ChannelInspector({
+  step,
+  channels,
+  variables,
+  canEdit,
+  onChange,
+  onRemove,
+}: {
+  step: WorkflowStepView;
+  channels: ChannelView[];
+  variables: string[];
+  canEdit: boolean;
+  onChange: (step: WorkflowStepView) => void;
+  onRemove: () => void;
+}) {
+  const node: ChannelNodeView = step.channel ?? { channelId: "" };
+  const setNode = (change: Partial<ChannelNodeView>) => {
+    const next: ChannelNodeView = { ...node, ...change };
+    // Absent and empty are different on purpose (the channel's saved messages vs. only listening), so
+    // only an explicit `undefined` removes a field.
+    for (const key of Object.keys(change) as (keyof ChannelNodeView)[]) if (change[key] === undefined) delete next[key];
+    onChange({ ...step, channel: next });
+  };
+  const channel = channels.find((item) => item.id === node.channelId);
+  const script = effectiveScript(node, channel);
+  const problems = channelNodeProblems(step, channels);
+
+  return (
+    <NodePanel
+      kind="channel"
+      title="Canal"
+      subtitle={channel ? `${channel.name} · ${PROTOCOL_LABEL[channel.protocol]} · ${step.id}` : step.id}
+      description={
+        <>
+          Abre el canal con el entorno de la corrida, manda el guion, espera y cierra. Pasa si se cumple lo que el canal
+          espera; la guarda de red, los topes, los secretos tapados y el entorno sin escrituras son los de «Conectar».
+        </>
+      }
+      canEdit={canEdit}
+      onRemove={onRemove}
+      tabs={[
+        {
+          id: "channel",
+          label: "Canal",
+          content: (
+            <>
+              <Field label="Canal" info={"Uno de los canales del proyecto (pestaña Canales de Endpoints). Su URL, autenticación, topes y expectativas se leen al correr."}>
+                <select
+                  aria-label="Canal que ejecuta"
+                  className={inputClass}
+                  value={node.channelId}
+                  disabled={!canEdit}
+                  onChange={(event) => setNode({ channelId: event.target.value })}
+                >
+                  <option value="">Elige un canal…</option>
+                  {channels.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} · {PROTOCOL_LABEL[item.protocol]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {channels.length === 0 && (
+                <p className="mt-1 text-[11px] leading-5 text-slate-500">
+                  El proyecto no tiene canales: créalos en Endpoints → Canales.
+                </p>
+              )}
+              {channel && (
+                <p className="mt-2 text-[11px] leading-5 text-slate-500">
+                  {untilText(node, channel)}. Espera{" "}
+                  {channel.expectations.minMessages !== undefined
+                    ? `al menos ${channel.expectations.minMessages} mensaje(s)`
+                    : "solo que conecte"}
+                  {channel.expectations.checks?.length ? ` y ${channel.expectations.checks.length} comprobación(es)` : ""}.
+                </p>
+              )}
+              <div className="mt-3 grid grid-cols-2 gap-3 @3xl:grid-cols-[12rem_12rem]">
+                <Field label="Cerrar al recibir" info={"Cuántos mensajes recibidos dan la conversación por terminada. Vacío: los que el canal espera (su mínimo); sin mínimo, decide el cierre o un tope."}>
+                  <input
+                    aria-label="Mensajes para cerrar"
+                    className={inputClass}
+                    type="number"
+                    min={1}
+                    placeholder={channel?.expectations.minMessages !== undefined ? String(channel.expectations.minMessages) : "—"}
+                    value={node.untilMessages ?? ""}
+                    disabled={!canEdit}
+                    onChange={(event) => setNode({ untilMessages: event.target.value ? Number(event.target.value) : undefined })}
+                  />
+                </Field>
+                <Field label="Inactividad (ms)" info={"Solo puede bajar la del canal: cuánto se espera sin mensajes antes de cortar (100–60 000 ms)."}>
+                  <input
+                    aria-label="Inactividad"
+                    className={inputClass}
+                    type="number"
+                    min={100}
+                    max={60000}
+                    placeholder={channel ? String(channel.limits.idleMs) : ""}
+                    value={node.idleMs ?? ""}
+                    disabled={!canEdit}
+                    onChange={(event) => setNode({ idleMs: event.target.value ? Number(event.target.value) : undefined })}
+                  />
+                </Field>
+              </div>
+              {channel?.protocol === "grpc" && (
+                <Field label="Petición de la llamada" info={"JSON con {{variables}} que sustituye al mensaje guardado en el canal. Vacío: el del canal."}>
+                  <textarea
+                    aria-label="Petición gRPC"
+                    className={`${inputClass} h-28 font-mono text-[11px]`}
+                    placeholder={channel.grpc?.message || "{}"}
+                    value={node.request ?? ""}
+                    disabled={!canEdit}
+                    spellCheck={false}
+                    onChange={(event) => setNode({ request: event.target.value || undefined })}
+                  />
+                </Field>
+              )}
+              {problems.length > 0 && (
+                <ul className="mt-2 grid gap-1 text-[11px] leading-5 text-amber-700">
+                  {problems.map((problem) => (
+                    <li key={problem}>{problem}</li>
+                  ))}
+                </ul>
+              )}
+            </>
+          ),
+        },
+        {
+          id: "script",
+          label: "Guion",
+          count: script.length,
+          content: (
+            <>
+              <label className="mb-3 flex items-center gap-2 text-xs text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={node.messages === undefined}
+                  disabled={!canEdit}
+                  onChange={(event) => setNode({ messages: event.target.checked ? undefined : [...script] })}
+                />
+                {channel?.protocol === "grpc"
+                  ? "Sin guion propio: solo la petición de la llamada"
+                  : "Mandar los mensajes guardados del canal, en orden"}
+              </label>
+              {node.messages === undefined ? (
+                <ol className="grid gap-1 text-[11px] text-slate-600">
+                  {script.map((action, index) => (
+                    <li key={index} className="truncate font-mono">
+                      {index + 1}. {action.action === "send" ? `${action.topic ? `${action.topic} ← ` : ""}${action.body}` : action.action}
+                    </li>
+                  ))}
+                  {script.length === 0 && <li>Nada que mandar: la sesión escucha.</li>}
+                </ol>
+              ) : (
+                <ChannelScriptEditor
+                  steps={node.messages}
+                  protocol={channel?.protocol}
+                  variables={variables}
+                  canEdit={canEdit}
+                  onChange={(messages) => setNode({ messages })}
+                />
+              )}
+            </>
+          ),
+        },
+        {
+          id: "captures",
+          label: "Capturas",
+          count: step.captures?.length,
+          content: <CapturesTab step={step} canEdit={canEdit} sampleBody={channelSampleBody(channel)} onChange={onChange} />,
         },
         {
           id: "failure",

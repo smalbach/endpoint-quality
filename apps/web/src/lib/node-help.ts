@@ -269,4 +269,22 @@ export const NODE_HELP: Record<NodeKind, NodeHelp> = {
       "Un flujo verde con mocks no prueba la API real: quítalos cuando exista el servicio.",
     ],
   },
+  channel: {
+    title: "Canal (WebSocket, MQTT o gRPC)",
+    summary:
+      "Ejecuta un canal del proyecto como un paso del flujo: abre la sesión, manda un guion, espera y la cierra, y la juzga con lo que el canal espera.",
+    how: [
+      "Abre con el entorno de la corrida: misma guarda de red, mismos topes, misma autenticación y mismos secretos tapados que al pulsar «Conectar».",
+      "Manda el guion (enviar, esperar N mensajes, terminar el stream). Sin guion, los mensajes guardados del canal, en orden; en gRPC, la petición de la llamada.",
+      "Cierra al recibir los mensajes esperados, cuando el otro lado cierra o cuando salta un tope del canal. El veredicto es el del canal.",
+      "Las capturas leen la conversación: last.campo es el último mensaje, messages.0.campo el primero, y una regex busca en todos.",
+    ],
+    example:
+      'Un chat: enviar {"auth": "{{token}}"}, esperar 1 mensaje, enviar {"join": "sala-1"}; el canal espera 2 mensajes y que el último tenga type = "joined". Captura last.sessionId.',
+    pitfalls: [
+      "Las comprobaciones son las del canal: escríbelas en el canal, no en el nodo.",
+      "En un entorno sin escrituras se escucha pero no se manda, y en gRPC solo se invocan métodos sin efectos: el nodo falla diciéndolo.",
+      "Sin mensajes esperados, un socket que no cierra dura hasta su tope de inactividad: baja la inactividad en el nodo o pon cuántos mensajes esperar.",
+    ],
+  },
 };
