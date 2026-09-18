@@ -7,6 +7,7 @@
  * referenced by several flows, and «delete it» has to be answerable by a query.
  */
 import type { StepGraphql } from "./graphql.ts";
+import type { StepChannel } from "./channel-node.ts";
 import { valueAtPath, type RuntimeVariables } from "./variables.ts";
 import type { ResponseCheck } from "./checks.ts";
 import type { ScenarioAuth } from "./types.ts";
@@ -197,6 +198,9 @@ export type StepWaits = (typeof STEP_WAITS)[number];
  *   fails on a non-empty `errors` array, which a GraphQL server answers with a 200. See {@link StepGraphql}.
  * - `mock` answers with a response written on the node, without any network: the flow can be built
  *   before the service exists, or pin one answer. See {@link StepMock}.
+ * - `channel` runs a saved channel (WebSocket, MQTT or gRPC) as a bounded conversation: opens it,
+ *   sends a script, waits, closes, and passes when the channel's own expectations hold. See
+ *   {@link StepChannel}.
  *
  * The ones that send no request (`branch`, `wait`, `merge`, `validate`, `set`, `script`, `schema`, `mock`) are
  * *control* nodes: they produce a case that records what the flow did, not one that made an HTTP
@@ -220,7 +224,8 @@ export type StepKind =
   | "notify"
   | "subflow"
   | "graphql"
-  | "mock";
+  | "mock"
+  | "channel";
 
 /** The control kinds — the nodes that record a decision instead of making a request. */
 export const CONTROL_KINDS: StepKind[] = [
@@ -497,6 +502,8 @@ export type WorkflowStep = {
   graphql?: StepGraphql;
   /** On a `mock` node: the simulated response it answers with. */
   mock?: StepMock;
+  /** On a `channel` node: the channel it runs and, optionally, what it sends. */
+  channel?: StepChannel;
   /** On a node downstream of a branch: which path it sits on. */
   branch?: StepBranch;
   waits?: StepWaits;

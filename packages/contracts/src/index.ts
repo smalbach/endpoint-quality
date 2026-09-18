@@ -278,7 +278,8 @@ export type StepKind =
   | "notify"
   | "subflow"
   | "graphql"
-  | "mock";
+  | "mock"
+  | "channel";
 
 /** A `graphql` node: one operation sent as `POST` `{query, variables, operationName}` the way a fetch
  * sends its call (URL absolute or under the base URL, session only with `useSession`). `variables` is
@@ -328,6 +329,27 @@ export type StepMockView = {
   disabledHeaders?: Record<string, string>;
   body?: string;
   delayMs?: number;
+};
+
+/** One action of a `channel` node's script: send a text (MQTT: to `topic` with `qos`/`retain`), after
+ * `delayMs`; wait until `messages` more arrive, at most `timeoutMs`; or `end` a gRPC client stream. */
+export type ChannelScriptStepView =
+  | { action: "send"; body: string; topic?: string; qos?: 0 | 1 | 2; retain?: boolean; delayMs?: number }
+  | { action: "wait"; messages: number; timeoutMs: number }
+  | { action: "end" };
+
+/** A `channel` node: runs channel `channelId` of the same project as a bounded, non-interactive session
+ * and passes when the channel's saved expectations hold (its verdict is the case's). `messages` absent
+ * sends the channel's saved messages in order; `[]` only listens. `request` replaces a gRPC call's
+ * saved request. The session closes after `untilMessages` received (default: the channel's
+ * `minMessages`), when the peer closes, or at a channel cap; `idleMs` can only lower the channel's.
+ * Captures read `{messages, last, count, topics, closeCode}` built from the received messages. */
+export type StepChannelView = {
+  channelId: string;
+  messages?: ChannelScriptStepView[];
+  request?: string;
+  untilMessages?: number;
+  idleMs?: number;
 };
 
 /** A `schema` node: validates `from`'s response body against the contract's schema for that operation
@@ -415,6 +437,8 @@ export type WorkflowStepView = {
   graphql?: StepGraphqlView;
   /** On a `mock` node: the simulated response. */
   mock?: StepMockView;
+  /** On a `channel` node: the channel it runs and its script. */
+  channel?: StepChannelView;
   /** On any node downstream of an `If`: which of its two paths this node sits on. */
   branch?: StepBranchView;
   dependsOn?: string[];
