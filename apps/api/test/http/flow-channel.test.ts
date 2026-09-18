@@ -446,6 +446,28 @@ describe("un nodo canal gRPC", () => {
   });
 });
 
+describe("con reflexión", () => {
+  test("un entorno sin escrituras es un rojo de configuración, no de red, aunque el método se resuelva al conectar", async () => {
+    const reflective = await startGrpcServer({ reflection: true });
+    try {
+      const created = await channel({
+        protocol: "grpc",
+        url: `grpc://127.0.0.1:${reflective.port}`,
+        grpc: { source: "reflection", service: "demo.v1.Shop", method: "Buy", message: '{"item_id":"1"}' },
+      });
+      const workflowId = await flow([{ id: "comprar", kind: "channel", channel: { channelId: created.id } }]);
+      const result = await run(workflowId, await environment(false));
+      assert.equal(result.caseOf("comprar").status, "failed");
+      assert.equal(result.caseOf("comprar").failure, "config");
+      const detail = (await result.detailOf("comprar")).assertions.map((assertion) => assertion.detail).join("\n");
+      assert.match(detail, /no permite escrituras/);
+      assert.doesNotMatch(detail, /no se pudo conectar/);
+    } finally {
+      await reflective.close();
+    }
+  });
+});
+
 describe("un monitor", () => {
   test("cuyo plan es un flujo con un nodo canal corre y sale en verde", async () => {
     context.channels.script(SOCKET, { greeting: ['{"type":"hello"}'] });

@@ -34,7 +34,7 @@ import {
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { ENV, type Env } from "@/shared/config/env";
-import { ConflictError, InvalidInputError } from "@/shared/errors/domain-error";
+import { ConflictError, DomainError, InvalidInputError } from "@/shared/errors/domain-error";
 import { BlockedTargetError } from "@/shared/http/safe-fetch";
 import { HandshakeRejectedError } from "@/shared/http/safe-socket";
 import { MqttRejectedError } from "@/shared/http/safe-mqtt";
@@ -247,8 +247,10 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       // No llegó a abrir. Lo que pasó decide de quién es el rojo: la guarda o una URL que no es de
       // socket son `config` —nadie llegó a llamar—, y el resto es `network`, con el estado del
-      // upgrade dentro cuando lo hubo.
-      const blocked = error instanceof BlockedTargetError;
+      // upgrade dentro cuando lo hubo. Un error de dominio a mitad de la apertura también es
+      // `config`: con reflexión, el método se resuelve y el entorno sin escrituras se comprueba
+      // **después** de conectar, y un «no permite escrituras» no es la red fallando.
+      const blocked = error instanceof BlockedTargetError || error instanceof DomainError;
       const detail =
         error instanceof HandshakeRejectedError || blocked
           ? error.message
