@@ -11,12 +11,13 @@
  * esa lista —un token que el servidor inventa y devuelve— lo tapa la regla por nombre de campo
  * (`redactBody`), que es la segunda red y la misma que usan los ejemplos guardados.
  */
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { Inject } from "@nestjs/common";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 import {
   interpolateText,
   signAuth,
+  type ComputedSeed,
   unresolvedVariables,
   withEnvironmentNamespace,
   type RequestAuth,
@@ -134,6 +135,11 @@ export class OpenChannelSessionHandler implements ICommandHandler<OpenChannelSes
       expect: channel.expectations,
       readOnly: environment ? !environment.writesAllowed : false,
       environmentName: environment?.name ?? "",
+      // Los mensajes llevan `{{variables}}` como la URL y las cabeceras: sin esto, una trama
+      // guardada con `{{token}}` viajaba con las llaves literales, y guardarla con el valor es
+      // dejar la credencial en la columna del canal. La semilla es nueva en cada mensaje, porque
+      // `{{$uuid}}` en una trama es un id por mensaje y no uno por sesión.
+      interpolate: (text) => interpolateText(text, variables, freshSeed(this.clock.now())),
     });
     return viewSession(started, this.registry.owns(started.id));
   }
@@ -213,6 +219,14 @@ export function redactMessage(text: string): string {
     return result.body;
   }
 }
+
+/** Lo que resuelve `{{$uuid}}`, `{{$now}}` y compañía, igual que en «Enviar» de un endpoint. */
+const freshSeed = (now: Date): ComputedSeed => ({
+  uuid: randomUUID(),
+  now,
+  random: Math.random(),
+  hmacSha256: (key, text) => createHmac("sha256", key).update(text).digest("hex"),
+});
 
 export class SendChannelMessageCommand implements ICommand {
   constructor(
