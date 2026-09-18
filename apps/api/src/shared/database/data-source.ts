@@ -43,6 +43,7 @@ import { ForkMergeRequests1700000033000 } from "./migrations/1700000033000-ForkM
 import { ChannelMessageProperties1700000034000 } from "./migrations/1700000034000-ChannelMessageProperties";
 import { ChannelSocketIo1700000036000 } from "./migrations/1700000036000-ChannelSocketIo";
 import { FlowHooks1700000039000 } from "./migrations/1700000039000-FlowHooks";
+import { RunsWithoutContract1700000040000 } from "./migrations/1700000040000-RunsWithoutContract";
 
 // Ordered. TypeORM runs them by the timestamp in the class name, and the second one adds a
 // foreign key into a table the first creates.
@@ -84,6 +85,7 @@ export const MIGRATIONS = [
   ChannelMessageProperties1700000034000,
   ChannelSocketIo1700000036000,
   FlowHooks1700000039000,
+  RunsWithoutContract1700000040000,
 ];
 
 export function buildDataSourceOptions(databaseUrl: string) {

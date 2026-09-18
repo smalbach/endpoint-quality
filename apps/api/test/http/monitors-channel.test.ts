@@ -32,17 +32,19 @@ async function signUp(email: string): Promise<Actor> {
   return { organizationId: registered.body.organizationId, token: session.body.accessToken };
 }
 
-async function project(): Promise<{ base: string; environmentId: string }> {
+async function project(withContract = true): Promise<{ base: string; environmentId: string }> {
   const created = await api()
     .post(`/orgs/${owner.organizationId}/projects`)
     .set(as(owner))
     .send({ name: `mon-canal-${Math.random().toString(36).slice(2, 8)}` });
   const base = `/orgs/${owner.organizationId}/projects/${created.body.projectId}`;
-  const imported = await api()
-    .post(`${base}/spec-versions`)
-    .set(as(owner))
-    .send({ source: { kind: "inline", raw: STUB_SPEC_YAML } });
-  assert.equal(imported.status, 201, JSON.stringify(imported.body));
+  if (withContract) {
+    const imported = await api()
+      .post(`${base}/spec-versions`)
+      .set(as(owner))
+      .send({ source: { kind: "inline", raw: STUB_SPEC_YAML } });
+    assert.equal(imported.status, 201, JSON.stringify(imported.body));
+  }
   const environment = await api()
     .post(`${base}/environments`)
     .set(as(owner))
@@ -109,6 +111,28 @@ afterEach(() => {
 });
 
 describe("un monitor de canal", () => {
+  test("corre en un proyecto sin contrato: un canal no lee ninguna operación", async () => {
+    context.channels.script(SOCKET, { reply: () => [JSON.stringify({ type: "ok" })] });
+    const { base, environmentId } = await project(false);
+    const socket = await channel(base);
+    const created = await monitor(base, {
+      environmentId,
+      channel: { channelId: socket.id, messages: [{ action: "send", body: "hola" }] },
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const before = context.http.requested.length;
+
+    const fired = await runNow(base, created.body.id);
+    assert.ok(fired.runId, JSON.stringify(fired));
+    const run = await api().get(`${base}/runs/${fired.runId}`).set(as(owner));
+    assert.equal(run.body.status, "passed", JSON.stringify(run.body));
+    // Y sin contrato no hay nada que leer del objetivo: la corrida no pide su /openapi.json.
+    assert.ok(
+      !context.http.requested.slice(before).some((url) => url.endsWith("/openapi.json")),
+      context.http.requested.slice(before).join(", "),
+    );
+  });
+
   test("lanza una corrida de un caso con el veredicto del canal, y el guion con variables", async () => {
     context.channels.script(SOCKET, { reply: (text) => [JSON.stringify({ type: "ok", echo: text })] });
     const { base, environmentId } = await project();

@@ -357,7 +357,8 @@ export class RunEntity {
   @Column({ type: "uuid", nullable: true }) environmentId: string | null;
   /** The snapshot the run asserted against. A run is only interpretable next to the contract it
    * was measured on, so the version is recorded rather than looked up later. */
-  @Column("uuid") specVersionId: string;
+  /** Null en una corrida que no lee el contrato: un canal, o un flujo sin peticiones guardadas. */
+  @Column({ type: "uuid", nullable: true }) specVersionId: string | null;
   @Column({ type: "varchar", length: 20 }) status: string;
   @Column({ type: "jsonb" }) plan: unknown;
   @Column({ type: "jsonb" }) totals: unknown;

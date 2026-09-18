@@ -51,7 +51,10 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
     const project = await this.projects.findById(command.projectId);
     if (!project || project.organizationId !== command.organizationId)
       throw new NotFoundError("El proyecto no existe", "project-not-found");
-    if (!project.activeSpecVersionId)
+    // Solo lo que lee operaciones necesita el contrato: la matriz, y un flujo con alguna petición
+    // guardada o login. Un canal, o un flujo de fetch, GraphQL, mocks, canales y webhooks, corre igual
+    // en un proyecto que todavía no lo ha importado.
+    if (!project.activeSpecVersionId && (await this.needsContract(project.id, command.input)))
       throw new ConflictError("El proyecto no tiene contrato importado", "no-active-spec");
 
     const environment = await this.environments.findById(command.input.environmentId);
@@ -170,7 +173,7 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
       environmentId: environment.id,
       // The snapshot is pinned now. A run is only interpretable next to the contract it was
       // measured against, and activating a new version mid-run must not change what it asserted.
-      specVersionId: project.activeSpecVersionId,
+      specVersionId: project.activeSpecVersionId ?? null,
       status: "queued",
       plan,
       totals: { cases: 0, completed: 0, passed: 0, failed: 0, skipped: 0 },
@@ -220,6 +223,37 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
       );
     }
     return parsed.data as StepChannel;
+  }
+
+  /**
+   * Si el plan lee alguna operación del contrato.
+   *
+   * La matriz, siempre: es el contrato recorrido. Un canal, nunca. Un flujo o una suite, cuando algún
+   * nodo es una petición guardada o un login —lo único que se resuelve contra una operación—, mirando
+   * también dentro de los sub-flujos que ejecutan, que corren con el mismo contexto. Un sub-flujo que
+   * no existe no cuenta: ese error lo da la corrida, como hasta ahora.
+   */
+  private async needsContract(projectId: string, input: StartRunInput): Promise<boolean> {
+    if (input.channel) return false;
+    const pending = input.suiteId
+      ? [...((await this.workflows.findSuite(projectId, input.suiteId))?.workflowIds ?? [])]
+      : input.workflowId
+        ? [input.workflowId]
+        : null;
+    if (!pending) return true;
+    const seen = new Set<string>();
+    while (pending.length) {
+      const id = pending.pop()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const workflow = await this.workflows.findWorkflow(projectId, id);
+      for (const step of workflow?.definition.steps ?? []) {
+        const kind = step.kind ?? "request";
+        if (kind === "request" || kind === "login") return true;
+        if (kind === "subflow" && step.subflow?.workflowId) pending.push(step.subflow.workflowId);
+      }
+    }
+    return false;
   }
 
   /**
