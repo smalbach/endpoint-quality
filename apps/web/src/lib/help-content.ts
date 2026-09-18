@@ -289,8 +289,13 @@ export const HELP_TOPICS: HelpTopic[] = [
       { title: "General", body: "Nombre y descripción del proyecto, y archivarlo cuando deja de usarse." },
       {
         title: "Contrato y configuración",
-        body: "Importar o releer el contrato, copiar de otro proyecto y las secciones que rellenan lo que el documento no dice. Van en tres grupos: «Datos de la corrida» (con qué valores y qué cuerpos se ejecuta, y qué operaciones existen ya), «Cuándo un caso es rojo» (401/403, latencia y forma de la respuesta) y «Ajustes avanzados», que casi nadie toca. Cada sección se abre con qué es, cuándo tocarla, qué pasa si no se toca y cómo suele quedar.",
+        body: "Importar o releer el contrato, traer piezas sueltas de otro proyecto y las secciones que rellenan lo que el documento no dice. Van en tres grupos: «Datos de la corrida» (con qué valores y qué cuerpos se ejecuta, y qué operaciones existen ya), «Cuándo un caso es rojo» (401/403, latencia y forma de la respuesta) y «Ajustes avanzados», que casi nadie toca. Cada sección se abre con qué es, cuándo tocarla, qué pasa si no se toca y cómo suele quedar.",
         tip: "«por defecto» no es «vacío»: la sección dice, al abrirla, qué usa el motor cuando nadie la ha rellenado.",
+      },
+      {
+        title: "Bifurcar, traer y fusionar",
+        body: "Desde el menú «⋯» junto al nombre del proyecto. Bifurcar crea un proyecto nuevo con todo lo de este, que recuerda de dónde salió; desde la bifurcación se traen los cambios del original y se fusionan los propios en él, elemento a elemento y eligiendo lado en cada conflicto.",
+        tip: "Los secretos no cruzan: una bifurcación nace con ellos vacíos, y fusionar un entorno conserva los que el original ya tenía.",
       },
       {
         title: "Entornos",

@@ -91,13 +91,6 @@ export class ImportSpecDto {
   @IsOptional() @IsBoolean() activate?: boolean;
 }
 
-/**
- * Copiar de otro proyecto de la misma organización.
- *
- * Which sections come across is a list and not a boolean, because the useful copy is almost never
- * all of it: two projects share an envelope and a set of budgets far more often than they share
- * which operations are implemented, and that last one is a fact about somebody else's code.
- */
 /** Una bifurcación: cómo se llama. Todo lo demás sale del original. */
 export class ForkProjectDto {
   @IsOptional() @IsString() @MaxLength(200) name?: string;

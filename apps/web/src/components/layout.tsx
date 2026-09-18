@@ -10,6 +10,7 @@ import { HelpTooltip } from "@/components/overlay";
 import { useHelp } from "@/components/help-panel";
 import { ImportProvider, useImport } from "@/components/import-provider";
 import { EnvironmentButton } from "@/components/environment-button";
+import { ForkBadge, ProjectMenu } from "@/components/project-fork-menu";
 
 /** The menu of the bar across the top, for a signed-in person. */
 export const GLOBAL_NAV = [
@@ -336,9 +337,13 @@ export function ProjectLayout() {
           {!collapsed && (
             <>
               <div className="mt-3 mb-2 h-0.5 w-8 rounded-full bg-slate-900" />
-              <p className="truncate text-sm font-semibold text-slate-900" title={project.data?.name}>
-                {project.data?.name ?? "…"}
-              </p>
+              <div className="flex items-center gap-1">
+                <p className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900" title={project.data?.name}>
+                  {project.data?.name ?? "…"}
+                </p>
+                {project.data && <ProjectMenu project={project.data} />}
+              </div>
+              {project.data && <ForkBadge project={project.data} />}
               {project.data?.contract ? (
                 <p className="mt-0.5 truncate text-[11px] text-slate-500" title={project.data.contract.title}>
                   {project.data.contract.title} <span className="font-mono">v{project.data.contract.version}</span>
