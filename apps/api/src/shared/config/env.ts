@@ -66,6 +66,36 @@ export const envSchema = z.object({
   MONITOR_TICK_SECONDS: z.coerce.number().int().min(0).max(3600).default(60),
 
   /**
+   * Los techos de una sesión de WebSocket, para todo el despliegue.
+   *
+   * Cada canal elige sus propios topes y estos son el máximo que puede elegir: un canal no puede
+   * pedir escuchar una hora ni guardar cien megas porque quien lo creó lo escribiera así. Los
+   * valores por omisión son los que una prueba de un socket necesita de verdad —treinta segundos,
+   * doscientos mensajes— y no más.
+   *
+   * `CHANNEL_MAX_IDLE_MS` es el que atrapa el socket colgado: sin él, toda sesión contra un servidor
+   * que acepta y calla cuesta la duración entera. Y `CHANNEL_MAX_OPEN` es por proceso, porque un
+   * socket abierto es un descriptor, y sin tope el editor sería una forma de clavar quinientos en la
+   * API a golpe de botón.
+   */
+  CHANNEL_MAX_MESSAGES: z.coerce.number().int().min(1).max(10_000).default(200),
+  CHANNEL_MAX_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1024)
+    .max(64 * 1024 * 1024)
+    .default(1024 * 1024),
+  CHANNEL_MAX_MESSAGE_BYTES: z.coerce
+    .number()
+    .int()
+    .min(256)
+    .max(16 * 1024 * 1024)
+    .default(64 * 1024),
+  CHANNEL_MAX_DURATION_MS: z.coerce.number().int().min(1000).max(600_000).default(30_000),
+  CHANNEL_MAX_IDLE_MS: z.coerce.number().int().min(500).max(600_000).default(10_000),
+  CHANNEL_MAX_OPEN: z.coerce.number().int().min(1).max(1000).default(20),
+
+  /**
    * The most cases one run may produce.
    *
    * Every ceiling in this product is local — 500 rows in a dataset, 50 flows in a suite, 200
