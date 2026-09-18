@@ -16,12 +16,14 @@ import {
   PacketSizeGuard,
   openSafeMqtt,
   pinnedBrokerStream,
+  subscribeMqtt,
+  unsubscribeMqtt,
   type MqttDelivery,
   type SafeMqttOptions,
 } from "@/shared/http/safe-mqtt";
 import type { SafeFetchPolicy } from "@/shared/http/safe-fetch";
 import type { Env } from "@/shared/config/env";
-import { MqttChannelTransport } from "@/modules/channels/infrastructure/mqtt-transport";
+import { MqttChannelTransport, shownProperties } from "@/modules/channels/infrastructure/mqtt-transport";
 import { BROKER_USER, startAedes, startMqtt5, type TestBroker } from "../support/mqtt-broker";
 
 const selfHosted: SafeFetchPolicy = {
@@ -335,5 +337,123 @@ describe("contra un broker mqtts:// con certificado para un nombre", () => {
       openSafeMqtt(`mqtts://${literal}:${broker.port}`, selfHosted, options(), listeners(quiet())),
       /altnames|certificate|IP/i,
     );
+  });
+});
+
+describe("a mitad de sesión, contra un broker 3.1.1", () => {
+  let broker: TestBroker;
+  before(async () => {
+    broker = await startAedes({ forbidden: "prohibido/" });
+  });
+  after(async () => broker.close());
+  const url = () => `mqtt://127.0.0.1:${broker.port}`;
+
+  test("suscribirse concede la QoS, un no del broker se dice con su código y la conexión sigue", async () => {
+    const sink = quiet();
+    const { client } = await openSafeMqtt(url(), selfHosted, options(), listeners(sink));
+    try {
+      assert.equal(await subscribeMqtt(client, "casa/#", 1, 2_000), 1);
+      await assert.rejects(
+        subscribeMqtt(client, "prohibido/#", 0, 2_000),
+        (error: unknown) => error instanceof MqttRejectedError && /^128 /.test(error.message),
+      );
+      // Lo que ya se oía se sigue oyendo: el no de una suscripción no cierra la conexión.
+      client.publish("casa/sala", "hola");
+      await until(() => sink.delivered.length === 1, "el mensaje del tema concedido");
+      assert.equal(sink.closed.length, 0);
+
+      await unsubscribeMqtt(client, "casa/#", 2_000);
+      client.publish("casa/sala", "otra vez");
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(sink.delivered.length, 1, "tras darse de baja no llega nada");
+    } finally {
+      client.end(true);
+    }
+  });
+
+  test("el testamento sale cuando la conexión se corta sin despedirse, y no con un DISCONNECT", async () => {
+    const watcher = quiet();
+    const { client: watching } = await openSafeMqtt(
+      url(),
+      selfHosted,
+      options({ subscriptions: [{ topic: "estado/#", qos: 0 }] }),
+      listeners(watcher),
+    );
+    const will = { topic: "estado/sensor-1", payload: "caído", qos: 0 as const, retain: false };
+    try {
+      const polite = await openSafeMqtt(url(), selfHosted, options({ will }), listeners(quiet()));
+      polite.client.end(false);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(watcher.delivered.length, 0, "un DISCONNECT no publica el testamento");
+
+      const rude = await openSafeMqtt(url(), selfHosted, options({ will }), listeners(quiet()));
+      assert.equal(rude.handshake.headers.testamento, "estado/sensor-1 (QoS 0)");
+      rude.client.stream.destroy();
+      await until(() => watcher.delivered.length === 1, "el testamento");
+      assert.equal(watcher.delivered[0].topic, "estado/sensor-1");
+      assert.equal(watcher.delivered[0].payload.toString(), "caído");
+    } finally {
+      watching.end(true);
+    }
+  });
+});
+
+describe("las propiedades de MQTT 5", () => {
+  test("las del CONNECT llegan al broker, y las de un mensaje se entregan con él", async () => {
+    const broker = await startMqtt5({ forbidden: "prohibido/" });
+    const sink = quiet();
+    try {
+      const { client } = await openSafeMqtt(
+        `mqtt://127.0.0.1:${broker.port}`,
+        selfHosted,
+        options({
+          protocolVersion: 5,
+          userProperties: [
+            { name: "origen", value: "eq" },
+            { name: "origen", value: "prueba" },
+          ],
+          will: { topic: "estado/x", payload: "caído", qos: 1, retain: true },
+        }),
+        listeners(sink),
+      );
+      const [connect] = broker.connects ?? [];
+      assert.deepEqual({ ...connect.properties?.userProperties }, { origen: ["eq", "prueba"] });
+      assert.equal(connect.will?.topic, "estado/x");
+      assert.equal(connect.will?.retain, true);
+
+      // Un 0x87 de un broker 5.0 es un no con su nombre.
+      await assert.rejects(subscribeMqtt(client, "prohibido/#", 0, 2_000), /135 \(no autorizado\)/);
+
+      client.publish("eco/uno", "hola", {
+        properties: {
+          userProperties: { traza: "abc" },
+          contentType: "text/plain",
+          responseTopic: "respuestas/1",
+          correlationData: Buffer.from([0, 255]),
+        },
+      });
+      await until(() => sink.delivered.length === 1, "el eco con propiedades");
+      const { properties } = sink.delivered[0];
+      assert.deepEqual(properties?.userProperties, [["traza", "abc"]]);
+      assert.equal(properties?.contentType, "text/plain");
+      assert.equal(properties?.responseTopic, "respuestas/1");
+      assert.deepEqual(shownProperties(properties!), {
+        userProperties: [["traza", "abc"]],
+        contentType: "text/plain",
+        responseTopic: "respuestas/1",
+        correlationData: "00ff",
+        correlationEncoding: "hex",
+      });
+      client.end(true);
+    } finally {
+      await broker.close();
+    }
+  });
+
+  test("unos datos de correlación que son texto se enseñan como texto", () => {
+    assert.deepEqual(shownProperties({ correlationData: Buffer.from("pedido-7") }), {
+      correlationData: "pedido-7",
+      correlationEncoding: "text",
+    });
   });
 });

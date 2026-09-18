@@ -1474,6 +1474,10 @@ export type MqttSettingsView = {
   keepaliveSec: number;
   cleanSession: boolean;
   subscriptions: { topic: string; qos: 0 | 1 | 2 }[];
+  /** El testamento: lo que el broker publica si el cliente se cae sin despedirse. `null`: sin él. */
+  will: { topic: string; payload: string; qos: 0 | 1 | 2; retain: boolean } | null;
+  /** Propiedades de usuario del `CONNECT`. Solo en 5.0. */
+  userProperties: { name: string; value: string }[];
 };
 
 /** Servicio, método, mensaje y plazo de un canal gRPC. */
@@ -1511,7 +1515,8 @@ export type ChannelView = {
 /** Un mensaje de una conversación, **ya redactado**. `atMs` va desde la apertura. */
 export type ChannelMessageView = {
   seq: number;
-  direction: "out" | "in" | "open" | "close" | "error";
+  /** `event`: una suscripción a mitad de sesión y lo que contestó el broker. No cuenta como mensaje. */
+  direction: "out" | "in" | "open" | "close" | "error" | "event";
   atMs: number;
   kind: "text" | "binary" | "ping" | "pong";
   body: string;
@@ -1522,6 +1527,14 @@ export type ChannelMessageView = {
   topic?: string;
   qos?: 0 | 1 | 2;
   retain?: boolean;
+  /** Solo MQTT 5, y ya tapadas: propiedades de usuario, tipo de contenido, respuesta y correlación. */
+  properties?: {
+    userProperties?: [string, string][];
+    contentType?: string;
+    responseTopic?: string;
+    correlationData?: string;
+    correlationEncoding?: "text" | "hex";
+  };
 };
 
 export type ChannelSessionView = {

@@ -36,6 +36,7 @@ import { CreateMockDto, UpdateMockDto } from "@/modules/mocks/presentation/dto/m
 import { CreateDocSiteDto, UpdateDocSiteDto } from "@/modules/docs/presentation/dto/doc-sites.dto";
 import { CreateMonitorDto, UpdateMonitorDto } from "@/modules/monitors/presentation/dto/monitors.dto";
 import {
+  ChannelSubscriptionDto,
   CreateChannelDto,
   OpenChannelSessionDto,
   SendChannelMessageDto,
@@ -196,6 +197,7 @@ const DTOS = [
   UpdateChannelDto,
   OpenChannelSessionDto,
   SendChannelMessageDto,
+  ChannelSubscriptionDto,
   SaveProtosDto,
   ReflectGrpcDto,
   ImportCaptureDto,

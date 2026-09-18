@@ -37,7 +37,14 @@ import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/module
 import { SECRET_HEADER } from "@/modules/endpoints/domain/examples";
 import type { Environment } from "@/modules/environments/domain/model";
 import { MAX_SAVED_MESSAGE_BYTES, effectiveLimits, type Channel } from "../../domain/model";
-import { mqttSessionPlan, planProblems, type MqttPublish, type MqttSessionPlan } from "../../domain/mqtt";
+import {
+  mqttSessionPlan,
+  planProblems,
+  userPropertiesProblems,
+  type MqttPublish,
+  type MqttQos,
+  type MqttSessionPlan,
+} from "../../domain/mqtt";
 import {
   CHANNEL_REPOSITORY,
   CHANNEL_SESSION_REPOSITORY,
@@ -45,7 +52,7 @@ import {
   type ChannelSessionRepositoryPort,
 } from "../../domain/ports";
 import { isFinished, startSession } from "../../domain/session";
-import { ChannelSessionRegistry } from "../../infrastructure/session-registry";
+import { ChannelSessionRegistry, type MqttSubscriptionResult } from "../../infrastructure/session-registry";
 import { viewSession, type ChannelSessionView } from "../views";
 import { GrpcSessionPlanner } from "../grpc";
 import { ceilingsOf } from "./manage-channels";
@@ -332,6 +339,11 @@ export class SendChannelMessageHandler implements ICommandHandler<SendChannelMes
     const topicProblem = command.publish ? publishTopicProblem(command.publish.topic) : null;
     if (topicProblem)
       throw new InvalidInputError("El mensaje no es válido", [{ field: "topic", detail: topicProblem }]);
+    const propertyProblems =
+      command.publish?.userProperties !== undefined
+        ? userPropertiesProblems(command.publish.userProperties, "userProperties")
+        : [];
+    if (propertyProblems.length) throw new InvalidInputError("El mensaje no es válido", propertyProblems);
     await this.registry.send(session.id, command.text, command.publish);
   }
 }
@@ -362,8 +374,48 @@ export class CloseChannelSessionHandler implements ICommandHandler<CloseChannelS
   }
 }
 
+/**
+ * Suscribirse a un filtro, o darse de baja, con la sesión MQTT abierta.
+ *
+ * Como mandar, por su id y solo en la instancia que tiene el socket; a diferencia de mandar, un
+ * entorno sin escrituras lo deja hacer, porque suscribirse es escuchar.
+ */
+export class ChangeChannelSubscriptionCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly sessionId: string,
+    readonly action: "subscribe" | "unsubscribe",
+    readonly topic: string,
+    readonly qos: MqttQos = 0,
+  ) {}
+}
+
+@CommandHandler(ChangeChannelSubscriptionCommand)
+export class ChangeChannelSubscriptionHandler implements ICommandHandler<
+  ChangeChannelSubscriptionCommand,
+  MqttSubscriptionResult
+> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(CHANNEL_SESSION_REPOSITORY) private readonly sessions: ChannelSessionRepositoryPort,
+    private readonly registry: ChannelSessionRegistry,
+  ) {}
+
+  async execute(command: ChangeChannelSubscriptionCommand): Promise<MqttSubscriptionResult> {
+    const project = await writableProject(this.projects, command.organizationId, command.projectId);
+    const session = await this.sessions.findById(project.id, command.sessionId);
+    if (!session) throw new NotFoundError("La sesión no existe", "channel-session-not-found");
+    if (isFinished(session)) throw new ConflictError("La sesión ya terminó", "channel-session-finished");
+    return command.action === "subscribe"
+      ? this.registry.subscribe(session.id, command.topic, command.qos)
+      : this.registry.unsubscribe(session.id, command.topic);
+  }
+}
+
 export const CHANNEL_SESSION_COMMAND_HANDLERS = [
   OpenChannelSessionHandler,
   SendChannelMessageHandler,
   CloseChannelSessionHandler,
+  ChangeChannelSubscriptionHandler,
 ];

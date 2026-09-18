@@ -8,6 +8,8 @@
  *   usuario y contraseña, y las suscripciones con su QoS — sin subprotocolos ni cabeceras.
  * - **Publicar pide un tema** sin comodines, y manda tema, QoS y retain con el cuerpo.
  * - **La transcripción enseña el tema** de cada mensaje, y si venía retenido.
+ * - **Suscribirse a mitad de sesión** es una barra aparte, y lo que contesta el broker llega como
+ *   evento a la conversación; las propiedades de MQTT 5 se ven debajo del cuerpo.
  */
 import { describe, expect, test, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -40,6 +42,8 @@ const channel = (patch: Partial<ChannelView> = {}): ChannelView => ({
     keepaliveSec: 60,
     cleanSession: true,
     subscriptions: [{ topic: "casa/#", qos: 1 }],
+    will: null,
+    userProperties: [],
   },
   grpc: null,
   orderIndex: 0,
@@ -155,6 +159,8 @@ describe("un canal MQTT en la pantalla", () => {
         { topic: "casa/#", qos: 1 },
         { topic: "alarmas/#", qos: 2 },
       ],
+      will: null,
+      userProperties: [],
     });
     expect(options.body.auth).toEqual({ type: "basic", params: { username: "sensor", password: "{{mqttPass}}" } });
     expect(options.body).not.toHaveProperty("subprotocols");
@@ -192,5 +198,99 @@ describe("un canal MQTT en la pantalla", () => {
         body: { text: '{"on":true}', topic: "luces/sala", qos: 1, retain: true },
       }),
     );
+  });
+
+  test("suscribirse a mitad de sesión pide un filtro válido, y el evento sale en la conversación", async () => {
+    answers();
+    call.mockImplementation(async (path: string) => {
+      if (path.endsWith("/environments")) return [{ id: "env-1", name: "staging", active: true, variables: {} }];
+      if (path.endsWith("/channels")) return { channels: [channel()] };
+      if (/\/channels\/c\d$/.test(path)) return { ...channel(), sessions: [] };
+      if (/\/channels\/sessions\/s\d$/.test(path))
+        return session({
+          messages: [
+            msg(0, { direction: "event", body: "suscrito a jardin/# (QoS 1)", topic: "jardin/#", qos: 1 }),
+            msg(1, {
+              body: "hola",
+              topic: "jardin/riego",
+              properties: {
+                userProperties: [["traza", "abc"]],
+                correlationData: "00ff",
+                correlationEncoding: "hex",
+              },
+            }),
+          ],
+        });
+      return {};
+    });
+    show("/p/p1/channels?c=c1&s=s1");
+    expect(await screen.findByText("suscrito a jardin/# (QoS 1)")).toBeTruthy();
+    expect(screen.getByText("evento")).toBeTruthy();
+    const properties = within(screen.getByLabelText("Propiedades"));
+    expect(properties.getByText("traza")).toBeTruthy();
+    expect(properties.getByText("correlación (hex)")).toBeTruthy();
+    expect(properties.getByText("00ff")).toBeTruthy();
+
+    const suscribir = screen.getByRole("button", { name: "Suscribir" });
+    fireEvent.change(screen.getByLabelText("Filtro"), { target: { value: "alarmas/#/x" } });
+    expect(screen.getByText(/# va solo/)).toBeTruthy();
+    expect(suscribir.hasAttribute("disabled")).toBe(true);
+    fireEvent.change(screen.getByLabelText("Filtro"), { target: { value: "alarmas/#" } });
+    fireEvent.change(screen.getByLabelText("QoS de la suscripción"), { target: { value: "2" } });
+    fireEvent.click(suscribir);
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/channels/sessions/s1/subscribe", {
+        method: "POST",
+        body: { topic: "alarmas/#", qos: 2 },
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Dar de baja" }));
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/channels/sessions/s1/unsubscribe", {
+        method: "POST",
+        body: { topic: "alarmas/#", qos: undefined },
+      }),
+    );
+  });
+
+  test("en 5.0 se publica con propiedades de usuario, y en 3.1.1 ni se enseñan", async () => {
+    const five = channel({ mqtt: { ...channel().mqtt!, version: 5 } });
+    answers([five]);
+    show("/p/p1/channels?c=c1&s=s1");
+    fireEvent.click(await screen.findByRole("button", { name: "Añadir propiedad" }));
+    fireEvent.change(screen.getByLabelText("Nombre de la propiedad 1"), { target: { value: "traza" } });
+    fireEvent.change(screen.getByLabelText("Valor de la propiedad 1"), { target: { value: "{{id}}" } });
+    fireEvent.change(screen.getByLabelText("Tema"), { target: { value: "luces/sala" } });
+    fireEvent.change(screen.getByLabelText("Mensaje"), { target: { value: "on" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/channels/sessions/s1/messages", {
+        method: "POST",
+        body: {
+          text: "on",
+          topic: "luces/sala",
+          qos: 0,
+          retain: false,
+          userProperties: [{ name: "traza", value: "{{id}}" }],
+        },
+      }),
+    );
+  });
+
+  test("el testamento se configura con su tema, cuerpo, QoS y retain", async () => {
+    answers();
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Configuración" }));
+    // En 3.1.1 no hay propiedades de usuario que poner.
+    expect(screen.queryByText("Propiedades de usuario al conectar")).toBeNull();
+    fireEvent.click(await screen.findByLabelText("Testamento (Last Will)"));
+    fireEvent.change(screen.getByPlaceholderText("dispositivos/{{id}}/estado"), {
+      target: { value: "estado/panel" },
+    });
+    fireEvent.change(screen.getByLabelText("Cuerpo"), { target: { value: "caído" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(call.mock.calls.some(([, options]) => options?.method === "PATCH")).toBe(true));
+    const [, options] = call.mock.calls.find(([, options]) => options?.method === "PATCH")!;
+    expect(options.body.mqtt.will).toEqual({ topic: "estado/panel", payload: "caído", qos: 0, retain: false });
   });
 });

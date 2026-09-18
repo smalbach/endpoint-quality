@@ -7,17 +7,21 @@ import {
   type Conversation,
   type MessageDirection,
   type MessageKind,
+  type MessageProperties,
 } from "@eq/runner-core";
 
 import { ChannelEndpointEntity, ChannelMessageEntity, ChannelSessionEntity } from "@/shared/database/entities";
 import type { Channel } from "../../domain/model";
+import { DEFAULT_MQTT, type MqttSettings } from "../../domain/mqtt";
 import type { ChannelRepositoryPort, ChannelSessionRepositoryPort } from "../../domain/ports";
 import type { ChannelSession, SessionStatus } from "../../domain/session";
 
 // `mqtt` y `grpc` con su `null` explícito: una fila de antes de la columna no la trae, y `undefined` no es un canal.
 const toChannel = (row: ChannelEndpointEntity): Channel => ({
   ...(row as unknown as Channel),
-  mqtt: (row.mqtt as Channel["mqtt"]) ?? null,
+  // Con los valores por defecto debajo: una fila de antes del testamento no trae `will` ni
+  // `userProperties`, y la pantalla los lee sin preguntar.
+  mqtt: row.mqtt ? { ...DEFAULT_MQTT, ...(row.mqtt as Partial<MqttSettings>) } : null,
   grpc: (row.grpc as Channel["grpc"]) ?? null,
 });
 
@@ -125,6 +129,7 @@ export class TypeOrmChannelSessionRepository implements ChannelSessionRepository
       ...(row.topic !== null ? { topic: row.topic } : {}),
       ...(row.qos !== null ? { qos: row.qos as 0 | 1 | 2 } : {}),
       ...(row.retain !== null ? { retain: row.retain } : {}),
+      ...(row.properties ? { properties: row.properties as MessageProperties } : {}),
     }));
   }
 

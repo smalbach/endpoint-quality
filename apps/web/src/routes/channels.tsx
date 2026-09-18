@@ -45,8 +45,11 @@ import { AuthEditor } from "@/components/auth-editor";
 import { MqttChannelSettings } from "@/components/mqtt-channel-settings";
 import {
   BLANK_PUBLISH,
+  MessageProperties,
   MessageRoute,
   MqttPublishFields,
+  MqttSubscribeBar,
+  publishBody,
   publishTopicHint,
   type MqttPublishDraft,
 } from "@/components/mqtt-publish";
@@ -455,9 +458,16 @@ function Conversation({
     mutationFn: (text: string) =>
       api(`${base}/channels/sessions/${sessionId}/messages`, {
         method: "POST",
-        body: mqtt ? { text, ...publish } : { text },
+        body: mqtt ? { text, ...publishBody(publish, channel.mqtt?.version ?? 4) } : { text },
       }),
     onSuccess: () => setDraft(""),
+    onError: (error) => toast.error(message(error)),
+  });
+  // Suscribirse o darse de baja a mitad de sesión. Lo que contesta el broker llega como evento a la
+  // conversación; aquí solo se avisa de lo que ni llegó a pedirse (un filtro mal escrito, un 409).
+  const subscription = useMutation({
+    mutationFn: ({ action, topic, qos }: { action: "subscribe" | "unsubscribe"; topic: string; qos?: 0 | 1 | 2 }) =>
+      api(`${base}/channels/sessions/${sessionId}/${action}`, { method: "POST", body: { topic, qos } }),
     onError: (error) => toast.error(message(error)),
   });
   const close = useMutation({
@@ -594,16 +604,27 @@ function Conversation({
                     ? "ml-auto bg-slate-900 text-white"
                     : row.direction === "error"
                       ? "bg-rose-50 text-rose-800"
-                      : "bg-white text-slate-800 shadow-sm",
+                      : row.direction === "event"
+                        ? "mx-auto border border-dashed border-slate-300 text-slate-600"
+                        : "bg-white text-slate-800 shadow-sm",
                 )}
               >
                 <div className="mb-0.5 flex items-center gap-2 text-[10px] opacity-70">
-                  <span>{row.direction === "out" ? "enviado" : row.direction === "in" ? "recibido" : "error"}</span>
+                  <span>
+                    {row.direction === "out"
+                      ? "enviado"
+                      : row.direction === "in"
+                        ? "recibido"
+                        : row.direction === "event"
+                          ? "evento"
+                          : "error"}
+                  </span>
                   <span>{gap(row.atMs, previousAt.get(row.seq) ?? null)}</span>
                   {row.kind === "binary" && <span>binario · {row.bytes} B</span>}
                   <MessageRoute message={row} />
                 </div>
                 <pre className="whitespace-pre-wrap break-words font-mono">{prettyBody(row.body)}</pre>
+                <MessageProperties message={row} />
                 {row.truncated && (
                   <p className="mt-1 text-[10px] opacity-70">
                     recortado: llegaron {row.bytes.toLocaleString("es")} bytes y aquí se guarda el principio
@@ -635,7 +656,14 @@ function Conversation({
               ))}
             </div>
           )}
-          {mqtt && <MqttPublishFields value={publish} onChange={setPublish} />}
+          {mqtt && (
+            <MqttSubscribeBar
+              pending={subscription.isPending}
+              onSubscribe={(topic, qos) => subscription.mutate({ action: "subscribe", topic, qos })}
+              onUnsubscribe={(topic) => subscription.mutate({ action: "unsubscribe", topic })}
+            />
+          )}
+          {mqtt && <MqttPublishFields value={publish} onChange={setPublish} version={channel.mqtt?.version ?? 4} />}
           <div className="flex gap-2">
             <textarea
               aria-label="Mensaje"

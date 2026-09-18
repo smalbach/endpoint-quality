@@ -767,6 +767,8 @@ export class ChannelMessageEntity {
   @Column({ type: "text", nullable: true }) topic: string | null;
   @Column({ type: "smallint", nullable: true }) qos: number | null;
   @Column({ type: "boolean", nullable: true }) retain: boolean | null;
+  /** Solo MQTT 5: las propiedades del mensaje (ya tapadas). Nulas en todo lo demás. */
+  @Column({ type: "jsonb", nullable: true }) properties: Record<string, unknown> | null;
 }
 
 /**

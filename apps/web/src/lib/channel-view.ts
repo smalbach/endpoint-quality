@@ -59,11 +59,12 @@ export function mergeMessage(messages: ChannelMessageView[], message: ChannelMes
 export const isOver = (session: Pick<ChannelSessionView, "status"> | null | undefined): boolean =>
   session?.status === "closed" || session?.status === "error";
 
-/** Las filas que se enseñan: los mensajes, sin la apertura ni el cierre, que van en la cabecera. */
+/**
+ * Las filas que se enseñan: los mensajes y los eventos (una suscripción a mitad de sesión), sin la
+ * apertura ni el cierre, que van en la cabecera.
+ */
 export function visibleMessages(messages: ChannelMessageView[]): ChannelMessageView[] {
-  return messages.filter(
-    (message) => message.direction === "in" || message.direction === "out" || message.direction === "error",
-  );
+  return messages.filter((message) => message.direction !== "open" && message.direction !== "close");
 }
 
 /** Qué filas de la conversación se quieren ver: todas, las que llegaron o las que salieron. */

@@ -18,7 +18,7 @@ import {
   type SavedMessage,
 } from "../../domain/model";
 import type { GrpcSettings } from "../../domain/grpc";
-import type { MqttQos, MqttSettings } from "../../domain/mqtt";
+import type { MqttQos, MqttSettings, MqttUserProperty } from "../../domain/mqtt";
 
 export class CreateChannelDto {
   /** Ausente es `ws`, que es lo que eran todos los canales antes de MQTT y gRPC. */
@@ -60,4 +60,12 @@ export class SendChannelMessageDto {
   @IsOptional() @IsString() topic?: string;
   @IsOptional() @IsIn([0, 1, 2]) qos?: MqttQos;
   @IsOptional() @IsBoolean() retain?: boolean;
+  /** Solo en MQTT 5: propiedades de usuario del `PUBLISH`, con `{{variables}}`. */
+  @IsOptional() @IsArray() userProperties?: MqttUserProperty[];
+}
+
+/** Un filtro al que suscribirse, o del que darse de baja, a mitad de una sesión MQTT. */
+export class ChannelSubscriptionDto {
+  @IsString() @MaxLength(65_535) topic: string;
+  @IsOptional() @IsIn([0, 1, 2]) qos?: MqttQos;
 }

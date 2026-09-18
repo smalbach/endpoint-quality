@@ -12,7 +12,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { ENV, type Env } from "@/shared/config/env";
 import { policyFromEnv } from "@/shared/http/safe-fetch.provider";
 import { openSafeSocket, type SafeSocketOptions, type SocketListeners } from "@/shared/http/safe-socket";
-import type { MqttPublish } from "../domain/mqtt";
+import type { MqttPublish, MqttQos } from "../domain/mqtt";
 
 export const CHANNEL_TRANSPORT = Symbol("CHANNEL_TRANSPORT");
 
@@ -35,6 +35,13 @@ export type OpenChannel = {
   check?(text: string): void;
   /** Terminar de mandar sin cerrar: el medio cierre de un stream de gRPC. Quien no lo tiene, no lo trae. */
   end?(): void;
+  /**
+   * Solo MQTT: suscribirse a mitad de sesión. Devuelve la QoS concedida, o rechaza con el código si
+   * el broker dijo que no (`MqttRejectedError`). Un no aquí no cierra la sesión.
+   */
+  subscribe?(topic: string, qos: MqttQos): Promise<number>;
+  /** Solo MQTT: dejar de oír un filtro. */
+  unsubscribe?(topic: string): Promise<void>;
 };
 
 /**
