@@ -7,7 +7,12 @@ import { CONFIG_REPOSITORY, type ConfigRepositoryPort, type ConfigRow } from "@/
 import { ENDPOINT_REPOSITORY, type EndpointRepositoryPort } from "@/modules/endpoints/domain/ports";
 import type { Endpoint } from "@/modules/endpoints/domain/model";
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
-import type { Environment, EnvironmentVariables } from "@/modules/environments/domain/model";
+import {
+  CREDENTIAL_ROLE_NAME,
+  RESERVED_CREDENTIAL_ROLES,
+  type Environment,
+  type EnvironmentVariables,
+} from "@/modules/environments/domain/model";
 import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
 import type { DatasetRow, RequestTemplateRow, SuiteRow, WorkflowRow } from "@/modules/workflows/domain/model";
 import { ROLE_REPOSITORY, type RoleRepositoryPort } from "@/modules/roles/domain/ports";
@@ -35,6 +40,7 @@ import {
 } from "../domain/fork";
 import {
   diffToken,
+  entryId,
   MERGE_KINDS,
   withAllKinds,
   threeWayDiff,
@@ -186,6 +192,9 @@ export class ForkSync {
     const lineage = Object.fromEntries(
       LINKED_KINDS.map((kind) => [kind, [...fork.lineage[kind], ...implicit[kind]]]),
     ) as Lineage;
+    // La clave de un elemento enlazado es el id del original, así que una pareja por nombre se
+    // reconoce por el id del original que emparejó.
+    const byName = new Set(LINKED_KINDS.flatMap((kind) => implicit[kind].map((pair) => `${kind}:${pair.parentId}`)));
     return {
       direction,
       fork,
@@ -194,7 +203,9 @@ export class ForkSync {
       source,
       target,
       lineage,
-      entries: threeWayDiff(fork.base, source.snapshot, target.snapshot),
+      entries: threeWayDiff(fork.base, source.snapshot, target.snapshot).map((entry) =>
+        byName.has(entryId(entry)) ? { ...entry, pairedByName: true } : entry,
+      ),
       token: diffToken(fork.base, source.snapshot, target.snapshot),
     };
   }
@@ -664,9 +675,10 @@ class PlanBuilder {
   }
 
   /**
-   * Los roles. El nombre no se numera como el de un flujo: un rol se nombra en las credenciales y en
-   * la matriz, y «admin (2)» ni cabe en sus reglas ni querría decir nada. Si el destino ya tiene
-   * otro rol con ese nombre, este no se trae, y se dice.
+   * Los roles. Si el destino ya tiene **otro** rol con ese nombre, el que llega se numera como una
+   * prueba, pero con la regla de nombres de las credenciales: «admin (2)» no es un nombre de rol
+   * —ni cabe en una credencial ni en la matriz—, «admin-2» sí. Antes no se traía y solo se avisaba,
+   * y un rol que no llega se lleva con él sus permisos y sus reglas sin que nadie lo decida.
    */
   private roleRows(): Role[] {
     const taken = this.namesAfter("role");
@@ -675,15 +687,19 @@ class PlanBuilder {
     for (const key of [...this.writes.role]) {
       const source = this.source.role.get(key) as Role;
       const current = this.target.role.get(key) as Role | undefined;
-      if (taken.has(source.name)) {
+      const name = taken.has(source.name) ? freeRoleName(source.name, taken) : source.name;
+      if (!name) {
         this.writes.role.delete(key);
         if (!current) this.targetIds.role.delete(key);
         this.skipped.push({ what: "rol", detail: `${source.name}: el destino ya tiene otro rol con ese nombre` });
         continue;
       }
-      taken.add(source.name);
+      taken.add(name);
+      if (name !== source.name && name !== current?.name)
+        this.skipped.push({ what: "rol", detail: `${source.name}: ya había otro con ese nombre, se llama ${name}` });
       rows.push({
         ...source,
+        name,
         id: this.targetIds.role.get(key)!,
         projectId: this.comparison.target.project.id,
         position: current?.position ?? position++,
@@ -972,4 +988,20 @@ export function keepTargetSecrets(incoming: RequestAuth, current: RequestAuth | 
     if (value === "" && isSecretParam(incoming.type, key) && current.params[key]) params[key] = current.params[key]!;
   }
   return { ...incoming, params };
+}
+
+/**
+ * Un nombre libre para un rol que choca: `admin-2`, `admin-3`… dentro de la regla de las credenciales
+ * (20 caracteres, sin espacios ni paréntesis) y fuera de los reservados. Nulo si no queda ninguno,
+ * que con 998 intentos es un proyecto que no existe.
+ */
+export function freeRoleName(wanted: string, taken: Set<string>): string | null {
+  for (let suffix = 2; suffix < 1000; suffix += 1) {
+    const tail = `-${suffix}`;
+    const candidate = `${wanted.slice(0, 20 - tail.length)}${tail}`;
+    if (taken.has(candidate) || !CREDENTIAL_ROLE_NAME.test(candidate)) continue;
+    if ((RESERVED_CREDENTIAL_ROLES as readonly string[]).includes(candidate)) continue;
+    return candidate;
+  }
+  return null;
 }

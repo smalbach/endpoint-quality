@@ -263,6 +263,15 @@ function EntryRow({
           {entry.label}
         </button>
         <span className="text-[11px] text-slate-500">{changeSummary(entry, view.source.name, view.target.name)}</span>
+        {/* Sin linaje entre los dos: se tratan como el mismo porque se llaman igual, y quien revisa tiene que saberlo. */}
+        {entry.pairedByName && (
+          <span
+            className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
+            title="Se crearon cada uno en su lado y se emparejan porque se llaman igual, no porque uno venga del otro"
+          >
+            emparejado por nombre
+          </span>
+        )}
         <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", STATUS_TONES[entry.status])}>
           {STATUS_LABELS[entry.status]}
         </span>

@@ -2145,6 +2145,8 @@ export type ForkDiffEntryView = {
   targetChange: ForkChange;
   status: ForkDiffStatus;
   fields: ForkFieldChange[];
+  /** Emparejado solo por el nombre, sin linaje: dos elementos creados cada uno en su lado. */
+  pairedByName?: boolean;
 };
 
 /** Una comparación a tres bandas: origen → destino, contra la última foto común. */

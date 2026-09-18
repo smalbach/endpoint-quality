@@ -89,6 +89,12 @@ export type DiffEntry = {
   targetChange: Change;
   status: DiffStatus;
   fields: FieldChange[];
+  /**
+   * Emparejado solo por el nombre, sin linaje: dos elementos creados cada uno en su lado que se
+   * llaman igual. Se tratan como el mismo —ver `forkKeys`—, y se dice, porque quien revisa puede
+   * estar viendo dos cosas distintas que coinciden en el nombre por casualidad.
+   */
+  pairedByName?: boolean;
 };
 
 export type Side = "source" | "target";
