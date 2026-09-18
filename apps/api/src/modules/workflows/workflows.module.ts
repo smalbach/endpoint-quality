@@ -12,6 +12,7 @@ import { AuthModule } from "@/modules/auth/auth.module";
 import { IamModule } from "@/modules/iam/iam.module";
 import { ProjectsModule } from "@/modules/projects/projects.module";
 import { SpecsModule } from "@/modules/specs/specs.module";
+import { ChannelsModule } from "@/modules/channels/channels.module";
 import { WORKFLOW_REPOSITORY } from "./domain/ports";
 import { TypeOrmWorkflowRepository } from "./infrastructure/persistence/typeorm-workflow.repository";
 import {
@@ -67,6 +68,7 @@ export const WORKFLOW_ADAPTERS = [{ provide: WORKFLOW_REPOSITORY, useClass: Type
     // The importer reads the active contract's operations: a request that lands on no operation is
     // reported rather than imported, which is what keeps the contract the source of the endpoints.
     forwardRef(() => SpecsModule),
+    forwardRef(() => ChannelsModule),
   ],
   controllers: [WorkflowsController],
   providers: [...WORKFLOW_ADAPTERS, ...WORKFLOW_COMMAND_HANDLERS, ...WORKFLOW_QUERY_HANDLERS],

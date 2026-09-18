@@ -67,6 +67,8 @@ import { sendNotification } from "./notify-step";
 import { ExecutionContextFactory, type ExecutionContext } from "./execution-context";
 import { flattenPrepared, nestedScenarioId } from "./subflow-support";
 import { mockStep } from "./mock-node";
+import { channelStep } from "./channel-node";
+import { HeadlessChannelRunner } from "@/modules/channels/application/headless-session";
 import {
   RunCaseFinishedEvent,
   RunCaseRetryingEvent,
@@ -93,6 +95,8 @@ export class RunOrchestrator {
     private readonly executor: CaseExecutor,
     private readonly contexts: ExecutionContextFactory,
     private readonly eventBus: EventBus,
+    // The channel node opens its session through the channels module, the same way «Conectar» does.
+    private readonly channels: HeadlessChannelRunner,
   ) {}
 
   /** Wired at boot by the module. Kept separate from the constructor so the handler is
@@ -1041,6 +1045,37 @@ export class RunOrchestrator {
       return;
     }
 
+    // A channel node runs a saved channel as a bounded session (see `channel-node.ts`). Scheduled like
+    // a request — after the condition and the wait — and its conversation, shaped as a response, is
+    // what the nodes after it read.
+    if (item.step.kind === "channel" && item.step.channel) {
+      const running: RunCase = { ...item.runCase, status: "running", startedAt };
+      await this.runs.saveCase(running);
+      this.eventBus.publish(new RunCaseStartedEvent(run.projectId, run.id, running));
+      const outcome = await this.channels.run({
+        projectId: run.projectId,
+        channelId: item.step.channel.channelId,
+        environmentId: run.environmentId,
+        actorId: run.triggeredBy,
+        node: item.step.channel,
+        variables: context.target.variables,
+        secrets: [...(context.target.secrets ?? []), ...(context.target.session ? [context.target.session.value] : [])],
+      });
+      const result = channelStep(item.step, item.runCase, outcome, context.target.variables);
+      if (result.actual) responses.set(item.step.id, { actual: result.actual, durationMs: result.executed.durationMs });
+      // The case names the protocol and the channel once it is known, the way a request names its verb.
+      item.runCase = { ...item.runCase, ...result.caseFields };
+      await this.finishControl(run, item, state, startedAt, {
+        ok: result.executed.ok,
+        failure: result.executed.failure,
+        assertions: result.executed.assertions,
+        sent: result.executed.sent,
+        steps: [result.executed],
+        durationMs: result.executed.durationMs,
+      });
+      return;
+    }
+
     const walked = this.elementsFor(item.step, responses, budget);
     const elements = walked?.elements ?? null;
     if (elements && elements.length === 0) {
@@ -1959,6 +1994,9 @@ function controlCaseFields(step: WorkflowStep): { operationId: string; method: s
       return { operationId: "", method: "FLOW", path: `ejecuta ${step.subflow?.workflowId ?? ""}` };
     case "mock":
       return { operationId: "", method: "MOCK", path: String(step.mock?.status ?? "") };
+    case "channel":
+      // The protocol and the name are only known once the channel is read; `channelStep` fills them in.
+      return { operationId: "", method: "CHANNEL", path: step.channel?.channelId ?? "" };
     default:
       return null;
   }

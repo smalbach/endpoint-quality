@@ -83,6 +83,15 @@ export type SessionPlan = {
   interpolate?: (text: string) => string;
   /** Solo en un canal MQTT: con qué se conecta. Su presencia es lo que elige el transporte. */
   mqtt?: MqttSessionPlan;
+  /**
+   * Cada mensaje recibido **que la conversación aceptó**, crudo: antes de tapar y de recortar.
+   *
+   * Solo lo pide quien ejecuta la sesión sin pantalla —el nodo canal de un flujo— para sus capturas:
+   * una variable que vale `••••••••` no le sirve al paso siguiente. Es la misma copia en memoria que
+   * una corrida guarda de una respuesta HTTP; lo que se escribe en la fila y lo que sale en vivo
+   * sigue siendo solo lo tapado, porque esto no pasa por ninguno de los dos caminos.
+   */
+  onReceived?: (frame: RawFrame) => void;
 };
 
 type Live = {
@@ -351,6 +360,7 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
     entry.session = session;
 
     const added = session.conversation.messages.slice(before);
+    if (frame.direction === "in" && added.length) entry.plan.onReceived?.(frame);
     entry.writes = entry.writes
       .then(() => (added.length ? this.sessions.appendMessages(sessionId, added) : undefined))
       .catch((error: unknown) =>

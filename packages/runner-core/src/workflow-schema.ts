@@ -20,6 +20,7 @@ import { GRAPHQL_OPERATION_NAME, graphqlVariablesProblem } from "./graphql.ts";
 import { CHECK_OPERATORS, RESPONSE_CHECK_SOURCES } from "./checks.ts";
 import { stepNotifySchema } from "./notify.ts";
 import { mockBodyProblem } from "./mock.ts";
+import { stepChannelSchema } from "./channel-node.ts";
 import {
   CAPTURE_SOURCES,
   FETCH_METHODS,
@@ -227,8 +228,12 @@ export const workflowStepSchema = z.object({
       "subflow",
       "graphql",
       "mock",
+      "channel",
     ])
     .optional(),
+  // The `channel` node: a saved channel run as a bounded conversation. Whether the channel exists in
+  // this project spans two tables — the command handler checks it, as it does a subflow's flow.
+  channel: stepChannelSchema.optional(),
   // The `mock` node: the response it answers with, no network. Same ceilings as a fetch's call.
   mock: z
     .object({
@@ -512,7 +517,9 @@ export const workflowDocumentSchema = z
           message:
             kind === "fetch" || kind === "graphql"
               ? `un nodo ${kind} lleva su petición escrita, no una guardada`
-              : "un nodo de control no envía ninguna petición",
+              : kind === "channel"
+                ? "un nodo canal ejecuta un canal, no una petición guardada"
+                : "un nodo de control no envía ninguna petición",
           path: ["steps", index, "requestTemplateId"],
         });
       }
@@ -713,6 +720,41 @@ export const workflowDocumentSchema = z
             context.addIssue({
               code: "custom",
               message: "un mock no admite reintentos, forEach ni login: su respuesta está escrita",
+              path: ["steps", index, field],
+            });
+          }
+        }
+      }
+      if (step.channel && kind !== "channel") {
+        context.addIssue({
+          code: "custom",
+          message: "solo un nodo canal lleva su bloque channel",
+          path: ["steps", index, "channel"],
+        });
+      }
+      if (kind === "channel") {
+        if (!step.channel) {
+          context.addIssue({
+            code: "custom",
+            message: "un nodo canal necesita el canal que ejecuta",
+            path: ["steps", index, "channel"],
+          });
+        }
+        // What a channel expects is written on the channel, and its verdict is decided in one place
+        // (`evaluateConversation`). Checks on the node would be a second verdict over the same
+        // conversation; a retry or a list walk would open the same socket over and over.
+        if (step.checks?.length) {
+          context.addIssue({
+            code: "custom",
+            message: "un nodo canal usa las comprobaciones del propio canal: escríbelas en el canal",
+            path: ["steps", index, "checks"],
+          });
+        }
+        for (const field of ["retry", "forEach", "authorizes"] as const) {
+          if (step[field]) {
+            context.addIssue({
+              code: "custom",
+              message: "un nodo canal no admite reintentos, forEach ni login",
               path: ["steps", index, field],
             });
           }

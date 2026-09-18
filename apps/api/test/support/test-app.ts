@@ -73,6 +73,8 @@ import { GrpcChannelsController } from "@/modules/channels/presentation/grpc.con
 import { CHANNEL_PROTO_REPOSITORY } from "@/modules/channels/domain/grpc";
 import { GRPC_TRANSPORT, GrpcChannelTransport } from "@/modules/channels/infrastructure/grpc-transport";
 import { GrpcSessionPlanner } from "@/modules/channels/application/grpc";
+import { ChannelSessionOpener } from "@/modules/channels/application/commands/manage-sessions";
+import { HeadlessChannelRunner } from "@/modules/channels/application/headless-session";
 import { InMemoryChannelProtoRepository } from "./in-memory-protos";
 import { CHANNEL_TRANSPORT, WsChannelTransport } from "@/modules/channels/infrastructure/ws-transport";
 import { MQTT_TRANSPORT, MqttChannelTransport } from "@/modules/channels/infrastructure/mqtt-transport";
@@ -324,8 +326,18 @@ export type TestContext = {
   close(): Promise<void>;
 };
 
-export async function createTestApp(): Promise<TestContext> {
+export async function createTestApp(
+  options: {
+    /**
+     * Si los sockets de los canales pueden ir a loopback. Sí por defecto, porque sus pruebas hablan
+     * con servidores en 127.0.0.1; `false` es la guarda tal como está en producción, que es lo que
+     * necesita una prueba que quiere ver la negativa.
+     */
+    channelPrivateTargets?: boolean;
+  } = {},
+): Promise<TestContext> {
   const env = loadEnv(TEST_ENV);
+  const channelEnv = { ...env, ALLOW_PRIVATE_TARGETS: options.channelPrivateTargets ?? true };
   const clock = new FixedClock(new Date("2026-03-01T10:00:00.000Z"));
   const repositories = {
     users: new InMemoryUserRepository(),
@@ -366,7 +378,7 @@ export async function createTestApp(): Promise<TestContext> {
   // Lo que no se guioniza sale por el transporte de verdad, con la misma política de red que el
   // resto de la aplicación de prueba: loopback permitido, porque las pruebas de socket de verdad
   // apuntan a un servidor en 127.0.0.1.
-  const channels = new StubChannelTransport(new WsChannelTransport({ ...env, ALLOW_PRIVATE_TARGETS: true }));
+  const channels = new StubChannelTransport(new WsChannelTransport(channelEnv));
   // Loopback is allowed here because the run tests point the engine at a stub server on
   // 127.0.0.1, which is also the ordinary self-hosted case.
   const http = new StubSafeFetch({
@@ -465,13 +477,15 @@ export async function createTestApp(): Promise<TestContext> {
       { provide: CHANNEL_SESSION_REPOSITORY, useValue: repositories.channelSessions },
       { provide: CHANNEL_TRANSPORT, useValue: channels },
       // MQTT sin guion: las pruebas hablan con un broker en proceso en loopback, como las de socket.
-      { provide: MQTT_TRANSPORT, useValue: new MqttChannelTransport({ ...env, ALLOW_PRIVATE_TARGETS: true }) },
+      { provide: MQTT_TRANSPORT, useValue: new MqttChannelTransport(channelEnv) },
       { provide: CHANNEL_PROTO_REPOSITORY, useValue: repositories.channelProtos },
       // gRPC sin guion: las pruebas llaman a un servidor de verdad en loopback, como las de socket.
-      { provide: GRPC_TRANSPORT, useValue: new GrpcChannelTransport({ ...env, ALLOW_PRIVATE_TARGETS: true }) },
+      { provide: GRPC_TRANSPORT, useValue: new GrpcChannelTransport(channelEnv) },
       GrpcSessionPlanner,
       ChannelProgressStream,
       ChannelSessionRegistry,
+      ChannelSessionOpener,
+      HeadlessChannelRunner,
       { provide: CAPTURE_REPOSITORY, useValue: repositories.captures },
       CaptureProxyService,
       // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the
