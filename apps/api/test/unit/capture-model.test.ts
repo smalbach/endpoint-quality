@@ -17,6 +17,7 @@ import {
   viewCaptureItemSummary,
   type RawExchange,
 } from "@/modules/captures/domain/model";
+import { MASK } from "@/modules/endpoints/domain/examples";
 import { parseEndpointFile } from "@/modules/endpoints/domain/import-endpoints";
 
 let seq = 0;
@@ -72,6 +73,34 @@ describe("la redacción al grabar", () => {
       responseBodyTruncated: true,
     });
     assert.ok(!item.responseBody.includes("SECRETO-CORTADO"));
+  });
+
+  test("un secreto que el servidor repite en otro campo se tapa por su valor, como el eco de httpbin", () => {
+    const item = exchange({
+      url: "http://httpbin.org/get?api_key=CLAVE-eco-88&q=1",
+      requestHeaders: {
+        Authorization: "Bearer SECRETO-eco-77",
+        Cookie: "sid=galleta-eco-66; tema=claro",
+      },
+      responseHeaders: {
+        "content-type": "application/json",
+        "set-cookie": "nueva=galleta-eco-55; Domain=httpbin.org; Path=/",
+      },
+      responseBody: Buffer.from(
+        JSON.stringify({
+          url: "http://httpbin.org/get?api_key=CLAVE-eco-88&q=1",
+          headers: { "X-Echo": "Bearer SECRETO-eco-77", Otra: "sid=galleta-eco-66" },
+          nota: "vuelve galleta-eco-55",
+        }),
+      ),
+    });
+    const stored = JSON.stringify(item);
+    for (const secret of ["CLAVE-eco-88", "SECRETO-eco-77", "galleta-eco-66", "galleta-eco-55"])
+      assert.equal(stored.includes(secret), false, secret);
+    // Lo que no es credencial se queda: el dominio de la cookie no es un secreto.
+    assert.ok(stored.includes("httpbin.org"));
+    assert.ok(item.url.endsWith("&q=1"));
+    assert.equal(JSON.parse(item.responseBody).url, `http://httpbin.org/get?api_key=${MASK}&q=1`);
   });
 
   test("un cuerpo que no es texto no se guarda", () => {

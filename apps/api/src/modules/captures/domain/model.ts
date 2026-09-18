@@ -203,6 +203,100 @@ export function redactCapturedBody(body: string, contentType: string): string {
   return redactBody(body, contentType).body;
 }
 
+/**
+ * Los valores de las credenciales que la petición llevó: la de `Authorization` sin su esquema, las
+ * cookies, las cabeceras de clave, la query y los campos con nombre de credencial —de la petición y
+ * de la respuesta—.
+ *
+ * Tapar por nombre de campo no basta, y esto salió probando contra un servidor de verdad: un eco
+ * como el de httpbin devuelve la URL entera en `"url"`, un campo que no se llama como una
+ * credencial, y `?api_key=…` quedaba en claro en la fila. Con los valores en la mano se tapan
+ * donde aparezcan, igual que la consola de un script tapa los secretos del entorno.
+ */
+export function credentialValues(raw: RawExchange): string[] {
+  const found = new Set<string>();
+  const add = (value: string | undefined) => {
+    const trimmed = value?.trim();
+    if (trimmed && trimmed.length >= 4 && trimmed !== MASK) found.add(trimmed);
+  };
+  const decode = (text: string) => {
+    try {
+      return decodeURIComponent(text.replace(/\+/g, " "));
+    } catch {
+      return text;
+    }
+  };
+  const pairs = (text: string) =>
+    text.split("&").map((pair) => {
+      const equals = pair.indexOf("=");
+      return equals === -1 ? null : ([decode(pair.slice(0, equals)), pair.slice(equals + 1)] as const);
+    });
+  const fromPairs = (text: string) => {
+    for (const pair of pairs(text)) {
+      if (!pair || !SECRET_FIELD.test(pair[0])) continue;
+      add(pair[1]);
+      add(decode(pair[1]));
+    }
+  };
+  const fromJson = (text: string) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return;
+    }
+    const walk = (value: unknown, key: string, depth: number) => {
+      if (depth > 20) return;
+      if (typeof value === "string" || typeof value === "number") {
+        if (key && SECRET_FIELD.test(key)) add(String(value));
+        return;
+      }
+      if (Array.isArray(value)) for (const item of value) walk(item, key, depth + 1);
+      else if (value && typeof value === "object")
+        for (const [name, item] of Object.entries(value)) walk(item, name, depth + 1);
+    };
+    walk(parsed, "", 0);
+  };
+  for (const headers of [raw.requestHeaders, raw.responseHeaders])
+    for (const [name, value] of Object.entries(headers)) {
+      if (!SECRET_HEADER.test(name.trim())) continue;
+      const lowered = name.trim().toLowerCase();
+      if (lowered === "cookie" || lowered === "set-cookie") {
+        // En `Set-Cookie` solo el primer par es la cookie; `Domain=api.example.com` y compañía son
+        // atributos, y tomarlos por secretos taparía el dominio en todo el cuerpo.
+        const parts = lowered === "cookie" ? value.split(";") : value.split("\n").map((line) => line.split(";")[0]!);
+        for (const part of parts) {
+          const equals = part.indexOf("=");
+          if (equals !== -1) add(part.slice(equals + 1));
+        }
+        continue;
+      }
+      add(value);
+      add(/^\s*[A-Za-z][\w-]*\s+(\S.*)$/.exec(value)?.[1]);
+    }
+  const cut = raw.url.indexOf("?");
+  if (cut !== -1) fromPairs(raw.url.slice(cut + 1).split("#")[0]!);
+  for (const [body, headers] of [
+    [raw.requestBody, raw.requestHeaders],
+    [raw.responseBody, raw.responseHeaders],
+  ] as const) {
+    const text = textOf(body);
+    if (!text) continue;
+    if (/x-www-form-urlencoded/i.test(headerOf(headers, "content-type"))) fromPairs(text);
+    else fromJson(text);
+  }
+  return [...found].sort((a, b) => b.length - a.length);
+}
+
+/** Cada valor, y su forma codificada en una URL, cambiado por `mask` donde aparezca. */
+function maskValues(text: string, values: string[], mask = MASK): string {
+  let out = text;
+  for (const value of values)
+    for (const form of new Set([value, encodeURIComponent(value), JSON.stringify(value).slice(1, -1)]))
+      if (form.length >= 4) out = out.split(form).join(mask);
+  return out;
+}
+
 /** La cabecera, sin importar cómo la escribió quien la mandó. */
 export function headerOf(headers: Record<string, string>, name: string): string {
   const wanted = name.toLowerCase();
@@ -221,6 +315,10 @@ export function captureItemFrom(
 ): CaptureItem {
   const requestType = headerOf(raw.requestHeaders, "content-type");
   const responseType = headerOf(raw.responseHeaders, "content-type");
+  const secrets = credentialValues(raw);
+  const hide = (text: string) => maskValues(text, secrets);
+  const hideHeaders = (headers: Record<string, string>) =>
+    Object.fromEntries(Object.entries(redactCapturedHeaders(headers)).map(([name, value]) => [name, hide(value)]));
   return {
     id: randomUUID(),
     sessionId: context.sessionId,
@@ -230,22 +328,24 @@ export function captureItemFrom(
     // Los largos de las columnas. Una URL de más de 4000 caracteres no es una API que alguien
     // quiera importar, y cortarla es mejor que perder la fila entera en un error de la base.
     method: raw.method.toUpperCase().slice(0, 16),
-    url: redactCapturedUrl(raw.url).slice(0, 4000),
+    url: maskValues(redactCapturedUrl(raw.url), secrets, encodeURIComponent(MASK)).slice(0, 4000),
     status: raw.status,
     encrypted: raw.encrypted,
-    requestHeaders: redactCapturedHeaders(raw.requestHeaders),
-    requestBody: raw.requestBodyTruncated
-      ? textOf(raw.requestBody)
-      : redactCapturedBody(textOf(raw.requestBody), requestType),
+    requestHeaders: hideHeaders(raw.requestHeaders),
+    requestBody: hide(
+      raw.requestBodyTruncated ? textOf(raw.requestBody) : redactCapturedBody(textOf(raw.requestBody), requestType),
+    ),
     requestBodyTruncated: raw.requestBodyTruncated,
-    responseHeaders: redactCapturedHeaders(raw.responseHeaders),
-    responseBody: raw.responseBodyTruncated
-      ? maskTruncated(textOf(raw.responseBody))
-      : redactCapturedBody(textOf(raw.responseBody), responseType),
+    responseHeaders: hideHeaders(raw.responseHeaders),
+    responseBody: hide(
+      raw.responseBodyTruncated
+        ? maskTruncated(textOf(raw.responseBody))
+        : redactCapturedBody(textOf(raw.responseBody), responseType),
+    ),
     responseBodyTruncated: raw.responseBodyTruncated,
     responseContentType: responseType.split(";")[0]!.trim().slice(0, 200),
     durationMs: raw.durationMs,
-    error: raw.error?.slice(0, 500) ?? null,
+    error: raw.error ? hide(raw.error).slice(0, 500) : null,
   };
 }
 
