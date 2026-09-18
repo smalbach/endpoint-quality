@@ -83,7 +83,7 @@ export const CHANNEL_ADAPTERS = [
   controllers: [ChannelsController, GrpcChannelsController],
   providers: [...CHANNEL_ADAPTERS, ...CHANNEL_COMMAND_HANDLERS, ...CHANNEL_QUERY_HANDLERS],
   // Para los flujos: el nodo canal corre por la misma apertura que «Conectar», y guardar un flujo
-  // comprueba que el canal que nombra es de su proyecto.
-  exports: [CHANNEL_REPOSITORY, HeadlessChannelRunner],
+  // comprueba que el canal que nombra es de su proyecto. Los `.proto`, para bifurcar y sincronizar.
+  exports: [CHANNEL_REPOSITORY, CHANNEL_PROTO_REPOSITORY, HeadlessChannelRunner],
 })
 export class ChannelsModule {}

@@ -162,6 +162,38 @@ export class ProjectForkEntity {
   @Column({ type: "jsonb" }) lineage: Record<string, unknown>;
 }
 
+/** Una solicitud de fusión de una bifurcación en su original. Ver `ForkMergeRequests1700000033000`. */
+@Entity({ name: "fork_merge_requests" })
+export class ForkMergeRequestEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Column("uuid") organizationId: string;
+  @Column("uuid") forkProjectId: string;
+  @Column("uuid") parentProjectId: string;
+  @Column({ type: "varchar", length: 200 }) title: string;
+  @Column({ type: "text", default: "" }) description: string;
+  @Column({ type: "varchar", length: 12 }) status: string;
+  @Column("uuid") createdBy: string;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) updatedAt: Date;
+  @Column({ type: "jsonb" }) diff: unknown[];
+  @Column({ type: "int" }) diffVersion: number;
+  @Column({ type: "uuid", nullable: true }) decidedBy: string | null;
+  @Column({ type: "timestamptz", nullable: true }) decidedAt: Date | null;
+  @Column({ type: "int", nullable: true }) mergedVersion: number | null;
+}
+
+/** Una línea del hilo de una solicitud: un comentario o una decisión. Solo crece. */
+@Entity({ name: "fork_merge_request_events" })
+export class ForkMergeRequestEventEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Column("uuid") requestId: string;
+  @Column("uuid") organizationId: string;
+  @Column("uuid") authorId: string;
+  @Column({ type: "varchar", length: 12 }) kind: string;
+  @Column({ type: "text", default: "" }) body: string;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+}
+
 /** Where a contract comes from, so a re-import needs no arguments and a drift check can run on
  * a schedule. */
 @Entity({ name: "spec_sources" })
@@ -981,7 +1013,8 @@ export class CodeScanEntity {
 export const ENTITIES = [
   UserEntity, OrganizationEntity, MembershipEntity, InvitationEntity, RefreshTokenEntity, ApiTokenEntity,
   PasswordResetTokenEntity,
-  ProjectEntity, ProjectForkEntity, SpecSourceEntity, SpecVersionEntity, SpecOperationEntity,
+  ProjectEntity, ProjectForkEntity, ForkMergeRequestEntity, ForkMergeRequestEventEntity,
+  SpecSourceEntity, SpecVersionEntity, SpecOperationEntity,
   EnvironmentEntity, EnvironmentCredentialEntity, SessionTokenEntity, RequestCookieEntity, ProjectConfigEntity,
   RequestTemplateEntity, WorkflowEntity, WorkflowDatasetEntity, WorkflowSuiteEntity,
   RunEntity, RunCaseEntity, RunStepEntity,

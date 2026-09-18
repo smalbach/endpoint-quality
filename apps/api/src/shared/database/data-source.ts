@@ -39,6 +39,7 @@ import { ChannelMqtt1700000029000 } from "./migrations/1700000029000-ChannelMqtt
 import { ChannelGrpc1700000030000 } from "./migrations/1700000030000-ChannelGrpc";
 import { ProjectForks1700000031000 } from "./migrations/1700000031000-ProjectForks";
 import { CaptureSessions1700000032000 } from "./migrations/1700000032000-CaptureSessions";
+import { ForkMergeRequests1700000033000 } from "./migrations/1700000033000-ForkMergeRequests";
 import { ChannelMessageProperties1700000034000 } from "./migrations/1700000034000-ChannelMessageProperties";
 
 // Ordered. TypeORM runs them by the timestamp in the class name, and the second one adds a
@@ -77,6 +78,7 @@ export const MIGRATIONS = [
   ChannelGrpc1700000030000,
   ProjectForks1700000031000,
   CaptureSessions1700000032000,
+  ForkMergeRequests1700000033000,
   ChannelMessageProperties1700000034000,
 ];
 

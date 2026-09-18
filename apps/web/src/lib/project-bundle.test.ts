@@ -17,6 +17,7 @@ const empty: ProjectBundleImportResultView = {
   datasets: 0,
   suites: 0,
   environments: 0,
+  channels: 0,
   performancePlans: 0,
   skipped: [],
 };

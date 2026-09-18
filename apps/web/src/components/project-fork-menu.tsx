@@ -34,17 +34,19 @@ export function ForkBadge({ project }: { project: ProjectSummary }) {
 }
 
 /**
- * El menú del proyecto: bifurcarlo y, si es una bifurcación, traer cambios o fusionar.
+ * El menú del proyecto: bifurcarlo, sus solicitudes de fusión y, si es una bifurcación, traer
+ * cambios o fusionar.
  *
  * Donde Postman los pone —en el menú «…» de la colección— y no en una pestaña de ajustes: son
  * cosas que se hacen *con* el proyecto, no ajustes de él. Sustituye a «Copiar de otro proyecto»,
  * que estaba escondido debajo de la importación del contrato y copiaba sin recordar de dónde.
+ *
+ * Un viewer también lo ve, con lo único que puede hacer: leer qué solicitudes están pendientes.
  */
 export function ProjectMenu({ project }: { project: ProjectSummary }) {
   const canEdit = useCan("editor");
   const [open, setOpen] = useState(false);
   const [forking, setForking] = useState(false);
-  if (!canEdit) return null;
   const item = "block w-full rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50";
   return (
     <div className="relative">
@@ -63,18 +65,23 @@ export function ProjectMenu({ project }: { project: ProjectSummary }) {
           className="absolute top-8 right-0 z-20 w-56 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
           onMouseLeave={() => setOpen(false)}
         >
-          <button
-            role="menuitem"
-            type="button"
-            className={item}
-            onClick={() => {
-              setOpen(false);
-              setForking(true);
-            }}
-          >
-            Bifurcar…
-          </button>
-          {project.fork?.parentName && (
+          {canEdit && (
+            <button
+              role="menuitem"
+              type="button"
+              className={item}
+              onClick={() => {
+                setOpen(false);
+                setForking(true);
+              }}
+            >
+              Bifurcar…
+            </button>
+          )}
+          <Link role="menuitem" className={item} to={`/p/${project.id}/merge-requests`} onClick={() => setOpen(false)}>
+            Solicitudes de fusión
+          </Link>
+          {canEdit && project.fork?.parentName && (
             <>
               <Link role="menuitem" className={item} to={`/p/${project.id}/fork/pull`} onClick={() => setOpen(false)}>
                 Traer cambios del original

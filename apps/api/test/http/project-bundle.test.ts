@@ -7,6 +7,7 @@ import request from "supertest";
 
 import { createTestApp, type TestContext } from "../support/test-app";
 import { STUB_SPEC_YAML } from "../support/stub-target";
+import { SHOP_FILES } from "../support/grpc-server";
 
 let context: TestContext;
 const api = () => request(context.app.getHttpServer());
@@ -272,5 +273,61 @@ describe("exportar e importar un proyecto como fichero", () => {
       ),
       JSON.stringify(renamed.body.skipped),
     );
+  });
+
+  test("un flujo con un nodo canal lleva su canal, sin secretos y con sus .proto, y se importa apuntando al nuevo", async () => {
+    const home = await newProject("Con canales");
+    const projectId = home.split("/").pop()!;
+    const socket = await created(
+      await api().post(`${home}/channels`).set(as(owner)).send({ name: "eco", url: "wss://eco.example.com/socket" }),
+    );
+    const grpc = await created(
+      await api().post(`${home}/channels`).set(as(owner)).send({ name: "tienda", protocol: "grpc", url: "grpc://127.0.0.1:50051" }),
+    );
+    await created(await api().put(`${home}/channels/${grpc.body.id}/grpc/protos`).set(as(owner)).send({ files: SHOP_FILES }));
+    // Una fila de antes de que los canales taparan sus secretos.
+    const legacy = (await context.repositories.channels.findById(projectId, socket.body.id))!;
+    await context.repositories.channels.save({
+      ...legacy,
+      headers: [{ name: "Authorization", value: "Bearer literal-del-fichero", enabled: true }],
+    });
+    const flow = await created(
+      await api()
+        .post(`${home}/workflows`)
+        .set(as(owner))
+        .send({
+          name: "Socket",
+          definition: {
+            steps: [
+              { id: "s", kind: "channel", channel: { channelId: socket.body.id, messages: [] } },
+              { id: "g", kind: "channel", channel: { channelId: grpc.body.id } },
+            ],
+          },
+        }),
+    );
+
+    const exported = await api().get(`${home}/export?parts=flows&workflowIds=${flow.body.workflowId}`).set(as(owner));
+    assert.equal(exported.status, 200, JSON.stringify(exported.body));
+    const bundle = exported.body;
+    assert.deepEqual(bundle.flows.channels.map((channel: { name: string }) => channel.name).sort(), ["eco", "tienda"]);
+    assert.ok(!JSON.stringify(bundle).includes("literal-del-fichero"));
+
+    const target = await newProject("Recibe canales");
+    const targetId = target.split("/").pop()!;
+    const imported = await api().post(`${target}/import-bundle`).set(as(owner)).send({ bundle });
+    assert.equal(imported.status, 201, JSON.stringify(imported.body));
+    assert.equal(imported.body.channels, 2);
+    const channels = await context.repositories.channels.listByProject(targetId);
+    const [workflow] = await context.repositories.workflows.listWorkflows(targetId);
+    const ids = workflow!.definition.steps.map((step) => step.channel!.channelId);
+    assert.deepEqual([...ids].sort(), channels.map((channel) => channel.id).sort());
+    const tienda = channels.find((channel) => channel.protocol === "grpc")!;
+    assert.equal((await context.repositories.channelProtos.list(tienda.id)).length, SHOP_FILES.length);
+
+    // Un nodo canal cuyo canal no viene en el fichero se rechaza entero.
+    const orphan = { ...bundle, flows: { ...bundle.flows, channels: [] } };
+    const refused = await api().post(`${target}/import-bundle`).set(as(owner)).send({ bundle: orphan });
+    assert.equal(refused.status, 422, JSON.stringify(refused.body));
+    assert.ok(JSON.stringify(refused.body).includes("el canal no viene en el fichero"));
   });
 });

@@ -14,7 +14,21 @@ import { createHash } from "node:crypto";
  * es al revés. Lo que no cambia es la foto común.
  */
 
-export const MERGE_KINDS = ["endpoint", "template", "workflow", "environment"] as const;
+/**
+ * En el orden en que se enseñan. Suites, canales, roles y secciones llegaron después que los otros:
+ * al bifurcar ya se copiaban, pero no se comparaban, y un rol arreglado en el original había que
+ * repetirlo a mano en cada bifurcación —justo lo que bifurcar venía a quitar—.
+ */
+export const MERGE_KINDS = [
+  "endpoint",
+  "template",
+  "workflow",
+  "suite",
+  "channel",
+  "environment",
+  "role",
+  "section",
+] as const;
 export type MergeKind = (typeof MERGE_KINDS)[number];
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -25,7 +39,30 @@ export type SnapshotEntry = { label: string; content: JsonValue };
 /** Clave de linaje → elemento, por tipo. Lo que se guarda como punto de bifurcación. */
 export type ForkSnapshot = Record<MergeKind, Record<string, SnapshotEntry>>;
 
-export const emptySnapshot = (): ForkSnapshot => ({ endpoint: {}, template: {}, workflow: {}, environment: {} });
+export const emptySnapshot = (): ForkSnapshot => ({
+  endpoint: {},
+  template: {},
+  workflow: {},
+  suite: {},
+  channel: {},
+  environment: {},
+  role: {},
+  section: {},
+});
+
+/**
+ * Una foto con todos los tipos, aunque se guardara cuando había menos.
+ *
+ * Una bifurcación anterior a las suites, los canales, los roles y las secciones tiene una foto común sin ellos.
+ * Leída tal cual, cada suite de los dos lados sería «añadida en los dos» —`same` si coinciden, un
+ * conflicto si no—, que es lo honrado: no se sabe qué tenían en común, y la primera sincronización
+ * deja la foto completa.
+ */
+export function withAllKinds(snapshot: Partial<ForkSnapshot>): ForkSnapshot {
+  const complete = emptySnapshot();
+  for (const kind of MERGE_KINDS) complete[kind] = snapshot[kind] ?? {};
+  return complete;
+}
 
 export type Change = "none" | "added" | "modified" | "deleted";
 
@@ -98,7 +135,14 @@ function changeOf(base: SnapshotEntry | undefined, side: SnapshotEntry | undefin
  * Los que no cambiaron en ninguno no salen: una lista de doscientos «sin cambios» esconde los tres
  * que importan.
  */
-export function threeWayDiff(base: ForkSnapshot, source: ForkSnapshot, target: ForkSnapshot): DiffEntry[] {
+export function threeWayDiff(
+  storedBase: ForkSnapshot,
+  storedSource: ForkSnapshot,
+  storedTarget: ForkSnapshot,
+): DiffEntry[] {
+  const base = withAllKinds(storedBase);
+  const source = withAllKinds(storedSource);
+  const target = withAllKinds(storedTarget);
   const entries: DiffEntry[] = [];
   for (const kind of MERGE_KINDS) {
     const keys = new Set([...Object.keys(base[kind]), ...Object.keys(source[kind]), ...Object.keys(target[kind])]);

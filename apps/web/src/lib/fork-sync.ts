@@ -1,4 +1,4 @@
-import type { ForkDiffEntryView, ForkDiffView } from "@/lib/types";
+import type { ForkDiffEntryView, ForkDiffView, MergeRequestEventKind, MergeRequestStatus } from "@/lib/types";
 
 /**
  * Lo que la pantalla de traer y fusionar necesita decir, separado de cómo lo dibuja.
@@ -11,7 +11,11 @@ export const KIND_LABELS: Record<ForkDiffEntryView["kind"], string> = {
   endpoint: "Endpoints",
   template: "Pruebas",
   workflow: "Flujos",
+  suite: "Suites",
+  channel: "Canales",
   environment: "Entornos",
+  role: "Roles",
+  section: "Secciones de configuración",
 };
 
 export const STATUS_LABELS: Record<ForkDiffEntryView["status"], string> = {
@@ -65,3 +69,31 @@ export function showValue(value: unknown): string {
   const text = typeof value === "string" ? value : JSON.stringify(value);
   return text === "" ? "(vacío)" : text;
 }
+
+/** Las solicitudes de fusión: su estado dicho como se dice, y lo que cada línea del hilo cuenta. */
+export const REQUEST_STATUS_LABELS: Record<MergeRequestStatus, string> = {
+  open: "Abierta",
+  approved: "Aprobada",
+  merged: "Fusionada",
+  declined: "Rechazada",
+  closed: "Retirada",
+};
+
+export const REQUEST_STATUS_TONES: Record<MergeRequestStatus, string> = {
+  open: "bg-sky-50 text-sky-700",
+  approved: "bg-emerald-50 text-emerald-700",
+  merged: "bg-violet-50 text-violet-700",
+  declined: "bg-rose-50 text-rose-700",
+  closed: "bg-slate-100 text-slate-600",
+};
+
+export const EVENT_VERBS: Record<MergeRequestEventKind, string> = {
+  comment: "comentó",
+  approved: "aprobó",
+  declined: "rechazó",
+  merged: "fusionó",
+  closed: "retiró la solicitud",
+};
+
+/** Pendiente: la que todavía espera una decisión. */
+export const isPending = (status: MergeRequestStatus) => status === "open" || status === "approved";

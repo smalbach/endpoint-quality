@@ -27,6 +27,15 @@ import {
 import { CreateProjectCommand } from "../application/commands/create-project";
 import { ForkProjectCommand } from "../application/commands/fork-project";
 import { assertDirection, GetForkDiffQuery, SyncForkCommand } from "../application/commands/sync-fork";
+import {
+  assertReviewAction,
+  CommentMergeRequestCommand,
+  CreateMergeRequestCommand,
+  GetMergeRequestQuery,
+  ListMergeRequestsQuery,
+  MergeMergeRequestCommand,
+  ReviewMergeRequestCommand,
+} from "../application/commands/merge-requests";
 import { ImportElementsCommand } from "../application/commands/import-elements";
 import { GetImportPreviewQuery } from "../application/queries/import-preview";
 import { ExportProjectQuery } from "../application/queries/export-project";
@@ -45,6 +54,9 @@ import { GetOperationsQuery, ListSpecVersionsQuery } from "@/modules/specs/appli
 import {
   ForkProjectDto,
   SyncForkDto,
+  CreateMergeRequestDto,
+  MergeRequestCommentDto,
+  MergeRequestReviewDto,
   ImportElementsDto,
   ImportProjectBundleDto,
   ImportAnythingDto,
@@ -280,6 +292,116 @@ export class ProjectsController {
         assertDirection(direction),
         body.token,
         body.resolutions ?? {},
+        actorId(principal),
+      ),
+    );
+  }
+
+  /**
+   * Crear una solicitud de fusión desde la bifurcación. `editor`, como fusionar: es pedir escribir
+   * en el original, y quien no puede escribir en esta organización tampoco lo pide.
+   */
+  @Post(":projectId/merge-requests")
+  @RequireRole("editor")
+  async createMergeRequest(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Body() body: CreateMergeRequestDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.commandBus.execute(
+      new CreateMergeRequestCommand(
+        organizationId,
+        projectId,
+        { title: body.title, description: body.description },
+        actorId(principal),
+      ),
+    );
+  }
+
+  /**
+   * Las solicitudes de un proyecto, como original o como bifurcación. `viewer`: la lista es título,
+   * estado y quién, sin la comparación, y cualquiera del equipo puede ver qué está pendiente.
+   */
+  @Get(":projectId/merge-requests")
+  @RequireRole("viewer")
+  async listMergeRequests(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string) {
+    return this.queryBus.execute(new ListMergeRequestsQuery(organizationId, projectId));
+  }
+
+  /** Una solicitud con su hilo y su comparación. `editor`, como la comparación directa: enseña los
+   * scripts y las cabeceras de los dos proyectos. */
+  @Get(":projectId/merge-requests/:requestId")
+  @RequireRole("editor")
+  async getMergeRequest(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("requestId") requestId: string,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.queryBus.execute(new GetMergeRequestQuery(organizationId, projectId, requestId, actorId(principal)));
+  }
+
+  @Post(":projectId/merge-requests/:requestId/comments")
+  @RequireRole("editor")
+  @HttpCode(204)
+  async commentMergeRequest(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("requestId") requestId: string,
+    @Body() body: MergeRequestCommentDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    await this.commandBus.execute(
+      new CommentMergeRequestCommand(organizationId, projectId, requestId, body.body, actorId(principal)),
+    );
+  }
+
+  /**
+   * Fusionar la solicitud: la comparación de ahora, con su huella y las decisiones de quien fusiona.
+   * Declarada antes que `:action` para que «merge» no se lea como una acción de revisión.
+   */
+  @Post(":projectId/merge-requests/:requestId/merge")
+  @RequireRole("editor")
+  @HttpCode(200)
+  async mergeMergeRequest(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("requestId") requestId: string,
+    @Body() body: SyncForkDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.commandBus.execute(
+      new MergeMergeRequestCommand(
+        organizationId,
+        projectId,
+        requestId,
+        body.token,
+        body.resolutions ?? {},
+        actorId(principal),
+      ),
+    );
+  }
+
+  /** `approve`, `decline` o `close`. Quién puede cada una lo decide el dominio: ver `merge-request.ts`. */
+  @Post(":projectId/merge-requests/:requestId/:action")
+  @RequireRole("editor")
+  @HttpCode(204)
+  async reviewMergeRequest(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("requestId") requestId: string,
+    @Param("action") action: string,
+    @Body() body: MergeRequestReviewDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    await this.commandBus.execute(
+      new ReviewMergeRequestCommand(
+        organizationId,
+        projectId,
+        requestId,
+        assertReviewAction(action),
+        body.body ?? "",
         actorId(principal),
       ),
     );

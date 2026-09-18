@@ -2,7 +2,12 @@ import { Module, forwardRef } from "@nestjs/common";
 import { CqrsModule } from "@nestjs/cqrs";
 import { TypeOrmModule } from "@nestjs/typeorm";
 
-import { ProjectEntity, ProjectForkEntity } from "@/shared/database/entities";
+import {
+  ForkMergeRequestEntity,
+  ForkMergeRequestEventEntity,
+  ProjectEntity,
+  ProjectForkEntity,
+} from "@/shared/database/entities";
 import { AuthModule } from "@/modules/auth/auth.module";
 import { IamModule } from "@/modules/iam/iam.module";
 import { SpecsModule } from "@/modules/specs/specs.module";
@@ -10,9 +15,20 @@ import { ProjectConfigModule } from "@/modules/config/config.module";
 import { WorkflowsModule } from "@/modules/workflows/workflows.module";
 import { EnvironmentsModule } from "@/modules/environments/environments.module";
 import { EndpointsModule } from "@/modules/endpoints/endpoints.module";
-import { PROJECT_FORK_REPOSITORY, PROJECT_REPOSITORY } from "./domain/ports";
+import { MERGE_REQUEST_REPOSITORY, PROJECT_FORK_REPOSITORY, PROJECT_REPOSITORY } from "./domain/ports";
 import { TypeOrmProjectRepository } from "./infrastructure/persistence/typeorm-project.repository";
 import { TypeOrmProjectForkRepository } from "./infrastructure/persistence/typeorm-project-fork.repository";
+import { TypeOrmMergeRequestRepository } from "./infrastructure/persistence/typeorm-merge-request.repository";
+import {
+  CommentMergeRequestHandler,
+  CreateMergeRequestHandler,
+  GetMergeRequestHandler,
+  ListMergeRequestsHandler,
+  MergeMergeRequestHandler,
+  ReviewMergeRequestHandler,
+} from "./application/commands/merge-requests";
+import { MergeRequestNotifier } from "./application/merge-request-notifier";
+import { MergeRequestViews } from "./application/merge-request-views";
 import { CreateProjectHandler } from "./application/commands/create-project";
 import { ForkProjectHandler } from "./application/commands/fork-project";
 import { GetForkDiffHandler, SyncForkHandler } from "./application/commands/sync-fork";
@@ -28,6 +44,7 @@ import { GetImportPreviewHandler } from "./application/queries/import-preview";
 import { SetProjectArchivedHandler, UpdateProjectHandler } from "./application/commands/update-project";
 import { DeleteProjectHandler } from "./application/commands/delete-project";
 import { RunsModule } from "@/modules/runs/runs.module";
+import { ChannelsModule } from "@/modules/channels/channels.module";
 import { GetProjectHandler, ListProjectsHandler } from "./application/queries/list-projects";
 import { ProjectsController } from "./presentation/projects.controller";
 
@@ -38,6 +55,10 @@ export const PROJECT_COMMAND_HANDLERS = [
   DeleteProjectHandler,
   ForkProjectHandler,
   SyncForkHandler,
+  CreateMergeRequestHandler,
+  CommentMergeRequestHandler,
+  ReviewMergeRequestHandler,
+  MergeMergeRequestHandler,
   ImportElementsHandler,
   ImportProjectBundleHandler,
   ImportAnythingHandler,
@@ -49,12 +70,16 @@ export const PROJECT_QUERY_HANDLERS = [
   ExportProjectHandler,
   ExportPostmanHandler,
   GetForkDiffHandler,
+  ListMergeRequestsHandler,
+  GetMergeRequestHandler,
 ];
-/** Lo que comparten la vista previa y la aplicación de una sincronización: ver `fork-sync.ts`. */
-export const PROJECT_SERVICES = [ForkSync];
+/** Lo que comparten la vista previa y la aplicación de una sincronización —ver `fork-sync.ts`—, y
+ * la lectura y los avisos de las solicitudes de fusión. */
+export const PROJECT_SERVICES = [ForkSync, MergeRequestViews, MergeRequestNotifier];
 export const PROJECT_ADAPTERS = [
   { provide: PROJECT_REPOSITORY, useClass: TypeOrmProjectRepository },
   { provide: PROJECT_FORK_REPOSITORY, useClass: TypeOrmProjectForkRepository },
+  { provide: MERGE_REQUEST_REPOSITORY, useClass: TypeOrmMergeRequestRepository },
 ];
 
 /**
@@ -65,7 +90,7 @@ export const PROJECT_ADAPTERS = [
 @Module({
   imports: [
     CqrsModule,
-    TypeOrmModule.forFeature([ProjectEntity, ProjectForkEntity]),
+    TypeOrmModule.forFeature([ProjectEntity, ProjectForkEntity, ForkMergeRequestEntity, ForkMergeRequestEventEntity]),
     forwardRef(() => SpecsModule),
     // Copying a project reads the other one's configuration, its flows and its environments, so
     // this module needs all three repositories. Circular, because each of those modules already
@@ -79,6 +104,8 @@ export const PROJECT_ADAPTERS = [
     forwardRef(() => PerformanceModule),
     // The project list shows the health of each project's latest run.
     forwardRef(() => RunsModule),
+    // Bifurcar y sincronizar llevan los canales y sus `.proto`.
+    forwardRef(() => ChannelsModule),
     AuthModule,
     IamModule,
   ],

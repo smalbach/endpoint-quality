@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import request from "supertest";
 
 import { createTestApp, type TestContext } from "../support/test-app";
+import { SHOP_FILES } from "../support/grpc-server";
 import type { Role } from "@/modules/iam/domain/model";
 
 let context: TestContext;
@@ -340,5 +341,262 @@ describe("traer y fusionar", () => {
     await api().patch(`${parent.base}/archived`).set(as(owner)).send({ archived: true });
     const archived = await api().post(`${forkBase}/fork/merge`).set(as(owner)).send({ token: merge.token });
     assert.equal(archived.status, 409, JSON.stringify(archived.body));
+  });
+});
+
+describe("suites, roles y secciones", () => {
+  test("se comparan y viajan: el rol con sus permisos por ruta, la suite con sus flujos, la sección entera", async () => {
+    const parent = await parentProject();
+    const role = await api().post(`${parent.base}/roles`).set(as(owner)).send({ name: "admin" });
+    assert.equal(role.status, 201, JSON.stringify(role.body));
+    const allowed = await api()
+      .put(`${parent.base}/roles/${role.body.id}/permissions`)
+      .set(as(owner))
+      .send({ permissions: [{ endpointId: await endpointId(parent.base, "/orders"), access: "allow" }] });
+    assert.equal(allowed.status, 200, JSON.stringify(allowed.body));
+
+    const forked = (await fork(parent.id)).body.projectId as string;
+    const forkBase = `${org()}/${forked}`;
+    assert.deepEqual((await api().get(`${forkBase}/fork/merge`).set(as(owner))).body.entries, []);
+
+    const [forkRole] = await context.repositories.roles.list(forked);
+    await api().patch(`${forkBase}/roles/${forkRole!.id}`).set(as(owner)).send({ color: "#10b981" });
+    await api()
+      .put(`${forkBase}/roles/${forkRole!.id}/permissions`)
+      .set(as(owner))
+      .send({ permissions: [{ endpointId: await endpointId(forkBase, "/orders"), access: "deny" }] });
+    const [forkFlow] = await context.repositories.workflows.listWorkflows(forked);
+    const suite = await api()
+      .post(`${forkBase}/suites`)
+      .set(as(owner))
+      .send({ name: "Nocturna", workflowIds: [forkFlow!.id] });
+    assert.equal(suite.status, 201, JSON.stringify(suite.body));
+    const budgets = await api().put(`${forkBase}/config/budgets`).set(as(owner)).send({ budgets: [] });
+    assert.equal(budgets.status, 204, JSON.stringify(budgets.body));
+
+    const merge = (await api().get(`${forkBase}/fork/merge`).set(as(owner))).body;
+    assert.deepEqual(
+      merge.entries.map((entry: { kind: string; label: string; status: string }) => [
+        entry.kind,
+        entry.label,
+        entry.status,
+      ]),
+      [
+        ["suite", "Nocturna", "incoming"],
+        ["role", "admin", "incoming"],
+        ["section", "budgets", "incoming"],
+      ],
+    );
+    const merged = await api().post(`${forkBase}/fork/merge`).set(as(owner)).send({ token: merge.token });
+    assert.equal(merged.status, 200, JSON.stringify(merged.body));
+    assert.deepEqual([merged.body.applied.suite, merged.body.applied.role, merged.body.applied.section], [1, 1, 1]);
+
+    // En el original: el mismo rol —por linaje, no uno nuevo—, con el permiso sobre su propio endpoint.
+    const [parentRole, ...others] = await context.repositories.roles.list(parent.id);
+    assert.equal(others.length, 0);
+    assert.equal(parentRole!.id, role.body.id);
+    assert.equal(parentRole!.color, "#10b981");
+    const permissions = await context.repositories.roles.listPermissions(parent.id);
+    assert.deepEqual(
+      permissions.map((cell) => [cell.endpointId, cell.access]),
+      [[await endpointId(parent.base, "/orders"), "deny"]],
+    );
+    const [parentSuite] = await context.repositories.workflows.listSuites(parent.id);
+    assert.deepEqual(parentSuite!.workflowIds, [parent.workflowId]);
+    assert.deepEqual((await context.repositories.config.findSection(parent.id, "budgets"))?.data, { budgets: [] });
+    // `access` se vuelve a derivar de los roles del original, no se copia.
+    const access = (await context.repositories.config.findSection(parent.id, "access"))?.data as {
+      access: { roles: string[] };
+    };
+    assert.deepEqual(access.access.roles, ["admin"]);
+
+    // Y quedan emparejados: nada que traer ni que fusionar.
+    assert.deepEqual((await api().get(`${forkBase}/fork/pull`).set(as(owner))).body.entries, []);
+    assert.deepEqual((await api().get(`${forkBase}/fork/merge`).set(as(owner))).body.entries, []);
+  });
+
+  test("una suite que llega trae el flujo que el destino había borrado", async () => {
+    const parent = await parentProject();
+    const suite = await api()
+      .post(`${parent.base}/suites`)
+      .set(as(owner))
+      .send({ name: "Humo", workflowIds: [parent.workflowId] });
+    assert.equal(suite.status, 201, JSON.stringify(suite.body));
+    const forked = (await fork(parent.id)).body.projectId as string;
+    const forkBase = `${org()}/${forked}`;
+    const [forkSuite] = await context.repositories.workflows.listSuites(forked);
+    await api().delete(`${forkBase}/suites/${forkSuite!.id}`).set(as(owner));
+    const [forkFlow] = await context.repositories.workflows.listWorkflows(forked);
+    const removed = await api().delete(`${forkBase}/workflows/${forkFlow!.id}`).set(as(owner));
+    assert.equal(removed.status, 204, JSON.stringify(removed.body));
+    await api().put(`${parent.base}/suites/${suite.body.suiteId}`).set(as(owner)).send({ description: "cada hora" });
+
+    const pull = (await api().get(`${forkBase}/fork/pull`).set(as(owner))).body;
+    const conflict = pull.entries.find((entry: { kind: string }) => entry.kind === "suite");
+    assert.equal(conflict.status, "conflict");
+    const pulled = await api()
+      .post(`${forkBase}/fork/pull`)
+      .set(as(owner))
+      .send({ token: pull.token, resolutions: { [`suite:${conflict.key}`]: "source" } });
+    assert.equal(pulled.status, 200, JSON.stringify(pulled.body));
+    assert.ok(pulled.body.skipped.some((skip: { detail: string }) => skip.detail.includes("vino con la suite")));
+    const [flow] = await context.repositories.workflows.listWorkflows(forked);
+    const [back] = await context.repositories.workflows.listSuites(forked);
+    assert.deepEqual(back!.workflowIds, [flow!.id]);
+  });
+});
+
+describe("dos aplicaciones a la vez", () => {
+  test("con la misma huella, solo una escribe: la otra es 409 aunque pasó la comprobación de la huella", async () => {
+    const parent = await parentProject();
+    const forked = (await fork(parent.id)).body.projectId as string;
+    const forkBase = `${org()}/${forked}`;
+    await api().post(`${forkBase}/endpoints`).set(as(owner)).send({ method: "PUT", path: "/orders" });
+    const merge = (await api().get(`${forkBase}/fork/merge`).set(as(owner))).body;
+
+    // Las dos llegan a escribir antes de que ninguna haya escrito: la huella ya no las separa.
+    context.repositories.forks.holdApplies(2);
+    const results = await Promise.all([
+      api().post(`${forkBase}/fork/merge`).set(as(owner)).send({ token: merge.token }),
+      api().post(`${forkBase}/fork/merge`).set(as(owner)).send({ token: merge.token }),
+    ]);
+    assert.deepEqual(
+      results.map((response) => response.status).sort(),
+      [200, 409],
+      JSON.stringify(results.map((response) => response.body)),
+    );
+    const refused = results.find((response) => response.status === 409)!;
+    assert.match(refused.body.type, /fork-diff-stale/);
+    assert.equal(context.repositories.forks.rows.get(forked)!.version, 2);
+    const puts = (await context.repositories.endpoints.listAll(parent.id)).filter((row) => row.method === "PUT");
+    assert.equal(puts.length, 1);
+  });
+});
+
+describe("canales", () => {
+  async function channel(base: string, body: Record<string, unknown>): Promise<string> {
+    const created = await api()
+      .post(`${base}/channels`)
+      .set(as(owner))
+      .send({ name: unique("canal"), url: "wss://echo.example.com/socket", ...body });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    return created.body.id as string;
+  }
+  async function flowWith(base: string, channelId: string): Promise<string> {
+    const created = await api()
+      .post(`${base}/workflows`)
+      .set(as(owner))
+      .send({
+        name: unique("flujo"),
+        definition: { steps: [{ id: "socket", kind: "channel", channel: { channelId, messages: [] } }] },
+      });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    return created.body.workflowId as string;
+  }
+
+  test("bifurcar copia los canales con sus .proto y sin secretos, y el nodo canal apunta a la copia", async () => {
+    const parent = await parentProject();
+    const socket = await channel(parent.base, { headers: [{ name: "X-Tenant", value: "acme" }] });
+    const grpc = await channel(parent.base, { protocol: "grpc", url: "grpc://127.0.0.1:50051" });
+    const protos = await api()
+      .put(`${parent.base}/channels/${grpc}/grpc/protos`)
+      .set(as(owner))
+      .send({ files: SHOP_FILES });
+    assert.equal(protos.status, 200, JSON.stringify(protos.body));
+    await flowWith(parent.base, socket);
+    // Una fila de antes de que un canal tapara sus secretos: el literal está en la base.
+    const legacy = (await context.repositories.channels.findById(parent.id, socket))!;
+    await context.repositories.channels.save({
+      ...legacy,
+      headers: [...legacy.headers, { name: "Authorization", value: "Bearer literal-del-original", enabled: true }],
+      auth: { type: "bearer", params: { token: "literal-del-original" } },
+    });
+
+    const response = await fork(parent.id);
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.copied.channels, 2);
+    assert.ok(response.body.skipped.some((skip: { what: string }) => skip.what === "canal"));
+    const forked = response.body.projectId as string;
+
+    const copies = await context.repositories.channels.listByProject(forked);
+    assert.equal(copies.length, 2);
+    assert.ok(!JSON.stringify(copies).includes("literal-del-original"));
+    assert.ok(!JSON.stringify(context.repositories.forks.rows.get(forked)).includes("literal-del-original"));
+    const copiedGrpc = copies.find((row) => row.protocol === "grpc")!;
+    assert.deepEqual(
+      (await context.repositories.channelProtos.list(copiedGrpc.id)).map((file) => file.path),
+      SHOP_FILES.map((file) => file.path).sort(),
+    );
+    const copiedSocket = copies.find((row) => row.protocol === "ws")!;
+    assert.notEqual(copiedSocket.id, socket);
+    const [flow] = await context.repositories.workflows
+      .listWorkflows(forked)
+      .then((rows) => rows.filter((row) => row.definition.steps.some((step) => step.channel)));
+    assert.equal(flow!.definition.steps[0]!.channel!.channelId, copiedSocket.id);
+
+    // Recién nacida, nada que comparar: los canales se comparan ya sin sus secretos.
+    assert.deepEqual((await api().get(`${org()}/${forked}/fork/pull`).set(as(owner))).body.entries, []);
+  });
+
+  test("un flujo nuevo con su canal llega al original apuntando al canal de allí; y el destino conserva sus secretos", async () => {
+    const parent = await parentProject();
+    const shared = await channel(parent.base, {
+      auth: { type: "bearer", params: { token: "{{token}}" } },
+    });
+    const forked = (await fork(parent.id)).body.projectId as string;
+    const forkBase = `${org()}/${forked}`;
+
+    const fresh = await channel(forkBase, { protocol: "mqtt", url: "mqtt://broker.example.com:1883" });
+    await flowWith(forkBase, fresh);
+    const merge = (await api().get(`${forkBase}/fork/merge`).set(as(owner))).body;
+    assert.deepEqual(
+      merge.entries.map((entry: { kind: string; status: string }) => [entry.kind, entry.status]),
+      [
+        ["workflow", "incoming"],
+        ["channel", "incoming"],
+      ],
+    );
+    const merged = await api().post(`${forkBase}/fork/merge`).set(as(owner)).send({ token: merge.token });
+    assert.equal(merged.status, 200, JSON.stringify(merged.body));
+    const parentChannels = await context.repositories.channels.listByProject(parent.id);
+    const arrived = parentChannels.find((row) => row.protocol === "mqtt")!;
+    assert.ok(arrived && arrived.id !== fresh);
+    const parentFlow = (await context.repositories.workflows.listWorkflows(parent.id)).find((row) =>
+      row.definition.steps.some((step) => step.channel),
+    )!;
+    assert.equal(parentFlow.definition.steps[0]!.channel!.channelId, arrived.id);
+
+    // El original cambia la URL del canal compartido; al traerlo, la bifurcación conserva su token.
+    await api()
+      .patch(`${parent.base}/channels/${shared}`)
+      .set(as(owner))
+      .send({ url: "wss://otro.example.com/socket" });
+    const pull = (await api().get(`${forkBase}/fork/pull`).set(as(owner))).body;
+    assert.deepEqual(
+      pull.entries.map((entry: { kind: string; key: string; status: string }) => [entry.kind, entry.key, entry.status]),
+      [["channel", shared, "incoming"]],
+    );
+    const pulled = await api().post(`${forkBase}/fork/pull`).set(as(owner)).send({ token: pull.token });
+    assert.equal(pulled.status, 200, JSON.stringify(pulled.body));
+    const mine = (await context.repositories.channels.listByProject(forked)).find((row) => row.protocol === "ws")!;
+    assert.equal(mine.url, "wss://otro.example.com/socket");
+    assert.deepEqual(mine.auth, { type: "bearer", params: { token: "{{token}}" } });
+    assert.deepEqual((await api().get(`${forkBase}/fork/merge`).set(as(owner))).body.entries, []);
+  });
+
+  test("un canal que el original borró no se borra en la bifurcación si un flujo suyo lo usa", async () => {
+    const parent = await parentProject();
+    const socket = await channel(parent.base, {});
+    const forked = (await fork(parent.id)).body.projectId as string;
+    const forkBase = `${org()}/${forked}`;
+    const [copy] = await context.repositories.channels.listByProject(forked);
+    await flowWith(forkBase, copy!.id);
+    assert.equal((await api().delete(`${parent.base}/channels/${socket}`).set(as(owner))).status, 204);
+
+    const pull = (await api().get(`${forkBase}/fork/pull`).set(as(owner))).body;
+    const pulled = await api().post(`${forkBase}/fork/pull`).set(as(owner)).send({ token: pull.token });
+    assert.equal(pulled.status, 200, JSON.stringify(pulled.body));
+    assert.ok(pulled.body.skipped.some((skip: { detail: string }) => skip.detail.includes("un flujo lo usa")));
+    assert.equal((await context.repositories.channels.listByProject(forked)).length, 1);
   });
 });

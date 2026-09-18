@@ -6,6 +6,7 @@ import { api, ApiError } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { Button, Card, Empty } from "@/components/ui";
 import { ConfirmDialog } from "@/components/overlay";
+import { CreateMergeRequestModal } from "@/components/merge-request-modal";
 import { cn } from "@/lib/format";
 import {
   KIND_LABELS,
@@ -42,6 +43,7 @@ export function ForkSyncPage() {
   const copy = directionCopy(direction);
   const [resolutions, setResolutions] = useState<Record<string, ForkSide>>({});
   const [confirming, setConfirming] = useState(false);
+  const [requesting, setRequesting] = useState(false);
 
   const diff = useQuery({
     queryKey: ["fork-diff", projectId, direction],
@@ -113,29 +115,11 @@ export function ForkSyncPage() {
 
       {view && entries.length > 0 && (
         <>
-          <Summary entries={entries} />
-          {(Object.keys(KIND_LABELS) as ForkDiffEntryView["kind"][]).map((kind) => {
-            const group = entries.filter((entry) => entry.kind === kind);
-            if (!group.length) return null;
-            return (
-              <Card key={kind} className="p-0">
-                <p className="border-b border-slate-100 px-4 py-2 text-[10px] font-semibold tracking-wide text-slate-400 uppercase">
-                  {KIND_LABELS[kind]}
-                </p>
-                <ul className="divide-y divide-slate-100">
-                  {group.map((entry) => (
-                    <EntryRow
-                      key={entryId(entry)}
-                      entry={entry}
-                      view={view}
-                      side={resolutions[entryId(entry)]}
-                      onPick={(side) => setResolutions((current) => ({ ...current, [entryId(entry)]: side }))}
-                    />
-                  ))}
-                </ul>
-              </Card>
-            );
-          })}
+          <DiffEntries
+            view={view}
+            resolutions={resolutions}
+            onPick={(id, side) => setResolutions((current) => ({ ...current, [id]: side }))}
+          />
 
           <div className="flex items-center justify-end gap-3">
             {pending.length > 0 && (
@@ -146,6 +130,11 @@ export function ForkSyncPage() {
             {!writes && pending.length === 0 && (
               <p className="text-xs text-slate-500">Nada de esto escribe en {view.target.name}.</p>
             )}
+            {direction === "merge" && canEdit && (
+              <Button variant="ghost" onClick={() => setRequesting(true)}>
+                Crear solicitud de fusión
+              </Button>
+            )}
             <Button
               disabled={!canEdit || pending.length > 0 || apply.isPending}
               onClick={() => (direction === "merge" ? setConfirming(true) : apply.mutate())}
@@ -154,6 +143,10 @@ export function ForkSyncPage() {
             </Button>
           </div>
         </>
+      )}
+
+      {requesting && view && (
+        <CreateMergeRequestModal forkId={view.source.id} parent={view.target} onClose={() => setRequesting(false)} />
       )}
 
       {confirming && view && (
@@ -183,6 +176,49 @@ const STATUS_TONES: Record<ForkDiffEntryView["status"], string> = {
   conflict: "bg-amber-100 text-amber-800",
 };
 
+/**
+ * Los elementos de una comparación, agrupados por tipo, con el selector de cada conflicto. La usan
+ * esta pantalla y la de una solicitud de fusión, que fusiona con la misma comparación.
+ */
+export function DiffEntries({
+  view,
+  resolutions,
+  onPick,
+}: {
+  view: Pick<ForkDiffView, "source" | "target" | "entries">;
+  resolutions?: Record<string, ForkSide>;
+  /** Sin él, los conflictos se enseñan sin selector: es una comparación para leer. */
+  onPick?: (id: string, side: ForkSide) => void;
+}) {
+  return (
+    <>
+      <Summary entries={view.entries} />
+      {(Object.keys(KIND_LABELS) as ForkDiffEntryView["kind"][]).map((kind) => {
+        const group = view.entries.filter((entry) => entry.kind === kind);
+        if (!group.length) return null;
+        return (
+          <Card key={kind} className="p-0">
+            <p className="border-b border-slate-100 px-4 py-2 text-[10px] font-semibold tracking-wide text-slate-400 uppercase">
+              {KIND_LABELS[kind]}
+            </p>
+            <ul className="divide-y divide-slate-100">
+              {group.map((entry) => (
+                <EntryRow
+                  key={entryId(entry)}
+                  entry={entry}
+                  view={view}
+                  side={resolutions?.[entryId(entry)]}
+                  onPick={onPick && ((side) => onPick(entryId(entry), side))}
+                />
+              ))}
+            </ul>
+          </Card>
+        );
+      })}
+    </>
+  );
+}
+
 function Summary({ entries }: { entries: ForkDiffEntryView[] }) {
   const count = (status: ForkDiffEntryView["status"]) => entries.filter((entry) => entry.status === status).length;
   return (
@@ -210,9 +246,9 @@ function EntryRow({
   onPick,
 }: {
   entry: ForkDiffEntryView;
-  view: ForkDiffView;
+  view: Pick<ForkDiffView, "source" | "target">;
   side: ForkSide | undefined;
-  onPick: (side: ForkSide) => void;
+  onPick?: (side: ForkSide) => void;
 }) {
   const [open, setOpen] = useState(entry.status === "conflict");
   return (
@@ -231,7 +267,7 @@ function EntryRow({
           {STATUS_LABELS[entry.status]}
         </span>
       </div>
-      {entry.status === "conflict" && (
+      {entry.status === "conflict" && onPick && (
         <div role="radiogroup" aria-label={`Qué lado gana en ${entry.label}`} className="mt-2 flex flex-wrap gap-2">
           {(["source", "target"] as const).map((option) => (
             <label
@@ -285,10 +321,14 @@ const APPLIED_LABELS: Record<keyof ForkSyncOutcomeView["applied"], string> = {
   endpoint: "endpoints",
   template: "pruebas",
   workflow: "flujos",
+  suite: "suites",
+  channel: "canales",
   environment: "entornos",
+  role: "roles",
+  section: "secciones",
 };
 
-function Outcome({ outcome, done }: { outcome: ForkSyncOutcomeView; done: string }) {
+export function Outcome({ outcome, done }: { outcome: ForkSyncOutcomeView; done: string }) {
   const applied = (Object.keys(APPLIED_LABELS) as (keyof ForkSyncOutcomeView["applied"])[])
     .filter((kind) => outcome.applied[kind] > 0)
     .map((kind) => `${outcome.applied[kind]} ${APPLIED_LABELS[kind]}`);

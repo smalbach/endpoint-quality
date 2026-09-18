@@ -8,6 +8,7 @@ import {
   canonicalJson,
   diffToken,
   emptySnapshot,
+  withAllKinds,
   fieldChanges,
   resolutionProblems,
   threeWayDiff,
@@ -15,8 +16,15 @@ import {
   type ForkSnapshot,
   type JsonValue,
 } from "@/modules/projects/domain/fork-merge";
-import { forkKeys, parentKeys, snapshotOf, environmentContent } from "@/modules/projects/domain/fork-snapshot";
-import { emptyLineage, type ProjectContents } from "@/modules/projects/domain/fork";
+import {
+  channelContent,
+  forkKeys,
+  linkedDefinition,
+  parentKeys,
+  snapshotOf,
+  environmentContent,
+} from "@/modules/projects/domain/fork-snapshot";
+import { completeLineage, emptyLineage, type ProjectContents } from "@/modules/projects/domain/fork";
 import { keepTargetSecrets } from "@/modules/projects/application/fork-sync";
 
 const snap = (entries: Partial<Record<keyof ForkSnapshot, Record<string, JsonValue>>>): ForkSnapshot => {
@@ -174,7 +182,13 @@ const contents = (partial: Partial<ProjectContents>): ProjectContents => ({
   workflows: [],
   datasets: [],
   suites: [],
+  channels: [],
+  channelProtos: {},
   environments: [],
+  roles: [],
+  rolePermissions: [],
+  roleRules: [],
+  sections: [],
   ...partial,
 });
 
@@ -238,5 +252,238 @@ describe("fotos y linaje", () => {
       { type: "bearer", params: { token: "x" } },
     );
     assert.deepEqual(changed.params, { password: "" });
+  });
+});
+
+const at = new Date(0);
+const suite = (id: string, name: string, workflowIds: string[]) => ({
+  id,
+  projectId: "p",
+  name,
+  description: null,
+  workflowIds,
+  createdAt: at,
+  updatedAt: at,
+  updatedBy: "u",
+});
+const workflow = (id: string, name: string) => ({
+  id,
+  projectId: "p",
+  name,
+  description: null,
+  status: "active",
+  definition: { steps: [] },
+  createdAt: at,
+  updatedAt: at,
+  updatedBy: "u",
+});
+const role = (id: string, name: string, position = 0) => ({
+  id,
+  projectId: "p",
+  name,
+  description: "",
+  color: "#6366f1",
+  sameRoleDataIsolation: false,
+  position,
+  createdAt: at,
+  updatedAt: at,
+});
+const endpoint = (id: string, path: string) =>
+  ({
+    id,
+    method: "GET",
+    path,
+    auth: { type: "inherit", params: {} },
+  }) as unknown as ProjectContents["endpoints"][number];
+const section = (name: string, data: unknown) =>
+  ({ projectId: "p", section: name, data, updatedAt: at, updatedBy: "u" }) as ProjectContents["sections"][number];
+
+/** Las dos fotos de un original y su bifurcación recién nacida, con las claves de cada una. */
+function pair(parent: ProjectContents, fork: ProjectContents, lineage = emptyLineage()) {
+  const pKeys = parentKeys(parent);
+  const { keys } = forkKeys(fork, lineage, parent);
+  return { parent: snapshotOf(parent, pKeys), fork: snapshotOf(fork, keys) };
+}
+
+describe("suites, roles y secciones", () => {
+  test("una suite nombra sus flujos por clave de linaje y en orden: la copia no sale modificada", () => {
+    const parent = contents({
+      workflows: [workflow("w1", "Pedidos") as never, workflow("w2", "Pagos") as never],
+      suites: [suite("s1", "Nocturna", ["w1", "w2"])],
+    });
+    const fork = contents({
+      workflows: [workflow("f1", "Pedidos") as never, workflow("f2", "Pagos") as never],
+      suites: [suite("t1", "Nocturna", ["f1", "f2"])],
+    });
+    const lineage = emptyLineage();
+    lineage.workflow.push({ parentId: "w1", forkId: "f1" }, { parentId: "w2", forkId: "f2" });
+    lineage.suite.push({ parentId: "s1", forkId: "t1" });
+    const same = pair(parent, fork, lineage);
+    assert.deepEqual(threeWayDiff(same.parent, same.parent, same.fork), []);
+
+    // El mismo par de flujos en otro orden es otra suite: corre en ese orden.
+    const reordered = contents({ ...fork, suites: [suite("t1", "Nocturna", ["f2", "f1"])] });
+    const changed = pair(parent, reordered, lineage);
+    const entry = one(changed.parent, changed.parent, changed.fork);
+    assert.deepEqual(
+      [entry.kind, entry.key, entry.status, entry.fields[0]!.path],
+      ["suite", "s1", "kept", "workflows"],
+    );
+  });
+
+  test("un rol compara sus permisos por método y ruta y sus reglas por el otro rol, no por ids ni posición", () => {
+    const parent = contents({
+      endpoints: [endpoint("e1", "/orders")],
+      roles: [role("r1", "admin", 0), role("r2", "buyer", 1)],
+      rolePermissions: [{ roleId: "r1", endpointId: "e1", access: "allow", dataScope: "all" }],
+      roleRules: [
+        { projectId: "p", sourceRoleId: "r1", targetRoleId: "r2", canRead: true, canWrite: false, canDelete: false },
+      ],
+    });
+    const fork = contents({
+      endpoints: [endpoint("x1", "/orders")],
+      roles: [role("q2", "buyer", 0), role("q1", "admin", 5)],
+      rolePermissions: [{ roleId: "q1", endpointId: "x1", access: "allow", dataScope: "all" }],
+      roleRules: [
+        { projectId: "f", sourceRoleId: "q1", targetRoleId: "q2", canRead: true, canWrite: false, canDelete: false },
+      ],
+    });
+    const lineage = emptyLineage();
+    lineage.role.push({ parentId: "r1", forkId: "q1" }, { parentId: "r2", forkId: "q2" });
+    const same = pair(parent, fork, lineage);
+    assert.deepEqual(threeWayDiff(same.parent, same.parent, same.fork), []);
+
+    const denied = contents({
+      ...fork,
+      rolePermissions: [{ roleId: "q1", endpointId: "x1", access: "deny", dataScope: "all" }],
+    });
+    const changed = pair(parent, denied, lineage);
+    const entry = one(changed.parent, changed.fork, changed.parent);
+    assert.equal(entry.kind, "role");
+    assert.equal(entry.status, "incoming");
+    assert.deepEqual(entry.fields, [
+      { path: "permissions.GET /orders.access", base: "allow", source: "deny", target: "allow" },
+    ]);
+  });
+
+  test("un rol sin pareja se empareja por nombre, como un flujo", () => {
+    const parent = contents({ roles: [role("r1", "admin")] });
+    const fork = contents({ roles: [role("q1", "admin")] });
+    const { keys, implicit } = forkKeys(fork, emptyLineage(), parent);
+    assert.equal(keys.role.get("q1"), "r1");
+    assert.deepEqual(implicit.role, [{ parentId: "r1", forkId: "q1" }]);
+  });
+
+  test("las secciones se comparan por nombre, sin `implemented` ni `access`", () => {
+    const parent = contents({
+      sections: [
+        section("budgets", { budgets: [] }),
+        section("implemented", { implemented: ["a"] }),
+        section("access", { access: { roles: ["admin"] } }),
+      ],
+    });
+    const fork = contents({
+      sections: [
+        section("budgets", { budgets: [{ p95: 300 }] }),
+        section("implemented", { implemented: ["b"] }),
+        section("access", { access: { roles: [] } }),
+      ],
+    });
+    const snapshots = pair(parent, fork);
+    assert.deepEqual(Object.keys(snapshots.parent.section), ["budgets"]);
+    const entry = one(snapshots.parent, snapshots.fork, snapshots.parent);
+    assert.deepEqual([entry.kind, entry.key, entry.status], ["section", "budgets", "incoming"]);
+    // Una sección que solo existe en un lado es añadida o borrada, como cualquier elemento.
+    const created = pair(parent, contents({ sections: [...fork.sections, section("labels", { labels: {} })] }));
+    assert.ok(
+      threeWayDiff(snapshots.parent, created.fork, snapshots.parent).some(
+        (row) => row.key === "labels" && row.sourceChange === "added",
+      ),
+    );
+  });
+
+  test("una foto común de antes de estos tipos se completa: lo que coincide sale igual, lo que no, en conflicto", () => {
+    const legacy = { endpoint: {}, template: {}, workflow: {}, environment: {} } as unknown as ForkSnapshot;
+    assert.deepEqual(Object.keys(withAllKinds(legacy)).sort(), [
+      "channel",
+      "endpoint",
+      "environment",
+      "role",
+      "section",
+      "suite",
+      "template",
+      "workflow",
+    ]);
+    const a = snap({ role: { r1: { color: "#000000" } } });
+    const b = snap({ role: { r1: { color: "#ffffff" } } });
+    assert.equal(one(legacy, a, a).status, "same");
+    assert.equal(one(legacy, a, b).status, "conflict");
+    assert.deepEqual(completeLineage({ template: [], workflow: [], environment: [] } as never).role, []);
+  });
+});
+
+const channelRow = (id: string, name: string, protocol: "ws" | "mqtt" | "grpc", token: string) =>
+  ({
+    id,
+    projectId: "p",
+    protocol,
+    name,
+    url: "wss://x.example.com",
+    subprotocols: [],
+    headers: [{ name: "Authorization", value: token ? `Bearer ${token}` : "", enabled: true }],
+    auth: { type: "bearer", params: { token } },
+    limits: {},
+    expectations: {},
+    messages: [],
+    mqtt: null,
+    grpc: null,
+    orderIndex: 0,
+    createdAt: at,
+    updatedAt: at,
+    updatedBy: null,
+    deletedAt: null,
+  }) as unknown as ProjectContents["channels"][number];
+
+describe("canales", () => {
+  test("un canal se compara sin sus secretos: un literal y el hueco de la copia son el mismo canal", () => {
+    const withSecret = contents({ channels: [channelRow("c1", "eco", "ws", "literal")] });
+    const emptied = contents({ channels: [channelRow("c2", "eco", "ws", "")] });
+    const a = canonicalJson(channelContent(withSecret.channels[0]!, withSecret));
+    assert.equal(a, canonicalJson(channelContent(emptied.channels[0]!, emptied)));
+    assert.ok(!a.includes("literal"));
+  });
+
+  test("los .proto van en el canal, ordenados por ruta", () => {
+    const grpc = contents({
+      channels: [channelRow("g1", "tienda", "grpc", "")],
+      channelProtos: {
+        g1: [
+          { path: "b.proto", content: "b" },
+          { path: "a.proto", content: "a" },
+        ],
+      },
+    });
+    const content = channelContent(grpc.channels[0]!, grpc) as { protos: { path: string }[] };
+    assert.deepEqual(
+      content.protos.map((file) => file.path),
+      ["a.proto", "b.proto"],
+    );
+  });
+
+  test("se emparejan por protocolo y nombre, y el nodo canal de un flujo se nombra por la clave", () => {
+    const parent = contents({ channels: [channelRow("c1", "eco", "ws", ""), channelRow("m1", "eco", "mqtt", "")] });
+    const fork = contents({ channels: [channelRow("f1", "eco", "mqtt", "")] });
+    const { keys } = forkKeys(fork, emptyLineage(), parent);
+    assert.equal(keys.channel.get("f1"), "m1");
+    const definition = linkedDefinition(
+      { steps: [{ id: "s", kind: "channel", channel: { channelId: "f1" } }] } as never,
+      keys,
+    );
+    assert.equal(definition.steps[0]!.channel!.channelId, "m1");
+    const dangling = linkedDefinition(
+      { steps: [{ id: "s", kind: "channel", channel: { channelId: "otro" } }] } as never,
+      keys,
+    );
+    assert.equal(dangling.steps[0]!.channel!.channelId, "(no existe)");
   });
 });
