@@ -46,8 +46,9 @@ import { InMemoryDocSiteRepository } from "./in-memory-doc-sites";
 import { InMemoryMonitorRepository } from "./in-memory-monitors";
 import { InMemoryChannelRepository, InMemoryChannelSessionRepository } from "./in-memory-channels";
 import { StubChannelTransport } from "./stub-channel-transport";
-import { InMemoryCaptureRepository } from "./in-memory-captures";
-import { CAPTURE_REPOSITORY } from "@/modules/captures/domain/ports";
+import { InMemoryCaptureAuthorityRepository, InMemoryCaptureRepository } from "./in-memory-captures";
+import { CAPTURE_AUTHORITY_REPOSITORY, CAPTURE_REPOSITORY } from "@/modules/captures/domain/ports";
+import { CaptureAuthority } from "@/modules/captures/infrastructure/capture-authority";
 import { CapturesController } from "@/modules/captures/presentation/captures.controller";
 import { CaptureProxyService } from "@/modules/captures/infrastructure/capture-proxy.service";
 import { CAPTURE_COMMAND_HANDLERS, CAPTURE_QUERY_HANDLERS } from "@/modules/captures/captures.module";
@@ -314,6 +315,7 @@ export type TestContext = {
     channelSessions: InMemoryChannelSessionRepository;
     channelProtos: InMemoryChannelProtoRepository;
     captures: InMemoryCaptureRepository;
+    captureAuthorities: InMemoryCaptureAuthorityRepository;
     mergeRequests: InMemoryMergeRequestRepository;
     forks: InMemoryProjectForkRepository;
   };
@@ -345,9 +347,11 @@ export async function createTestApp(
     sibling?: TestContext;
     /** El bus de esta instancia. Sin él, uno en memoria para ella sola: un despliegue de un proceso. */
     bus?: InstanceBusPort;
+    /** Variables que cambian para esta aplicación, sobre `TEST_ENV`. */
+    env?: NodeJS.ProcessEnv;
   } = {},
 ): Promise<TestContext> {
-  const env = loadEnv(TEST_ENV);
+  const env = loadEnv({ ...TEST_ENV, ...options.env });
   const channelEnv = { ...env, ALLOW_PRIVATE_TARGETS: options.channelPrivateTargets ?? true };
   const clock = options.sibling?.clock ?? new FixedClock(new Date("2026-03-01T10:00:00.000Z"));
   const bus = options.bus ?? new InMemoryInstanceBus();
@@ -382,6 +386,7 @@ export async function createTestApp(
     channelSessions: new InMemoryChannelSessionRepository(),
     channelProtos: new InMemoryChannelProtoRepository(),
     captures: new InMemoryCaptureRepository(),
+    captureAuthorities: new InMemoryCaptureAuthorityRepository(),
     mergeRequests: new InMemoryMergeRequestRepository(),
   };
   const forks = options.sibling?.repositories.forks ?? new InMemoryProjectForkRepository(repositories);
@@ -499,6 +504,8 @@ export async function createTestApp(
       ChannelSessionOpener,
       HeadlessChannelRunner,
       { provide: CAPTURE_REPOSITORY, useValue: repositories.captures },
+      { provide: CAPTURE_AUTHORITY_REPOSITORY, useValue: repositories.captureAuthorities },
+      CaptureAuthority,
       CaptureProxyService,
       // A real cipher with a throwaway key, not a fake: the tests assert that what lands in the
       // repository is ciphertext, and a pass-through would make that assertion meaningless.

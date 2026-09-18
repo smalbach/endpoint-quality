@@ -7,13 +7,14 @@
  */
 import { Inject } from "@nestjs/common";
 import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
-import type { CaptureItemView, CaptureOverviewView, CapturePageView } from "@eq/contracts";
+import type { CaptureAuthorityView, CaptureItemView, CaptureOverviewView, CapturePageView } from "@eq/contracts";
 
 import { NotFoundError } from "@/shared/errors/domain-error";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
 import { viewCaptureItem, viewCaptureItemSummary, viewCaptureSession } from "../../domain/model";
 import { CAPTURE_REPOSITORY, type CaptureRepositoryPort } from "../../domain/ports";
+import { CaptureAuthority } from "../../infrastructure/capture-authority";
 import { CAPTURE_PROXY_USERNAME, CaptureProxyService } from "../../infrastructure/capture-proxy.service";
 
 /** Cuántas sesiones se enseñan. Las viejas siguen ahí hasta que alguien las borra. */
@@ -34,6 +35,7 @@ export class GetCapturesHandler implements IQueryHandler<GetCapturesQuery, Captu
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(CAPTURE_REPOSITORY) private readonly captures: CaptureRepositoryPort,
     private readonly proxy: CaptureProxyService,
+    private readonly authority: CaptureAuthority,
   ) {}
 
   async execute(query: GetCapturesQuery): Promise<CaptureOverviewView> {
@@ -46,6 +48,7 @@ export class GetCapturesHandler implements IQueryHandler<GetCapturesQuery, Captu
         this.proxy.enabled && port !== null
           ? { host: this.proxy.publicHost, port, username: CAPTURE_PROXY_USERNAME }
           : null,
+      mitm: this.proxy.enabled ? await this.authority.status() : null,
       sessions: sessions.map(viewCaptureSession),
     };
   }
@@ -100,4 +103,34 @@ export class GetCaptureItemHandler implements IQueryHandler<GetCaptureItemQuery,
   }
 }
 
-export const CAPTURE_QUERY_HANDLERS = [GetCapturesHandler, GetCapturePageHandler, GetCaptureItemHandler];
+export class GetCaptureAuthorityQuery implements IQuery {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+  ) {}
+}
+
+/**
+ * El certificado de la CA de captura, para instalarlo en el dispositivo. **Solo la parte pública**:
+ * la clave privada no sale por ninguna ruta. Pide ver el proyecto como cualquier lectura de la
+ * captura, aunque la CA sea de la instalación: así no hay una ruta abierta sin sesión.
+ */
+@QueryHandler(GetCaptureAuthorityQuery)
+export class GetCaptureAuthorityHandler implements IQueryHandler<GetCaptureAuthorityQuery, CaptureAuthorityView> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    private readonly authority: CaptureAuthority,
+  ) {}
+
+  async execute(query: GetCaptureAuthorityQuery): Promise<CaptureAuthorityView> {
+    await ownedProject(this.projects, query.organizationId, query.projectId);
+    return this.authority.view();
+  }
+}
+
+export const CAPTURE_QUERY_HANDLERS = [
+  GetCapturesHandler,
+  GetCapturePageHandler,
+  GetCaptureItemHandler,
+  GetCaptureAuthorityHandler,
+];

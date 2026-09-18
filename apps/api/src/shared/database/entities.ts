@@ -819,7 +819,7 @@ export class CaptureSessionEntity {
   @PrimaryColumn("uuid") id: string;
   @Index() @Column("uuid") projectId: string;
   @Column({ type: "varchar", length: 20 }) status: string;
-  @Column({ type: "varchar", length: 64 }) tokenHash: string;
+  @Index({ unique: true }) @Column({ type: "varchar", length: 64 }) tokenHash: string;
   @Column({ type: "jsonb" }) limits: unknown;
   @Column({ type: "int", default: 0 }) itemCount: number;
   @Column({ type: "timestamptz" }) startedAt: Date;
@@ -827,6 +827,21 @@ export class CaptureSessionEntity {
   @Column({ type: "timestamptz", nullable: true }) stoppedAt: Date | null;
   @Column({ type: "varchar", length: 30, nullable: true }) stopReason: string | null;
   @Column("uuid") startedBy: string;
+  @Column({ type: "boolean", default: false }) decryptHttps: boolean;
+}
+
+/**
+ * La CA del proxy de captura para descifrar HTTPS. Una por instalación.
+ *
+ * El certificado es público; la clave privada **solo cifrada** con `SECRETS_KEY`. Ver
+ * `captures/infrastructure/capture-authority.ts`.
+ */
+@Entity({ name: "capture_authorities" })
+export class CaptureAuthorityEntity {
+  @PrimaryColumn({ type: "varchar", length: 20 }) id: string;
+  @Column({ type: "text" }) certificatePem: string;
+  @Column({ type: "text" }) privateKeyCiphertext: string;
+  @Column({ type: "timestamptz" }) createdAt: Date;
 }
 
 /** Una petición grabada por el proxy, **ya tapada**: ver `captures/domain/model.ts`. */
@@ -1028,7 +1043,7 @@ export const ENTITIES = [
   DocSiteEntity,
   MonitorEntity, MonitorExecutionEntity,
   ChannelEndpointEntity, ChannelSessionEntity, ChannelMessageEntity, ChannelProtoFileEntity,
-  CaptureSessionEntity, CaptureItemEntity,
+  CaptureSessionEntity, CaptureItemEntity, CaptureAuthorityEntity,
   RoleEntity, RolePermissionEntity, RoleRuleEntity,
   SecurityRunEntity,
   PerformancePlanEntity, PerformanceRunEntity,

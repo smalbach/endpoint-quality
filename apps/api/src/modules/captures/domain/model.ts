@@ -42,8 +42,9 @@ export type CaptureStatus = (typeof CAPTURE_STATUSES)[number];
  * - `request-limit`: llegó al tope de peticiones.
  * - `replaced`: se abrió otra en el mismo proyecto. Una por proyecto: dos sesiones vivas son dos
  *   tokens válidos y una lista partida en dos.
- * - `restart`: la API se reinició. El proxy vive en el proceso y el registro de tokens en memoria,
- *   así que una sesión «activa» en la tabla sin proceso detrás no está activa.
+ * - `restart`: la API se reinició. Solo en filas antiguas: cuando el registro de tokens vivía en
+ *   memoria, un reinicio dejaba sin proceso las sesiones abiertas. Ahora el token se busca en la
+ *   tabla y una sesión sobrevive al reinicio, así que no se escribe más; se conserva para leerlas.
  */
 export const CAPTURE_STOP_REASONS = ["manual", "expired", "request-limit", "replaced", "restart"] as const;
 export type CaptureStopReason = (typeof CAPTURE_STOP_REASONS)[number];
@@ -71,6 +72,11 @@ export type CaptureSession = {
   stoppedAt: Date | null;
   stopReason: CaptureStopReason | null;
   startedBy: string;
+  /**
+   * Si esta sesión descifra HTTPS. Solo puede ser `true` con `CAPTURE_MITM=true` en el despliegue,
+   * y solo sirve si el dispositivo instaló la CA de la instalación (ver `capture-authority.ts`).
+   */
+  decryptHttps: boolean;
 };
 
 /** Una petición grabada, ya tapada. */
@@ -88,8 +94,8 @@ export type CaptureItem = {
   /**
    * Un `CONNECT`: un túnel HTTPS que el proxy abrió sin mirar dentro.
    *
-   * Solo se sabe a qué `host:puerto` iba. Descifrarlo pediría instalar una CA de este producto en
-   * el dispositivo, y eso no se hace por defecto (ver `capture-proxy.ts`).
+   * Solo se sabe a qué `host:puerto` iba. Una sesión que descifra HTTPS no graba el túnel así:
+   * graba cada petición de dentro como una más, con su URL `https://`, y esas sí se importan.
    */
   encrypted: boolean;
   requestHeaders: Record<string, string>;
@@ -394,6 +400,7 @@ export function viewCaptureSession(session: CaptureSession): CaptureSessionView 
     startedAt: session.startedAt.toISOString(),
     expiresAt: session.expiresAt.toISOString(),
     stoppedAt: session.stoppedAt?.toISOString() ?? null,
+    decryptHttps: session.decryptHttps ?? false,
   };
 }
 

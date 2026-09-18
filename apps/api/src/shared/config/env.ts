@@ -126,6 +126,35 @@ export const envSchema = z.object({
     .min(1024)
     .max(1024 * 1024)
     .default(64 * 1024),
+  /**
+   * Descifrar HTTPS en el proxy de captura (MITM). **Apagado por defecto.**
+   *
+   * Encendido, el proxy genera una CA para esta instalación y cada sesión puede pedir descifrar: el
+   * dispositivo tiene que instalar esa CA como raíz de confianza. Exige una `SECRETS_KEY` válida
+   * —la clave de la CA solo se guarda cifrada— y sin ella se niega con el motivo. El razonamiento
+   * entero está en `captures/infrastructure/capture-authority.ts`.
+   */
+  CAPTURE_MITM: booleanish.default(false),
+  /**
+   * A qué puertos abre túnel un `CONNECT`. Por omisión los de la web: 443, 80 y 8443.
+   *
+   * Un túnel es un cable TCP hacia donde diga el cliente, y la guarda de red solo mira la IP. Sin
+   * esta lista, un token de captura sirve para hablar SMTP con un servidor de correo o para abrir
+   * cualquier servicio que escuche en una IP pública: justo lo que un proxy de captura de APIs no
+   * tiene por qué hacer. Lista separada por comas; vacía cuenta como ausente.
+   */
+  CAPTURE_CONNECT_PORTS: z.preprocess(
+    (value) =>
+      typeof value === "string"
+        ? value.trim()
+          ? value
+              .split(",")
+              .map((part) => part.trim())
+              .filter(Boolean)
+          : undefined
+        : value,
+    z.array(z.coerce.number().int().min(1).max(65_535)).min(1).default([443, 80, 8443]),
+  ),
 
   /**
    * The most cases one run may produce.

@@ -229,3 +229,48 @@ describe("capturar tráfico", () => {
     await api().post(`${base()}/captures/${sessionId}/stop`).set(as(owner));
   });
 });
+
+describe("descifrar HTTPS, por HTTP", () => {
+  test("apagado: la vista no lo ofrece, y pedirlo al abrir es un 409 con el motivo", async () => {
+    const overview = await api().get(`${base()}/captures`).set(as(owner));
+    assert.equal(overview.body.mitm, null);
+    const refused = await api().post(`${base()}/captures`).set(as(owner)).send({ decryptHttps: true });
+    assert.equal(refused.status, 409);
+    assert.match(JSON.stringify(refused.body), /CAPTURE_MITM/);
+    assert.equal((await api().get(`${base()}/captures/authority/certificate`).set(as(owner))).status, 409);
+  });
+
+  test("encendido: la CA se descarga sin la clave, y la sesión sale marcada", async () => {
+    const mitm = await createTestApp({ env: { CAPTURE_MITM: "true" } });
+    try {
+      const http = () => request(mitm.app.getHttpServer());
+      const password = "Una-contraseña-larga-1";
+      const email = `captures-mitm-${Date.now()}@example.test`;
+      const registered = await http().post("/auth/register").send({ email, password, name: "x" });
+      const login = await http().post("/auth/login").send({ email, password });
+      const headers = { Authorization: `Bearer ${login.body.accessToken}` };
+      const organizationId: string = registered.body.organizationId;
+      const project = await http().post(`/orgs/${organizationId}/projects`).set(headers).send({ name: "MITM" });
+      const root = `/orgs/${organizationId}/projects/${project.body.projectId}/captures`;
+
+      const overview = await http().get(root).set(headers);
+      assert.deepEqual(overview.body.mitm, { ready: true, problem: null });
+
+      const authority = await http().get(`${root}/authority/certificate`).set(headers);
+      assert.equal(authority.status, 200);
+      assert.match(authority.body.pem, /BEGIN CERTIFICATE/);
+      assert.ok(!JSON.stringify(authority.body).includes("PRIVATE KEY"));
+      // En la tabla, la clave solo cifrada.
+      const row = mitm.repositories.captureAuthorities.row!;
+      assert.ok(row.privateKeyCiphertext.startsWith("v1."));
+      assert.ok(!JSON.stringify(row).includes("PRIVATE KEY"));
+
+      const started = await http().post(root).set(headers).send({ decryptHttps: true });
+      assert.equal(started.status, 201, JSON.stringify(started.body));
+      assert.equal(started.body.session.decryptHttps, true);
+      await http().post(`${root}/${started.body.session.id}/stop`).set(headers);
+    } finally {
+      await mitm.close();
+    }
+  });
+});

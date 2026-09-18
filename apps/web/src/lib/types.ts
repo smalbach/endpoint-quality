@@ -181,6 +181,8 @@ export type {
   CaptureItemSummaryView,
   CaptureItemView,
   CaptureOverviewView,
+  CaptureAuthorityView,
+  CaptureMitmView,
   CaptureStartedView,
   CapturePageView,
   PostmanExportResult,

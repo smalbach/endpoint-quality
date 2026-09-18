@@ -259,6 +259,13 @@ describe("configuración de entorno", () => {
       );
     }
   });
+
+  test("los túneles del proxy de captura van a puertos web salvo que se diga otra lista", () => {
+    assert.deepEqual(loadEnv(TEST_ENV).CAPTURE_CONNECT_PORTS, [443, 80, 8443]);
+    assert.deepEqual(loadEnv({ ...TEST_ENV, CAPTURE_CONNECT_PORTS: "" }).CAPTURE_CONNECT_PORTS, [443, 80, 8443]);
+    assert.deepEqual(loadEnv({ ...TEST_ENV, CAPTURE_CONNECT_PORTS: "443, 9443" }).CAPTURE_CONNECT_PORTS, [443, 9443]);
+    assert.throws(() => loadEnv({ ...TEST_ENV, CAPTURE_CONNECT_PORTS: "443,correo" }), /CAPTURE_CONNECT_PORTS/);
+  });
 });
 
 describe("duración del access token", () => {

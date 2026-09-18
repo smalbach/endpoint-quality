@@ -38,8 +38,13 @@ import {
   StartCaptureCommand,
   StopCaptureCommand,
 } from "../application/commands/manage-captures";
-import { GetCaptureItemQuery, GetCapturePageQuery, GetCapturesQuery } from "../application/queries/read-captures";
-import { ImportCaptureDto } from "./dto/captures.dto";
+import {
+  GetCaptureAuthorityQuery,
+  GetCaptureItemQuery,
+  GetCapturePageQuery,
+  GetCapturesQuery,
+} from "../application/queries/read-captures";
+import { ImportCaptureDto, StartCaptureDto } from "./dto/captures.dto";
 
 const actorId = (principal: Principal): string => (principal.kind === "user" ? principal.userId : principal.tokenId);
 
@@ -66,8 +71,21 @@ export class CapturesController {
     @Param("organizationId") organizationId: string,
     @Param("projectId") projectId: string,
     @CurrentUser() principal: Principal,
+    @Body() body: StartCaptureDto,
   ) {
-    return this.commandBus.execute(new StartCaptureCommand(organizationId, projectId, actorId(principal)));
+    return this.commandBus.execute(
+      new StartCaptureCommand(organizationId, projectId, actorId(principal), { decryptHttps: body?.decryptHttps }),
+    );
+  }
+
+  /**
+   * El certificado de la CA para descifrar HTTPS, **solo la parte pública**, para instalarlo en el
+   * dispositivo. Dos segmentos a propósito: uno solo lo tomaría la ruta de una sesión.
+   */
+  @Get("authority/certificate")
+  @RequireRole("viewer")
+  authority(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string) {
+    return this.queryBus.execute(new GetCaptureAuthorityQuery(organizationId, projectId));
   }
 
   /** La lista en vivo. Sin límite de ritmo: la pantalla pregunta mientras la sesión está abierta. */

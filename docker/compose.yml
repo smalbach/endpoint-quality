@@ -89,6 +89,10 @@ services:
       # del anfitrión en las instalaciones que no lo usan.
       CAPTURE_PROXY_PORT: ${CAPTURE_PROXY_PORT:-}
       CAPTURE_PROXY_PUBLIC_HOST: ${CAPTURE_PROXY_PUBLIC_HOST:-localhost}
+      # Puertos a los que abre túnel un CONNECT. Vacío = 443, 80 y 8443.
+      CAPTURE_CONNECT_PORTS: ${CAPTURE_CONNECT_PORTS:-}
+      # Descifrar HTTPS con una CA propia de la instalación. Apagado por omisión; exige SECRETS_KEY.
+      CAPTURE_MITM: ${CAPTURE_MITM:-false}
     ports: ["${EQ_API_PORT:-3001}:3001"]
     healthcheck:
       # `web` hace proxy de `/api/` contra esto, y el seed de la demo lo espera. Sin healthcheck,

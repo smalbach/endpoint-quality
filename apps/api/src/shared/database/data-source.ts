@@ -42,6 +42,7 @@ import { CaptureSessions1700000032000 } from "./migrations/1700000032000-Capture
 import { ForkMergeRequests1700000033000 } from "./migrations/1700000033000-ForkMergeRequests";
 import { ChannelMessageProperties1700000034000 } from "./migrations/1700000034000-ChannelMessageProperties";
 import { ChannelSocketIo1700000036000 } from "./migrations/1700000036000-ChannelSocketIo";
+import { CaptureProxyHardening1700000037000 } from "./migrations/1700000037000-CaptureProxyHardening";
 
 // Ordered. TypeORM runs them by the timestamp in the class name, and the second one adds a
 // foreign key into a table the first creates.
@@ -82,6 +83,7 @@ export const MIGRATIONS = [
   ForkMergeRequests1700000033000,
   ChannelMessageProperties1700000034000,
   ChannelSocketIo1700000036000,
+  CaptureProxyHardening1700000037000,
 ];
 
 export function buildDataSourceOptions(databaseUrl: string) {

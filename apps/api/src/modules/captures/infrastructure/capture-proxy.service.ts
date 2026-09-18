@@ -1,16 +1,23 @@
 /**
  * El proxy de captura atado a la aplicación: cuándo escucha, y dónde acaba lo que graba.
  *
- * **Escucha solo mientras hay sesiones.** Se abre con la primera y se cierra con la última: sin
- * ninguna sesión abierta el puerto no está escuchando, así que un proxy configurado y sin usar no es
- * una superficie. Y solo si el despliegue definió `CAPTURE_PROXY_PORT`.
+ * **Escucha solo mientras hay sesiones, y lo decide la tabla.** Cada instancia de la API mira cada
+ * segundo si hay alguna sesión abierta (`sync`): con alguna, su proxy escucha; sin ninguna, cierra el
+ * puerto. Así un proxy configurado y sin usar no es una superficie, y una sesión abierta desde una
+ * instancia se atiende en cualquier otra: el balanceador puede mandar el puerto del proxy a la que
+ * quiera. Solo si el despliegue definió `CAPTURE_PROXY_PORT`.
  *
- * **Lo grabado se escribe en orden, sesión a sesión.** El proxy entrega cada petición según termina
- * y la escritura es asíncrona; sin una cola por sesión, la fila 7 podría llegar a la tabla antes que
- * la 6 y la cuenta de la sesión quedaría por detrás de lo que hay. Parar una sesión espera a que se
- * vacíe su cola, para que lo último que se capturó esté en la lista cuando se lee.
+ * **La tabla es la única verdad.** El token se busca por su hash (`findSessionByTokenHash`), la
+ * cuenta de lo grabado sube con un incremento atómico que respeta el tope (`appendNext`), y parar o
+ * caducar es un `UPDATE` condicional. No hay registro en memoria que se pierda al reiniciar: una
+ * sesión abierta sigue sirviendo después de un despliegue.
+ *
+ * Es deliberadamente sondeo contra la base y no un bus de mensajes: son unas pocas filas, un índice
+ * parcial, y una consulta por segundo e instancia. Lo que llega con ese retraso es que otra
+ * instancia corte las conexiones abiertas de una sesión parada; el token deja de valer antes, al
+ * caducar su caché (ver `capture-proxy.ts`).
  */
-import { Inject, Injectable, type OnApplicationBootstrap, type OnModuleDestroy } from "@nestjs/common";
+import { Inject, Injectable, Logger, type OnApplicationBootstrap, type OnModuleDestroy } from "@nestjs/common";
 
 import { ENV, type Env } from "@/shared/config/env";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
@@ -18,23 +25,30 @@ import { ConflictError } from "@/shared/errors/domain-error";
 import { policyFromEnv } from "@/shared/http/safe-fetch.provider";
 import { captureItemFrom, type CaptureLimits, type CaptureSession, type CaptureStopReason } from "../domain/model";
 import { CAPTURE_REPOSITORY, type CaptureRepositoryPort } from "../domain/ports";
-import { CaptureProxy, type ProxySession } from "./capture-proxy";
+import { CaptureAuthority } from "./capture-authority";
+import { CaptureProxy, type ProxySession, type SessionLookup } from "./capture-proxy";
 
 /** El usuario del `Basic`. Da igual cuál: lo que autentica es la contraseña, que es el token. */
 export const CAPTURE_PROXY_USERNAME = "captura";
 
 /** Cuánto aguanta un túnel HTTPS sin tráfico antes de cortarse. */
 const TUNNEL_IDLE_MS = 120_000;
+/** Cada cuánto mira cada instancia si hay sesiones abiertas, y cuáles se pararon en otra. */
+export const CAPTURE_SYNC_MS = 1_000;
 
 @Injectable()
 export class CaptureProxyService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly proxy: CaptureProxy;
-  private readonly queues = new Map<string, Promise<void>>();
+  /** Las escrituras de este proceso que aún no han terminado, por sesión: parar las espera. */
+  private readonly pending = new Map<string, Set<Promise<unknown>>>();
+  private timer: NodeJS.Timeout | null = null;
+  private syncing: Promise<void> | null = null;
 
   constructor(
     @Inject(ENV) private readonly env: Env,
     @Inject(CAPTURE_REPOSITORY) private readonly captures: CaptureRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
+    private readonly authority: CaptureAuthority,
   ) {
     this.proxy = new CaptureProxy({
       // La misma política que `SAFE_FETCH` y los sockets, leída del mismo sitio: es lo que impide
@@ -43,19 +57,25 @@ export class CaptureProxyService implements OnApplicationBootstrap, OnModuleDest
       now: () => clock.now(),
       maxForwardBodyBytes: env.MAX_RESPONSE_BYTES,
       tunnelIdleMs: TUNNEL_IDLE_MS,
-      hooks: {
-        onExchange: (session, exchange) =>
-          this.enqueue(session.id, async () => {
-            const item = captureItemFrom(exchange, {
-              sessionId: session.id,
-              projectId: session.projectId,
-              seq: session.recorded,
-            });
-            await this.captures.appendItem(item);
-            const row = await this.captures.findSession(session.projectId, session.id);
-            if (row) await this.captures.saveSession({ ...row, itemCount: Math.max(row.itemCount, item.seq) });
+      connectPorts: new Set(env.CAPTURE_CONNECT_PORTS),
+      // Solo con `CAPTURE_MITM=true`: sin esto, una sesión que pidiera descifrar no descifra.
+      ...(env.CAPTURE_MITM ? { mitm: { contextFor: (hostname: string) => authority.contextFor(hostname) } } : {}),
+      store: {
+        lookup: (tokenHash) => this.lookup(tokenHash),
+        record: (session, exchange) =>
+          this.track(session.id, async () => {
+            const item = captureItemFrom(exchange, { sessionId: session.id, projectId: session.projectId, seq: 0 });
+            const { seq: _unused, ...rest } = item;
+            const seq = await this.captures.appendNext(rest, session.limits.maxRequests);
+            if (seq !== null && seq < session.limits.maxRequests) return { open: true };
+            // Con esta llegó al tope, o ya no estaba abierta: se apunta, y el proxy corta.
+            if (seq !== null)
+              await this.captures.stopSession(session.projectId, session.id, "request-limit", clock.now());
+            return { open: false };
           }),
-        onStop: (session, reason) => void this.closed(session, reason),
+        expire: async (session) => {
+          await this.captures.stopSession(session.projectId, session.id, "expired", clock.now());
+        },
       },
     });
   }
@@ -81,16 +101,82 @@ export class CaptureProxyService implements OnApplicationBootstrap, OnModuleDest
     };
   }
 
-  isLive(sessionId: string): boolean {
-    return this.proxy.isLive(sessionId);
+  /** Pone el proxy a escuchar para una sesión recién escrita en la tabla. Devuelve el puerto. */
+  async open(_session: CaptureSession): Promise<number> {
+    if (!this.enabled) throw disabled();
+    // Una vuelta de sincronización en marcha pudo leer la tabla antes de que la sesión estuviera:
+    // se espera a que acabe, o cerraría el puerto que se abre aquí.
+    await this.syncing?.catch(() => undefined);
+    return this.listen();
   }
 
-  /** Da de alta la sesión en el proxy, y lo pone a escuchar si no lo estaba. Devuelve el puerto. */
-  async open(session: CaptureSession): Promise<number> {
-    if (!this.enabled) throw disabled();
-    let port: number;
+  /**
+   * Cierra una sesión desde fuera —«Parar», borrarla, o que se abrió otra—.
+   *
+   * En este proceso deja de atenderla ya (su credencial y sus conexiones) y espera a que lo
+   * capturado aquí esté escrito; luego la cierra en la tabla, que es por donde se enteran las demás
+   * instancias, y cierra el puerto si era la última. Devuelve si la cerró esta llamada.
+   */
+  async stop(session: Pick<CaptureSession, "id" | "projectId">, reason: CaptureStopReason): Promise<boolean> {
+    this.proxy.stop(session.id);
+    await this.flush(session.id);
+    const closed = await this.captures.stopSession(session.projectId, session.id, reason, this.clock.now());
+    await this.sync().catch(() => undefined);
+    return closed;
+  }
+
+  /** Lo que queda por escribir de una sesión en este proceso. */
+  async flush(sessionId: string): Promise<void> {
+    const writes = this.pending.get(sessionId);
+    if (writes) await Promise.allSettled([...writes]);
+  }
+
+  /**
+   * Una vuelta de sincronización con la tabla: caduca lo vencido, corta lo que otra instancia
+   * paró, y abre o cierra el puerto según haya sesiones abiertas. Nunca dos a la vez.
+   */
+  sync(): Promise<void> {
+    this.syncing ??= this.syncOnce().finally(() => (this.syncing = null));
+    return this.syncing;
+  }
+
+  async onApplicationBootstrap(): Promise<void> {
+    if (!this.enabled) return;
+    if (this.authority.enabled) {
+      // Al arrancar y no a la primera sesión: quien despliega ve en el registro por qué no hay
+      // descifrado —sin `SECRETS_KEY`, por ejemplo— sin esperar a que alguien lo pida. El motivo no
+      // lleva nada secreto; la clave no pasa nunca por aquí.
+      await this.authority.ensure().catch((error: unknown) => {
+        new Logger("CaptureProxy").error(error instanceof Error ? error.message : "Descifrar HTTPS no pudo arrancar");
+      });
+    }
+    await this.sync().catch(() => undefined);
+    this.timer = setInterval(() => void this.sync().catch(() => undefined), CAPTURE_SYNC_MS);
+    this.timer.unref();
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    await this.syncing?.catch(() => undefined);
+    await this.proxy.close();
+  }
+
+  private async syncOnce(): Promise<void> {
+    await this.captures.expireDue(this.clock.now());
+    const active = await this.captures.listActive();
+    const open = new Set(active.map((session) => session.id));
+    for (const id of this.proxy.knownSessions()) if (!open.has(id)) this.proxy.stop(id);
+    if (!active.length) {
+      if (this.proxy.listening) await this.proxy.close();
+    } else if (!this.proxy.listening) {
+      await this.listen().catch(() => undefined);
+    }
+  }
+
+  private async listen(): Promise<number> {
     try {
-      port = await this.proxy.listen(this.env.CAPTURE_PROXY_PORT!, this.env.CAPTURE_PROXY_HOST);
+      return await this.proxy.listen(this.env.CAPTURE_PROXY_PORT!, this.env.CAPTURE_PROXY_HOST);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       throw new ConflictError(
@@ -100,71 +186,34 @@ export class CaptureProxyService implements OnApplicationBootstrap, OnModuleDest
         "capture-proxy-unavailable",
       );
     }
-    const handle: ProxySession = {
-      id: session.id,
-      projectId: session.projectId,
-      tokenHash: session.tokenHash,
-      expiresAt: session.expiresAt,
-      limits: session.limits,
-      recorded: session.itemCount,
+  }
+
+  private async lookup(tokenHash: string): Promise<SessionLookup> {
+    const row = await this.captures.findSessionByTokenHash(tokenHash);
+    if (!row) return null;
+    if (row.status !== "active") return { ended: row.stopReason ?? "manual" };
+    const session: ProxySession = {
+      id: row.id,
+      projectId: row.projectId,
+      expiresAt: row.expiresAt,
+      limits: row.limits,
+      decryptHttps: row.decryptHttps ?? false,
     };
-    this.proxy.open(handle);
-    return port;
+    return { session };
   }
 
-  /** Cierra una sesión desde fuera. Espera a que lo ya capturado esté escrito. */
-  async stop(sessionId: string, reason: CaptureStopReason): Promise<void> {
-    this.proxy.stop(sessionId, reason);
-    await this.flush(sessionId);
-    await this.closeIfIdle();
-  }
-
-  /** Lo que queda por escribir de una sesión. */
-  async flush(sessionId: string): Promise<void> {
-    await this.queues.get(sessionId);
-  }
-
-  /**
-   * Al arrancar: las sesiones que la tabla da por abiertas no lo están.
-   *
-   * Su token vivía en la memoria de un proceso que ya no existe, así que el proxy no las reconoce.
-   * Se cierran con su motivo en vez de dejarlas «activas» para siempre en la pantalla.
-   */
-  async onApplicationBootstrap(): Promise<void> {
-    const orphans = await this.captures.listActive();
-    const now = this.clock.now();
-    for (const session of orphans) {
-      if (this.proxy.isLive(session.id)) continue;
-      await this.captures.saveSession({ ...session, status: "stopped", stopReason: "restart", stoppedAt: now });
-    }
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    await this.proxy.close();
-  }
-
-  /** El proxy cerró la sesión por su cuenta —caducó o llegó al tope—: se apunta en la tabla. */
-  private async closed(session: ProxySession, reason: CaptureStopReason): Promise<void> {
-    await this.enqueue(session.id, async () => {
-      const row = await this.captures.findSession(session.projectId, session.id);
-      if (row && row.status === "active") {
-        await this.captures.saveSession({ ...row, status: "stopped", stopReason: reason, stoppedAt: this.clock.now() });
-      }
-    });
-    await this.closeIfIdle();
-  }
-
-  private async closeIfIdle(): Promise<void> {
-    if (this.proxy.listening && this.proxy.liveCount() === 0) await this.proxy.close();
-  }
-
-  private enqueue(sessionId: string, work: () => Promise<void>): Promise<void> {
-    const next = (this.queues.get(sessionId) ?? Promise.resolve())
-      .then(work)
-      // Una escritura que falla no puede parar la cola: la siguiente petición también se graba.
-      .catch(() => undefined);
-    this.queues.set(sessionId, next);
-    return next;
+  private track<T>(sessionId: string, work: () => Promise<T>): Promise<T> {
+    const promise = work();
+    let writes = this.pending.get(sessionId);
+    if (!writes) this.pending.set(sessionId, (writes = new Set()));
+    writes.add(promise);
+    void promise
+      .catch(() => undefined)
+      .finally(() => {
+        writes.delete(promise);
+        if (!writes.size && this.pending.get(sessionId) === writes) this.pending.delete(sessionId);
+      });
+    return promise;
   }
 }
 

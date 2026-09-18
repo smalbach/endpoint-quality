@@ -20,8 +20,17 @@ import { randomUUID } from "node:crypto";
 import { DataSource } from "typeorm";
 
 import { buildDataSourceOptions, MIGRATIONS } from "@/shared/database/data-source";
-import { RunCaseEntity, RunEntity, RunStepEntity } from "@/shared/database/entities";
+import {
+  CaptureAuthorityEntity,
+  CaptureItemEntity,
+  CaptureSessionEntity,
+  RunCaseEntity,
+  RunEntity,
+  RunStepEntity,
+} from "@/shared/database/entities";
 import { TypeOrmRunRepository } from "@/modules/runs/infrastructure/persistence/typeorm-run.repository";
+import { TypeOrmCaptureRepository } from "@/modules/captures/infrastructure/persistence/typeorm-capture.repository";
+import { TypeOrmCaptureAuthorityRepository } from "@/modules/captures/infrastructure/persistence/typeorm-capture-authority.repository";
 
 const DATABASE_URL = process.env.EQ_TEST_DATABASE_URL;
 const REASON =
@@ -67,6 +76,7 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
     const tables = rows.map((row) => row.table_name).sort();
     assert.deepEqual(tables, [
       "api_tokens",
+      "capture_authorities",
       "capture_items",
       "capture_sessions",
       "channel_endpoints",
@@ -901,5 +911,102 @@ describe("los canales", { skip: DATABASE_URL ? false : REASON }, () => {
       [channel, session],
     );
     assert.deepEqual(left, { channels: 0, sessions: 0, messages: 0 });
+  });
+});
+
+describe("la captura con varias instancias", { skip: DATABASE_URL ? false : REASON }, () => {
+  /**
+   * Lo que el repositorio en memoria no puede probar: que `appendNext` es atómico contra Postgres.
+   * Veinte escrituras a la vez por el pool —como dos instancias de la API grabando la misma
+   * sesión— con tope 7: siete filas, `seq` del 1 al 7 sin huecos ni repetidos, y la cuenta en 7.
+   */
+  test("appendNext respeta el tope y no repite seq con escrituras a la vez; parar es condicional", async () => {
+    const user = randomUUID();
+    const organization = randomUUID();
+    const project = randomUUID();
+    const session = randomUUID();
+    await insertUser(user, `captura-${user}@example.test`);
+    await insertOrganization(organization, `captura-${organization.slice(0, 8)}`);
+    await dataSource!.query(
+      `INSERT INTO projects (id, "organizationId", name, slug, "createdBy", "createdAt") VALUES ($1, $2, 'p', $3, $4, now())`,
+      [project, organization, `p-${project.slice(0, 8)}`, user],
+    );
+    const repository = new TypeOrmCaptureRepository(
+      dataSource!.getRepository(CaptureSessionEntity),
+      dataSource!.getRepository(CaptureItemEntity),
+    );
+    const now = new Date();
+    await repository.saveSession({
+      id: session,
+      projectId: project,
+      status: "active",
+      tokenHash: randomUUID().replace(/-/g, "").padEnd(64, "0"),
+      limits: { durationMs: 60_000, maxRequests: 7, maxBodyBytes: 1024 },
+      itemCount: 0,
+      startedAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+      stoppedAt: null,
+      stopReason: null,
+      startedBy: user,
+      decryptHttps: false,
+    });
+    const item = () => ({
+      id: randomUUID(),
+      sessionId: session,
+      projectId: project,
+      at: now,
+      method: "GET",
+      url: "https://api.example.test/x",
+      status: 200,
+      encrypted: false,
+      requestHeaders: {},
+      requestBody: "",
+      requestBodyTruncated: false,
+      responseHeaders: {},
+      responseBody: "",
+      responseBodyTruncated: false,
+      responseContentType: "",
+      durationMs: 1,
+      error: null,
+    });
+    const seqs = await Promise.all(Array.from({ length: 20 }, () => repository.appendNext(item(), 7)));
+    assert.deepEqual(
+      seqs.filter((seq) => seq !== null).sort((a, b) => a! - b!),
+      [1, 2, 3, 4, 5, 6, 7],
+    );
+    const [row] = await dataSource!.query(`SELECT "itemCount" FROM capture_sessions WHERE id = $1`, [session]);
+    assert.equal(row.itemCount, 7);
+    const stored = await dataSource!.query(`SELECT seq FROM capture_items WHERE "sessionId" = $1 ORDER BY seq`, [
+      session,
+    ]);
+    assert.deepEqual(
+      stored.map((entry: { seq: number }) => entry.seq),
+      [1, 2, 3, 4, 5, 6, 7],
+    );
+
+    assert.equal(await repository.stopSession(project, session, "manual", now), true);
+    assert.equal(await repository.stopSession(project, session, "expired", now), false);
+    assert.equal((await repository.findSession(project, session))!.stopReason, "manual");
+    assert.equal(await repository.appendNext(item(), 100), null, "una sesión parada no admite más");
+    await dataSource!.query(`DELETE FROM projects WHERE id = $1`, [project]);
+  });
+});
+
+describe("la CA de captura", { skip: DATABASE_URL ? false : REASON }, () => {
+  /**
+   * Dos instancias que arrancan a la vez generan cada una su CA: solo una puede quedarse, y la
+   * segunda escritura no puede reescribirla —un dispositivo que ya instaló la primera dejaría de
+   * confiar en el proxy—.
+   */
+  test("insertIfAbsent se queda con la primera, y la columna solo guarda texto cifrado", async () => {
+    const repository = new TypeOrmCaptureAuthorityRepository(dataSource!.getRepository(CaptureAuthorityEntity));
+    await dataSource!.query(`DELETE FROM capture_authorities`);
+    const first = { certificatePem: "PRIMERA", privateKeyCiphertext: "v1.a.b.c", createdAt: new Date() };
+    await repository.insertIfAbsent(first);
+    await repository.insertIfAbsent({ ...first, certificatePem: "SEGUNDA", privateKeyCiphertext: "v1.d.e.f" });
+    const stored = await repository.find();
+    assert.equal(stored?.certificatePem, "PRIMERA");
+    assert.equal(stored?.privateKeyCiphertext, "v1.a.b.c");
+    await dataSource!.query(`DELETE FROM capture_authorities`);
   });
 });

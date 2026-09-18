@@ -13,6 +13,8 @@
  * - **La lista viene marcada con el filtro del import.** Lo que el import tiraría —un bundle, una
  *   hoja de estilo, un `OPTIONS`, un túnel cifrado— llega sin marcar y dice por qué, así que lo que
  *   se importa por omisión es la API y nada más.
+ * - **Descifrar HTTPS es por sesión y solo si el servidor lo ofrece.** Con `CAPTURE_MITM` apagado
+ *   la opción no aparece; encendido, se marca antes de abrir y la CA se descarga desde aquí mismo.
  * - **La lista se lee por cursor.** Se pregunta cada segundo y medio por lo que vino después de lo
  *   último que ya se tiene, sin cuerpos: una sesión de quinientas no se vuelve a bajar entera.
  */
@@ -24,7 +26,9 @@ import { useOrganization } from "@/lib/auth";
 import { Button, inputClass } from "@/components/ui";
 import { cn } from "@/lib/format";
 import type {
+  CaptureAuthorityView,
   CaptureItemSummaryView,
+  CaptureMitmView,
   CaptureOverviewView,
   CapturePageView,
   CaptureSessionView,
@@ -67,6 +71,7 @@ export function CaptureTraffic({
   const [filter, setFilter] = useState("");
   const [onlyApi, setOnlyApi] = useState(true);
   const [flow, setFlow] = useState(false);
+  const [decryptHttps, setDecryptHttps] = useState(false);
   const [busy, setBusy] = useState<"start" | "stop" | "import" | null>(null);
   const [problem, setProblem] = useState<unknown>(null);
   const cursor = useRef(0);
@@ -127,7 +132,11 @@ export function CaptureTraffic({
     setBusy("start");
     setProblem(null);
     try {
-      const opened = await api<CaptureStartedView>(base, { method: "POST" });
+      // Solo se pide descifrar si el servidor lo ofrece; si no, la opción ni se ve.
+      const opened = await api<CaptureStartedView>(
+        base,
+        overview.data?.mitm ? { method: "POST", body: { decryptHttps } } : { method: "POST" },
+      );
       cursor.current = 0;
       setItems([]);
       setSelected(new Set());
@@ -210,7 +219,19 @@ export function CaptureTraffic({
         {session && <SessionState session={session} />}
       </div>
 
-      {active && started && started.session.id === session?.id && <Instructions started={started} />}
+      {overview.data?.mitm && !active && (
+        <HttpsOption
+          mitm={overview.data.mitm}
+          checked={decryptHttps}
+          onChange={setDecryptHttps}
+          base={base}
+          onProblem={setProblem}
+        />
+      )}
+
+      {active && started && started.session.id === session?.id && (
+        <Instructions started={started} decrypting={started.session.decryptHttps} base={base} onProblem={setProblem} />
+      )}
       {active && (!started || started.session.id !== session?.id) && (
         <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-4 text-slate-600">
           Esta sesión sigue abierta, pero su contraseña solo se enseñó al abrirla. Si ya no la tienes, abre una nueva:
@@ -273,7 +294,17 @@ function SessionState({ session }: { session: CaptureSessionView }) {
  * El nombre del servidor sale de la configuración cuando la hay y, si no, del nombre con el que se
  * abrió esta página: es el que el navegador ya sabe alcanzar.
  */
-function Instructions({ started }: { started: CaptureStartedView }) {
+function Instructions({
+  started,
+  decrypting,
+  base,
+  onProblem,
+}: {
+  started: CaptureStartedView;
+  decrypting: boolean;
+  base: string;
+  onProblem: (error: unknown) => void;
+}) {
   const host = started.proxy.host ?? window.location.hostname;
   const rows: [string, string][] = [
     ["Servidor", host],
@@ -308,11 +339,124 @@ function Instructions({ started }: { started: CaptureStartedView }) {
         {new Date(started.session.expiresAt).toLocaleTimeString()} o al llegar a {started.session.limits.maxRequests}{" "}
         peticiones.
       </p>
+      {decrypting ? (
+        <div className="mt-1 space-y-1 text-[11px] leading-4 text-slate-500">
+          <p>
+            Esta sesión descifra HTTPS: el dispositivo tiene que confiar en la CA de captura, o sus conexiones seguras
+            fallarán y quedarán en la lista con el motivo.
+          </p>
+          <CertificateDownload base={base} onProblem={onProblem} />
+        </div>
+      ) : (
+        <p className="mt-1 text-[11px] leading-4 text-slate-500">
+          Lo que va por HTTPS pasa por un túnel que el proxy no abre: se apunta a qué servidor iba, «cifrado, sin
+          detalle», y no se puede importar.
+        </p>
+      )}
       <p className="mt-1 text-[11px] leading-4 text-slate-500">
-        Lo que va por HTTPS pasa por un túnel que el proxy no abre: se apunta a qué servidor iba, «cifrado, sin
-        detalle», y no se puede importar. Las cabeceras de credenciales y los campos con contraseñas o tokens se guardan
-        tapados.
+        Las cabeceras de credenciales y los campos con contraseñas o tokens se guardan tapados.
       </p>
+    </div>
+  );
+}
+
+/**
+ * «Descifrar HTTPS», antes de abrir la sesión. Solo aparece si el servidor lo tiene encendido
+ * (`CAPTURE_MITM`), y desactivado con el motivo cuando no puede usarse —sin `SECRETS_KEY`, por
+ * ejemplo—: una opción que falla al pulsar «Empezar» no dice nada que sirva.
+ */
+function HttpsOption({
+  mitm,
+  checked,
+  onChange,
+  base,
+  onProblem,
+}: {
+  mitm: CaptureMitmView;
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  base: string;
+  onProblem: (error: unknown) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-slate-200 p-3 text-[11px] leading-4 text-slate-600">
+      <label className="flex items-center gap-1.5 font-medium text-slate-800">
+        <input
+          type="checkbox"
+          checked={checked && mitm.ready}
+          disabled={!mitm.ready}
+          onChange={(event) => onChange(event.target.checked)}
+        />
+        Descifrar HTTPS
+      </label>
+      {mitm.ready ? (
+        <>
+          <p className="mt-1">
+            El proxy verá dentro de las conexiones seguras y podrás importarlas como el resto. Para eso el dispositivo
+            tiene que instalar la CA de captura de esta instalación como raíz de confianza.
+          </p>
+          <CertificateDownload base={base} onProblem={onProblem} />
+        </>
+      ) : (
+        <p className="mt-1 text-amber-800">No se puede usar en esta instalación: {mitm.problem}</p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * La CA para instalar en el dispositivo: solo el certificado, que es público. Se baja con la sesión
+ * de la aplicación y se entrega como fichero, porque la ruta pide la cabecera `Authorization`.
+ */
+function CertificateDownload({ base, onProblem }: { base: string; onProblem: (error: unknown) => void }) {
+  const [fingerprint, setFingerprint] = useState<string | null>(null);
+  const download = async () => {
+    try {
+      const authority = await api<CaptureAuthorityView>(`${base}/authority/certificate`);
+      const url = URL.createObjectURL(new Blob([authority.pem], { type: "application/x-pem-file" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = authority.fileName;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      setFingerprint(authority.fingerprint);
+    } catch (error) {
+      onProblem(error);
+    }
+  };
+  return (
+    <div className="mt-2 space-y-1">
+      <Button variant="ghost" className="h-7 text-[11px]" onClick={() => void download()}>
+        Descargar el certificado de la CA
+      </Button>
+      {fingerprint && (
+        <p className="break-all font-mono text-[10px] text-slate-500" data-testid="ca-fingerprint">
+          SHA-256 {fingerprint}
+        </p>
+      )}
+      <details>
+        <summary className="cursor-pointer text-slate-700">Cómo instalarla</summary>
+        <ul className="mt-1 list-disc space-y-0.5 pl-4">
+          <li>macOS: ábrela con Acceso a Llaveros, en «Sistema»; en el certificado, «Confiar» → «Confiar siempre».</li>
+          <li>
+            Windows: doble clic → «Instalar certificado» → «Equipo local» → «Entidades de certificación raíz de
+            confianza».
+          </li>
+          <li>
+            iPhone/iPad: ábrela en el dispositivo e instala el perfil; luego Ajustes → General → Información → Ajustes
+            de confianza de certificados, y actívala.
+          </li>
+          <li>
+            Android: Ajustes → Seguridad → Cifrado → Instalar un certificado → Certificado de CA. Desde Android 7 las
+            apps solo confían en ella si su configuración de red lo permite.
+          </li>
+          <li>Firefox usa su propio almacén: Ajustes → Privacidad y seguridad → Certificados → Importar.</li>
+        </ul>
+        <p className="mt-1 text-amber-800">
+          Esta CA puede firmar certificados para cualquier dominio: instálala solo en dispositivos de prueba y quítala
+          al terminar. Las apps que fijan el certificado de su servidor no se pueden descifrar.
+        </p>
+      </details>
     </div>
   );
 }

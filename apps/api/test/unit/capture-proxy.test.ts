@@ -11,7 +11,12 @@ import { createServer, request as httpRequest, type Server } from "node:http";
 import { connect as netConnect } from "node:net";
 import type { AddressInfo } from "node:net";
 
-import { CaptureProxy, tokenFrom, type ProxySession } from "@/modules/captures/infrastructure/capture-proxy";
+import {
+  CaptureProxy,
+  tokenFrom,
+  type CaptureProxyOptions,
+  type ProxySession,
+} from "@/modules/captures/infrastructure/capture-proxy";
 import { captureItemFrom, type CaptureStopReason, type RawExchange } from "@/modules/captures/domain/model";
 import { hashOpaqueToken } from "@/shared/crypto/opaque-token";
 
@@ -56,36 +61,61 @@ type Harness = {
   exchanges: RawExchange[];
   stops: CaptureStopReason[];
   clock: { now: Date };
+  /** Parar desde fuera: se apunta en la «tabla» y se deja de atender, como hace el servicio. */
+  stop: (reason: CaptureStopReason) => void;
 };
 
+/**
+ * Un proxy con una «tabla» de una sola sesión. Hace de `CaptureProxyStore` lo justo para probar el
+ * proxy solo: la cuenta y el tope de verdad, con la base, están en `capture-proxy-service.test.ts`.
+ */
 async function harness(
   policy = OPEN,
   limits = { durationMs: 60_000, maxRequests: 50, maxBodyBytes: 1_024 },
+  extra: Partial<CaptureProxyOptions> = {},
 ): Promise<Harness> {
   const exchanges: RawExchange[] = [];
   const stops: CaptureStopReason[] = [];
   const clock = { now: new Date("2026-03-01T10:00:00Z") };
+  const session: ProxySession = {
+    id: "s1",
+    projectId: "p1",
+    expiresAt: new Date(clock.now.getTime() + limits.durationMs),
+    limits,
+    decryptHttps: false,
+  };
+  const tokenHash = hashOpaqueToken(TOKEN);
+  let ended: CaptureStopReason | null = null;
   const proxy = new CaptureProxy({
     policy,
     now: () => clock.now,
     maxForwardBodyBytes: 100_000,
     tunnelIdleMs: 2_000,
-    hooks: {
-      onExchange: (_session, exchange) => exchanges.push(exchange),
-      onStop: (_session, reason) => stops.push(reason),
+    // El destino de prueba escucha en un puerto cualquiera: se añade al 443 de siempre.
+    connectPorts: new Set([443, targetPort]),
+    store: {
+      lookup: async (hash) => (hash !== tokenHash ? null : ended ? { ended } : { session }),
+      record: async (_session, exchange) => {
+        if (ended) return { open: false };
+        exchanges.push(exchange);
+        if (exchanges.length < limits.maxRequests) return { open: true };
+        ended = "request-limit";
+        stops.push(ended);
+        return { open: false };
+      },
+      expire: async () => {
+        ended = "expired";
+        stops.push(ended);
+      },
     },
+    ...extra,
   });
   const port = await proxy.listen(0, "127.0.0.1");
-  const session: ProxySession = {
-    id: "s1",
-    projectId: "p1",
-    tokenHash: hashOpaqueToken(TOKEN),
-    expiresAt: new Date(clock.now.getTime() + limits.durationMs),
-    limits,
-    recorded: 0,
+  const stop = (reason: CaptureStopReason) => {
+    ended = reason;
+    proxy.stop(session.id);
   };
-  proxy.open(session);
-  return { proxy, port, exchanges, stops, clock };
+  return { proxy, port, exchanges, stops, clock, stop };
 }
 
 const basic = (token: string) => `Basic ${Buffer.from(`captura:${token}`).toString("base64")}`;
@@ -239,6 +269,19 @@ describe("el proxy de captura", () => {
     }
   });
 
+  test("un CONNECT a un puerto que no es de la web es un 403, grabado como rechazado", async () => {
+    const h = await harness();
+    try {
+      assert.equal(await connectVia(h.port, "127.0.0.1:25", TOKEN), "HTTP/1.1 403 Forbidden");
+      assert.equal(await connectVia(h.port, "ejemplo.test:6379", TOKEN), "HTTP/1.1 403 Forbidden");
+      assert.equal(h.exchanges.length, 2);
+      assert.match(h.exchanges[0].error ?? "", /puerto 25 no está permitido/);
+      assert.equal(h.exchanges[1].url, "https://ejemplo.test:6379");
+    } finally {
+      await h.proxy.close();
+    }
+  });
+
   test("el cuerpo se guarda hasta el tope y el cliente lo recibe entero", async () => {
     const h = await harness(OPEN, { durationMs: 60_000, maxRequests: 50, maxBodyBytes: 1_024 });
     try {
@@ -279,7 +322,7 @@ describe("el proxy de captura", () => {
       assert.equal(answer.status, 407);
       assert.match(answer.body, /expired/);
       assert.deepEqual(h.stops, ["expired"]);
-      assert.equal(h.proxy.liveCount(), 0);
+      assert.deepEqual(h.proxy.knownSessions(), []);
     } finally {
       await h.proxy.close();
     }
@@ -288,13 +331,56 @@ describe("el proxy de captura", () => {
   test("parar desde fuera invalida el token al momento", async () => {
     const h = await harness();
     try {
-      h.proxy.stop("s1", "manual");
+      h.stop("manual");
       const answer = await viaProxy(h.port, `http://127.0.0.1:${targetPort}/x`, {
         headers: { "Proxy-Authorization": basic(TOKEN) },
       });
       assert.equal(answer.status, 407);
       // Cerrada desde fuera no se avisa: quien la cerró ya lo sabe.
       assert.deepEqual(h.stops, []);
+    } finally {
+      await h.proxy.close();
+    }
+  });
+
+  test("demasiadas credenciales malas desde una IP: 429 sin mirar la credencial, hasta que pasa la ventana", async () => {
+    const limits = { durationMs: 600_000, maxRequests: 50, maxBodyBytes: 1_024 };
+    const h = await harness(OPEN, limits, { authFailureLimit: { max: 3, windowMs: 60_000 } });
+    try {
+      const url = `http://127.0.0.1:${targetPort}/x`;
+      const auth = (token: string) => ({ headers: { "Proxy-Authorization": basic(token) } });
+      // Sin credencial no cuenta: es lo que hace un navegador la primera vez.
+      for (let index = 0; index < 5; index += 1) assert.equal((await viaProxy(h.port, url)).status, 407);
+      for (let index = 0; index < 3; index += 1)
+        assert.equal((await viaProxy(h.port, url, auth(`malo-${index}`))).status, 407);
+
+      const limited = await viaProxy(h.port, url, auth("malo-4"));
+      assert.equal(limited.status, 429);
+      assert.equal(limited.headers["retry-after"], "60");
+      assert.ok(!limited.body.includes("malo-4"), "la respuesta no repite la credencial probada");
+      // Ni la buena pasa mientras dura la ventana: el tope va antes de mirar la credencial.
+      assert.equal((await viaProxy(h.port, url, auth(TOKEN))).status, 429);
+      assert.equal(await connectVia(h.port, `127.0.0.1:${targetPort}`, TOKEN), "HTTP/1.1 429 Too Many Requests");
+      assert.equal(h.exchanges.length, 0);
+
+      h.clock.now = new Date(h.clock.now.getTime() + 61_000);
+      assert.equal((await viaProxy(h.port, url, auth(TOKEN))).status, 201);
+    } finally {
+      await h.proxy.close();
+    }
+  });
+
+  test("el token de una sesión ya cerrada no cuenta como intento", async () => {
+    const h = await harness(OPEN, undefined, { authFailureLimit: { max: 2, windowMs: 60_000 } });
+    try {
+      h.stop("manual");
+      for (let index = 0; index < 4; index += 1) {
+        const answer = await viaProxy(h.port, `http://127.0.0.1:${targetPort}/x`, {
+          headers: { "Proxy-Authorization": basic(TOKEN) },
+        });
+        assert.equal(answer.status, 407);
+        assert.match(answer.body, /terminó \(manual\)/);
+      }
     } finally {
       await h.proxy.close();
     }
