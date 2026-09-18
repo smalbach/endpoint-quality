@@ -9,6 +9,7 @@ import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projec
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
 import type { WorkflowRow, WorkflowStatus } from "../../domain/model";
 import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "../../domain/ports";
+import { withoutLiteralSecrets } from "../../domain/postman-auth";
 
 export type WorkflowInput = {
   name?: string;
@@ -124,8 +125,9 @@ async function validatedDefinition(
       );
     }
   }
-  return definition;
+  return withoutLiteralSecrets(definition);
 }
+
 
 @CommandHandler(CreateWorkflowCommand)
 export class CreateWorkflowHandler implements ICommandHandler<CreateWorkflowCommand, { workflowId: string }> {

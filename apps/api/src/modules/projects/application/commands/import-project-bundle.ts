@@ -44,6 +44,7 @@ import {
 } from "../../domain/project-bundle";
 import { ownedProject } from "./update-project";
 import { uniqueName } from "./copy-from-project";
+import { redactAuth, withoutLiteralSecrets } from "@/modules/workflows/domain/postman-auth";
 
 export class ImportProjectBundleCommand implements ICommand {
   constructor(
@@ -216,6 +217,8 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
       const id = randomUUID();
       rows.push({
         ...fields,
+        // La autenticación se vuelve a tapar al entrar, por lo mismo que los ejemplos de abajo.
+        auth: redactAuth(fields.auth).auth,
         path,
         pathParameters: reconcilePathParameters(path, endpoint.pathParameters),
         id,
@@ -378,7 +381,7 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
         name,
         description: workflow.description,
         status: workflow.status,
-        definition: definition as unknown as WorkflowDocument,
+        definition: withoutLiteralSecrets(definition as unknown as WorkflowDocument),
       });
       result.workflows += 1;
     }

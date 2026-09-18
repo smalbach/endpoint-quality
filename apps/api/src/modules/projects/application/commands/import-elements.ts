@@ -12,6 +12,7 @@ import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/module
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "../../domain/ports";
 import { ownedProject } from "./update-project";
 import { uniqueName, withoutSecrets } from "./copy-from-project";
+import { redactAuth, withoutLiteralSecrets } from "@/modules/workflows/domain/postman-auth";
 
 export type ImportElementsInput = {
   sourceProjectId: string;
@@ -87,6 +88,8 @@ export class ImportElementsHandler implements ICommandHandler<ImportElementsComm
       })
       .map((endpoint) => ({
         ...endpoint,
+        // Una fila de antes de que un endpoint tapara sus secretos puede traer uno: no se copia.
+        auth: redactAuth(endpoint.auth).auth,
         id: randomUUID(),
         projectId: targetId,
         origin: "import" as const,
@@ -152,7 +155,7 @@ export class ImportElementsHandler implements ICommandHandler<ImportElementsComm
         id: workflowId,
         projectId: targetId,
         name,
-        definition: { ...workflow.definition, steps } as WorkflowDocument,
+        definition: withoutLiteralSecrets({ ...workflow.definition, steps } as WorkflowDocument),
         createdAt: now,
         updatedAt: now,
         updatedBy: actorId,

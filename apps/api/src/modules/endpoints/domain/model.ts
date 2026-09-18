@@ -17,7 +17,7 @@
 
 import { AUTH_TYPES, graphqlVariablesProblem, isAuthType, type RequestAuth } from "@eq/runner-core";
 
-import { storableParams } from "@/modules/workflows/domain/postman-auth";
+import { redactAuth, storableParams } from "@/modules/workflows/domain/postman-auth";
 
 export const ENDPOINT_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 export type EndpointMethod = (typeof ENDPOINT_METHODS)[number];
@@ -344,7 +344,9 @@ export function applyEndpointInput(current: Endpoint, input: EndpointInput): End
         }
       : current.body,
     requiresAuth: input.requiresAuth ?? current.requiresAuth,
-    auth: input.auth ? { type: input.auth.type, params: storableParams(input.auth) } : current.auth,
+    // `redactAuth` primero: un secreto escrito a mano se guarda vacío —la marca de que falta— y solo
+    // una `{{variable}}` se queda. Sin esto la contraseña iba tal cual a la columna `jsonb`.
+    auth: input.auth ? { type: input.auth.type, params: storableParams(redactAuth(input.auth).auth) } : current.auth,
     tags: input.tags ? [...new Set(input.tags.map((tag) => tag.trim()).filter(Boolean))] : current.tags,
     status: input.status ?? current.status,
     preRequestScript: input.preRequestScript ?? current.preRequestScript,

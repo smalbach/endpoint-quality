@@ -228,6 +228,55 @@ describe("el nodo GraphQL", () => {
     await stub.stop();
   });
 
+  test("una contraseña escrita a mano no se guarda en el documento; la {{variable}} sí", async () => {
+    const project = await api()
+      .post(`/orgs/${organizationId}/projects`)
+      .set(auth())
+      .send({ name: `gql-${Math.random().toString(36).slice(2, 8)}` });
+    const base = `/orgs/${organizationId}/projects/${project.body.projectId}/workflows`;
+    const created = await api()
+      .post(base)
+      .set(auth())
+      .send({
+        name: "Con secretos",
+        definition: {
+          steps: [
+            {
+              id: "g",
+              kind: "graphql",
+              graphql: {
+                url: "/graphql",
+                query: "{ a }",
+                auth: { type: "basic", params: { username: "ana", password: "literal-que-no-se-guarda" } },
+              },
+            },
+            {
+              id: "f",
+              kind: "fetch",
+              fetch: { method: "GET", url: "/x", auth: { type: "bearer", params: { token: "{{token}}" } } },
+            },
+          ],
+        },
+      });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const list = await api().get(base).set(auth());
+    assert.equal(list.status, 200, JSON.stringify(list.body));
+    const saved = (list.body.workflows as { id: string; steps: unknown[] }[]).find(
+      (row) => row.id === created.body.workflowId,
+    );
+    assert.ok(saved, "el flujo guardado está en la lista");
+    assert.equal(JSON.stringify(saved).includes("literal-que-no-se-guarda"), false);
+    const steps = saved.steps as { id: string; graphql?: { auth: unknown }; fetch?: { auth: unknown } }[];
+    assert.deepEqual(steps.find((step) => step.id === "g")?.graphql?.auth, {
+      type: "basic",
+      params: { username: "ana", password: "" },
+    });
+    assert.deepEqual(steps.find((step) => step.id === "f")?.fetch?.auth, {
+      type: "bearer",
+      params: { token: "{{token}}" },
+    });
+  });
+
   test("el documento rechaza variables que no pueden ser un objeto JSON", async () => {
     const stub = new GraphqlStub();
     await stub.start();

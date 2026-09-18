@@ -11,6 +11,7 @@ import type { EnvironmentVariables } from "@/modules/environments/domain/model";
 import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "../../domain/ports";
 import { ownedProject } from "./update-project";
+import { withoutLiteralSecrets } from "@/modules/workflows/domain/postman-auth";
 
 export type CopyFromProjectInput = {
   sourceProjectId: string;
@@ -227,7 +228,7 @@ export class CopyFromProjectHandler implements ICommandHandler<CopyFromProjectCo
         id,
         projectId: targetId,
         name,
-        definition: { ...workflow.definition, steps } as WorkflowDocument,
+        definition: withoutLiteralSecrets({ ...workflow.definition, steps } as WorkflowDocument),
         createdAt: now,
         updatedAt: now,
         updatedBy: actorId,

@@ -14,7 +14,14 @@
  * significa «esta no, aunque las de arriba sí». Son dos cosas distintas y guardarlas igual borra la
  * decisión de quien escribió el fichero.
  */
-import { AUTH_TYPES, NO_AUTH, isAuthType, type AuthType, type RequestAuth } from "@eq/runner-core";
+import {
+  AUTH_TYPES,
+  NO_AUTH,
+  isAuthType,
+  type AuthType,
+  type RequestAuth,
+  type WorkflowDocument,
+} from "@eq/runner-core";
 
 /** Los nombres de Postman que no son los nuestros. El resto coincide y no hace falta traducir. */
 const FROM_POSTMAN: Record<string, AuthType> = { noauth: "none" };
@@ -189,3 +196,24 @@ export const AUTH_LABELS: Record<AuthType, string> = {
 };
 
 export { AUTH_TYPES };
+
+/**
+ * El flujo con los secretos escritos a mano vaciados en la autenticación de sus llamadas.
+ *
+ * El documento de un flujo es un `jsonb` sin cifrar, y la ayuda del inspector ya dice que un secreto
+ * tiene que ser una `{{variable}}` —que vive cifrada en el entorno—. Esto es lo que hace verdad esa
+ * frase: la misma regla que el import y que un endpoint, en cada puerta que escribe un flujo —
+ * guardarlo, importar un proyecto, copiar entre proyectos, que puede traer una fila de antes de esta
+ * regla—. El secreto vacío se queda como marca de que falta, y la corrida lo dice al firmar.
+ */
+export function withoutLiteralSecrets(definition: WorkflowDocument): WorkflowDocument {
+  return {
+    ...definition,
+    steps: definition.steps.map((step) => {
+      if (step.fetch?.auth) return { ...step, fetch: { ...step.fetch, auth: redactAuth(step.fetch.auth).auth } };
+      if (step.graphql?.auth)
+        return { ...step, graphql: { ...step.graphql, auth: redactAuth(step.graphql.auth).auth } };
+      return step;
+    }),
+  };
+}

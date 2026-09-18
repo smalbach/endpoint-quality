@@ -149,6 +149,24 @@ describe("escribir endpoints", () => {
     assert.deepEqual(read.body.body, { mode: "raw", text: "<x/>", contentType: "application/xml", fields: [] });
   });
 
+  test("una contraseña escrita a mano en la autenticación no se guarda; una {{variable}} sí", async () => {
+    const response = await api()
+      .patch(`${base()}/endpoints/${endpointId}`)
+      .set(as(owner))
+      .send({ auth: { type: "basic", params: { username: "ana", password: "hunter2-literal" } } });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    const read = await api().get(`${base()}/endpoints/${endpointId}`).set(as(owner));
+    assert.equal(JSON.stringify(read.body).includes("hunter2-literal"), false);
+    assert.deepEqual(read.body.auth, { type: "basic", params: { username: "ana", password: "" } });
+
+    await api()
+      .patch(`${base()}/endpoints/${endpointId}`)
+      .set(as(owner))
+      .send({ auth: { type: "basic", params: { username: "ana", password: "{{clave}}" } } });
+    const kept = await api().get(`${base()}/endpoints/${endpointId}`).set(as(owner));
+    assert.equal(kept.body.auth.params.password, "{{clave}}");
+  });
+
   test("listar filtra por estado y búsqueda, y cuenta por estado", async () => {
     const extra = await api()
       .post(`${base()}/endpoints`)
