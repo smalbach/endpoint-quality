@@ -50,6 +50,7 @@ import {
 } from "@/lib/run-settings";
 import { activeBreakpoints, pausedNodeId, toggleBreakpoint } from "@/lib/run-pause";
 import type {
+  ChannelListView,
   DatasetRowsView,
   Environment,
   RequestTemplateView,
@@ -135,6 +136,13 @@ export function WorkflowsPage() {
     queryKey: ["environments", projectId],
     enabled,
     queryFn: () => api<Environment[]>(`${base}/environments`),
+  });
+  // The same list and key as the channels screen: the channel node's selector reads it, and a channel
+  // created there shows up here without a reload.
+  const channels = useQuery({
+    queryKey: ["channels", projectId],
+    enabled,
+    queryFn: () => api<ChannelListView>(`${base}/channels`),
   });
 
   // Start from the project's active environment, once. After that the select is the person's.
@@ -894,6 +902,7 @@ export function WorkflowsPage() {
               >
                 <WorkflowInspector
                   flows={workflows.data?.workflows ?? []}
+                  channels={channels.data?.channels ?? []}
                   base={base}
                   workflow={draft}
                   steps={steps}

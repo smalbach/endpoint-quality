@@ -275,7 +275,12 @@ function folderFor(
     }
     skipped.push({
       what: label(step),
-      detail: `es un nodo «${kind}», y Postman no tiene nada equivalente: se queda fuera del fichero`,
+      detail:
+        kind === "channel"
+          ? // Una colección de Postman v2.1 solo describe peticiones HTTP: sus WebSocket, MQTT y gRPC
+            // viven en otro formato que su exportación de colecciones no incluye.
+            "es un canal (WebSocket, MQTT o gRPC), y una colección de Postman solo lleva peticiones HTTP: se queda fuera del fichero"
+          : `es un nodo «${kind}», y Postman no tiene nada equivalente: se queda fuera del fichero`,
     });
   }
 

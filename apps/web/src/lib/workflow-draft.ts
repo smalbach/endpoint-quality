@@ -17,6 +17,7 @@ import type {
 import { slugId } from "@/lib/config-draft";
 import { defaultNotify, notifyProblems } from "@/lib/workflow-notify";
 import { defaultMock, mockProblems } from "@/lib/mock-draft";
+import { channelNodeProblems, defaultChannelNode } from "@/lib/channel-node-draft";
 
 export type OperationSummary = { id: string; method: string; path: string; summary: string };
 
@@ -258,6 +259,7 @@ export const CONTROL_PALETTE: { kind: ControlKind; glyph: string; label: string;
   { kind: "subflow", glyph: "⧉", label: "Sub-flujo", hint: "Ejecuta otro flujo del proyecto como un paso de este: le pasa variables y recoge las que devuelve" },
   { kind: "graphql", glyph: "◈", label: "GraphQL", hint: "Una operación GraphQL (query, variables, operationName): falla si la respuesta trae errors" },
   { kind: "mock", glyph: "◌", label: "Mock", hint: "Respuesta simulada sin red: estado, cabeceras y body escritos a mano, para lo que aún no existe" },
+  { kind: "channel", glyph: "⇌", label: "Canal", hint: "Ejecuta un canal del proyecto (WebSocket, MQTT o gRPC): abre, manda un guion, espera y lo juzga con lo que el canal espera" },
 ];
 
 /** Why the JSON Schema written on a schema node cannot be used, or null. The server refuses the same
@@ -300,7 +302,8 @@ type ControlKind =
   | "notify"
   | "subflow"
   | "graphql"
-  | "mock";
+  | "mock"
+  | "channel";
 
 /** A retry node's settings before anything is wired to it. */
 const DEFAULT_RERUN = { from: "", target: "", attempts: 3, delayMs: 1000 };
@@ -324,6 +327,7 @@ const CONTROL_BASE_ID: Record<ControlKind, string> = {
   subflow: "subflujo",
   graphql: "graphql",
   mock: "mock",
+  channel: "canal",
 };
 
 /**
@@ -415,6 +419,8 @@ export function addControlStep(
   // No flow yet: the inspector's selector picks it, and flowProblems asks for it until then.
   if (kind === "subflow") node.subflow = { workflowId: "", inputs: [], outputs: [] };
   if (kind === "mock") node.mock = defaultMock();
+  // No channel yet: the inspector's selector picks it, and flowProblems asks for it until then.
+  if (kind === "channel") node.channel = defaultChannelNode();
   if (kind === "retry") node.rerun = { ...DEFAULT_RERUN, from: from ?? "", target: from ?? "" };
   if (kind === "poll") {
     node.poll = { from: from ?? "", attempts: 5, delayMs: 2000 };
@@ -696,6 +702,20 @@ export function toNodes(
           from: step.schema?.from ?? "",
           source: step.schema?.source ?? "custom",
           strict: Boolean(step.schema?.strict),
+          runStatus: runStatusFor,
+        },
+      };
+    }
+    if (kind === "channel") {
+      return {
+        id: step.id,
+        type: "channel",
+        position,
+        data: {
+          name: step.id,
+          chosen: Boolean(step.channel?.channelId),
+          scripted: step.channel?.messages?.length ?? null,
+          captures: step.captures?.length ?? 0,
           runStatus: runStatusFor,
         },
       };
@@ -1186,6 +1206,7 @@ export function flowProblems(steps: WorkflowStepView[]): FlowProblem[] {
         problems.push({ message: `El sub-flujo «${step.id}» está dentro de un bucle: no puede ir ahí.`, stepId: step.id });
     }
     if (kind === "mock") problems.push(...mockProblems(step).map((message) => ({ message, stepId: step.id })));
+    if (kind === "channel") problems.push(...channelNodeProblems(step).map((message) => ({ message, stepId: step.id })));
     if (kind === "fetch" && !step.fetch?.url?.trim())
       problems.push({ message: `El fetch «${step.id}» no tiene URL.`, stepId: step.id });
     if (kind === "graphql") {
