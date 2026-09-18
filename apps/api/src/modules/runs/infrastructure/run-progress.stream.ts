@@ -1,8 +1,10 @@
-import { Inject, Injectable, type OnApplicationBootstrap } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { EventsHandler, type IEventHandler } from "@nestjs/cqrs";
 import { Subject, filter, type Observable } from "rxjs";
 
-import { PROGRESS_RELAY, type ProgressEvent, type ProgressRelayPort } from "../domain/progress";
+import { INSTANCE_BUS, type InstanceBusPort } from "@/shared/bus/instance-bus";
+import { InMemoryInstanceBus } from "@/shared/bus/in-memory-instance-bus";
+import { RUN_PROGRESS_TOPIC, type ProgressEvent } from "../domain/progress";
 import {
   RunCaseFinishedEvent,
   RunCaseRetryingEvent,
@@ -22,31 +24,30 @@ export type { ProgressEvent };
  * an event per case, and building an observable chain per follower would multiply that by the
  * number of open tabs.
  *
- * The subject is per process, which used to be the end of the story: with `QUEUE_DRIVER=redis`
- * and more than one instance, a follower connected to instance B saw nothing from a run executing
- * on instance A, and the polling fallback — meant for a dropped connection — covered the normal
- * case instead. The relay closes that. Its default adapter does nothing, because for a
- * single-process install there is nothing to do.
+ * The subject is per process, which used to be the end of the story: a follower connected to
+ * instance B saw nothing from a run executing on instance A. Every event now goes through the
+ * instance bus, which hands this instance its own events synchronously and the other instances
+ * theirs over Redis. Without `REDIS_URL` the bus is in memory and there is nobody else to tell.
  *
- * **Local first, relay second.** A follower on this instance must not wait on a network round
- * trip to see a case turn green, and a broken broker must degrade the live view of other
- * instances rather than this one.
+ * **Local first.** A follower on this instance must not wait on a network round trip to see a
+ * case turn green, and a broken broker must degrade the live view of other instances rather than
+ * this one. And what arrives from another instance is never published again: an event that made
+ * one hop has reached everybody the channel reaches.
  */
 @Injectable()
-export class RunProgressStream implements OnApplicationBootstrap {
+export class RunProgressStream {
   private readonly events = new Subject<ProgressEvent>();
+  private readonly bus: InstanceBusPort;
 
-  constructor(@Inject(PROGRESS_RELAY) private readonly relay: ProgressRelayPort) {}
-
-  onApplicationBootstrap(): void {
-    // What arrives from another instance goes straight into the subject, and is never relayed
-    // onward: an event that made one hop has reached everybody the channel reaches.
-    this.relay.subscribe((event) => this.events.next(event));
+  /** Sin bus inyectado, uno propio en memoria: el de un solo proceso, que es lo que eso significa. */
+  constructor(@Optional() @Inject(INSTANCE_BUS) bus: InstanceBusPort | null = null) {
+    this.bus = bus ?? new InMemoryInstanceBus();
+    // En el constructor y no al arrancar: un evento publicado antes del arranque no se pierde.
+    this.bus.subscribe<ProgressEvent>(RUN_PROGRESS_TOPIC, (event) => this.events.next(event));
   }
 
   publish(event: ProgressEvent): void {
-    this.events.next(event);
-    this.relay.publish(event);
+    this.bus.publish(RUN_PROGRESS_TOPIC, event);
   }
 
   forRun(runId: string): Observable<ProgressEvent> {

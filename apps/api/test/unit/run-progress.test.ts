@@ -15,52 +15,23 @@ import {
   RunCaseStartedProjector,
   RunProgressStream,
 } from "@/modules/runs/infrastructure/run-progress.stream";
-import { InProcessRelay } from "@/modules/runs/infrastructure/progress/in-process-relay";
+import { InMemoryBusHub, InMemoryInstanceBus } from "@/shared/bus/in-memory-instance-bus";
 import { RunCaseFinishedEvent, RunCaseStartedEvent } from "@/modules/runs/application/events/run.events";
 import type { RunCase, RunTotals } from "@/modules/runs/domain/model";
-import type { ProgressEvent, ProgressRelayPort } from "@/modules/runs/domain/progress";
+import type { ProgressEvent } from "@/modules/runs/domain/progress";
 
-/** A channel two streams share, standing in for Redis pub/sub. It delivers to everyone *except*
- * the publisher, which is what the real adapter achieves by stamping and dropping its origin. */
-class FakeChannel {
-  private readonly relays: FakeRelay[] = [];
-  attach(relay: FakeRelay): void {
-    this.relays.push(relay);
-  }
-  broadcast(from: FakeRelay, event: ProgressEvent): void {
-    for (const relay of this.relays) if (relay !== from) relay.deliver({ ...event, origin: "otra-instancia" });
-  }
-}
-
-class FakeRelay implements ProgressRelayPort {
-  private handler?: (event: ProgressEvent) => void;
-  readonly published: ProgressEvent[] = [];
-  constructor(private readonly channel: FakeChannel) {
-    channel.attach(this);
-  }
-  publish(event: ProgressEvent): void {
-    this.published.push(event);
-    this.channel.broadcast(this, event);
-  }
-  subscribe(handler: (event: ProgressEvent) => void): void {
-    this.handler = handler;
-  }
-  deliver(event: ProgressEvent): void {
-    this.handler?.(event);
-  }
-}
-
-/** Two API processes on one channel, as a hosted deployment behind a load balancer. */
+/** Two API processes on one bus, as a hosted deployment behind a load balancer. */
 function twoInstances() {
-  const channel = new FakeChannel();
-  const relayA = new FakeRelay(channel);
-  const relayB = new FakeRelay(channel);
-  const instanceA = new RunProgressStream(relayA);
-  const instanceB = new RunProgressStream(relayB);
-  instanceA.onApplicationBootstrap();
-  instanceB.onApplicationBootstrap();
-  return { instanceA, instanceB, relayA, relayB };
+  const hub = new InMemoryBusHub();
+  const busA = new InMemoryInstanceBus(hub, "a");
+  const busB = new InMemoryInstanceBus(hub, "b");
+  const instanceA = new RunProgressStream(busA);
+  const instanceB = new RunProgressStream(busB);
+  return { instanceA, instanceB, busA, busB };
 }
+
+/** Lo que va a otra instancia llega en un turno posterior, como por Redis. */
+const crossed = () => new Promise((resolve) => setImmediate(resolve));
 
 const collect = (stream: RunProgressStream, runId: string) => {
   const seen: ProgressEvent[] = [];
@@ -74,6 +45,7 @@ describe("progreso en vivo", () => {
     const watching = collect(instanceB, "run-1");
 
     instanceA.publish({ runId: "run-1", type: "case", payload: { case: 1 } });
+    await crossed();
 
     assert.equal(watching.length, 1);
     assert.equal(watching[0].type, "case");
@@ -85,19 +57,23 @@ describe("progreso en vivo", () => {
     const watching = collect(instanceA, "run-1");
 
     instanceA.publish({ runId: "run-1", type: "case", payload: {} });
+    assert.equal(watching.length, 1, "lo local llega en el acto, sin esperar a la red");
+    await crossed();
 
     assert.equal(watching.length, 1);
   });
 
   test("lo que llega de fuera no se vuelve a retransmitir", async () => {
     // Sin esto, dos instancias se reenvían el mismo evento sin parar.
-    const { instanceA, relayA, relayB } = twoInstances();
-    collect(instanceA, "run-1");
+    const { instanceA, instanceB } = twoInstances();
+    const onA = collect(instanceA, "run-1");
+    const onB = collect(instanceB, "run-1");
 
-    relayA.deliver({ runId: "run-1", type: "case", payload: {}, origin: "otra" });
+    instanceB.publish({ runId: "run-1", type: "case", payload: {} });
+    for (let turn = 0; turn < 5; turn++) await crossed();
 
-    assert.deepEqual(relayA.published, [], "un evento que ya dio un salto no da otro");
-    assert.deepEqual(relayB.published, []);
+    assert.equal(onA.length, 1, "un evento que ya dio un salto no da otro");
+    assert.equal(onB.length, 1);
   });
 
   test("cada seguidor recibe solo su corrida", async () => {
@@ -106,14 +82,14 @@ describe("progreso en vivo", () => {
     const ajena = collect(instanceB, "run-2");
 
     instanceA.publish({ runId: "run-1", type: "finished", payload: {} });
+    await crossed();
 
     assert.equal(suya.length, 1);
     assert.equal(ajena.length, 0);
   });
 
   test("el caso que empieza se anuncia como 'case' sin totales; el que termina sí los trae", () => {
-    const stream = new RunProgressStream(new InProcessRelay());
-    stream.onApplicationBootstrap();
+    const stream = new RunProgressStream();
     const seen = collect(stream, "run-1");
 
     const runCase = { id: "c1", status: "running", position: 0 } as unknown as RunCase;
@@ -134,11 +110,9 @@ describe("progreso en vivo", () => {
     assert.deepEqual(finishedPayload.totals, totals);
   });
 
-  test("con un solo proceso el relé no hace nada, y es lo correcto", async () => {
-    // El sujeto en memoria ya alcanza a todos los seguidores que hay. Una instalación de un solo
-    // proceso no abre un cliente de Redis que no va a usar.
-    const stream = new RunProgressStream(new InProcessRelay());
-    stream.onApplicationBootstrap();
+  test("con un solo proceso basta el bus en memoria, y lo entrega en el acto", async () => {
+    // Una instalación de un solo proceso no abre un cliente de Redis que no va a usar.
+    const stream = new RunProgressStream();
     const watching = collect(stream, "run-1");
 
     stream.publish({ runId: "run-1", type: "started", payload: { cases: 3 } });

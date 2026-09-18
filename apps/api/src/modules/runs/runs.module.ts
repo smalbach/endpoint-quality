@@ -4,6 +4,7 @@ import { TypeOrmModule } from "@nestjs/typeorm";
 
 import { RunCaseEntity, RunEntity, RunStepEntity } from "@/shared/database/entities";
 import { ENV, type Env } from "@/shared/config/env";
+import { INSTANCE_BUS, type InstanceBusPort } from "@/shared/bus/instance-bus";
 import { AuthModule } from "@/modules/auth/auth.module";
 import { IamModule } from "@/modules/iam/iam.module";
 import { ProjectsModule } from "@/modules/projects/projects.module";
@@ -13,12 +14,9 @@ import { ProjectConfigModule } from "@/modules/config/config.module";
 import { WorkflowsModule } from "@/modules/workflows/workflows.module";
 import { ChannelsModule } from "@/modules/channels/channels.module";
 import { REQUEST_PREVIEWER, RUN_QUEUE, RUN_REPOSITORY } from "./domain/ports";
-import { PROGRESS_RELAY } from "./domain/progress";
 import { TypeOrmRunRepository } from "./infrastructure/persistence/typeorm-run.repository";
 import { InMemoryRunQueue } from "./infrastructure/queue/in-memory-queue";
 import { RedisRunQueue } from "./infrastructure/queue/redis-queue";
-import { InProcessRelay } from "./infrastructure/progress/in-process-relay";
-import { RedisProgressRelay } from "./infrastructure/progress/redis-relay";
 import { CaseExecutor } from "./infrastructure/case-executor";
 import { ExecutionContextFactory } from "./infrastructure/execution-context";
 import { RequestPreviewer } from "./infrastructure/request-previewer";
@@ -72,26 +70,11 @@ export const RUN_PROJECTORS = [
  */
 export const RUN_QUEUE_PROVIDER = {
   provide: RUN_QUEUE,
-  inject: [ENV],
-  useFactory: (env: Env) =>
+  inject: [ENV, INSTANCE_BUS],
+  useFactory: (env: Env, bus: InstanceBusPort) =>
     env.QUEUE_DRIVER === "redis"
       ? new RedisRunQueue(env.REDIS_URL ?? "redis://localhost:6379")
-      : new InMemoryRunQueue(),
-};
-
-/**
- * Live progress crosses instances only when there is more than one, which is exactly what
- * `QUEUE_DRIVER=redis` says. The same switch, because the two facts are the same fact: a run is
- * executed by whichever instance took the job, and watched from whichever one the browser
- * reached.
- */
-export const PROGRESS_RELAY_PROVIDER = {
-  provide: PROGRESS_RELAY,
-  inject: [ENV],
-  useFactory: (env: Env) =>
-    env.QUEUE_DRIVER === "redis"
-      ? new RedisProgressRelay(env.REDIS_URL ?? "redis://localhost:6379")
-      : new InProcessRelay(),
+      : new InMemoryRunQueue(bus),
 };
 
 @Module({
@@ -111,7 +94,6 @@ export const PROGRESS_RELAY_PROVIDER = {
   providers: [
     { provide: RUN_REPOSITORY, useClass: TypeOrmRunRepository },
     RUN_QUEUE_PROVIDER,
-    PROGRESS_RELAY_PROVIDER,
     CaseExecutor,
     ExecutionContextFactory,
     { provide: REQUEST_PREVIEWER, useClass: RequestPreviewer },
