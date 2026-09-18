@@ -242,6 +242,26 @@ describe("los scripts de «Enviar»", () => {
     assert.equal(stored.variables.busqueda, undefined, "pm.variables no se guarda");
   });
 
+  test("pm.visualizer llega a la respuesta con sus datos, y los secretos tapados también ahí", async () => {
+    const response = await send({
+      environmentId,
+      method: "GET",
+      path: "/items/3",
+      auth: { mode: "none" },
+      postResponseScript: [
+        "const echoed = pm.response.json();",
+        'pm.visualizer.set("<p>{{url}} · {{firma}}</p>", { url: echoed.url, firma: pm.environment.get("apiSecret") });',
+      ].join("\n"),
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    const { pre, post } = response.body.scripts;
+    assert.equal(pre, null);
+    assert.equal(post.error, null);
+    assert.equal(post.visualization.template, "<p>{{url}} · {{firma}}</p>");
+    assert.deepEqual(JSON.parse(post.visualization.data), { url: "/items/3", firma: "••••••••" });
+    assert.equal(JSON.stringify(response.body).includes("secreto-del-api"), false);
+  });
+
   test("si el previo falla, la petición no sale", async () => {
     const before = hits;
     const response = await send({

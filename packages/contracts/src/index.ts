@@ -1514,6 +1514,12 @@ export type ScriptRunView = {
   tests: { name: string; passed: boolean; message: string | null }[];
   /** Names of the environment variables whose current value it changed. */
   environmentUpdates: string[];
+  /**
+   * What `pm.visualizer.set` left, for the response's «Visualizar» tab: a Handlebars template and
+   * its data and options as JSON text. Rendered by the browser in a sandboxed frame; null when the
+   * script did not call it.
+   */
+  visualization: { template: string; data: string; options: string } | null;
   durationMs: number;
 };
 

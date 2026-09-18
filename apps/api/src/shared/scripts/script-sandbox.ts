@@ -35,6 +35,12 @@ export type ScriptLogLevel = "log" | "info" | "warn" | "error";
 export type ScriptLog = { level: ScriptLogLevel; text: string };
 export type ScriptTest = { name: string; passed: boolean; message: string | null };
 
+/**
+ * What `pm.visualizer.set` left: a Handlebars template and its data, both as text. `data` and
+ * `options` are JSON; the browser parses them inside the sandboxed frame that renders the template.
+ */
+export type ScriptVisualization = { template: string; data: string; options: string };
+
 export type ScriptOutcome = {
   /** `Nombre: mensaje (línea n)`, or why the process did not answer. Null when it ran to the end. */
   error: string | null;
@@ -47,6 +53,8 @@ export type ScriptOutcome = {
   variables: Record<string, string>;
   /** The request headers after a pre script, when it ran; null after a post script. */
   headers: Record<string, string> | null;
+  /** `pm.visualizer.set` in a post script, or null. */
+  visualization: ScriptVisualization | null;
   durationMs: number;
 };
 
@@ -65,6 +73,9 @@ export const SCRIPT_LIMITS = {
   maxTests: 200,
   maxValueLength: 10_000,
   maxWrites: 100,
+  /** `pm.visualizer.set`: a template is markup, its data is a response's worth of JSON. */
+  maxTemplateLength: 200_000,
+  maxVisualizationData: 2_000_000,
   /** Processes alive at once. A burst of «Enviar» queues rather than forks without end. */
   concurrency: 4,
 } as const;
@@ -94,6 +105,7 @@ export const failedOutcome = (error: string, durationMs: number): ScriptOutcome 
   environmentUnset: [],
   variables: {},
   headers: null,
+  visualization: null,
   durationMs,
 });
 
@@ -125,8 +137,29 @@ export function sanitizeOutcome(raw: unknown, durationMs: number): ScriptOutcome
       .slice(0, SCRIPT_LIMITS.maxWrites),
     variables: stringMap(raw.variables, SCRIPT_LIMITS.maxWrites, true),
     headers: isRecord(raw.headers) ? stringMap(raw.headers, 100) : null,
+    visualization: visualizationOf(raw.visualization),
     durationMs,
   };
+}
+
+/** Readable JSON of at most `limit` characters, or null. */
+function jsonText(value: unknown, limit: number): string | null {
+  if (typeof value !== "string" || value.length > limit) return null;
+  try {
+    JSON.parse(value);
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+function visualizationOf(value: unknown): ScriptVisualization | null {
+  if (!isRecord(value) || typeof value.template !== "string") return null;
+  if (value.template.length > SCRIPT_LIMITS.maxTemplateLength) return null;
+  const data = jsonText(value.data, SCRIPT_LIMITS.maxVisualizationData);
+  if (data === null) return null;
+  const options = jsonText(value.options, 10_000);
+  return { template: value.template, data, options: options && isRecord(JSON.parse(options)) ? options : "{}" };
 }
 
 /**
@@ -142,6 +175,7 @@ export function redactOutcome(outcome: ScriptOutcome, secrets: string[]): Script
   const redact = (text: string) => hidden.reduce((result, secret) => result.split(secret).join("••••••••"), text);
   return {
     ...outcome,
+    visualization: outcome.visualization && redactVisualization(outcome.visualization, redact),
     error: outcome.error === null ? null : redact(outcome.error),
     logs: outcome.logs.map((log) => ({ ...log, text: redact(log.text) })),
     tests: outcome.tests.map((test) => ({
@@ -149,5 +183,35 @@ export function redactOutcome(outcome: ScriptOutcome, secrets: string[]): Script
       name: redact(test.name),
       message: test.message === null ? null : redact(test.message),
     })),
+  };
+}
+
+/**
+ * The visualization with its secrets masked, walking the data rather than its text.
+ *
+ * A secret replaced inside the JSON text would break it the moment it sat outside a string — a
+ * numeric PIN, a key the script used as a property name — and the frame would get nothing. So the
+ * data is parsed, every string, key and number is masked on its own, and it is written back. A
+ * number that held a secret comes back as the masked string.
+ */
+function redactVisualization(
+  visualization: ScriptVisualization,
+  redact: (text: string) => string,
+): ScriptVisualization {
+  const walk = (value: unknown): unknown => {
+    if (typeof value === "string") return redact(value);
+    if (typeof value === "number") {
+      const masked = redact(String(value));
+      return masked === String(value) ? value : masked;
+    }
+    if (Array.isArray(value)) return value.map(walk);
+    if (isRecord(value))
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [redact(key), walk(item)]));
+    return value;
+  };
+  return {
+    template: redact(visualization.template),
+    data: JSON.stringify(walk(JSON.parse(visualization.data))),
+    options: JSON.stringify(walk(JSON.parse(visualization.options))),
   };
 }

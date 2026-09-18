@@ -261,6 +261,73 @@ describe("lo que vuelve del proceso", () => {
   });
 });
 
+describe("pm.visualizer", () => {
+  const post = (code: string) =>
+    input(code, {
+      phase: "post",
+      response: { status: 200, headers: {}, body: '{"items":[{"n":"a"},{"n":"b"}]}', durationMs: 5 },
+    });
+
+  test("el posterior deja la plantilla y sus datos como texto, tomados en el momento de la llamada", async () => {
+    const outcome = await sandbox.run(
+      post(`
+        const data = pm.response.json();
+        pm.visualizer.set("<ul>{{#each items}}<li>{{n}}</li>{{/each}}</ul>", data, { noEscape: false });
+        data.items.push({ n: "después" });
+      `),
+    );
+    assert.equal(outcome.error, null);
+    assert.deepEqual(outcome.visualization, {
+      template: "<ul>{{#each items}}<li>{{n}}</li>{{/each}}</ul>",
+      data: '{"items":[{"n":"a"},{"n":"b"}]}',
+      options: '{"noEscape":false}',
+    });
+  });
+
+  test("clear lo quita, el previo no lo tiene, y unos datos circulares son un error con su nombre", async () => {
+    const cleared = await sandbox.run(post(`pm.visualizer.set("x", {}); pm.visualizer.clear();`));
+    assert.equal(cleared.visualization, null);
+    const early = await sandbox.run(input(`pm.visualizer.set("x", {});`));
+    assert.match(early.error ?? "", /solo existe en el script posterior/);
+    const circular = await sandbox.run(post(`const a = {}; a.a = a; pm.visualizer.set("x", a);`));
+    assert.match(circular.error ?? "", /no se pueden pasar a JSON/);
+    assert.equal(circular.visualization, null);
+  });
+
+  test("lo que vuelve se lee sin fiarse: un JSON roto o una plantilla que no es texto no pasan", () => {
+    const read = (visualization: unknown) => sanitizeOutcome({ visualization }, 1).visualization;
+    assert.equal(read({ template: "x", data: "{no es json", options: "{}" }), null);
+    assert.equal(read({ template: 7, data: "{}", options: "{}" }), null);
+    assert.equal(read({ template: "x".repeat(200_001), data: "{}", options: "{}" }), null);
+    assert.deepEqual(read({ template: "x", data: "[1]", options: "[]" }), {
+      template: "x",
+      data: "[1]",
+      options: "{}",
+    });
+  });
+
+  test("los secretos se tapan en la plantilla y en los datos, y el JSON sigue siendo JSON", () => {
+    const outcome = redactOutcome(
+      {
+        ...sanitizeOutcome({}, 1),
+        visualization: {
+          template: "<p>clave-secreta</p>",
+          data: JSON.stringify({ token: "Bearer clave-secreta", pin: 98765, "clave-secreta": true, lista: ["abc"] }),
+          options: "{}",
+        },
+      },
+      ["clave-secreta", "98765"],
+    );
+    assert.equal(outcome.visualization?.template, "<p>••••••••</p>");
+    assert.deepEqual(JSON.parse(outcome.visualization?.data ?? ""), {
+      token: "Bearer ••••••••",
+      pin: "••••••••",
+      "••••••••": true,
+      lista: ["abc"],
+    });
+  });
+});
+
 describe("lo que un script escribe en el entorno", () => {
   const environment: Environment = {
     id: "e",

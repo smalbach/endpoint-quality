@@ -35,6 +35,7 @@ import {
   type ScriptInput,
   type ScriptLogLevel,
   type ScriptOutcome,
+  type ScriptVisualization,
   type ScriptSandboxPort,
 } from "@/shared/scripts/script-sandbox";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
@@ -86,6 +87,7 @@ export type ScriptRunView = {
   logs: { level: ScriptLogLevel; text: string }[];
   tests: { name: string; passed: boolean; message: string | null }[];
   environmentUpdates: string[];
+  visualization: ScriptVisualization | null;
   durationMs: number;
 };
 
@@ -758,6 +760,7 @@ class ScriptSession {
         logs: shown.logs,
         tests: shown.tests,
         environmentUpdates: this.environment ? names : [],
+        visualization: shown.visualization,
         durationMs: raw.durationMs,
       },
     };
