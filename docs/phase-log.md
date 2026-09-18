@@ -2840,3 +2840,82 @@ limpio`. En la pila, con las migraciones 33 y 34 aplicadas:
 Datos de la prueba borrados. No comprobado: las pantallas en el navegador. Pendiente: un monitor que
 apunte a un canal sin flujo, `{{variables}}` en los temas MQTT del guion, y el nombre del canal en el
 lienzo (hoy enseña el id). Y `SECRETS_KEY`, sin tocar.
+
+## Ola 14: Socket.IO, varias réplicas, captura endurecida, el nodo webhook recuperado y los restos
+
+Cinco agentes en paralelo, integrados en `main` y probados juntos en la pila.
+
+### Socket.IO como canal
+
+`protocol: "socketio"`, con espacio de nombres, carga de `auth` en JSON con `{{variables}}`, query,
+eventos a oír (o todos) y transportes (`ChannelSocketIo1700000036000`). Emitir lleva evento,
+argumentos y acuse con plazo; conectar, `connect_error`, desconectar y un acuse perdido son eventos
+de la transcripción. runner-core gana `match.event`. La guarda es la de siempre, con un agente
+fijado a la IP comprobada, y el sondeo HTTP es un transporte **propio**: el de `socket.io-client`
+en Node sigue una redirección sin el agente, lo que se saltaría la guarda. Toda la carga de `auth`
+resuelta entra en los secretos. Versiones 3 y 4; la 2 fuera (cliente sin mantenimiento).
+
+### Varias réplicas detrás de un balanceador
+
+Un bus entre instancias (`InstanceBusPort`: memoria, o Redis pub/sub con `REDIS_URL`) sustituye al
+relé de progreso. Difundir es local primero; pedir va a una instancia concreta con plazo y con los
+errores de dominio cruzando con su tipo. Lo que estaba roto con dos instancias: el progreso en vivo
+de seguridad y rendimiento, «Cancelar», «Pausar» y «Reanudar» de las colas en memoria (por B no
+cancelaba lo de A), y las sesiones de canal, que ahora se usan desde cualquier instancia: el socket
+no se mueve, las órdenes van a la dueña. Los monitores ya eran correctos (`SKIP LOCKED`). El
+servicio `redis` de compose solo arranca con su perfil; sin él, una instancia avisa y sigue sola.
+Pendiente: el límite de peticiones y «una corrida a la vez» siguen siendo por proceso.
+
+### Captura por proxy, endurecida
+
+- **HTTPS descifrado, opcional**: `CAPTURE_MITM=true` y «Descifrar HTTPS» por sesión. CA ECDSA de
+  la instalación cuya clave solo existe cifrada con `SECRET_CIPHER`; sin cifrado válido se niega con
+  el motivo, **nunca** guarda la clave en claro. Hojas de 2 días en memoria. Lo descifrado se
+  reenvía por el mismo camino que HTTP: guarda, validación TLS real del destino, redacción e import.
+- **CONNECT** solo a 443, 80 y 8443 (`CAPTURE_CONNECT_PORTS`); otro puerto, 403 grabado.
+- **Tope de intentos**: 20 credenciales malas por minuto e IP, luego 429.
+- **Varias instancias**: el token se busca por su hash en la tabla, `appendNext` sube el contador
+  en la misma transacción que la fila, y las sesiones sobreviven a un reinicio
+  (`CaptureProxyHardening1700000037000`).
+
+### El nodo «Esperar webhook», recuperado
+
+Estaba en una rama de hace tres días que nunca llegó a `main` ni a este registro. Se portó sobre el
+código actual, no se copió: el almacén en memoria pasa a la tabla `flow_hooks`
+(`FlowHooks1700000039000`) —aceptar es un `UPDATE` condicionado, así que dos llamadas no ganan las
+dos—, la instancia que recibe la llamada despierta por el bus a la que corre el flujo, y el token ya
+no se guarda en ningún sitio: es un HMAC del id de la espera con una clave derivada de
+`JWT_ACCESS_SECRET`, y en la base solo queda su hash. Lo recibido se tapa con las reglas de las
+capturas; el corte a 1 MB cierra el socket (el arreglo que también estaba en la rama). Rotar
+`JWT_ACCESS_SECRET` invalida las esperas en curso. Variable nueva: `PUBLIC_API_URL`.
+
+### Lo pequeño
+
+- Un **monitor vigila un canal** sin flujo, y la tarjeta dice qué corre.
+- **Corridas sin contrato**: solo la matriz y los flujos con una petición guardada o login lo exigen;
+  un canal, un webhook o un flujo de `fetch` corren sin él (`RunsWithoutContract1700000040000`).
+- `{{variables}}` en los **temas MQTT**, revalidados después de resolver (una variable con `+` o `#`
+  haría un comodín).
+- El lienzo enseña el **nombre del canal** y avisa si se borró; los ids de canal se comprueban al
+  duplicar e importar elementos, que arrastra canales y **sub-flujos** y remapea los nodos.
+- Bifurcaciones: un rol que choca de nombre llega numerado; lo emparejado solo por nombre se marca.
+- gRPC cuenta los **bytes del protobuf** en el cable, y el medio cierre queda como evento.
+
+### Cómo se comprobó
+
+`api 1271 · web 602 · runner-core 383 · db 29 (contra Postgres real) · lint 0 errores · typecheck
+limpio`. La suite de base de datos no había corrido nunca en estas olas: `localhost:5432` en este Mac
+es otro Postgres; el del contenedor se alcanza por la IP de la red local. En la pila, con las
+migraciones 36 a 40 aplicadas:
+
+- **Tres «traer» a la vez** con la misma huella de una bifurcación: 200, 409, 409.
+- **Invitación**: el correo sale. Con `MAIL_DRIVER=log` el enlace queda en el log del contenedor,
+  que es para desarrollo; en producción hace falta un proveedor de verdad.
+- **Webhook** en un proyecto sin contrato: token falso 404, cuerpo de 1,1 MB 413, llamada buena 202 y
+  la corrida en verde con la captura, segunda llamada 404; el `Bearer` y la contraseña enviados, en
+  **0** filas de `run_steps`, `run_cases` y `flow_hooks`; el token, en 0 líneas del log.
+- **Monitor** de un canal MQTT (HiveMQ) sin contrato: verde, con la fuente «canal hivemq».
+
+No comprobado: las pantallas en el navegador, el MITM con un navegador o un móvil reales, y Socket.IO
+contra un servidor público. Y `SECRETS_KEY` sigue sin tocar: con ella, el MITM se niega y crear una
+variable secreta es un 500.
