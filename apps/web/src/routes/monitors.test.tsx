@@ -73,7 +73,7 @@ function answers(
     if (path.endsWith("/monitors")) return Promise.resolve({ monitors: [monitor()], ...list });
     if (path.endsWith("/environments")) return Promise.resolve(environments);
     if (path.endsWith("/channels"))
-      return Promise.resolve({ channels: [{ id: "c1", name: "eco", protocol: "websocket", messages: [] }] });
+      return Promise.resolve({ channels: [{ id: "c1", name: "eco", protocol: "ws", messages: [] }] });
     return Promise.resolve({ workflows: [{ id: "w1", name: "el alta" }], suites: [] });
   });
 }
@@ -284,7 +284,7 @@ describe("la pantalla de monitores", () => {
     fireEvent.change(dialog.getByLabelText(/Nombre/), { target: { value: "el socket" } });
     fireEvent.change(dialog.getByLabelText("Qué corre"), { target: { value: "channel" } });
     expect(dialog.getByRole("button", { name: "Crear" }).hasAttribute("disabled")).toBe(true);
-    await waitFor(() => expect(dialog.getByRole("option", { name: "eco · WEBSOCKET" })).toBeTruthy());
+    await waitFor(() => expect(dialog.getByRole("option", { name: "eco · WebSocket" })).toBeTruthy());
     fireEvent.change(dialog.getByLabelText("Canal"), { target: { value: "c1" } });
     expect(dialog.getByLabelText("Mandar los mensajes guardados del canal, en orden")).toBeTruthy();
     fireEvent.click(dialog.getByRole("button", { name: "Crear" }));

@@ -52,6 +52,22 @@ describe("el nodo canal en el borrador", () => {
     });
   });
 
+  test("en el lienzo el nodo dice el nombre y el protocolo del canal, y avisa si ya no existe", () => {
+    const steps: WorkflowStepView[] = [{ id: "canal", kind: "channel", channel: { channelId: CHANNEL_ID } }];
+    const data = (channels?: ChannelView[]) =>
+      toNodes(steps, [], [], undefined, undefined, undefined, channels)[0]!.data;
+
+    expect(data([channelView({ protocol: "mqtt", name: "sensores" })])).toMatchObject({
+      channelName: "sensores",
+      protocol: "MQTT",
+      missing: false,
+    });
+    // Borrado: la lista llegó y no está.
+    expect(data([])).toMatchObject({ channelName: null, missing: true });
+    // Mientras la lista carga no se sabe, y no se avisa.
+    expect(data(undefined)).toMatchObject({ channelName: null, missing: false });
+  });
+
   test("avisa de lo que el servidor rechazaría: tema en MQTT, tema con comodines, comprobaciones en el nodo", () => {
     const mqtt = channelView({ protocol: "mqtt" });
     const step = (channel: WorkflowStepView["channel"], extra: Partial<WorkflowStepView> = {}): WorkflowStepView => ({

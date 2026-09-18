@@ -9,6 +9,7 @@
 import { DEFAULT_GRAPHQL_QUERY, GRAPHQL_OPERATION_NAME, graphqlVariablesProblem } from "@/lib/graphql-draft";
 import type {
   CaseStatus,
+  ChannelView,
   WorkflowCaptureView,
   RequestTemplateView,
   WorkflowStatusView,
@@ -17,7 +18,7 @@ import type {
 import { slugId } from "@/lib/config-draft";
 import { defaultNotify, notifyProblems } from "@/lib/workflow-notify";
 import { defaultMock, mockProblems } from "@/lib/mock-draft";
-import { channelNodeProblems, defaultChannelNode } from "@/lib/channel-node-draft";
+import { PROTOCOL_LABEL, channelNodeProblems, defaultChannelNode } from "@/lib/channel-node-draft";
 
 export type OperationSummary = { id: string; method: string; path: string; summary: string };
 
@@ -583,6 +584,12 @@ export function toNodes(
   runStartedAt?: Record<string, string>,
   /** The retry each node is on, or ended with, in a live run (see `flowNodeRetries`). */
   runRetries?: Record<string, RetryNote>,
+  /**
+   * Los canales del proyecto, para que un nodo canal diga cuál ejecuta por su nombre y no por su id.
+   * Ausente mientras la lista no ha llegado: sin ella no se sabe si un canal falta, y avisar de uno
+   * borrado mientras carga sería un aviso falso en cada apertura.
+   */
+  channels?: ChannelView[],
 ) {
   const templateById = new Map(templates.map((template) => [template.id, template]));
   const operationById = new Map(operations.map((operation) => [operation.id, operation]));
@@ -714,6 +721,7 @@ export function toNodes(
         data: {
           name: step.id,
           chosen: Boolean(step.channel?.channelId),
+          ...channelLabel(step.channel?.channelId, channels),
           scripted: step.channel?.messages?.length ?? null,
           captures: step.captures?.length ?? 0,
           runStatus: runStatusFor,
@@ -845,6 +853,19 @@ function caseStepId(scenarioId: string): string | null {
   if (parts[0] !== "workflow" || parts.length < 3) return null;
   // A subflow's child cases are `<node>>childStep`: they light the node that runs them.
   return parts[2].split("#")[0].split(">")[0];
+}
+
+/** Cómo se llama en el lienzo el canal de un nodo: su nombre y su protocolo, o que ya no existe. */
+function channelLabel(
+  channelId: string | undefined,
+  channels: ChannelView[] | undefined,
+): { channelName: string | null; protocol: string | null; missing: boolean } {
+  const channel = channelId ? channels?.find((item) => item.id === channelId) : undefined;
+  return {
+    channelName: channel?.name ?? null,
+    protocol: channel ? PROTOCOL_LABEL[channel.protocol] : null,
+    missing: Boolean(channelId && channels && !channel),
+  };
 }
 
 export function flowNodeStatuses(cases: { scenarioId: string; status: CaseStatus }[]): Record<string, CaseStatus> {

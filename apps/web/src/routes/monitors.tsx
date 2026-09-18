@@ -28,7 +28,7 @@ import { ConfirmDialog, Modal } from "@/components/overlay";
 import { useToast } from "@/components/toast";
 import { formatDate } from "@/lib/format";
 import { ChannelScriptEditor } from "@/components/channel-script-editor";
-import type { ScriptStepView } from "@/lib/channel-node-draft";
+import { PROTOCOL_LABEL, type ScriptStepView } from "@/lib/channel-node-draft";
 import type {
   ChannelListView,
   ChannelView,
@@ -646,7 +646,7 @@ function MonitorModal({
                 <option value="">Elige uno</option>
                 {channels.map((entry) => (
                   <option key={entry.id} value={entry.id}>
-                    {entry.name} · {entry.protocol.toUpperCase()}
+                    {entry.name} · {PROTOCOL_LABEL[entry.protocol]}
                   </option>
                 ))}
               </select>

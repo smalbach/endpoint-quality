@@ -2170,6 +2170,8 @@ function ChannelInspector({
     onChange({ ...step, channel: next });
   };
   const channel = channels.find((item) => item.id === node.channelId);
+  // Un id que no está en la lista: el canal se borró, o el flujo vino de otro proyecto sin él.
+  const missing = Boolean(node.channelId) && !channel;
   const script = effectiveScript(node, channel);
   const problems = channelNodeProblems(step, channels);
 
@@ -2177,7 +2179,13 @@ function ChannelInspector({
     <NodePanel
       kind="channel"
       title="Canal"
-      subtitle={channel ? `${channel.name} · ${PROTOCOL_LABEL[channel.protocol]} · ${step.id}` : step.id}
+      subtitle={
+        channel
+          ? `${channel.name} · ${PROTOCOL_LABEL[channel.protocol]} · ${step.id}`
+          : missing
+            ? `canal eliminado · ${step.id}`
+            : step.id
+      }
       description={
         <>
           Abre el canal con el entorno de la corrida, manda el guion, espera y cierra. Pasa si se cumple lo que el canal
@@ -2201,6 +2209,8 @@ function ChannelInspector({
                   onChange={(event) => setNode({ channelId: event.target.value })}
                 >
                   <option value="">Elige un canal…</option>
+                  {/* Sin esta opción el desplegable enseñaría «Elige un canal…» y parecería que no hay ninguno elegido. */}
+                  {missing && <option value={node.channelId}>⚠ Canal eliminado</option>}
                   {channels.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.name} · {PROTOCOL_LABEL[item.protocol]}
@@ -2208,7 +2218,13 @@ function ChannelInspector({
                   ))}
                 </select>
               </Field>
-              {channels.length === 0 && (
+              {missing && (
+                <p className="mt-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] leading-5 text-amber-800" role="alert">
+                  Este nodo apunta a un canal que ya no existe en el proyecto: la corrida lo dará en rojo de configuración.
+                  Elige otro canal.
+                </p>
+              )}
+              {channels.length === 0 && !missing && (
                 <p className="mt-1 text-[11px] leading-5 text-slate-500">
                   El proyecto no tiene canales: créalos en Endpoints → Canales.
                 </p>
