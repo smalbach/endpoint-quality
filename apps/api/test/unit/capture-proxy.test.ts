@@ -11,7 +11,12 @@ import { createServer, request as httpRequest, type Server } from "node:http";
 import { connect as netConnect } from "node:net";
 import type { AddressInfo } from "node:net";
 
-import { CaptureProxy, tokenFrom, type ProxySession } from "@/modules/captures/infrastructure/capture-proxy";
+import {
+  CaptureProxy,
+  tokenFrom,
+  type CaptureProxyOptions,
+  type ProxySession,
+} from "@/modules/captures/infrastructure/capture-proxy";
 import { captureItemFrom, type CaptureStopReason, type RawExchange } from "@/modules/captures/domain/model";
 import { hashOpaqueToken } from "@/shared/crypto/opaque-token";
 
@@ -61,6 +66,7 @@ type Harness = {
 async function harness(
   policy = OPEN,
   limits = { durationMs: 60_000, maxRequests: 50, maxBodyBytes: 1_024 },
+  extra: Partial<CaptureProxyOptions> = {},
 ): Promise<Harness> {
   const exchanges: RawExchange[] = [];
   const stops: CaptureStopReason[] = [];
@@ -76,6 +82,7 @@ async function harness(
       onExchange: (_session, exchange) => exchanges.push(exchange),
       onStop: (_session, reason) => stops.push(reason),
     },
+    ...extra,
   });
   const port = await proxy.listen(0, "127.0.0.1");
   const session: ProxySession = {
@@ -310,6 +317,49 @@ describe("el proxy de captura", () => {
       assert.equal(answer.status, 407);
       // Cerrada desde fuera no se avisa: quien la cerró ya lo sabe.
       assert.deepEqual(h.stops, []);
+    } finally {
+      await h.proxy.close();
+    }
+  });
+
+  test("demasiadas credenciales malas desde una IP: 429 sin mirar la credencial, hasta que pasa la ventana", async () => {
+    const limits = { durationMs: 600_000, maxRequests: 50, maxBodyBytes: 1_024 };
+    const h = await harness(OPEN, limits, { authFailureLimit: { max: 3, windowMs: 60_000 } });
+    try {
+      const url = `http://127.0.0.1:${targetPort}/x`;
+      const auth = (token: string) => ({ headers: { "Proxy-Authorization": basic(token) } });
+      // Sin credencial no cuenta: es lo que hace un navegador la primera vez.
+      for (let index = 0; index < 5; index += 1) assert.equal((await viaProxy(h.port, url)).status, 407);
+      for (let index = 0; index < 3; index += 1)
+        assert.equal((await viaProxy(h.port, url, auth(`malo-${index}`))).status, 407);
+
+      const limited = await viaProxy(h.port, url, auth("malo-4"));
+      assert.equal(limited.status, 429);
+      assert.equal(limited.headers["retry-after"], "60");
+      assert.ok(!limited.body.includes("malo-4"), "la respuesta no repite la credencial probada");
+      // Ni la buena pasa mientras dura la ventana: el tope va antes de mirar la credencial.
+      assert.equal((await viaProxy(h.port, url, auth(TOKEN))).status, 429);
+      assert.equal(await connectVia(h.port, `127.0.0.1:${targetPort}`, TOKEN), "HTTP/1.1 429 Too Many Requests");
+      assert.equal(h.exchanges.length, 0);
+
+      h.clock.now = new Date(h.clock.now.getTime() + 61_000);
+      assert.equal((await viaProxy(h.port, url, auth(TOKEN))).status, 201);
+    } finally {
+      await h.proxy.close();
+    }
+  });
+
+  test("el token de una sesión ya cerrada no cuenta como intento", async () => {
+    const h = await harness(OPEN, undefined, { authFailureLimit: { max: 2, windowMs: 60_000 } });
+    try {
+      h.proxy.stop("s1", "manual");
+      for (let index = 0; index < 4; index += 1) {
+        const answer = await viaProxy(h.port, `http://127.0.0.1:${targetPort}/x`, {
+          headers: { "Proxy-Authorization": basic(TOKEN) },
+        });
+        assert.equal(answer.status, 407);
+        assert.match(answer.body, /terminó \(manual\)/);
+      }
     } finally {
       await h.proxy.close();
     }

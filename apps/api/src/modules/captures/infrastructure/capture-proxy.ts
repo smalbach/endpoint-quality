@@ -27,7 +27,9 @@
  * 6. **Nada en claro llega a la tabla.** Lo que se graba se tapa antes de guardarlo
  *    (`captureItemFrom`), y la `Proxy-Authorization` —el token de la propia sesión— ni se reenvía
  *    ni se graba.
- * 7. **Túneles, solo a puertos web.** Un `CONNECT` va a 443, 80 u 8443 salvo que el despliegue diga
+ * 7. **Intentos con tope.** Más de 20 credenciales malas por minuto desde una IP es un 429 sin mirar
+ *    la credencial (`auth-failure-limiter.ts`). El token probado no se guarda ni se registra.
+ * 8. **Túneles, solo a puertos web.** Un `CONNECT` va a 443, 80 u 8443 salvo que el despliegue diga
  *    otra lista (`CAPTURE_CONNECT_PORTS`). Otro puerto es un 403, grabado como rechazado.
  *
  * ## HTTPS: el túnel, sin mirar dentro
@@ -53,6 +55,7 @@ import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 import { BlockedTargetError, pinnedAgent, resolveTarget, type SafeFetchPolicy } from "@/shared/http/safe-fetch";
 import { hashOpaqueToken } from "@/shared/crypto/opaque-token";
 import type { CaptureLimits, CaptureStopReason, RawExchange } from "../domain/model";
+import { AuthFailureLimiter, DEFAULT_AUTH_FAILURE_LIMIT, type AuthFailureLimit } from "./auth-failure-limiter";
 
 /** Una sesión viva, como la ve el proxy. */
 export type ProxySession = {
@@ -66,6 +69,9 @@ export type ProxySession = {
 };
 
 type LiveSession = ProxySession & { sockets: Set<Socket>; timer: NodeJS.Timeout | null };
+
+/** Por qué no se atiende una petición: sin credencial que valga (407) o con demasiados intentos (429). */
+type Refusal = { status: 407; refused: string } | { status: 429; refused: string; retryAfter: number };
 
 export type CaptureProxyHooks = {
   /** Una petición o un túnel, en bruto. Quien lo recibe lo tapa antes de guardarlo. */
@@ -84,6 +90,8 @@ export type CaptureProxyOptions = {
   tunnelIdleMs: number;
   /** Los puertos a los que se abre túnel. Otro puerto es un 403, grabado como rechazado. */
   connectPorts: ReadonlySet<number>;
+  /** Cuántas credenciales malas se aguantan por IP. Por omisión, 20 por minuto. */
+  authFailureLimit?: AuthFailureLimit;
 };
 
 /** El nombre con el que el navegador pregunta por la credencial. */
@@ -116,7 +124,13 @@ export class CaptureProxy {
   /** Los tokens de sesiones ya cerradas, para poder decir «terminó» en vez de «no existe». */
   private readonly ended = new Map<string, CaptureStopReason>();
 
-  constructor(private readonly options: CaptureProxyOptions) {}
+  private readonly failures: AuthFailureLimiter;
+
+  constructor(private readonly options: CaptureProxyOptions) {
+    this.failures = new AuthFailureLimiter(options.authFailureLimit ?? DEFAULT_AUTH_FAILURE_LIMIT, () =>
+      options.now().getTime(),
+    );
+  }
 
   get listening(): boolean {
     return this.server !== null;
@@ -212,20 +226,34 @@ export class CaptureProxy {
    * Se busca por el hash del token y no comparando uno a uno: un `Map` sobre el hash de 256 bits
    * no filtra por tiempo cuánto se parecía el token a uno bueno.
    */
-  private authenticate(header: string | undefined): LiveSession | { refused: string } {
-    const token = tokenFrom(header);
-    if (!token) return { refused: "Falta la credencial de la sesión de captura" };
+  private authenticate(request: IncomingMessage): LiveSession | Refusal {
+    const ip = request.socket.remoteAddress ?? "desconocida";
+    // Antes de mirar la credencial: pasado el tope, ni hash ni búsqueda (ver `auth-failure-limiter.ts`).
+    const retryAfter = this.failures.blocked(ip);
+    if (retryAfter !== null) {
+      return {
+        status: 429,
+        refused: "Demasiados intentos con una credencial que no vale: espera un minuto",
+        retryAfter,
+      };
+    }
+    const token = tokenFrom(request.headers["proxy-authorization"]);
+    if (!token) return { status: 407, refused: "Falta la credencial de la sesión de captura" };
     const hash = hashOpaqueToken(token);
     const session = this.sessions.get(hash);
     if (!session) {
       const reason = this.ended.get(hash);
+      // El token de una sesión ya cerrada no es adivinar: es un móvil que sigue mandando lo de
+      // antes. Contarlo dejaría esa IP sin poder usar la sesión nueva durante un minuto.
+      if (!reason) this.failures.failed(ip);
       return {
+        status: 407,
         refused: reason ? `La sesión de captura terminó (${reason})` : "La credencial no es de ninguna sesión abierta",
       };
     }
     if (session.expiresAt.getTime() <= this.options.now().getTime()) {
       this.end(session, "expired", true);
-      return { refused: "La sesión de captura terminó (expired)" };
+      return { status: 407, refused: "La sesión de captura terminó (expired)" };
     }
     return session;
   }
@@ -250,10 +278,10 @@ export class CaptureProxy {
 
   private async onRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
     response.on("error", () => undefined);
-    const session = this.authenticate(request.headers["proxy-authorization"]);
+    const session = this.authenticate(request);
     if ("refused" in session) {
       request.resume();
-      return challenge(response, session.refused);
+      return challenge(response, session);
     }
     this.track(session, request.socket);
 
@@ -373,10 +401,12 @@ export class CaptureProxy {
 
   private async onConnect(request: IncomingMessage, client: Socket, head: Buffer): Promise<void> {
     client.on("error", () => undefined);
-    const session = this.authenticate(request.headers["proxy-authorization"]);
+    const session = this.authenticate(request);
     if ("refused" in session) {
       client.end(
-        `HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="${PROXY_REALM}", charset="UTF-8"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`,
+        session.status === 429
+          ? `HTTP/1.1 429 Too Many Requests\r\nRetry-After: ${session.retryAfter}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`
+          : `HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="${PROXY_REALM}", charset="UTF-8"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`,
       );
       return;
     }
@@ -485,13 +515,19 @@ export function tokenFrom(header: string | undefined): string | null {
   return token.trim() || null;
 }
 
-function challenge(response: ServerResponse, message: string): void {
-  response.writeHead(407, {
-    "Proxy-Authenticate": `Basic realm="${PROXY_REALM}", charset="UTF-8"`,
-    "Content-Type": "text/plain; charset=utf-8",
-    Connection: "close",
-  });
-  response.end(message);
+/** Por qué no se atiende: sin credencial buena, un 407 que la pide; con demasiados intentos, un 429 que no. */
+function challenge(response: ServerResponse, refusal: Refusal): void {
+  response.writeHead(
+    refusal.status,
+    refusal.status === 429
+      ? { "Retry-After": String(refusal.retryAfter), "Content-Type": "text/plain; charset=utf-8", Connection: "close" }
+      : {
+          "Proxy-Authenticate": `Basic realm="${PROXY_REALM}", charset="UTF-8"`,
+          "Content-Type": "text/plain; charset=utf-8",
+          Connection: "close",
+        },
+  );
+  response.end(refusal.refused);
 }
 
 function plain(response: ServerResponse, status: number, message: string): void {
