@@ -280,6 +280,72 @@ describe("crear un monitor", () => {
   });
 });
 
+/**
+ * Editar pasa por las mismas reglas que crear, campo a campo: la pantalla edita con el mismo
+ * formulario, y una puerta más blanda que la otra sería el camino para colar un horario de un
+ * minuto o una URL de webhook en la fila.
+ */
+describe("editar un monitor", () => {
+  test("las reglas de crear valen al editar", async () => {
+    const { projectBase, environmentId } = await projectAgainst();
+    const base = { schedule: { kind: "interval", minutes: 60 }, plan: { environmentId } };
+    const monitor = await createMonitor(projectBase, { ...base, name: "producción" });
+    await createMonitor(projectBase, { ...base, name: "staging" });
+    const patch = (body: Record<string, unknown>) =>
+      api().patch(`${projectBase}/monitors/${monitor.id}`).set(as(owner)).send(body);
+
+    const corto = await patch({ schedule: { kind: "interval", minutes: 1 } });
+    assert.equal(corto.status, 422);
+    assert.equal(corto.body.errors[0].field, "schedule.minutes");
+
+    const sinEntorno = await patch({ plan: {} });
+    assert.equal(sinEntorno.status, 422);
+    assert.equal(sinEntorno.body.errors[0].field, "plan.environmentId");
+
+    const url = await patch({
+      alert: { channel: "slack", urlVariable: "https://hooks.slack.test/xyz", afterFailures: 1 },
+    });
+    assert.equal(url.status, 422);
+    assert.equal(url.body.errors[0].field, "alert.urlVariable");
+
+    const repetido = await patch({ name: "staging" });
+    assert.equal(repetido.status, 409);
+
+    // Y nada de lo rechazado llegó a la fila.
+    const [row] = (await list(projectBase)).filter((entry) => entry.id === monitor.id);
+    assert.equal(row!.name, "producción");
+    assert.equal(row!.scheduleLabel, "cada hora");
+    assert.equal(row!.alert, null);
+  });
+
+  test("cambiar el nombre no mueve el turno; cambiar el horario lo recalcula; `alert: null` lo quita", async () => {
+    const { projectBase, environmentId } = await projectAgainst();
+    const monitor = await createMonitor(projectBase, {
+      name: "producción",
+      schedule: { kind: "interval", minutes: 60 },
+      plan: { environmentId },
+      alert: { channel: "slack", urlVariable: "SLACK_WEBHOOK", afterFailures: 1 },
+    });
+    advance(10);
+    const patch = (body: Record<string, unknown>) =>
+      api().patch(`${projectBase}/monitors/${monitor.id}`).set(as(owner)).send(body);
+
+    const renamed = await patch({ name: "producción EU", plan: { environmentId } });
+    assert.equal(renamed.status, 200, JSON.stringify(renamed.body));
+    assert.equal(renamed.body.nextRunAt, monitor.nextRunAt);
+
+    const rescheduled = await patch({ schedule: { kind: "interval", minutes: 15 } });
+    assert.equal(rescheduled.status, 200, JSON.stringify(rescheduled.body));
+    assert.equal(rescheduled.body.scheduleLabel, "cada 15 minutos");
+    assert.notEqual(rescheduled.body.nextRunAt, monitor.nextRunAt);
+
+    const silenced = await patch({ alert: null });
+    assert.equal(silenced.status, 200, JSON.stringify(silenced.body));
+    assert.equal(silenced.body.alert, null);
+    assert.equal(silenced.body.name, "producción EU");
+  });
+});
+
 describe("el turno", () => {
   test("lanza la corrida, la etiqueta como del monitor, y la deja verde", async () => {
     const { projectBase, environmentId } = await projectAgainst();
