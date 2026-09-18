@@ -192,7 +192,8 @@ export async function logout(): Promise<void> {
 }
 
 /**
- * The live stream of a run.
+ * The live stream of a run — or of anything else the API streams by path: una sesión de un canal
+ * usa esta misma función, con el mismo motivo para no usar `EventSource`.
  *
  * `EventSource` cannot send an `Authorization` header, and the access token is deliberately not
  * a cookie — so this uses `fetch` with a streaming body and parses SSE by hand. Twenty lines,

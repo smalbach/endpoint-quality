@@ -24,6 +24,7 @@ import { RolesPage } from "@/routes/roles";
 import { MocksPage } from "@/routes/mocks";
 import { DocSitesPage } from "@/routes/doc-sites";
 import { MonitorsPage } from "@/routes/monitors";
+import { ChannelsPage } from "@/routes/channels";
 import { PublishedDocsPage } from "@/routes/published-docs";
 import { ProjectGeneralPage, ProjectSettingsLayout } from "@/routes/project-settings";
 import { ProjectTransferPage } from "@/routes/project-transfer";
@@ -103,6 +104,7 @@ createRoot(document.getElementById("root")!).render(
                   <Route path="p/:projectId" element={<ProjectLayout />}>
                     <Route index element={<EndpointsPage />} />
                     <Route path="matrix" element={<MatrixPage />} />
+                    <Route path="channels" element={<ChannelsPage />} />
                     <Route path="endpoints/:endpointId" element={<EndpointEditorPage />} />
                     <Route path="roles" element={<RolesPage />} />
                     <Route
