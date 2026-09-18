@@ -9,6 +9,7 @@
  */
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { connect, createServer, type AddressInfo } from "node:net";
 import request from "supertest";
 
 import { createTestApp, type TestContext } from "../support/test-app";
@@ -407,5 +408,101 @@ describe("la reflexión", () => {
     const reflected = await api().post(`${base}/channels/${created.body.id}/grpc/reflection`).set(as(owner)).send({});
     assert.equal(reflected.status, 422, JSON.stringify(reflected.body));
     assert.match(reflected.body.errors[0].detail, /reflexión/);
+  });
+});
+
+describe("la metadata binaria (-bin)", () => {
+  test("se escribe en base64, llega en bytes, y vuelve en base64", async () => {
+    const environmentId = await environment();
+    const id = await channel(
+      { method: "GetItem", message: '{"item_id":"b"}' },
+      { headers: [{ name: "x-trace-bin", value: "AAEC/w==", enabled: true }] },
+    );
+    const session = await finished((await open(id, environmentId)).id);
+    assert.equal(session.closeCode, 0, JSON.stringify(session));
+    assert.equal(server.received.at(-1)?.["x-trace-bin"], "AAEC/w==");
+    assert.equal(session.trailers["x-trace-bin"], "AAEC/w==");
+  });
+
+  test("un secreto que vuelve en bytes se tapa por su valor, y una clave de credencial por su nombre", async () => {
+    const environmentId = await environment();
+    const id = await channel(
+      { method: "GetItem", message: '{"item_id":"eco"}' },
+      { headers: [{ name: "x-eco", value: "{{token}}", enabled: true }] },
+    );
+    const session = await finished((await open(id, environmentId)).id);
+    assert.equal(session.trailers["x-eco-bin"], "••••••••");
+    assert.equal(session.trailers["x-api-key-bin"], "••••••••");
+    const everything = JSON.stringify([session, [...context.repositories.channelSessions.rows.values()]]);
+    assert.ok(!everything.includes(Buffer.from(TOKEN).toString("base64").replace(/=+$/, "")));
+    assert.ok(!everything.includes(Buffer.from("clave-binaria-del-servidor").toString("base64").slice(0, 20)));
+  });
+
+  test("un valor que no es base64 es un 422 al guardar, y al abrir si sale de una variable", async () => {
+    const broken = await api()
+      .post(`${base}/channels`)
+      .set(as(owner))
+      .send({
+        protocol: "grpc",
+        name: "bin-roto",
+        url: "grpc://api.example.test",
+        headers: [{ name: "x-trace-bin", value: "esto no es base64!", enabled: true }],
+      });
+    assert.equal(broken.status, 422, JSON.stringify(broken.body));
+    assert.deepEqual(
+      broken.body.errors.map((problem: { field: string }) => problem.field),
+      ["headers.0.value"],
+    );
+
+    const environmentId = await environment();
+    const id = await channel(
+      { method: "GetItem", message: "{}" },
+      { headers: [{ name: "x-trace-bin", value: "{{grpcBase}}", enabled: true }] },
+    );
+    const opened = await api().post(`${base}/channels/${id}/sessions`).set(as(owner)).send({ environmentId });
+    assert.equal(opened.status, 422, JSON.stringify(opened.body));
+    assert.match(opened.body.errors[0].detail, /x-trace-bin: .*base64/);
+  });
+});
+
+describe("la reflexión y la llamada, por una sola conexión", () => {
+  test("una sesión con reflexión abre una conexión, no dos", async () => {
+    // Un relé TCP delante del servidor que cuenta las conexiones que le llegan.
+    let connections = 0;
+    const relay = createServer((incoming) => {
+      connections += 1;
+      const outgoing = connect(reflective.port, "127.0.0.1");
+      incoming.pipe(outgoing).pipe(incoming);
+      incoming.on("error", () => outgoing.destroy());
+      outgoing.on("error", () => incoming.destroy());
+    });
+    await new Promise<void>((resolve) => relay.listen(0, "127.0.0.1", resolve));
+    try {
+      const environmentId = await environment();
+      const created = await api()
+        .post(`${base}/channels`)
+        .set(as(owner))
+        .send({
+          protocol: "grpc",
+          name: "reflexion-una-conexion",
+          url: `grpc://127.0.0.1:${(relay.address() as AddressInfo).port}`,
+          grpc: { source: "reflection", service: "demo.v1.Shop", method: "GetItem", message: '{"item_id":"u"}' },
+        });
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      const session = await finished((await open(created.body.id, environmentId)).id);
+      assert.equal(session.closeCode, 0, JSON.stringify(session));
+      assert.equal(connections, 1);
+
+      // Un método que la reflexión no conoce: la sesión en rojo con el motivo, y sin llamar.
+      await api()
+        .patch(`${base}/channels/${created.body.id}`)
+        .set(as(owner))
+        .send({ grpc: { method: "NoExiste" } });
+      const missing = await finished((await open(created.body.id, environmentId)).id);
+      assert.equal(missing.status, "error", JSON.stringify(missing));
+      assert.match(missing.verdict.assertions[0].detail, /NoExiste/);
+    } finally {
+      await new Promise<void>((resolve) => relay.close(() => resolve()));
+    }
   });
 });

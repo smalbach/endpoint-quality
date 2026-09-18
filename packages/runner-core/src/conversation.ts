@@ -23,7 +23,14 @@ import type { ActualResponse, Evaluation } from "./assertions.ts";
 import { evaluateChecks, type CheckMessage, type StepCheck } from "./checks.ts";
 import { holds, type Assertion, type FailureKind } from "./types.ts";
 
-export const MESSAGE_DIRECTIONS = ["out", "in", "open", "close", "error"] as const;
+/**
+ * `event` es lo que pasa en la sesión sin ser un mensaje: suscribirse o dejar de hacerlo a mitad de
+ * una sesión MQTT, y lo que el broker contesta. Va en la transcripción porque es parte de la
+ * historia —«desde aquí se oye `alarmas/#`» explica por qué empiezan a llegar mensajes—, pero no
+ * cuenta como enviado ni como recibido: un `SUBACK` que contara como mensaje haría pasar un «al
+ * menos un mensaje» sin que llegara ninguno.
+ */
+export const MESSAGE_DIRECTIONS = ["out", "in", "open", "close", "error", "event"] as const;
 export type MessageDirection = (typeof MESSAGE_DIRECTIONS)[number];
 
 export const MESSAGE_KINDS = ["text", "binary", "ping", "pong"] as const;
@@ -62,6 +69,28 @@ export type MessageRouting = {
   topic?: string;
   qos?: 0 | 1 | 2;
   retain?: boolean;
+  /** Las propiedades de MQTT 5 que traía el mensaje, **ya tapadas**. Ausente si no traía ninguna. */
+  properties?: MessageProperties;
+};
+
+/**
+ * Lo que un `PUBLISH` de MQTT 5 lleva además del cuerpo, y que sirve al depurar: las propiedades de
+ * usuario (una lista, porque el protocolo admite el mismo nombre varias veces), el tipo de contenido
+ * y el tema y los datos de correlación de una petición-respuesta.
+ *
+ * Los datos de correlación son bytes: van como texto si lo son y como hexadecimal si no, y
+ * `correlationEncoding` lo dice, porque «a1b2» podría ser cualquiera de las dos cosas.
+ *
+ * **Se tapan como las cabeceras**: el valor de una propiedad que se llama como una credencial,
+ * entero; los secretos conocidos, por su valor, en todas. Una propiedad `authorization` es una
+ * cabecera con otro nombre, y el broker la reenvía a todo el que escucha.
+ */
+export type MessageProperties = {
+  userProperties?: [string, string][];
+  contentType?: string;
+  responseTopic?: string;
+  correlationData?: string;
+  correlationEncoding?: "text" | "hex";
 };
 
 /**
@@ -197,6 +226,14 @@ export function redactHeaders(headers: Record<string, string>, rules: RedactionR
   );
 }
 
+/** Cada secreto, y también su UTF-8 en hexadecimal (en minúsculas, que es como se vuelca). */
+function withHex(secrets: string[]): string[] {
+  return [...secrets, ...secrets.map((secret) => hexOf(secret))];
+}
+
+const hexOf = (text: string): string =>
+  [...new TextEncoder().encode(text)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+
 /** Los valores conocidos, fuera del texto. Se tapan los largos primero, o uno corto parte a otro. */
 export function maskSecrets(text: string, secrets: string[]): string {
   return [...secrets]
@@ -261,7 +298,11 @@ export function applyFrame(
   // y se guarda media credencial en claro. Y un JSON cortado no se parsea, así que la redacción
   // por nombre de campo —que lo parsea— no tapa nada y no avisa. Recortar lo ya tapado no puede
   // destapar nada.
-  const redacted = maskSecrets(rules.redact ? rules.redact(raw) : raw, rules.secrets ?? []);
+  // Un mensaje binario se guarda como hexadecimal de sus bytes: un secreto que viajó dentro no se
+  // parece a sí mismo ahí, así que se busca también su volcado. Sin esto, un token mandado o devuelto
+  // en una trama binaria quedaba en la fila en claro, solo que en hexadecimal.
+  const secrets = frame.kind === "binary" ? withHex(rules.secrets ?? []) : (rules.secrets ?? []);
+  const redacted = maskSecrets(rules.redact ? rules.redact(raw) : raw, secrets);
   const body = truncated ? redacted.slice(0, limits.maxMessageBytes) : redacted;
 
   const message: ChannelMessage = {
@@ -275,7 +316,8 @@ export function applyFrame(
     ...routingOf(frame, rules),
   };
 
-  const incoming = frame.direction !== "out";
+  // Un evento no es tráfico: ni se envía ni se recibe, y sus bytes son los de una frase nuestra.
+  const incoming = frame.direction === "in" || frame.direction === "error";
   const counters = {
     sent: conversation.counters.sent + (frame.direction === "out" ? 1 : 0),
     received: conversation.counters.received + (frame.direction === "in" ? 1 : 0),
@@ -314,11 +356,42 @@ export function applyFrame(
  * JSON y un tema no lo es. Y no se recorta: la especificación ya lo limita a 64 KB.
  */
 function routingOf(frame: RawFrame, rules: RedactionRules): MessageRouting {
+  const properties = frame.properties ? redactProperties(frame.properties, rules) : null;
   return {
     ...(frame.topic !== undefined ? { topic: maskSecrets(frame.topic, rules.secrets ?? []) } : {}),
     ...(frame.qos !== undefined ? { qos: frame.qos } : {}),
     ...(frame.retain !== undefined ? { retain: frame.retain } : {}),
+    ...(properties ? { properties } : {}),
   };
+}
+
+/**
+ * Las propiedades de un mensaje, tapadas con las mismas reglas que una cabecera y que un cuerpo.
+ *
+ * Una propiedad de usuario es una cabecera con otro nombre: su nombre decide si el valor se tapa
+ * entero (`secretHeader`), y después pasan la regla por forma (`redact`, que tapa un JWT) y los
+ * secretos conocidos. El tema de respuesta es un tema, y se tapa como uno; los datos de correlación
+ * en texto, como un cuerpo. En hexadecimal no hay nada que buscar por valor, y se dejan: un secreto
+ * que viaja como bytes no se reconoce en su volcado, igual que en un mensaje binario.
+ */
+export function redactProperties(properties: MessageProperties, rules: RedactionRules = {}): MessageProperties | null {
+  const secrets = rules.secrets ?? [];
+  const text = (value: string) => maskSecrets(rules.redact ? rules.redact(value) : value, secrets);
+  const out: MessageProperties = {};
+  if (properties.userProperties?.length) {
+    out.userProperties = properties.userProperties.map(([name, value]) => [
+      maskSecrets(name, secrets),
+      rules.secretHeader?.test(name) && value ? MASK : text(value),
+    ]);
+  }
+  if (properties.contentType) out.contentType = maskSecrets(properties.contentType, secrets);
+  if (properties.responseTopic) out.responseTopic = maskSecrets(properties.responseTopic, secrets);
+  if (properties.correlationData !== undefined) {
+    const hex = properties.correlationEncoding === "hex";
+    out.correlationData = hex ? properties.correlationData : text(properties.correlationData);
+    out.correlationEncoding = hex ? "hex" : "text";
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 /** Lo que el canal afirma de su conversación, más las comprobaciones escritas a mano. */

@@ -53,7 +53,20 @@ export type ParsedRequest = {
    * y sus variables por separado, que es lo que se edita.
    */
   graphql?: GraphqlOperation;
+  /**
+   * Las filas de un formulario `multipart` en su orden, con cuáles son **ficheros**. Solo cuando la
+   * fuente trae alguna fila de fichero.
+   *
+   * Va al lado de `body` por lo mismo que `graphql`: `RequestBody` es lo que el motor manda, y el
+   * motor no manda ficheros —no tiene sus bytes—, así que en `body.fields` una fila de fichero no
+   * está (antes entraba como un campo de texto vacío, que manda otra cosa). Quien sí sabe de
+   * ficheros —un endpoint, que tiene el botón de elegirlo— lee esto y la conserva como fichero.
+   */
+  formRows?: FormRow[];
 };
+
+/** Una fila de un formulario, como la escribe la fuente. Un fichero llega sin bytes: solo su nombre. */
+export type FormRow = { name: string; value: string; kind: "text" | "file"; enabled: boolean };
 
 /** Una operación GraphQL tal como la guardan Postman e Insomnia: el texto y las variables (JSON). */
 export type GraphqlOperation = { query: string; variables: string };
@@ -359,10 +372,45 @@ function fromKeyValues(list: unknown): { enabled: Record<string, string>; disabl
   for (const entry of asArray(list)) {
     const row = asRecord(entry);
     const key = asString(row?.key ?? row?.name).trim();
-    if (!row || !key) continue;
+    if (!row || !key || isFileRow(row)) continue;
     (row.disabled === true ? disabled : enabled)[key] = asString(row.value);
   }
   return { enabled, disabled };
+}
+
+/** Las filas de un `formdata` de Postman, si alguna es un fichero. */
+function postmanFormRows(value: unknown): { formRows?: FormRow[] } {
+  const body = asRecord(value);
+  return asString(body?.mode) === "formdata" ? formRowsOf(body?.formdata) : {};
+}
+
+/** Las de un `multipart/form-data` de Insomnia, igual. */
+function insomniaFormRows(value: unknown): { formRows?: FormRow[] } {
+  const body = asRecord(value);
+  return asString(body?.mimeType).includes("form-data") ? formRowsOf(body?.params) : {};
+}
+
+/** Postman e Insomnia marcan igual una fila de fichero en un formulario: `type: "file"`. */
+const isFileRow = (row: Record<string, unknown>): boolean => row.type === "file";
+
+/**
+ * Las filas de un formulario en su orden y con su tipo, si alguna es un fichero; si no, nada, y el
+ * formulario se lee entero de `body.fields`. Ver `ParsedRequest.formRows`.
+ */
+function formRowsOf(list: unknown): { formRows?: FormRow[] } {
+  const rows = asArray(list)
+    .map(asRecord)
+    .filter((row): row is Record<string, unknown> => row !== null && asString(row.key ?? row.name).trim() !== "");
+  if (!rows.some(isFileRow)) return {};
+  return {
+    formRows: rows.map((row) => ({
+      name: asString(row.key ?? row.name).trim(),
+      // La ruta que guarda Postman (`src`) es la del disco de quien la eligió: aquí no dice nada.
+      value: isFileRow(row) ? "" : asString(row.value),
+      kind: isFileRow(row) ? "file" : "text",
+      enabled: row.disabled !== true,
+    })),
+  };
 }
 
 /**
@@ -489,6 +537,7 @@ export function readPostmanCollection(text: string): PostmanCollection | null {
           auth: resolved.auth,
           examples: postmanExamples(item.response),
           ...withGraphql(postmanGraphql(request.body)),
+          ...postmanFormRows(request.body),
         },
         prerequest: eventScript(item.event, "prerequest"),
         test: eventScript(item.event, "test"),
@@ -704,6 +753,7 @@ export function parseInsomniaExport(text: string): ImportedRequests {
       headers: headers.enabled,
       body: insomniaBody(row.body, headers.enabled),
       ...withGraphql(insomniaGraphql(row.body)),
+      ...insomniaFormRows(row.body),
       auth: redactAuth(insomniaAuth(row.authentication)).auth,
       // Insomnia tampoco guarda respuestas junto a la petición.
       examples: [],

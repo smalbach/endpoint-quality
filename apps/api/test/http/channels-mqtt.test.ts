@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import request from "supertest";
 
 import { createTestApp, type TestContext } from "../support/test-app";
-import { BROKER_USER, startAedes, type TestBroker } from "../support/mqtt-broker";
+import { BROKER_USER, startAedes, startMqtt5, type TestBroker } from "../support/mqtt-broker";
 
 let context: TestContext;
 let broker: TestBroker;
@@ -243,5 +243,154 @@ describe("una sesión MQTT contra un broker de verdad", () => {
     const read = await waitFor(opened.body.id, (body) => body.status !== "open");
     assert.equal(read.body.status, "closed", JSON.stringify(read.body));
     assert.equal(read.body.stopReason, "idle-cap");
+  });
+});
+
+describe("suscripciones, testamento y propiedades", () => {
+  test("suscribirse y darse de baja a mitad de sesión queda como evento, y un no del broker no la cierra", async () => {
+    const environmentId = await environment();
+    const id = await channel({ expectations: { minMessages: 1 } });
+    const opened = await api().post(`${base}/channels/${id}/sessions`).set(as(owner)).send({ environmentId });
+    assert.equal(opened.body.status, "open", JSON.stringify(opened.body));
+    const session = `${base}/channels/sessions/${opened.body.id}`;
+
+    const granted = await api().post(`${session}/subscribe`).set(as(owner)).send({ topic: "jardin/#", qos: 1 });
+    assert.equal(granted.status, 200, JSON.stringify(granted.body));
+    assert.equal(granted.body.granted, 1);
+
+    const denied = await api().post(`${session}/subscribe`).set(as(owner)).send({ topic: "prohibido/#" });
+    assert.equal(denied.status, 200);
+    assert.equal(denied.body.granted, null);
+    assert.match(denied.body.detail, /rechazó la suscripción a prohibido\/#: 128/);
+
+    // Un filtro mal escrito es un 422 con el campo, antes de llegar al broker.
+    const broken = await api().post(`${session}/subscribe`).set(as(owner)).send({ topic: "jardin/#/x" });
+    assert.equal(broken.status, 422);
+    assert.equal(broken.body.errors[0].field, "topic");
+
+    await broker.publish("jardin/riego", "on");
+    await waitFor(opened.body.id, (body) => body.messages.some((m) => (m as { direction: string }).direction === "in"));
+    const left = await api().post(`${session}/unsubscribe`).set(as(owner)).send({ topic: "jardin/#" });
+    assert.equal(left.body.detail, "ya no se oye jardin/#");
+
+    const read = await api().get(session).set(as(owner));
+    assert.equal(read.body.status, "open");
+    const rows = read.body.messages as { direction: string; body: string; topic?: string }[];
+    assert.deepEqual(
+      rows.map((row) => [row.direction, row.topic]),
+      [
+        ["event", "jardin/#"],
+        ["event", "prohibido/#"],
+        ["in", "jardin/riego"],
+        ["event", "jardin/#"],
+      ],
+    );
+    assert.equal(read.body.counters.received, 1);
+
+    const closed = await api().post(`${session}/close`).set(as(owner));
+    assert.equal(closed.body.verdict.ok, true, JSON.stringify(closed.body.verdict));
+  });
+
+  test("en 3.1.1, publicar con propiedades de usuario es un 422 que dice que son de MQTT 5", async () => {
+    const environmentId = await environment();
+    const id = await channel();
+    const opened = await api().post(`${base}/channels/${id}/sessions`).set(as(owner)).send({ environmentId });
+    const session = `${base}/channels/sessions/${opened.body.id}`;
+    const props = await api()
+      .post(`${session}/messages`)
+      .set(as(owner))
+      .send({ text: "x", topic: "a", userProperties: [{ name: "n", value: "v" }] });
+    assert.equal(props.status, 422);
+    assert.match(JSON.stringify(props.body), /MQTT 5/);
+    await api().post(`${session}/close`).set(as(owner));
+  });
+
+  test("testamento y propiedades se guardan validados, y una credencial escrita a mano se guarda vacía", async () => {
+    const id = await channel({
+      mqtt: {
+        version: 5,
+        will: { topic: "estado/{{tema}}", payload: "caído", qos: 1, retain: true },
+        userProperties: [
+          { name: "authorization", value: `Bearer ${TOKEN}` },
+          { name: "x-api-key", value: "{{token}}" },
+          { name: "origen", value: "eq" },
+        ],
+      },
+    });
+    const read = await api().get(`${base}/channels/${id}`).set(as(owner));
+    assert.deepEqual(read.body.mqtt.will, { topic: "estado/{{tema}}", payload: "caído", qos: 1, retain: true });
+    assert.deepEqual(read.body.mqtt.userProperties, [
+      { name: "authorization", value: "" },
+      { name: "x-api-key", value: "{{token}}" },
+      { name: "origen", value: "eq" },
+    ]);
+    assert.ok(!JSON.stringify(context.repositories.channels.rows.get(id)).includes(TOKEN));
+
+    const broken = await api()
+      .post(`${base}/channels`)
+      .set(as(owner))
+      .send({
+        protocol: "mqtt",
+        name: "roto",
+        url: "mqtt://broker.example.test",
+        mqtt: {
+          version: 4,
+          will: { topic: "estado/#", payload: 1, qos: 5, retain: "sí" },
+          userProperties: [{ name: "", value: "x" }],
+        },
+      });
+    assert.equal(broken.status, 422);
+    const fields = broken.body.errors.map((error: { field: string }) => error.field).sort();
+    assert.deepEqual(fields, [
+      "mqtt.userProperties",
+      "mqtt.userProperties.0.name",
+      "mqtt.will.payload",
+      "mqtt.will.qos",
+      "mqtt.will.retain",
+      "mqtt.will.topic",
+    ]);
+  });
+});
+
+describe("un canal MQTT 5 con propiedades", () => {
+  test("las propiedades salen y vuelven en la transcripción, tapadas por nombre y por valor", async () => {
+    const five = await startMqtt5();
+    try {
+      const environmentId = await environment();
+      const id = await channel({ url: `mqtt://127.0.0.1:${five.port}`, auth: null, mqtt: { version: 5 } });
+      const opened = await api().post(`${base}/channels/${id}/sessions`).set(as(owner)).send({ environmentId });
+      assert.equal(opened.body.status, "open", JSON.stringify(opened.body));
+      const session = `${base}/channels/sessions/${opened.body.id}`;
+      const sent = await api()
+        .post(`${session}/messages`)
+        .set(as(owner))
+        .send({
+          text: "hola",
+          topic: "eco/uno",
+          userProperties: [
+            { name: "x-api-key", value: "literal-que-se-tapa-por-nombre" },
+            { name: "traza", value: "{{token}}" },
+            { name: "origen", value: "eq" },
+          ],
+        });
+      assert.equal(sent.status, 202, JSON.stringify(sent.body));
+      const read = await waitFor(opened.body.id, (body) => body.messages.length >= 2);
+      const rows = read.body.messages as { direction: string; properties?: { userProperties?: string[][] } }[];
+      const expected = [
+        ["x-api-key", "••••••••"],
+        ["traza", "••••••••"],
+        ["origen", "eq"],
+      ];
+      assert.deepEqual(rows[0].properties?.userProperties, expected);
+      assert.equal(rows[1].direction, "in");
+      assert.deepEqual(rows[1].properties?.userProperties, expected);
+      await api().post(`${session}/close`).set(as(owner));
+
+      const everything = JSON.stringify([read.body, [...context.repositories.channelSessions.messages.values()]]);
+      assert.ok(!everything.includes(TOKEN), "el secreto del entorno salió en una propiedad");
+      assert.ok(!everything.includes("literal-que-se-tapa-por-nombre"));
+    } finally {
+      await five.close();
+    }
   });
 });

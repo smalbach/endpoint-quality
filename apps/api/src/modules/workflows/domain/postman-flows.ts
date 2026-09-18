@@ -30,6 +30,7 @@ import type { PostmanItem } from "./import-requests";
 import { translatePostmanScript } from "./postman-scripts";
 import {
   FETCH_METHODS,
+  formTemplate,
   graphqlVariablesProblem,
   type FetchMethod,
   type RequestBody,
@@ -353,10 +354,10 @@ function fetchBody(body: RequestBody): { text: string; contentType: string } | n
     case "raw":
       return { text: body.text, contentType: body.contentType || "text/plain" };
     case "x-www-form-urlencoded":
-      return {
-        text: new URLSearchParams(Object.entries(body.fields)).toString(),
-        contentType: "application/x-www-form-urlencoded",
-      };
+      // Con las `{{variables}}` intactas: `URLSearchParams` codificaba sus llaves y el nodo se
+      // quedaba con un `%7B%7Btoken%7D%7D` que ninguna interpolación resuelve. Lo que valen se
+      // codifica al enviar (`interpolateFormBody`).
+      return { text: formTemplate(body.fields), contentType: "application/x-www-form-urlencoded" };
     default:
       return "un cuerpo multipart no cabe en un nodo fetch: impórtalo como endpoint";
   }

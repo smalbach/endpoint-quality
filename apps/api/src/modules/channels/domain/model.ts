@@ -38,6 +38,8 @@ import {
   grpcExpectationProblems,
   grpcSettingsProblems,
   grpcUrlProblems,
+  binaryMetadataProblem,
+  isBinaryMetadata,
   metadataKeyProblem,
   type GrpcSettings,
 } from "./grpc";
@@ -225,6 +227,10 @@ export function channelProblems(
           problem(`headers.${index}.name`, `${name} la pone el protocolo, no se escribe a mano`);
         if (typeof header?.value !== "string" || /[\r\n]/.test(header.value))
           problem(`headers.${index}.value`, "Una cabecera es texto y no lleva saltos de línea");
+        else if (grpc && isBinaryMetadata(name)) {
+          const binaryProblem = binaryMetadataProblem(header.value);
+          if (binaryProblem) problem(`headers.${index}.value`, binaryProblem);
+        }
       });
     }
   }
@@ -421,7 +427,8 @@ const SCHEME_ONLY = /^(?:bearer|basic|token|bot)?\s*$/i;
  */
 export function storableHeader(header: EndpointHeader): EndpointHeader {
   const value = header.value.trim();
-  if (!value || !SECRET_HEADER.test(header.name.trim())) return header;
+  // Con `-bin` detrás también: `x-api-key-bin` es la misma credencial, en bytes.
+  if (!value || !SECRET_HEADER.test(header.name.trim().replace(/-bin$/i, ""))) return header;
   if (value.includes("{{") && SCHEME_ONLY.test(value.replace(VARIABLE, "").trim())) return header;
   return { ...header, value: "" };
 }

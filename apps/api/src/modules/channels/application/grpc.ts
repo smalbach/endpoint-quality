@@ -14,7 +14,12 @@ import { unresolvedVariables, type ChannelLimits } from "@eq/runner-core";
 
 import { ENV, type Env } from "@/shared/config/env";
 import { ConflictError, InvalidInputError } from "@/shared/errors/domain-error";
-import { CHANNEL_PROTO_REPOSITORY, type ChannelProtoRepositoryPort } from "../domain/grpc";
+import {
+  CHANNEL_PROTO_REPOSITORY,
+  binaryMetadataProblem,
+  isBinaryMetadata,
+  type ChannelProtoRepositoryPort,
+} from "../domain/grpc";
 import {
   isReadOnly,
   messageProblem,
@@ -24,7 +29,12 @@ import {
   type ResolvedMethod,
 } from "../domain/grpc-schema";
 import type { Channel } from "../domain/model";
-import { GRPC_TRANSPORT, type GrpcTarget, type GrpcTransportPort } from "../infrastructure/grpc-transport";
+import {
+  GRPC_TRANSPORT,
+  type GrpcCall,
+  type GrpcTarget,
+  type GrpcTransportPort,
+} from "../infrastructure/grpc-transport";
 import type { ChannelListeners, OpenChannel } from "../infrastructure/ws-transport";
 
 export type GrpcPlanContext = {
@@ -86,27 +96,30 @@ export class GrpcSessionPlanner {
       checkCall(method, known.request?.value ?? null, context);
     }
 
+    const callOf = (resolved: ResolvedMethod, request: ReturnType<typeof requestOf>): GrpcCall => ({
+      method: resolved,
+      request,
+      deadlineMs: settings.deadlineMs,
+      decode: (text) => {
+        const next = parseMessage(text, context.interpolate, "text");
+        const problem = messageProblem(resolved.requestType, next.value);
+        if (problem) throw new InvalidInputError(problem, [{ field: "text", detail: problem }]);
+        return next.value;
+      },
+    });
+
     return async (listeners) => {
-      if (!known) {
-        // La reflexión, con la misma conexión fijada y la misma metadata que la llamada. Lo que falle
-        // aquí es una sesión en rojo con el motivo: ya se estaba conectando.
-        const method = resolveMethod(await this.transport.reflect(target), settings.service, settings.method);
-        known = { method, request: requestOf(method) };
-        checkCall(method, known.request?.value ?? null, context);
-      }
-      const resolved = known.method;
+      if (known) return this.transport.call(target, callOf(known.method, known.request), listeners);
+      // La reflexión va **dentro** de la llamada, por la misma conexión fijada y con la misma
+      // metadata: una sesión con reflexión abre una conexión, no una para preguntar y otra para
+      // invocar. Lo que falle aquí es una sesión en rojo con el motivo: ya se estaba conectando.
       return this.transport.call(
         target,
-        {
-          method: resolved,
-          request: known.request,
-          deadlineMs: settings.deadlineMs,
-          decode: (text) => {
-            const next = parseMessage(text, context.interpolate, "text");
-            const problem = messageProblem(resolved.requestType, next.value);
-            if (problem) throw new InvalidInputError(problem, [{ field: "text", detail: problem }]);
-            return next.value;
-          },
+        (schema) => {
+          const method = resolveMethod(schema, settings.service, settings.method);
+          const request = requestOf(method);
+          checkCall(method, request?.value ?? null, context);
+          return callOf(method, request);
         },
         listeners,
       );
@@ -119,6 +132,13 @@ export class GrpcSessionPlanner {
   }
 
   private target(context: Pick<GrpcPlanContext, "url" | "headers" | "limits">): GrpcTarget {
+    // Una clave `-bin` con una `{{variable}}` solo se puede comprobar ya resuelta: el valor de la
+    // variable es el que tiene que ser base64. Antes de conectar, y con la clave en el motivo.
+    const binary = Object.entries(context.headers).flatMap(([name, value]) => {
+      const problem = isBinaryMetadata(name) ? binaryMetadataProblem(value) : null;
+      return problem ? [{ field: "headers", detail: `${name}: ${problem}` }] : [];
+    });
+    if (binary.length) throw new InvalidInputError("La metadata binaria no es base64", binary);
     return {
       url: context.url,
       metadata: context.headers,

@@ -160,3 +160,83 @@ describe("una trama con tema en la conversación", () => {
     assert.equal(ws.assertions[0].detail, "abierta (0 en el upgrade)");
   });
 });
+
+describe("las propiedades de MQTT 5 y los eventos de la sesión", () => {
+  const JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJh";
+  const redact = (text: string) => text.replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, "••••••••");
+
+  test("las propiedades se tapan como cabeceras: por nombre, por forma y por valor", () => {
+    const secret = "tk-correlacion-77aa";
+    const { conversation } = applyFrame(
+      blankConversation(),
+      {
+        direction: "in",
+        atMs: 3,
+        body: "{}",
+        topic: "respuestas",
+        properties: {
+          userProperties: [
+            ["authorization", "Bearer lo-que-sea"],
+            ["origen", "sala"],
+            ["origen", JWT],
+          ],
+          contentType: "application/json",
+          responseTopic: `respuestas/${secret}`,
+          correlationData: `id-${secret}`,
+          correlationEncoding: "text",
+        },
+      },
+      LIMITS,
+      { secrets: [secret], redact, secretHeader: /^authorization$/i },
+    );
+    const { properties } = conversation.messages[0];
+    assert.deepEqual(properties?.userProperties, [
+      ["authorization", "••••••••"],
+      ["origen", "sala"],
+      ["origen", "••••••••"],
+    ]);
+    assert.equal(properties?.contentType, "application/json");
+    assert.equal(properties?.responseTopic, "respuestas/••••••••");
+    assert.equal(properties?.correlationData, "id-••••••••");
+    assert.equal(properties?.correlationEncoding, "text");
+    assert.ok(!JSON.stringify(conversation).includes(secret));
+  });
+
+  test("unos datos de correlación binarios van en hexadecimal y lo dicen", () => {
+    const { conversation } = applyFrame(
+      blankConversation(),
+      { direction: "in", atMs: 1, body: "x", properties: { correlationData: "00ff", correlationEncoding: "hex" } },
+      LIMITS,
+    );
+    assert.deepEqual(conversation.messages[0].properties, { correlationData: "00ff", correlationEncoding: "hex" });
+  });
+
+  test("unas propiedades vacías no dejan campo", () => {
+    const { conversation } = applyFrame(
+      blankConversation(),
+      { direction: "in", atMs: 1, body: "x", properties: { userProperties: [] } },
+      LIMITS,
+    );
+    assert.equal("properties" in conversation.messages[0], false);
+  });
+
+  test("un evento consta en la transcripción y no cuenta como mensaje", () => {
+    let conversation = applyFrame(
+      blankConversation(),
+      { direction: "event", atMs: 2, body: "suscrito a casa/# (QoS 1)", topic: "casa/#", qos: 1 },
+      LIMITS,
+    ).conversation;
+    conversation = applyFrame(
+      conversation,
+      { direction: "in", atMs: 4, body: "hola", topic: "casa/x" },
+      LIMITS,
+    ).conversation;
+    assert.deepEqual(
+      conversation.messages.map((message) => message.direction),
+      ["event", "in"],
+    );
+    assert.deepEqual(conversation.counters, { sent: 0, received: 1, bytesIn: 4, bytesOut: 0 });
+    const verdict = evaluateConversation({ expect: { minMessages: 2 }, conversation });
+    assert.equal(verdict.assertions[1].detail, "llegaron 1");
+  });
+});

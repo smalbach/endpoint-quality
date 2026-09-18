@@ -24,7 +24,7 @@ import { connect as netConnect, isIP } from "node:net";
 import { connect as tlsConnect } from "node:tls";
 import { Duplex } from "node:stream";
 import type { IncomingMessage } from "node:http";
-import { MqttClient, type IClientOptions, type IConnackPacket } from "mqtt";
+import { MqttClient, type IClientOptions, type IConnackPacket, type IPublishPacket } from "mqtt";
 import WebSocket from "ws";
 
 import { BlockedTargetError, resolveTarget, type SafeFetchPolicy } from "./safe-fetch";
@@ -46,14 +46,52 @@ export type SafeMqttOptions = {
   username?: string;
   password?: string;
   subscriptions: { topic: string; qos: MqttQos }[];
+  /** El testamento, ya resuelto. Lo publica el broker solo si la conexión se corta sin `DISCONNECT`. */
+  will?: { topic: string; payload: string; qos: MqttQos; retain: boolean };
+  /** Propiedades de usuario del `CONNECT`. Solo viajan en 5.0. */
+  userProperties?: { name: string; value: string }[];
   /** El tope de un paquete entrante. Obligatorio: sin él, un `PUBLISH` de 256 MB entra entero en memoria. */
   maxPacketBytes: number;
   /** Cuánto se espera al `CONNACK`. Un broker que acepta el TCP y no contesta es una conexión colgada. */
   connectTimeoutMs: number;
 };
 
-/** Un mensaje, tal como llega. */
-export type MqttDelivery = { topic: string; payload: Buffer; qos: MqttQos; retain: boolean };
+/** Un mensaje, tal como llega. Las propiedades, solo en 5.0 y solo si el mensaje traía alguna. */
+export type MqttDelivery = {
+  topic: string;
+  payload: Buffer;
+  qos: MqttQos;
+  retain: boolean;
+  properties?: MqttDeliveryProperties;
+};
+
+/** Las propiedades de un `PUBLISH` que se enseñan, crudas: la correlación son bytes. */
+export type MqttDeliveryProperties = {
+  userProperties?: [string, string][];
+  contentType?: string;
+  responseTopic?: string;
+  correlationData?: Buffer;
+};
+
+/**
+ * Las propiedades de usuario en la forma de `mqtt-packet`: un objeto cuyo valor es texto, o una
+ * lista si el nombre se repite. Se aplanan a pares para no perder las repetidas.
+ */
+export function userPropertyPairs(properties: Record<string, string | string[]> | undefined): [string, string][] {
+  return Object.entries(properties ?? {}).flatMap(([name, value]) =>
+    (Array.isArray(value) ? value : [value]).map((one): [string, string] => [name, String(one)]),
+  );
+}
+
+/** Y al revés: pares a la forma de `mqtt-packet`, agrupando los nombres repetidos. */
+export function userPropertyRecord(pairs: { name: string; value: string }[]): Record<string, string | string[]> {
+  const record: Record<string, string | string[]> = {};
+  for (const { name, value } of pairs) {
+    const current = record[name];
+    record[name] = current === undefined ? value : [...(Array.isArray(current) ? current : [current]), value];
+  }
+  return record;
+}
 
 /**
  * Lo que quien conecta quiere oír, entregado **desde antes de conectar**.
@@ -280,7 +318,24 @@ export async function openSafeMqtt(
     reconnectPeriod: 0,
     resubscribe: false,
     connectTimeout: options.connectTimeoutMs,
-    ...(v5 ? { properties: { maximumPacketSize: options.maxPacketBytes + 5 } } : {}),
+    ...(v5
+      ? {
+          properties: {
+            maximumPacketSize: options.maxPacketBytes + 5,
+            ...(options.userProperties?.length ? { userProperties: userPropertyRecord(options.userProperties) } : {}),
+          },
+        }
+      : {}),
+    ...(options.will
+      ? {
+          will: {
+            topic: options.will.topic,
+            payload: Buffer.from(options.will.payload, "utf8"),
+            qos: options.will.qos,
+            retain: options.will.retain,
+          },
+        }
+      : {}),
   };
 
   return new Promise((resolve, reject) => {
@@ -306,7 +361,14 @@ export async function openSafeMqtt(
     // Enganchadas aquí, con el cliente recién creado: nada puede llegar antes.
     client.on("message", (topic, payload, packet) => {
       if (state === "failed") return;
-      listeners.onMessage({ topic, payload, qos: packet.qos, retain: packet.retain });
+      const properties = deliveryProperties(packet.properties);
+      listeners.onMessage({
+        topic,
+        payload,
+        qos: packet.qos,
+        retain: packet.retain,
+        ...(properties ? { properties } : {}),
+      });
     });
     client.on("disconnect", (packet) => {
       const code = packet.reasonCode ?? 0;
@@ -340,6 +402,8 @@ export async function openSafeMqtt(
           protocolo: v5 ? "MQTT 5.0" : "MQTT 3.1.1",
           "sesión previa": connack.sessionPresent ? "sí" : "no",
           suscripciones: options.subscriptions.map((s) => `${s.topic} (QoS ${s.qos})`).join(", ") || "ninguna",
+          // El tema del testamento, no su cuerpo: basta para saber que lo lleva y dónde saldría.
+          ...(options.will ? { testamento: `${options.will.topic} (QoS ${options.will.qos})` } : {}),
         },
       };
       listeners.onOpen?.(handshake);
@@ -352,11 +416,7 @@ export async function openSafeMqtt(
 
       const wanted = Object.fromEntries(options.subscriptions.map((s) => [s.topic, { qos: s.qos }]));
       client.subscribe(wanted, (error, _granted, packet) => {
-        // Un código por tema, en el orden pedido; 0x80 o más es un no.
-        const codes = (packet?.granted ?? []) as (number | { qos: number })[];
-        const refused = codes
-          .map((code, index) => ({ code: typeof code === "number" ? code : code.qos, index }))
-          .filter(({ code }) => (code & 0x80) !== 0);
+        const refused = refusedCodes(packet?.granted);
         if (refused.length) {
           const { code, index } = refused[0];
           const topic = options.subscriptions[index]?.topic ?? "?";
@@ -370,6 +430,72 @@ export async function openSafeMqtt(
       });
     });
   });
+}
+
+/** Los códigos de un `SUBACK`, uno por tema y en el orden pedido; 0x80 o más es un no. */
+function subackCodes(granted: unknown): number[] {
+  return ((granted ?? []) as (number | { qos: number })[]).map((code) => (typeof code === "number" ? code : code.qos));
+}
+
+function refusedCodes(granted: unknown): { code: number; index: number }[] {
+  return subackCodes(granted)
+    .map((code, index) => ({ code, index }))
+    .filter(({ code }) => (code & 0x80) !== 0);
+}
+
+/**
+ * Suscribirse a mitad de sesión: la QoS concedida, o `MqttRejectedError` con el código si el broker
+ * dijo que no.
+ *
+ * Al contrario que al conectar, un no aquí **no** cierra la sesión: se pidió un tema más y no se
+ * concedió, pero lo que ya se oía se sigue oyendo. Quien llama lo anota como un hecho de la sesión.
+ * Con plazo, porque un broker que nunca contesta el `SUBACK` dejaría la petición colgada.
+ */
+export function subscribeMqtt(client: MqttClient, topic: string, qos: MqttQos, timeoutMs: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`el broker no confirmó la suscripción en ${timeoutMs} ms`)),
+      timeoutMs,
+    );
+    client.subscribe({ [topic]: { qos } }, (error, _granted, packet) => {
+      clearTimeout(timer);
+      const codes = subackCodes(packet?.granted);
+      const refused = refusedCodes(packet?.granted)[0];
+      if (refused) return reject(new MqttRejectedError(refused.code, topic, refusalText(refused.code)));
+      if (error) return reject(error);
+      resolve(codes[0] ?? qos);
+    });
+  });
+}
+
+/** Dejar de oír un filtro. En 5.0 el `UNSUBACK` trae un código por tema y también puede ser un no. */
+export function unsubscribeMqtt(client: MqttClient, topic: string, timeoutMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`el broker no confirmó la baja en ${timeoutMs} ms`)), timeoutMs);
+    client.unsubscribe(topic, (error, packet) => {
+      clearTimeout(timer);
+      const code = subackCodes((packet as { granted?: unknown; reasonCode?: unknown } | undefined)?.granted)[0];
+      if (code !== undefined && (code & 0x80) !== 0)
+        return reject(new MqttRejectedError(code, topic, refusalText(code)));
+      if (error) return reject(error);
+      resolve();
+    });
+  });
+}
+
+/**
+ * Lo que se enseña de las propiedades de un `PUBLISH`. `null` si no trae ninguna de esas: la
+ * de tope de paquete o de alias de tema son del transporte y no le dicen nada a quien depura.
+ */
+function deliveryProperties(properties: IPublishPacket["properties"]): MqttDeliveryProperties | null {
+  if (!properties) return null;
+  const out: MqttDeliveryProperties = {};
+  const pairs = userPropertyPairs(properties.userProperties as Record<string, string | string[]> | undefined);
+  if (pairs.length) out.userProperties = pairs;
+  if (properties.contentType) out.contentType = properties.contentType;
+  if (properties.responseTopic) out.responseTopic = properties.responseTopic;
+  if (properties.correlationData) out.correlationData = Buffer.from(properties.correlationData);
+  return Object.keys(out).length ? out : null;
 }
 
 export { BlockedTargetError };

@@ -14,6 +14,7 @@ import { ApiError, api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import type { ChannelView, MqttSettingsView, RequestAuthView } from "@/lib/types";
 import { AuthEditor } from "@/components/auth-editor";
+import { UserPropertiesEditor } from "@/components/mqtt-publish";
 import { ConfirmDialog } from "@/components/overlay";
 import { useToast } from "@/components/toast";
 import { Button, Field, inputClass } from "@/components/ui";
@@ -24,7 +25,11 @@ const DEFAULT_MQTT: MqttSettingsView = {
   keepaliveSec: 60,
   cleanSession: true,
   subscriptions: [],
+  will: null,
+  userProperties: [],
 };
+
+const BLANK_WILL: NonNullable<MqttSettingsView["will"]> = { topic: "", payload: "", qos: 0, retain: false };
 
 /** Sin cifrar y fuera de esta máquina: la contraseña del broker viaja en claro. */
 export const plaintextBroker = (url: string): boolean =>
@@ -57,7 +62,7 @@ export function MqttChannelSettings({
   const queryClient = useQueryClient();
   const [name, setName] = useState(channel.name);
   const [url, setUrl] = useState(channel.url);
-  const [mqtt, setMqtt] = useState<MqttSettingsView>(channel.mqtt ?? DEFAULT_MQTT);
+  const [mqtt, setMqtt] = useState<MqttSettingsView>({ ...DEFAULT_MQTT, ...channel.mqtt });
   const [auth, setAuth] = useState<RequestAuthView>(
     (channel.auth as RequestAuthView | null) ?? { type: "none", params: {} },
   );
@@ -73,7 +78,12 @@ export function MqttChannelSettings({
         body: {
           name,
           url,
-          mqtt: { ...mqtt, subscriptions: mqtt.subscriptions.filter((row) => row.topic.trim()) },
+          mqtt: {
+            ...mqtt,
+            subscriptions: mqtt.subscriptions.filter((row) => row.topic.trim()),
+            // En 3.1.1 no hay propiedades: se mandan vacías, que es lo que el servidor guarda igual.
+            userProperties: mqtt.version === 5 ? mqtt.userProperties.filter((row) => row.name.trim()) : [],
+          },
           auth: auth.type === "none" ? null : auth,
           limits,
           expectations: {
@@ -241,6 +251,82 @@ export function MqttChannelSettings({
           )}
         </div>
       </div>
+
+      <div>
+        <label className="mb-1 flex items-center gap-2 text-xs font-medium text-slate-600">
+          <input
+            type="checkbox"
+            checked={mqtt.will !== null}
+            disabled={!canEdit}
+            onChange={(e) => setMqtt({ ...mqtt, will: e.target.checked ? { ...BLANK_WILL } : null })}
+          />
+          Testamento (Last Will)
+        </label>
+        <p className="mb-2 text-[11px] text-slate-500">
+          Lo publica el broker si la conexión se corta sin despedirse. Desconectar desde aquí se despide, así que no
+          sale.
+        </p>
+        {mqtt.will && (
+          <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+            <Field label="Tema" error={problemOf("mqtt.will.topic")}>
+              <input
+                className={cn(inputClass, "font-mono text-xs")}
+                placeholder="dispositivos/{{id}}/estado"
+                value={mqtt.will.topic}
+                disabled={!canEdit}
+                onChange={(e) => mqtt.will && setMqtt({ ...mqtt, will: { ...mqtt.will, topic: e.target.value } })}
+              />
+            </Field>
+            <Field label="QoS" error={problemOf("mqtt.will.qos")}>
+              <select
+                className={cn(inputClass, "w-20")}
+                value={mqtt.will.qos}
+                disabled={!canEdit}
+                onChange={(e) =>
+                  mqtt.will && setMqtt({ ...mqtt, will: { ...mqtt.will, qos: Number(e.target.value) as 0 | 1 | 2 } })
+                }
+              >
+                <option value={0}>0</option>
+                <option value={1}>1</option>
+                <option value={2}>2</option>
+              </select>
+            </Field>
+            <label className="flex items-center gap-1.5 self-end pb-2 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                checked={mqtt.will.retain}
+                disabled={!canEdit}
+                onChange={(e) => mqtt.will && setMqtt({ ...mqtt, will: { ...mqtt.will, retain: e.target.checked } })}
+              />
+              Retener
+            </label>
+            <div className="sm:col-span-3">
+              <Field label="Cuerpo" error={problemOf("mqtt.will.payload")}>
+                <textarea
+                  className={cn(inputClass, "min-h-9 font-mono text-xs")}
+                  value={mqtt.will.payload}
+                  disabled={!canEdit}
+                  onChange={(e) => mqtt.will && setMqtt({ ...mqtt, will: { ...mqtt.will, payload: e.target.value } })}
+                />
+              </Field>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {mqtt.version === 5 && (
+        <div>
+          <UserPropertiesEditor
+            label="Propiedades de usuario al conectar"
+            rows={mqtt.userProperties}
+            disabled={!canEdit}
+            onChange={(userProperties) => setMqtt({ ...mqtt, userProperties })}
+          />
+          {problemOf("mqtt.userProperties") && (
+            <p className="mt-1 text-xs text-rose-600">{problemOf("mqtt.userProperties")}</p>
+          )}
+        </div>
+      )}
 
       <div>
         <p className="mb-1 text-xs font-medium text-slate-600">Topes de una sesión</p>

@@ -45,8 +45,11 @@ import { AuthEditor } from "@/components/auth-editor";
 import { MqttChannelSettings } from "@/components/mqtt-channel-settings";
 import {
   BLANK_PUBLISH,
+  MessageProperties,
   MessageRoute,
   MqttPublishFields,
+  MqttSubscribeBar,
+  publishBody,
   publishTopicHint,
   type MqttPublishDraft,
 } from "@/components/mqtt-publish";
@@ -378,6 +381,8 @@ function Conversation({
   // Solo en MQTT: a qué tema se publica. Un WebSocket no manda nada de esto.
   const mqtt = channel.protocol === "mqtt";
   const [publish, setPublish] = useState<MqttPublishDraft>(BLANK_PUBLISH);
+  // Solo en un WebSocket: el borrador son bytes escritos en base64 o hexadecimal, y sale en binario.
+  const [encoding, setEncoding] = useState<"text" | "base64" | "hex">("text");
   const bottom = useRef<HTMLDivElement>(null);
 
   const setSessionId = (id: string | null) =>
@@ -455,9 +460,20 @@ function Conversation({
     mutationFn: (text: string) =>
       api(`${base}/channels/sessions/${sessionId}/messages`, {
         method: "POST",
-        body: mqtt ? { text, ...publish } : { text },
+        body: mqtt
+          ? { text, ...publishBody(publish, channel.mqtt?.version ?? 4) }
+          : encoding !== "text"
+            ? { text, encoding }
+            : { text },
       }),
     onSuccess: () => setDraft(""),
+    onError: (error) => toast.error(message(error)),
+  });
+  // Suscribirse o darse de baja a mitad de sesión. Lo que contesta el broker llega como evento a la
+  // conversación; aquí solo se avisa de lo que ni llegó a pedirse (un filtro mal escrito, un 409).
+  const subscription = useMutation({
+    mutationFn: ({ action, topic, qos }: { action: "subscribe" | "unsubscribe"; topic: string; qos?: 0 | 1 | 2 }) =>
+      api(`${base}/channels/sessions/${sessionId}/${action}`, { method: "POST", body: { topic, qos } }),
     onError: (error) => toast.error(message(error)),
   });
   const close = useMutation({
@@ -495,7 +511,8 @@ function Conversation({
     session.live &&
     Boolean(draft.trim()) &&
     !send.isPending &&
-    (!mqtt || publishTopicHint(publish.topic) === null);
+    (!mqtt || publishTopicHint(publish.topic) === null) &&
+    binaryHint(draft, encoding) === null;
   const rows = useMemo(() => visibleMessages(messages), [messages]);
   const shown = useMemo(() => filterMessages(rows, filter), [rows, filter]);
   // El hueco se mide contra el mensaje anterior **de la conversación**, no contra el anterior que
@@ -594,16 +611,27 @@ function Conversation({
                     ? "ml-auto bg-slate-900 text-white"
                     : row.direction === "error"
                       ? "bg-rose-50 text-rose-800"
-                      : "bg-white text-slate-800 shadow-sm",
+                      : row.direction === "event"
+                        ? "mx-auto border border-dashed border-slate-300 text-slate-600"
+                        : "bg-white text-slate-800 shadow-sm",
                 )}
               >
                 <div className="mb-0.5 flex items-center gap-2 text-[10px] opacity-70">
-                  <span>{row.direction === "out" ? "enviado" : row.direction === "in" ? "recibido" : "error"}</span>
+                  <span>
+                    {row.direction === "out"
+                      ? "enviado"
+                      : row.direction === "in"
+                        ? "recibido"
+                        : row.direction === "event"
+                          ? "evento"
+                          : "error"}
+                  </span>
                   <span>{gap(row.atMs, previousAt.get(row.seq) ?? null)}</span>
                   {row.kind === "binary" && <span>binario · {row.bytes} B</span>}
                   <MessageRoute message={row} />
                 </div>
                 <pre className="whitespace-pre-wrap break-words font-mono">{prettyBody(row.body)}</pre>
+                <MessageProperties message={row} />
                 {row.truncated && (
                   <p className="mt-1 text-[10px] opacity-70">
                     recortado: llegaron {row.bytes.toLocaleString("es")} bytes y aquí se guarda el principio
@@ -635,7 +663,32 @@ function Conversation({
               ))}
             </div>
           )}
-          {mqtt && <MqttPublishFields value={publish} onChange={setPublish} />}
+          {mqtt && (
+            <MqttSubscribeBar
+              pending={subscription.isPending}
+              onSubscribe={(topic, qos) => subscription.mutate({ action: "subscribe", topic, qos })}
+              onUnsubscribe={(topic) => subscription.mutate({ action: "unsubscribe", topic })}
+            />
+          )}
+          {mqtt && <MqttPublishFields value={publish} onChange={setPublish} version={channel.mqtt?.version ?? 4} />}
+          {channel.protocol === "ws" && (
+            <div className="flex items-center gap-2 text-xs text-slate-600">
+              <label className="flex items-center gap-1.5">
+                Trama
+                <select
+                  aria-label="Tipo de trama"
+                  className={cn(inputClass, "mt-0 h-7 w-auto text-xs")}
+                  value={encoding}
+                  onChange={(event) => setEncoding(event.target.value as "text" | "base64" | "hex")}
+                >
+                  <option value="text">Texto</option>
+                  <option value="base64">Binaria (base64)</option>
+                  <option value="hex">Binaria (hexadecimal)</option>
+                </select>
+              </label>
+              {binaryHint(draft, encoding) && <span className="text-rose-600">{binaryHint(draft, encoding)}</span>}
+            </div>
+          )}
           <div className="flex gap-2">
             <textarea
               aria-label="Mensaje"
@@ -787,7 +840,8 @@ function SessionHeader({
         >
           {Object.entries(session.trailers).map(([name, value]) => (
             <div key={name} className="contents">
-              <dt>{name}</dt>
+              {/* Lo binario llega en base64, y se dice: «AAEC» a secas podría ser texto. */}
+              <dt>{name.endsWith("-bin") ? `${name} (base64)` : name}</dt>
               <dd className="truncate">{value}</dd>
             </div>
           ))}
@@ -963,7 +1017,7 @@ function ChannelSettings({
         label={grpc ? "Metadata" : "Cabeceras del upgrade"}
         hint={
           grpc
-            ? "Claves en minúsculas; las grpc-* y las de HTTP/2 las pone la llamada. Una credencial va como {{variable}}: escrita a mano no se guarda."
+            ? "Claves en minúsculas; las grpc-* y las de HTTP/2 las pone la llamada. Una clave que acaba en -bin lleva bytes: su valor se escribe en base64. Una credencial va como {{variable}}: escrita a mano no se guarda."
             : "Las del propio protocolo —Host, Upgrade, Sec-WebSocket-*— las pone la conexión."
         }
         rows={headers}
@@ -1121,4 +1175,17 @@ function ChannelSettings({
       )}
     </div>
   );
+}
+
+/**
+ * Si el borrador sirve como bytes, antes de mandarlo: la misma regla que el servidor, que es quien
+ * decide. Con `{{variables}}` no se mira: su valor es lo que tiene que ser base64 o hexadecimal.
+ */
+function binaryHint(draft: string, encoding: "text" | "base64" | "hex"): string | null {
+  const compact = draft.replace(/\s+/g, "");
+  if (encoding === "text" || !compact || compact.includes("{{")) return null;
+  if (encoding === "hex") return /^(?:[0-9a-fA-F]{2})+$/.test(compact) ? null : "Hexadecimal: pares de 0-9 y a-f";
+  return /^[A-Za-z0-9+/_-]+={0,2}$/.test(compact) && compact.replace(/=+$/, "").length % 4 !== 1
+    ? null
+    : "No es base64";
 }

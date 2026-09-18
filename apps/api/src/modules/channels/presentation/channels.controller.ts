@@ -26,6 +26,7 @@ import {
   UpdateChannelCommand,
 } from "../application/commands/manage-channels";
 import {
+  ChangeChannelSubscriptionCommand,
   CloseChannelSessionCommand,
   OpenChannelSessionCommand,
   SendChannelMessageCommand,
@@ -33,7 +34,13 @@ import {
 import { GetChannelQuery, GetChannelSessionQuery, ListChannelsQuery } from "../application/queries/read-channels";
 import type { ChannelSessionView } from "../application/views";
 import { ChannelProgressStream } from "../infrastructure/channel-progress.stream";
-import { CreateChannelDto, OpenChannelSessionDto, SendChannelMessageDto, UpdateChannelDto } from "./dto/channels.dto";
+import {
+  ChannelSubscriptionDto,
+  CreateChannelDto,
+  OpenChannelSessionDto,
+  SendChannelMessageDto,
+  UpdateChannelDto,
+} from "./dto/channels.dto";
 
 const actorId = (principal: Principal): string => (principal.kind === "user" ? principal.userId : principal.tokenId);
 
@@ -84,11 +91,64 @@ export class ChannelsController {
   ) {
     // El tema, la QoS y el `retain` solo existen en MQTT; en un WebSocket no se mandan y no viajan.
     const publish =
-      body.topic !== undefined ? { topic: body.topic, qos: body.qos ?? 0, retain: body.retain ?? false } : undefined;
+      body.topic !== undefined
+        ? {
+            topic: body.topic,
+            qos: body.qos ?? 0,
+            retain: body.retain ?? false,
+            ...(body.userProperties !== undefined ? { userProperties: body.userProperties } : {}),
+          }
+        : undefined;
     await this.commandBus.execute(
-      new SendChannelMessageCommand(organizationId, projectId, sessionId, body.text, publish),
+      new SendChannelMessageCommand(
+        organizationId,
+        projectId,
+        sessionId,
+        body.text,
+        publish,
+        body.encoding === "base64" || body.encoding === "hex" ? body.encoding : undefined,
+      ),
     );
     return { accepted: true };
+  }
+
+  /**
+   * Suscribirse a mitad de sesión. Un no del broker **no** es un error de la API: es un 200 con
+   * `granted: null` y el motivo, y queda en la transcripción como un evento.
+   */
+  @Post("sessions/:sessionId/subscribe")
+  @RequireRole("editor")
+  @HttpCode(200)
+  subscribe(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("sessionId") sessionId: string,
+    @Body() body: ChannelSubscriptionDto,
+  ) {
+    return this.commandBus.execute(
+      new ChangeChannelSubscriptionCommand(
+        organizationId,
+        projectId,
+        sessionId,
+        "subscribe",
+        body.topic,
+        body.qos ?? 0,
+      ),
+    );
+  }
+
+  @Post("sessions/:sessionId/unsubscribe")
+  @RequireRole("editor")
+  @HttpCode(200)
+  unsubscribe(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("sessionId") sessionId: string,
+    @Body() body: ChannelSubscriptionDto,
+  ) {
+    return this.commandBus.execute(
+      new ChangeChannelSubscriptionCommand(organizationId, projectId, sessionId, "unsubscribe", body.topic),
+    );
   }
 
   @Post("sessions/:sessionId/close")

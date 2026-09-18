@@ -11,11 +11,17 @@
  * `applyFrame`, como cualquier otra trama: redactar, recortar y contar siguen en un solo sitio.
  */
 import { Inject, Injectable } from "@nestjs/common";
-import type { RawFrame } from "@eq/runner-core";
+import type { MessageProperties, RawFrame } from "@eq/runner-core";
 
 import { ENV, type Env } from "@/shared/config/env";
 import { policyFromEnv } from "@/shared/http/safe-fetch.provider";
-import { openSafeMqtt } from "@/shared/http/safe-mqtt";
+import {
+  openSafeMqtt,
+  subscribeMqtt,
+  unsubscribeMqtt,
+  userPropertyRecord,
+  type MqttDeliveryProperties,
+} from "@/shared/http/safe-mqtt";
 import type { MqttPublish, MqttSessionPlan } from "../domain/mqtt";
 import type { OpenChannel } from "./ws-transport";
 
@@ -53,12 +59,14 @@ export class MqttChannelTransport implements MqttTransportPort {
         username: options.username,
         password: options.password,
         subscriptions: options.subscriptions,
+        will: options.will,
+        userProperties: options.userProperties,
         maxPacketBytes: options.maxMessageBytes + PACKET_OVERHEAD_BYTES,
         connectTimeoutMs: options.connectTimeoutMs,
       },
       {
         onOpen: (opened) => emit({ direction: "open", handshake: opened }),
-        onMessage: ({ topic, payload, qos, retain }) =>
+        onMessage: ({ topic, payload, qos, retain, properties }) =>
           emit({
             direction: "in",
             // Un cuerpo MQTT son bytes sin tipo: se lee como texto si lo es, y como hexadecimal de lo
@@ -70,6 +78,7 @@ export class MqttChannelTransport implements MqttTransportPort {
             topic,
             qos,
             retain,
+            ...(properties ? { properties: shownProperties(properties) } : {}),
           }),
         onClose: (reason) => emit({ direction: "close", closeReason: reason }),
         onError: (error) => emit({ direction: "error", body: error.message }),
@@ -79,11 +88,18 @@ export class MqttChannelTransport implements MqttTransportPort {
       handshake,
       send: (text, publish?: MqttPublish) => {
         if (!publish) throw new Error("En MQTT se publica en un tema");
-        client.publish(publish.topic, text, { qos: publish.qos, retain: publish.retain }, (error) => {
+        // Las propiedades de usuario solo existen en 5.0; en 3.1.1 las rechaza antes quien manda.
+        const properties = publish.userProperties?.length
+          ? { properties: { userProperties: userPropertyRecord(publish.userProperties) } }
+          : {};
+        client.publish(publish.topic, text, { qos: publish.qos, retain: publish.retain, ...properties }, (error) => {
           // Un PUBACK con código de error (5.0) o un corte a medio publicar: se cuenta en la sesión.
           if (error) emit({ direction: "error", body: `no se pudo publicar: ${error.message}` });
         });
       },
+      // Con el plazo de la conexión: un broker que no contesta el `SUBACK` no cuelga la petición.
+      subscribe: (topic, qos) => subscribeMqtt(client, topic, qos, options.connectTimeoutMs),
+      unsubscribe: (topic) => unsubscribeMqtt(client, topic, options.connectTimeoutMs),
       // Un DISCONNECT de verdad y no cortar el TCP: el broker lo distingue, y con un corte publicaría
       // el testamento del cliente como si se hubiera caído.
       close: () => {
@@ -91,6 +107,18 @@ export class MqttChannelTransport implements MqttTransportPort {
       },
     };
   }
+}
+
+/**
+ * Las propiedades de un mensaje, en la forma de la transcripción: los datos de correlación son
+ * bytes y van como texto si lo son y como hexadecimal (de lo que quepa) si no, diciéndolo.
+ */
+export function shownProperties(properties: MqttDeliveryProperties): MessageProperties {
+  const { correlationData, ...rest } = properties;
+  if (!correlationData) return rest;
+  return isText(correlationData)
+    ? { ...rest, correlationData: correlationData.toString("utf8"), correlationEncoding: "text" }
+    : { ...rest, correlationData: correlationData.subarray(0, 256).toString("hex"), correlationEncoding: "hex" };
 }
 
 /**

@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { payloadFor, serializeRequestBody } from "../src/request-body.ts";
+import { formTemplate, interpolateFormBody, payloadFor, serializeRequestBody } from "../src/request-body.ts";
 
 /**
  * De la forma guardada a los bytes que salen.
@@ -119,5 +119,38 @@ describe("el cuerpo que un paso manda", () => {
   test("el cuerpo descrito por una petición guardada gana, porque es el que alguien escribió", () => {
     const payload = payloadFor({ payload: { type: "raw", text: "hola", contentType: "text/plain" } });
     assert.deepEqual(payload, { contentType: "text/plain", text: "hola" });
+  });
+});
+
+describe("un formulario como plantilla, el de un nodo fetch", () => {
+  const values: Record<string, string> = { user: "ana maría", pass: "p&ss=1", form: "a=1&b=2" };
+  const substitute = (span: string) => span.replace(/\{\{(\w+)\}\}/g, (token, name) => values[name] ?? token);
+
+  test("las {{variables}} se quedan como se escribieron, y el texto se codifica", () => {
+    assert.equal(
+      formTemplate({ "mi campo": "{{user}} y más", clave: "{{pass}}" }),
+      "mi+campo={{user}}+y+m%C3%A1s&clave={{pass}}",
+    );
+    // Anidadas, una sola plantilla: `{{$hmacSha256:{{clave}}:texto}}` no se parte por dentro.
+    assert.equal(formTemplate({ firma: "{{$hmacSha256:{{clave}}:a b}}" }), "firma={{$hmacSha256:{{clave}}:a b}}");
+  });
+
+  test("al interpolar, lo que vale una variable se codifica dentro de su campo, y el resto no se toca", () => {
+    const body = interpolateFormBody("usuario={{user}}&clave={{pass}}&nota=a%26b", substitute);
+    assert.equal(body, "usuario=ana+mar%C3%ADa&clave=p%26ss%3D1&nota=a%26b");
+    assert.deepEqual(Object.fromEntries(new URLSearchParams(body)), {
+      usuario: "ana maría",
+      clave: "p&ss=1",
+      nota: "a&b",
+    });
+  });
+
+  test("una plantilla fuera de un campo es el formulario entero, y va tal cual", () => {
+    assert.equal(interpolateFormBody("{{form}}", substitute), "a=1&b=2");
+    assert.equal(interpolateFormBody("{{form}}&c={{user}}", substitute), "a=1&b=2&c=ana+mar%C3%ADa");
+  });
+
+  test("una variable sin valor se queda con sus llaves, para que se diga", () => {
+    assert.equal(interpolateFormBody("a={{nadie}}", substitute), "a={{nadie}}");
   });
 });

@@ -342,7 +342,9 @@ describe("contra un servidor de verdad en loopback", () => {
     sockets.on("connection", (client, upgrade) => {
       if (upgrade.url === "/calla") return;
       client.send('{"type":"welcome"}');
-      client.on("message", (data) => {
+      client.on("message", (data, isBinary) => {
+        // Lo binario vuelve tal cual, en una trama binaria.
+        if (isBinary) return client.send(data as Buffer, { binary: true });
         const text = String(data);
         if (text === "adiós") client.close(4001, "hasta luego");
         else client.send(JSON.stringify({ type: "eco", got: text }));
@@ -409,6 +411,47 @@ describe("contra un servidor de verdad en loopback", () => {
     }
     assert.equal(read.body.status, "closed", JSON.stringify(read.body));
     assert.equal(read.body.stopReason, "idle-cap");
+  });
+
+  test("un mensaje binario se escribe en base64 o hexadecimal, sale en bytes y se anota como binario", async () => {
+    const environmentId = await environment(true);
+    const id = await channel({ url: `ws://127.0.0.1:${port}/eco` });
+    const opened = await api().post(`${base}/channels/${id}/sessions`).set(as(owner)).send({ environmentId });
+    assert.equal(opened.status, 201, JSON.stringify(opened.body));
+    const messages = `${base}/channels/sessions/${opened.body.id}/messages`;
+
+    const hex = await api().post(messages).set(as(owner)).send({ text: "00 01 02 ff", encoding: "hex" });
+    assert.equal(hex.status, 202, JSON.stringify(hex.body));
+    // El secreto del entorno, en bytes: sale y vuelve en el eco, y en la transcripción no se ve.
+    const secret = Buffer.from(`id:${TOKEN}`).toString("base64");
+    const b64 = await api().post(messages).set(as(owner)).send({ text: secret, encoding: "base64" });
+    assert.equal(b64.status, 202, JSON.stringify(b64.body));
+
+    const broken = await api().post(messages).set(as(owner)).send({ text: "0g", encoding: "hex" });
+    assert.equal(broken.status, 422);
+    assert.equal(broken.body.errors[0].field, "text");
+
+    let read = await api().get(`${base}/channels/sessions/${opened.body.id}`).set(as(owner));
+    for (let attempt = 0; attempt < 50 && read.body.messages.length < 5; attempt += 1) {
+      await settle();
+      read = await api().get(`${base}/channels/sessions/${opened.body.id}`).set(as(owner));
+    }
+    const rows = read.body.messages as { direction: string; kind: string; body: string; bytes: number }[];
+    assert.deepEqual(
+      rows.slice(1).map((row) => [row.direction, row.kind, row.bytes]),
+      [
+        ["out", "binary", 4],
+        ["in", "binary", 4],
+        ["out", "binary", 3 + TOKEN.length],
+        ["in", "binary", 3 + TOKEN.length],
+      ],
+    );
+    assert.equal(rows[1].body, "000102ff");
+    assert.equal(rows[2].body, "000102ff");
+    assert.equal(rows[3].body, `${Buffer.from("id:").toString("hex")}••••••••`);
+    const everything = JSON.stringify([read.body, [...context.repositories.channelSessions.messages.values()]]);
+    assert.ok(!everything.includes(Buffer.from(TOKEN).toString("hex")), "el secreto salió en hexadecimal");
+    await api().post(`${base}/channels/sessions/${opened.body.id}/close`).set(as(owner));
   });
 });
 

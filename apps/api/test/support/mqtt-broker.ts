@@ -21,6 +21,8 @@ export type TestBroker = {
   /** Publica desde el propio broker, como lo haría otro cliente. */
   publish(topic: string, payload: string, retain?: boolean): Promise<void>;
   close(): Promise<void>;
+  /** Solo el de 5.0: los `CONNECT` que recibió, para mirar el testamento y las propiedades. */
+  connects?: mqttPacket.IConnectPacket[];
 };
 
 type BrokerOptions = {
@@ -85,8 +87,11 @@ export async function startAedes(options: BrokerOptions = {}): Promise<TestBroke
  * las suscripciones, devuelve cada `PUBLISH` a quien lo mandó y, si se le pide, manda un paquete del
  * tamaño que se diga —para probar el tope—.
  */
-export async function startMqtt5(options: { password?: string; oversized?: number } = {}): Promise<TestBroker> {
+export async function startMqtt5(
+  options: { password?: string; oversized?: number; forbidden?: string } = {},
+): Promise<TestBroker> {
   const sockets = new Set<Socket>();
+  const connects: mqttPacket.IConnectPacket[] = [];
   const server = createServer((socket) => {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
@@ -95,6 +100,7 @@ export async function startMqtt5(options: { password?: string; oversized?: numbe
     const send = (packet: mqttPacket.Packet) => socket.write(mqttPacket.generate(packet, { protocolVersion: 5 }));
     parser.on("packet", (packet: mqttPacket.Packet) => {
       if (packet.cmd === "connect") {
+        connects.push(packet);
         const ok = options.password === undefined || packet.password?.toString() === options.password;
         send({ cmd: "connack", sessionPresent: false, reasonCode: ok ? 0 : 0x86 });
         if (!ok) socket.end();
@@ -109,7 +115,13 @@ export async function startMqtt5(options: { password?: string; oversized?: numbe
           });
         }
       } else if (packet.cmd === "subscribe") {
-        send({ cmd: "suback", messageId: packet.messageId, granted: packet.subscriptions.map((s) => s.qos) });
+        // 0x87 («no autorizado») para lo prohibido: el no de un broker 5.0 con permisos.
+        const granted = packet.subscriptions.map((s) =>
+          options.forbidden && s.topic.startsWith(options.forbidden) ? 0x87 : s.qos,
+        );
+        send({ cmd: "suback", messageId: packet.messageId, granted });
+      } else if (packet.cmd === "unsubscribe") {
+        send({ cmd: "unsuback", messageId: packet.messageId, granted: packet.unsubscriptions.map(() => 0) });
       } else if (packet.cmd === "publish") {
         send({ ...packet, messageId: undefined, qos: 0 } as mqttPacket.Packet);
       } else if (packet.cmd === "pingreq") {
@@ -124,6 +136,7 @@ export async function startMqtt5(options: { password?: string; oversized?: numbe
   return {
     port: (server.address() as AddressInfo).port,
     publish: async () => undefined,
+    connects,
     close: async () => {
       for (const socket of sockets) socket.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));

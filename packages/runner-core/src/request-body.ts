@@ -102,3 +102,113 @@ export function payloadFor(step: { body?: Record<string, unknown>; payload?: Req
   if (step.payload) return serializeRequestBody(step.payload);
   return step.body === undefined ? null : { contentType: "application/json", text: JSON.stringify(step.body) };
 }
+
+/**
+ * A form body written as a template, the way a `fetch` node stores it: `usuario={{user}}&nota=a+b`.
+ *
+ * A `fetch` node sends one string, so a form has to become text before it is stored — and doing that
+ * with `URLSearchParams` percent-encodes the braces: `{{user}}` becomes `%7B%7Buser%7D%7D`, which no
+ * interpolation matches, and the node is refused at run time for a variable it does have. So the
+ * literal text is encoded and every `{{…}}` span is left exactly as written; {@link
+ * interpolateFormBody} encodes what it turns into, at send time.
+ */
+export function formTemplate(fields: Record<string, string>): string {
+  return Object.entries(fields)
+    .map(([name, value]) => `${encodeAroundTemplates(name)}=${encodeAroundTemplates(value)}`)
+    .join("&");
+}
+
+/**
+ * A form template with its variables substituted and **each substituted value encoded**.
+ *
+ * Substituting into the whole text and encoding nothing — what every other body does — puts a raw
+ * `&` or `=` from a password into the form, and the target reads one field where two were meant.
+ * Encoding the whole text afterwards would encode the separators too. So the template is cut into
+ * its pairs first, and only what a `{{…}}` becomes inside a `name=value` pair is encoded; the
+ * literal text is sent as written (it is already encoded, see {@link formTemplate}).
+ *
+ * A span outside any pair —a body that is just `{{form}}`— is substituted raw: it holds the whole
+ * form, separators and all, and encoding it would turn it into one field. A span that does not
+ * resolve is left standing, braces and all, so `unresolvedVariables` still names it.
+ */
+export function interpolateFormBody(template: string, substitute: (span: string) => string): string {
+  return splitOutsideTemplates(template, "&")
+    .map((pair) => {
+      const [name, ...rest] = splitOutsideTemplates(pair, "=");
+      const encode = rest.length > 0;
+      const side = (text: string) =>
+        pieces(text)
+          .map((piece) => {
+            if (!piece.template) return piece.text;
+            const value = substitute(piece.text);
+            return encode && !value.includes("{{") ? encodeFormComponent(value) : value;
+          })
+          .join("");
+      return encode ? `${side(name)}=${side(rest.join("="))}` : side(name);
+    })
+    .join("&");
+}
+
+/** What `URLSearchParams` writes for a value, bar the handful of marks it also encodes: `+` for a space. */
+const encodeFormComponent = (text: string): string => encodeURIComponent(text).replace(/%20/g, "+");
+
+const encodeAroundTemplates = (text: string): string =>
+  pieces(text)
+    .map((piece) => (piece.template ? piece.text : encodeFormComponent(piece.text)))
+    .join("");
+
+/**
+ * The text cut into literal runs and `{{…}}` spans. Nested braces stay inside their span, so
+ * `{{$hmacSha256:{{clave}}:texto}}` is one span and not two halves of something.
+ */
+function pieces(text: string): { text: string; template: boolean }[] {
+  const out: { text: string; template: boolean }[] = [];
+  let at = 0;
+  while (at < text.length) {
+    const open = text.indexOf("{{", at);
+    if (open < 0) break;
+    const close = closingOf(text, open);
+    if (close < 0) break;
+    if (open > at) out.push({ text: text.slice(at, open), template: false });
+    out.push({ text: text.slice(open, close), template: true });
+    at = close;
+  }
+  if (at < text.length) out.push({ text: text.slice(at), template: false });
+  return out;
+}
+
+/** Just past the `}}` that closes the `{{` at `open`, counting the ones nested inside; -1 if none. */
+function closingOf(text: string, open: number): number {
+  let depth = 0;
+  for (let at = open; at < text.length - 1; at++) {
+    if (text.startsWith("{{", at)) {
+      depth++;
+      at++;
+    } else if (text.startsWith("}}", at)) {
+      depth--;
+      at++;
+      if (depth === 0) return at + 1;
+    }
+  }
+  return -1;
+}
+
+/** `split` that leaves a separator inside a `{{…}}` span alone. */
+function splitOutsideTemplates(text: string, separator: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  for (const piece of pieces(text)) {
+    if (piece.template) {
+      current += piece.text;
+      continue;
+    }
+    const cut = piece.text.split(separator);
+    current += cut[0];
+    for (const next of cut.slice(1)) {
+      parts.push(current);
+      current = next;
+    }
+  }
+  parts.push(current);
+  return parts;
+}

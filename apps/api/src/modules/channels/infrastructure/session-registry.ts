@@ -23,6 +23,7 @@ import { hostname } from "node:os";
 import { performance } from "node:perf_hooks";
 import { Inject, Injectable, Logger, Optional, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
 import {
+  topicFilterProblem,
   unresolvedVariables,
   type ChannelExpectation,
   type ChannelLimits,
@@ -36,12 +37,54 @@ import { ENV, type Env } from "@/shared/config/env";
 import { ConflictError, InvalidInputError } from "@/shared/errors/domain-error";
 import { BlockedTargetError } from "@/shared/http/safe-fetch";
 import { HandshakeRejectedError } from "@/shared/http/safe-socket";
-import type { MqttPublish, MqttSessionPlan } from "../domain/mqtt";
+import { MqttRejectedError } from "@/shared/http/safe-mqtt";
+import type { MqttPublish, MqttQos, MqttSessionPlan } from "../domain/mqtt";
 import { CHANNEL_SESSION_REPOSITORY, type ChannelSessionRepositoryPort } from "../domain/ports";
 import { closeSession, isFinished, isStale, onFrame, onTick, type ChannelSession } from "../domain/session";
 import { ChannelProgressStream } from "./channel-progress.stream";
 import { MQTT_TRANSPORT, type MqttTransportPort } from "./mqtt-transport";
 import { CHANNEL_TRANSPORT, type ChannelListeners, type ChannelTransportPort, type OpenChannel } from "./ws-transport";
+
+/** Cómo viene escrito un mensaje binario: base64 (estándar o URL) o hexadecimal. */
+export type BinaryEncoding = "base64" | "hex";
+
+/**
+ * Los bytes de un mensaje binario, o un 422 que dice por qué no lo son.
+ *
+ * Estricto a propósito: `Buffer.from` se salta en silencio lo que no entiende, y un hexadecimal con
+ * una letra de más mandaría otros bytes que los que se ven escritos.
+ */
+export function decodeBinary(text: string, encoding: BinaryEncoding): Buffer {
+  const compact = text.replace(/\s+/g, "");
+  const valid =
+    encoding === "hex"
+      ? /^(?:[0-9a-fA-F]{2})+$/.test(compact)
+      : /^[A-Za-z0-9+/_-]+={0,2}$/.test(compact) && compact.replace(/=+$/, "").length % 4 !== 1;
+  if (!valid)
+    throw new InvalidInputError("El mensaje no es válido", [
+      {
+        field: "text",
+        detail:
+          encoding === "hex"
+            ? "Hexadecimal: pares de 0-9 y a-f, sin nada más (se ignoran los espacios)"
+            : "Base64: A-Z, a-z, 0-9, + y / (o - y _), con = al final si hace falta",
+      },
+    ]);
+  return Buffer.from(compact, encoding === "hex" ? "hex" : "base64");
+}
+
+/** Lo que contesta una suscripción a mitad de sesión: la QoS concedida, o `null` y el motivo. */
+export type MqttSubscriptionResult = { topic: string; granted: number | null; detail: string };
+
+const noTopics = () => new ConflictError("Solo una sesión MQTT tiene temas a los que suscribirse", "channel-no-topics");
+
+/** Un no del broker con su código y su nombre; cualquier otro fallo, con su mensaje. */
+function subscriptionFailure(what: string, topic: string, error: unknown): string {
+  const reason = error instanceof Error ? error.message : String(error);
+  return error instanceof MqttRejectedError
+    ? `el broker rechazó ${what} ${topic}: ${reason}`
+    : `no se pudo completar ${what} ${topic}: ${reason}`;
+}
 
 /** Cada cuánto se mira el reloj de las sesiones vivas. Decide la precisión de los topes de tiempo. */
 export const TICK_MS = 1_000;
@@ -227,9 +270,11 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
    * Mandar un mensaje. Se anota **antes** de mandarlo, y anotado ya tapado: lo que sale en vivo y lo
    * que se guarda es el mensaje redactado; el texto crudo solo lo ve el socket.
    */
-  async send(sessionId: string, text: string, publish?: MqttPublish): Promise<void> {
+  async send(sessionId: string, text: string, publish?: MqttPublish, binary?: BinaryEncoding): Promise<void> {
     const entry = this.live.get(sessionId);
     if (!entry?.channel) throw this.notHere(sessionId);
+    if (binary && !entry.channel.sendBinary)
+      throw new ConflictError("Este canal no manda tramas binarias: solo un WebSocket", "channel-no-binary");
     // Antes que la escritura: un mensaje sin tema en MQTT, o con tema en un WebSocket, no se anota.
     if (Boolean(entry.plan.mqtt) !== Boolean(publish)) {
       throw new InvalidInputError("El mensaje no es válido", [
@@ -244,10 +289,21 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
         "writes-not-allowed",
       );
     }
+    if (publish?.userProperties?.length && entry.plan.mqtt?.version !== 5) {
+      throw new InvalidInputError("El mensaje no es válido", [
+        { field: "userProperties", detail: "Las propiedades de usuario son de MQTT 5: esta sesión habla 3.1.1" },
+      ]);
+    }
     // Una variable sin valor se dice antes de mandar, con su nombre, como en «Enviar» de un
     // endpoint: que el servidor reciba `{{token}}` literal y conteste «no autorizado» no dice nada.
-    const wire = entry.plan.interpolate ? entry.plan.interpolate(text) : text;
-    const unresolved = entry.plan.interpolate ? unresolvedVariables(wire) : [];
+    const resolve = entry.plan.interpolate ?? ((value: string) => value);
+    const wire = resolve(text);
+    // Las propiedades de usuario llevan `{{variables}}` como el cuerpo, y se resuelven igual.
+    const properties = publish?.userProperties?.map(({ name, value }) => ({
+      name: resolve(name),
+      value: resolve(value),
+    }));
+    const unresolved = entry.plan.interpolate ? unresolvedVariables([wire, properties ?? null]) : [];
     if (unresolved.length) {
       throw new InvalidInputError(
         `Variables sin valor: ${unresolved.join(", ")}`,
@@ -258,14 +314,108 @@ export class ChannelSessionRegistry implements OnModuleInit, OnModuleDestroy {
         "unresolved-variables",
       );
     }
+    if (binary && entry.channel.sendBinary) {
+      // Los bytes, decodificados **después** de interpolar: una `{{variable}}` puede llevar la parte
+      // en base64 o en hexadecimal. Se anotan como lo binario que llega —hexadecimal de lo que quepa y
+      // el tamaño real—, así que la redacción de `applyFrame` busca los secretos también en su volcado.
+      const bytes = decodeBinary(wire, binary);
+      this.frame(sessionId, {
+        direction: "out",
+        atMs: this.at(entry),
+        kind: "binary",
+        body: bytes.subarray(0, 256).toString("hex"),
+        bytes: bytes.byteLength,
+      });
+      entry.channel.sendBinary(bytes);
+      await entry.writes;
+      return;
+    }
     // Lo que el protocolo no puede mandar —un JSON que no encaja con el tipo gRPC— se dice antes de
     // anotarlo: la transcripción no puede tener un «enviado» que nunca salió.
     entry.channel.check?.(wire);
     // Se anota lo que viaja, ya resuelto: la transcripción enseña lo que recibió el servidor, y la
     // redacción de `frame` tapa el valor de una variable sensible igual que el de cualquier otra.
-    this.frame(sessionId, { direction: "out", atMs: this.at(entry), body: wire, ...publish });
-    entry.channel.send(wire, publish);
+    const wirePublish = publish && { ...publish, ...(properties?.length ? { userProperties: properties } : {}) };
+    this.frame(sessionId, {
+      direction: "out",
+      atMs: this.at(entry),
+      body: wire,
+      ...(publish ? { topic: publish.topic, qos: publish.qos, retain: publish.retain } : {}),
+      // Se anotan como las cabeceras: tapadas por nombre y por valor dentro de `applyFrame`.
+      ...(properties?.length
+        ? { properties: { userProperties: properties.map(({ name, value }): [string, string] => [name, value]) } }
+        : {}),
+    });
+    entry.channel.send(wire, wirePublish);
     await entry.writes;
+  }
+
+  /**
+   * Suscribirse a un filtro más con la sesión abierta, como el botón «Suscribir» de Postman.
+   *
+   * Lo que pasa queda en la transcripción como un **evento** —ni enviado ni recibido—: la
+   * suscripción concedida con su QoS, o el no del broker con su código y su nombre. Un no aquí no
+   * cierra la sesión, al contrario que al conectar: allí la sesión se abrió para oír ese tema y sin
+   * él no sirve; aquí se pidió uno más, y lo que ya se oía se sigue oyendo.
+   *
+   * Suscribirse es escuchar, así que un entorno sin escrituras lo deja hacer.
+   */
+  async subscribe(sessionId: string, filter: string, qos: MqttQos): Promise<MqttSubscriptionResult> {
+    const { entry, channel, topic } = this.topicAction(sessionId, filter, topicFilterProblem);
+    if (!channel.subscribe) throw noTopics();
+    let result: MqttSubscriptionResult;
+    try {
+      const granted = await channel.subscribe(topic, qos);
+      result = {
+        topic,
+        granted,
+        detail: `suscrito a ${topic} (QoS ${granted}${granted !== qos ? `, pedida ${qos}` : ""})`,
+      };
+    } catch (error) {
+      result = { topic, granted: null, detail: subscriptionFailure("la suscripción a", topic, error) };
+    }
+    this.frame(sessionId, { direction: "event", atMs: this.at(entry), body: result.detail, topic, qos });
+    await entry.writes;
+    return result;
+  }
+
+  /** Dejar de oír un filtro, con la sesión abierta. También queda como evento. */
+  async unsubscribe(sessionId: string, filter: string): Promise<MqttSubscriptionResult> {
+    const { entry, channel, topic } = this.topicAction(sessionId, filter, topicFilterProblem);
+    if (!channel.unsubscribe) throw noTopics();
+    let result: MqttSubscriptionResult;
+    try {
+      await channel.unsubscribe(topic);
+      result = { topic, granted: null, detail: `ya no se oye ${topic}` };
+    } catch (error) {
+      result = { topic, granted: null, detail: subscriptionFailure("la baja de", topic, error) };
+    }
+    this.frame(sessionId, { direction: "event", atMs: this.at(entry), body: result.detail, topic });
+    await entry.writes;
+    return result;
+  }
+
+  /** Lo común de suscribirse y darse de baja: la sesión es de aquí, y el filtro resuelto vale. */
+  private topicAction(
+    sessionId: string,
+    filter: string,
+    problemOf: (topic: string) => string | null,
+  ): { entry: Live; channel: OpenChannel; topic: string } {
+    const entry = this.live.get(sessionId);
+    if (!entry?.channel) throw this.notHere(sessionId);
+    if (!entry.plan.mqtt) throw noTopics();
+    const topic = entry.plan.interpolate ? entry.plan.interpolate(filter) : filter;
+    const unresolved = entry.plan.interpolate ? unresolvedVariables(topic) : [];
+    if (unresolved.length) {
+      throw new InvalidInputError(
+        `Variables sin valor: ${unresolved.join(", ")}`,
+        unresolved.map((name) => ({ field: "topic", detail: `{{${name}}} no tiene valor` })),
+        "unresolved-variables",
+      );
+    }
+    const problem = problemOf(topic);
+    if (problem) throw new InvalidInputError("El filtro no es válido", [{ field: "topic", detail: problem }]);
+    return { entry, channel: entry.channel, topic };
   }
 
   /** Terminar de mandar sin cerrar: el medio cierre de un stream. Quien no lo tiene, lo dice. */

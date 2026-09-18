@@ -41,7 +41,7 @@ import { ENV, type Env } from "@/shared/config/env";
 import { ConflictError } from "@/shared/errors/domain-error";
 import { policyFromEnv } from "@/shared/http/safe-fetch.provider";
 import { resolveTarget, type SafeFetchPolicy } from "@/shared/http/safe-fetch";
-import { GRPC_SCHEMES, grpcPort } from "../domain/grpc";
+import { GRPC_SCHEMES, grpcPort, isBinaryMetadata } from "../domain/grpc";
 import type { GrpcSchema, ResolvedMethod } from "../domain/grpc-schema";
 import { reflectSchema } from "./grpc-reflection";
 import type { ChannelListeners, OpenChannel } from "./ws-transport";
@@ -69,11 +69,23 @@ export type GrpcCall = {
   decode(text: string): object;
 };
 
+/**
+ * La llamada de un canal con reflexión: se sabe qué método es solo después de preguntarle al
+ * servidor. Recibe el esquema reflejado y devuelve la llamada, o lanza con el motivo (un método que
+ * ya no está, un mensaje que no encaja).
+ */
+export type GrpcCallFromSchema = (schema: GrpcSchema) => GrpcCall;
+
 export interface GrpcTransportPort {
   /** La definición del servidor, por reflexión. */
   reflect(target: GrpcTarget): Promise<GrpcSchema>;
-  /** Invocar. Resuelve cuando la conexión está hecha, y lo demás llega por las escuchas. */
-  call(target: GrpcTarget, call: GrpcCall, listeners: ChannelListeners): Promise<OpenChannel>;
+  /**
+   * Invocar. Resuelve cuando la conexión está hecha, y lo demás llega por las escuchas.
+   *
+   * Con una función en vez de la llamada, primero se refleja **por la misma conexión** y después se
+   * invoca: una sesión con reflexión abre una conexión, no dos.
+   */
+  call(target: GrpcTarget, call: GrpcCall | GrpcCallFromSchema, listeners: ChannelListeners): Promise<OpenChannel>;
 }
 
 /**
@@ -108,10 +120,18 @@ export async function pinnedClient(
   return { client, hostname, address };
 }
 
-/** La metadata de la llamada. Las claves viajan en minúsculas: grpc-js las normaliza así. */
-function toMetadata(values: Record<string, string>): Metadata {
+/**
+ * La metadata de la llamada. Las claves viajan en minúsculas: grpc-js las normaliza así.
+ *
+ * Una clave `-bin` lleva bytes y se escribe en base64 (estándar o URL): aquí se decodifica, y
+ * grpc-js la vuelve a codificar para el cable. Mandar el texto tal cual lanzaría dentro de grpc-js.
+ */
+export function toMetadata(values: Record<string, string>): Metadata {
   const metadata = new Metadata();
-  for (const [name, value] of Object.entries(values)) metadata.add(name.toLowerCase(), value);
+  for (const [name, value] of Object.entries(values)) {
+    const key = name.toLowerCase();
+    metadata.add(key, isBinaryMetadata(key) ? Buffer.from(value.trim(), "base64") : value);
+  }
   return metadata;
 }
 
@@ -153,8 +173,24 @@ export class GrpcChannelTransport implements GrpcTransportPort {
    * La metadata de la respuesta llega después como una segunda apertura, con cabeceras: la
    * conversación se queda con el primer momento y con las últimas cabeceras.
    */
-  async call(target: GrpcTarget, call: GrpcCall, listeners: ChannelListeners): Promise<OpenChannel> {
+  async call(
+    target: GrpcTarget,
+    planned: GrpcCall | GrpcCallFromSchema,
+    listeners: ChannelListeners,
+  ): Promise<OpenChannel> {
     const { client } = await pinnedClient(target.url, policyFromEnv(this.env), target.maxMessageBytes);
+    let call: GrpcCall;
+    try {
+      // La reflexión por el mismo cliente —la misma conexión HTTP/2— que la llamada: grpc-js
+      // multiplexa los dos streams y la sesión abre una sola conexión, contra la misma IP comprobada.
+      call =
+        typeof planned === "function"
+          ? planned(await reflectSchema(client, toMetadata(target.metadata), target.connectTimeoutMs))
+          : planned;
+    } catch (error) {
+      client.close();
+      throw error;
+    }
     const { definition } = call.method;
     const clientStreaming = definition.requestStream;
     const serverStreaming = definition.responseStream;

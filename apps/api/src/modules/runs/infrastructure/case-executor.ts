@@ -38,6 +38,8 @@ import {
   type StepOutcome,
   type StepRequest,
   type TestScenario,
+  interpolateFormBody,
+  interpolateText,
   interpolateValue,
   payloadFor,
   type ComputedSeed,
@@ -219,6 +221,11 @@ export class CaseExecutor {
     const started = Date.now();
     const seed = computedSeed();
     const call = interpolateValue(input.call, input.target.variables, seed);
+    // Un formulario se interpola por campos: lo que vale una variable dentro de `nombre=valor` va
+    // codificado, o una contraseña con `&` partiría el campo en dos (ver `interpolateFormBody`).
+    if (input.call.body && isFormBody(input.call.headers)) {
+      call.body = interpolateFormBody(input.call.body, (span) => interpolateText(span, input.target.variables, seed));
+    }
     let url = fetchUrl(call.url, input.target.baseUrl);
     const headers: Record<string, string> = { Accept: "application/json" };
     const own = call.headers ?? {};
@@ -719,3 +726,9 @@ export function maskHeaders(headers: Record<string, string>): Record<string, str
     Object.entries(headers).map(([key, value]) => [key, SECRET_HEADER.test(key) ? "••••••••" : value]),
   );
 }
+
+/** Si un `fetch` declara su cuerpo como formulario: la cabecera que el import le pone, o la del autor. */
+const isFormBody = (headers: Record<string, string> | undefined): boolean =>
+  Object.entries(headers ?? {}).some(
+    ([name, value]) => name.toLowerCase() === "content-type" && /application\/x-www-form-urlencoded/i.test(value),
+  );

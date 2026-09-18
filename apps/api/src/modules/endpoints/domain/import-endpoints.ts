@@ -22,6 +22,7 @@ import {
   parsePostmanCollection,
   pathOf,
   queryOf,
+  type FormRow,
   type GraphqlOperation,
   type ParsedRequest,
   type PostmanExample,
@@ -68,6 +69,22 @@ export type EndpointDraft = EndpointInput & {
 };
 
 export type ImportSkip = { method: string; path: string; name: string; reason: string };
+
+/**
+ * Lo que un endpoint importado necesita antes de poder enviarse: hoy, los ficheros de un formulario.
+ *
+ * Un fichero llega sin bytes —Postman guarda la ruta en el disco de quien lo eligió, y eso aquí no
+ * existe—, así que el campo entra como fichero y **hay que elegirlo**. Se dice al importar, con el
+ * endpoint y el campo, en vez de descubrirlo al pulsar «Enviar».
+ */
+export function pendingFileNotes(draft: EndpointDraft): string[] {
+  if (draft.body?.mode !== "form-data") return [];
+  return draft.body.fields
+    .filter((field) => field.kind === "file")
+    .map(
+      (field) => `${draft.method} ${draft.path}: el campo «${field.name}» es un fichero — hay que elegir el fichero`,
+    );
+}
 
 export type ParsedFile = { format: ImportFileFormat; drafts: EndpointDraft[]; skipped: ImportSkip[] };
 
@@ -208,7 +225,7 @@ function draftFromRequest(request: ParsedRequest): EndpointDraft | string {
       value,
       enabled: true,
     })),
-    body: request.graphql ? graphqlBodyFrom(request.graphql) : bodyFrom(request.body),
+    body: request.graphql ? graphqlBodyFrom(request.graphql) : bodyFrom(request.body, request.formRows),
     // The credential itself is dropped with the header; that the request carried one is kept.
     requiresAuth:
       lowered.some((name) => ["authorization", "x-api-key", "api-key", "apikey"].includes(name)) ||
@@ -231,7 +248,10 @@ function graphqlBodyFrom(operation: GraphqlOperation): EndpointBody {
   };
 }
 
-function bodyFrom(body: RequestBody): EndpointBody {
+function bodyFrom(body: RequestBody, formRows?: FormRow[]): EndpointBody {
+  // Un formulario con ficheros llega con sus filas en orden y con su tipo: un fichero vuelve a ser
+  // un campo de fichero —sin bytes, con el botón de elegirlo—, no un campo de texto vacío.
+  if (body.type === "form-data" && formRows?.length) return { ...EMPTY_BODY, mode: "form-data", fields: formRows };
   switch (body.type) {
     case "none":
       return EMPTY_BODY;

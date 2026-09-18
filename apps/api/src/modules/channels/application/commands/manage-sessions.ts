@@ -34,10 +34,17 @@ import { SECRET_PARAMS } from "@/modules/endpoints/application/commands/auth-bri
 import { redactBody } from "@/modules/endpoints/domain/examples";
 import { resolveVariables } from "@/modules/environments/domain/model";
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
-import { SECRET_HEADER } from "@/modules/endpoints/domain/examples";
 import type { Environment } from "@/modules/environments/domain/model";
 import { MAX_SAVED_MESSAGE_BYTES, effectiveLimits, type Channel } from "../../domain/model";
-import { mqttSessionPlan, planProblems, type MqttPublish, type MqttSessionPlan } from "../../domain/mqtt";
+import { SECRET_METADATA } from "../../domain/grpc";
+import {
+  mqttSessionPlan,
+  planProblems,
+  userPropertiesProblems,
+  type MqttPublish,
+  type MqttQos,
+  type MqttSessionPlan,
+} from "../../domain/mqtt";
 import {
   CHANNEL_REPOSITORY,
   CHANNEL_SESSION_REPOSITORY,
@@ -45,7 +52,12 @@ import {
   type ChannelSessionRepositoryPort,
 } from "../../domain/ports";
 import { isFinished, startSession, type ChannelSession } from "../../domain/session";
-import { ChannelSessionRegistry, type SessionPlan } from "../../infrastructure/session-registry";
+import {
+  ChannelSessionRegistry,
+  type BinaryEncoding,
+  type MqttSubscriptionResult,
+  type SessionPlan,
+} from "../../infrastructure/session-registry";
 import { viewSession, type ChannelSessionView } from "../views";
 import { GrpcSessionPlanner } from "../grpc";
 import { ceilingsOf } from "./manage-channels";
@@ -138,12 +150,15 @@ export class ChannelSessionOpener {
       subprotocols: channel.subprotocols,
       limits,
       rules: {
-        secrets,
+        // En gRPC, cada secreto también en base64: la metadata `-bin` que vuelve se enseña así, y un
+        // servidor que devuelve en un trailer binario el token que recibió lo devuelve en base64.
+        secrets: channel.protocol === "grpc" ? withBase64(secrets) : secrets,
         // La segunda red: los campos que se llaman como una credencial y los JWT por su forma, que
         // es lo que tapa un token que el servidor inventa y que ninguna variable conocía.
         redact: redactMessage,
-        // Y en las cabeceras de la apertura y los trailers, por nombre: la lista de siempre.
-        secretHeader: SECRET_HEADER,
+        // Y en las cabeceras de la apertura y los trailers, por nombre: la lista de siempre, también
+        // con `-bin` detrás (`x-api-key-bin` es la misma credencial en bytes).
+        secretHeader: SECRET_METADATA,
       },
       expect: channel.expectations,
       readOnly,
@@ -346,6 +361,21 @@ export function redactMessage(text: string): string {
   }
 }
 
+/**
+ * Los secretos, y cada uno también en base64 (estándar con y sin relleno, y URL). Con relleno se
+ * tapa entero un valor que es solo el secreto; sin él, el que sigue con más bytes detrás. Solo casa
+ * cuando el secreto empieza el valor binario —que es el caso de un eco—: en mitad de otros bytes, su
+ * base64 depende de lo que tenga delante.
+ */
+export function withBase64(secrets: string[]): string[] {
+  const encoded = secrets.flatMap((secret) => {
+    const bytes = Buffer.from(secret, "utf8");
+    const padded = bytes.toString("base64");
+    return [padded, padded.replace(/=+$/, ""), bytes.toString("base64url")];
+  });
+  return [...new Set([...secrets, ...encoded])];
+}
+
 /** Lo que resuelve `{{$uuid}}`, `{{$now}}` y compañía, igual que en «Enviar» de un endpoint. */
 const freshSeed = (now: Date): ComputedSeed => ({
   uuid: randomUUID(),
@@ -362,6 +392,8 @@ export class SendChannelMessageCommand implements ICommand {
     readonly text: string,
     /** Solo en MQTT: a qué tema, con qué QoS y si se retiene. */
     readonly publish?: MqttPublish,
+    /** Solo en un WebSocket: el texto son bytes en base64 o hexadecimal, y sale como trama binaria. */
+    readonly binary?: BinaryEncoding,
   ) {}
 }
 
@@ -386,7 +418,12 @@ export class SendChannelMessageHandler implements ICommandHandler<SendChannelMes
     const topicProblem = command.publish ? publishTopicProblem(command.publish.topic) : null;
     if (topicProblem)
       throw new InvalidInputError("El mensaje no es válido", [{ field: "topic", detail: topicProblem }]);
-    await this.registry.send(session.id, command.text, command.publish);
+    const propertyProblems =
+      command.publish?.userProperties !== undefined
+        ? userPropertiesProblems(command.publish.userProperties, "userProperties")
+        : [];
+    if (propertyProblems.length) throw new InvalidInputError("El mensaje no es válido", propertyProblems);
+    await this.registry.send(session.id, command.text, command.publish, command.binary);
   }
 }
 
@@ -416,8 +453,48 @@ export class CloseChannelSessionHandler implements ICommandHandler<CloseChannelS
   }
 }
 
+/**
+ * Suscribirse a un filtro, o darse de baja, con la sesión MQTT abierta.
+ *
+ * Como mandar, por su id y solo en la instancia que tiene el socket; a diferencia de mandar, un
+ * entorno sin escrituras lo deja hacer, porque suscribirse es escuchar.
+ */
+export class ChangeChannelSubscriptionCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly sessionId: string,
+    readonly action: "subscribe" | "unsubscribe",
+    readonly topic: string,
+    readonly qos: MqttQos = 0,
+  ) {}
+}
+
+@CommandHandler(ChangeChannelSubscriptionCommand)
+export class ChangeChannelSubscriptionHandler implements ICommandHandler<
+  ChangeChannelSubscriptionCommand,
+  MqttSubscriptionResult
+> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(CHANNEL_SESSION_REPOSITORY) private readonly sessions: ChannelSessionRepositoryPort,
+    private readonly registry: ChannelSessionRegistry,
+  ) {}
+
+  async execute(command: ChangeChannelSubscriptionCommand): Promise<MqttSubscriptionResult> {
+    const project = await writableProject(this.projects, command.organizationId, command.projectId);
+    const session = await this.sessions.findById(project.id, command.sessionId);
+    if (!session) throw new NotFoundError("La sesión no existe", "channel-session-not-found");
+    if (isFinished(session)) throw new ConflictError("La sesión ya terminó", "channel-session-finished");
+    return command.action === "subscribe"
+      ? this.registry.subscribe(session.id, command.topic, command.qos)
+      : this.registry.unsubscribe(session.id, command.topic);
+  }
+}
+
 export const CHANNEL_SESSION_COMMAND_HANDLERS = [
   OpenChannelSessionHandler,
   SendChannelMessageHandler,
   CloseChannelSessionHandler,
+  ChangeChannelSubscriptionHandler,
 ];
