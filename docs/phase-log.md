@@ -2478,3 +2478,79 @@ secreta. Y `ALLOW_PRIVATE_TARGETS=false` explica que una corrida contra `sample-
 guarda la rechaza por red privada, no es un fallo del producto.
 
 `api 959 pruebas (55 nuevas) · web 472 (14 nuevas) · runner-core 311 · import-detect 29 (4 nuevas) · lint 0 errores · typecheck limpio`
+
+## Paridad con Postman, ola 9: los demás protocolos, empezando por el único que ya cabía
+
+WebSocket primero, y no por popular: un `ws://` es un GET con `Upgrade`, así que las cuatro reglas de
+la guarda de red valen tal cual. MQTT es TCP pelado con un `CONNECT` binario y gRPC necesita HTTP/2:
+los dos piden escribir el transporte desde abajo antes de poder comprobar nada. Quedan para las
+olas siguientes, y SSE no entra en ninguna: tiene método, ruta, estado y cabeceras — **es** una
+respuesta HTTP, y su sitio es el endpoint.
+
+### Al lado, no dentro
+
+Un canal es un agregado hermano de `Endpoint`, con sus tres tablas, y no una columna `protocol`.
+Todo lector de `endpoints` falla **abierto**: el mock serviría `GET /chat`, la documentación
+publicada sacaría una caja GET para un socket, la corrida de seguridad lo atacaría por HTTP. Siete
+filtros que recordar y ninguno se pone rojo si falta. La pantalla, en cambio, va en el mismo sitio
+—tercera pestaña de Endpoints—, porque un canal en otro menú es un canal que nadie encuentra.
+
+### Una conversación no es una respuesta
+
+`conversation.ts`, en runner-core y puro: tramas dentro, conversación fuera. El veredicto vuelve
+como el mismo `Evaluation` y pasa por el mismo `holds()`, así que «pasa» se sigue decidiendo en un
+solo sitio. Cinco topes obligatorios; el que de verdad atrapa un socket colgado es el de
+inactividad, y el de bytes por trama va además **dentro** de la biblioteca, porque
+`permessage-deflate` cuenta después de inflar. Un canal que conecta y no recibe nada, sin pedir
+nada, pasa **y lo dice**.
+
+La redacción va dentro de `applyFrame`, que recibe la trama cruda y devuelve solo el mensaje tapado:
+hay dos caminos de escritura —la fila y la trama en vivo— y una redacción «al guardar» falla en
+verde. Y se tapa **antes** de recortar, cosa que escribí al revés al principio: recortando primero,
+un token partido por el corte ya no coincide con su valor y se guarda media credencial en claro.
+
+### Lo que salió probando, y no escribiendo
+
+Seis fallos, todos cazados por una prueba antes de llegar a `main`, y la mayoría de los que una suite
+guionizada no ve:
+
+- **Una IPv4 disfrazada de IPv6 se colaba por la guarda de SSRF** —de antes de esta ola, y el más
+  serio—. `new URL` normaliza `[::ffff:127.0.0.1]` a `::ffff:7f00:1`, y la guarda solo reconocía la
+  forma con puntos. Con la guarda puesta se leía loopback y `169.254.169.254`; comprobado en la pila
+  antes de arreglarlo. Lo destapó la prueba de la lista de esquemas de esta ola.
+- **44 de 50 saludos se perdían.** Un servidor que saluda al conectar lo manda en el mismo paquete que
+  el 101, y las escuchas se enganchaban al resolver la promesa. Ahora son parte de la firma.
+- **Una sesión segada salía en verde**: la fila no trae mensajes, la apertura sí consta, y
+  «Conexión: abierta» pasaba. Ahora sale en rojo con el motivo.
+- **`start()` devolvía una sesión en `connecting`** cuando el servidor abría y cerraba en el mismo
+  paquete, porque el cierre aún no la había guardado.
+- **La redacción reformateaba cada mensaje JSON**: la transcripción enseñaba otro texto del que
+  viajó. Lo vio la prueba con bytes de verdad; la guionizada no comparaba cuerpos exactos.
+- **El stream en vivo tenía un hueco** entre la instantánea y lo vivo, y su 409 salía con 200.
+
+### Las tres cosas que la suite no puede ver, y cómo quedan
+
+1. **El socket vive en un proceso.** Una sesión abierta en otra instancia es un 409 que lo dice, y
+   no un stream vacío que parece una sesión callada. Relevar un descriptor entre procesos no existe.
+2. **Un proceso muerto deja sesiones abiertas.** Cada instancia late por las suyas y cualquiera cierra
+   las que llevan tres latidos sin dueño — nunca una viva.
+3. **La redacción en los dos caminos**, estructural y con prueba sobre la fila y sobre la trama.
+
+Un entorno sin escrituras deja escuchar y no deja mandar: la misma protección que un `POST` contra
+producción, adaptada a lo que un socket es.
+
+### Cómo se comprobó
+
+Contra la pila desplegada, con `Channels1700000028000` aplicada y `ALLOW_PRIVATE_TARGETS=false`:
+un `wss://` público de verdad —TLS, SNI y DNS reales— con upgrade 101, el saludo del servidor
+recibido con la apertura, y el token tapado en lo enviado y en el eco (`{"token":"••••••••"}`).
+`select … where body like '%TOKEN…%'` sobre mensajes, sesiones y canales: **0** en las tres. Un
+`ws://sample-api:9000` quedó en `config` con «red privada (172.19.0.3)». Una sesión abandonada por
+un script que murió la cerró el reloj por inactividad sin que nadie mirara. La suite `test/db`
+—que se salta sin base y llevaba roja varias olas sin que nadie lo supiera— corrida contra una base
+temporal: 27 de 27, incluida la que deshace todas las migraciones y las rehace.
+
+No comprobado: dos instancias de la API detrás de un balanceador. Esta pila corre una; el 409 y el
+segador están probados en la suite con una fila ajena, no con dos procesos.
+
+`api 1015 pruebas · web 483 · runner-core 336 · import-detect 29 · lint 0 errores · typecheck limpio`
