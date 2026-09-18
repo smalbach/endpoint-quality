@@ -11,7 +11,8 @@ import { ForkBadge, ProjectMenu } from "@/components/project-fork-menu";
 import { ToastProvider } from "@/components/toast";
 import type { ProjectSummary } from "@/lib/types";
 
-vi.mock("@/lib/auth", () => ({ useOrganization: () => ({ id: "o", name: "Org" }), useCan: () => true }));
+const can = vi.hoisted(() => ({ edit: true }));
+vi.mock("@/lib/auth", () => ({ useOrganization: () => ({ id: "o", name: "Org" }), useCan: () => can.edit }));
 
 const project = (fork: ProjectSummary["fork"]) => ({ id: "f", name: "Pedidos", fork }) as ProjectSummary;
 const forked = project({
@@ -42,6 +43,21 @@ describe("ProjectMenu", () => {
     expect(screen.getByRole("menuitem", { name: "Fusionar en el original" }).getAttribute("href")).toBe(
       "/p/f/fork/merge",
     );
+  });
+
+  test("las solicitudes de fusión están en el menú, también para quien solo lee", () => {
+    can.edit = false;
+    try {
+      draw(<ProjectMenu project={forked} />);
+      fireEvent.click(screen.getByRole("button", { name: "Acciones del proyecto" }));
+      expect(screen.getByRole("menuitem", { name: "Solicitudes de fusión" }).getAttribute("href")).toBe(
+        "/p/f/merge-requests",
+      );
+      expect(screen.queryByRole("menuitem", { name: "Bifurcar…" })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: "Fusionar en el original" })).toBeNull();
+    } finally {
+      can.edit = true;
+    }
   });
 
   test("sin original no hay nada que fusionar, y bifurcar abre el formulario con un nombre propuesto", () => {

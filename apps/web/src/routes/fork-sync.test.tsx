@@ -8,6 +8,8 @@
  * - **Fusionar pide confirmación nombrando el original**, porque escribe en un proyecto de todos.
  * - **Una huella vieja se dice y se ofrece comparar otra vez**, en vez de un error sin salida.
  * - **Los campos se enseñan con su valor en común y en cada lado.**
+ * - **Al fusionar se puede pedir en vez de hacer**: la solicitud se crea desde la bifurcación y se
+ *   abre en el original, donde se revisa.
  */
 import { describe, expect, test, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -15,6 +17,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import { ForkSyncPage } from "@/routes/fork-sync";
+import { ToastProvider } from "@/components/toast";
 import { ApiError } from "@/lib/api";
 import type { ForkDiffView } from "@/lib/types";
 
@@ -135,6 +138,40 @@ describe("ForkSyncPage", () => {
     expect(await screen.findByText("Alguno de los dos proyectos cambió")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Volver a comparar" }));
     await waitFor(() => expect(call.mock.calls.filter(([, options]) => !options).length).toBe(2));
+  });
+
+  test("en vez de fusionar, se crea una solicitud y se abre en el original", async () => {
+    call.mockReset();
+    call.mockImplementation((_path: string, options?: { method?: string }) =>
+      options?.method === "POST" ? Promise.resolve({ id: "mr-1" }) : Promise.resolve(diff("merge")),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <ToastProvider>
+          <MemoryRouter initialEntries={["/p/f/fork/merge"]}>
+            <Routes>
+              <Route path="/p/:projectId/fork/:direction" element={<ForkSyncPage />} />
+              <Route path="/p/:projectId/merge-requests/:requestId" element={<p>Solicitud abierta</p>} />
+            </Routes>
+          </MemoryRouter>
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Crear solicitud de fusión" }));
+    expect(screen.getByText("Pedir la fusión en «Original»")).toBeTruthy();
+    const create = screen.getByRole("button", { name: "Crear solicitud" }) as HTMLButtonElement;
+    expect(create.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Título"), { target: { value: "  Describir pedidos " } });
+    fireEvent.change(screen.getByLabelText(/Descripción/), { target: { value: "Para pagos" } });
+    fireEvent.click(create);
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith("/orgs/o/projects/f/merge-requests", {
+        method: "POST",
+        body: { title: "Describir pedidos", description: "Para pagos" },
+      }),
+    );
+    expect(await screen.findByText("Solicitud abierta")).toBeTruthy();
   });
 
   test("sin diferencias no hay nada que aplicar", async () => {

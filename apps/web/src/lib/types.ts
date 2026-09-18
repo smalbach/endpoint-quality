@@ -191,4 +191,9 @@ export type {
   ForkSyncOutcomeView,
   ForkFieldChange,
   ProjectForkSummary,
+  MergeRequestStatus,
+  MergeRequestEventKind,
+  MergeRequestSummaryView,
+  MergeRequestEventView,
+  MergeRequestDetailView,
 } from "@eq/contracts";

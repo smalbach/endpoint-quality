@@ -25,6 +25,7 @@ import { MocksPage } from "@/routes/mocks";
 import { DocSitesPage } from "@/routes/doc-sites";
 import { MonitorsPage } from "@/routes/monitors";
 import { ForkSyncPage } from "@/routes/fork-sync";
+import { MergeRequestDetailPage, MergeRequestsPage } from "@/routes/merge-requests";
 import { ChannelsPage } from "@/routes/channels";
 import { PublishedDocsPage } from "@/routes/published-docs";
 import { ProjectGeneralPage, ProjectSettingsLayout } from "@/routes/project-settings";
@@ -156,6 +157,8 @@ createRoot(document.getElementById("root")!).render(
                     <Route path="doc-sites" element={<DocSitesPage />} />
                     <Route path="monitors" element={<MonitorsPage />} />
                     <Route path="fork/:direction" element={<ForkSyncPage />} />
+                    <Route path="merge-requests" element={<MergeRequestsPage />} />
+                    <Route path="merge-requests/:requestId" element={<MergeRequestDetailPage />} />
                     <Route path="settings" element={<ProjectSettingsLayout />}>
                       <Route index element={<ProjectGeneralPage />} />
                       <Route path="contract" element={<ConfigPage />} />
