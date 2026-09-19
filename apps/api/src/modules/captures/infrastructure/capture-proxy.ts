@@ -62,6 +62,7 @@ import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 
 import { BlockedTargetError, pinnedAgent, resolveTarget, type SafeFetchPolicy } from "@/shared/http/safe-fetch";
 import { hashOpaqueToken } from "@/shared/crypto/opaque-token";
+import { InMemoryRateLimitStore, type RateLimitStorePort } from "@/shared/rate-limit/rate-limit-store";
 import type { CaptureLimits, CaptureStopReason, RawExchange } from "../domain/model";
 import { AuthFailureLimiter, DEFAULT_AUTH_FAILURE_LIMIT, type AuthFailureLimit } from "./auth-failure-limiter";
 
@@ -108,6 +109,11 @@ export type CaptureProxyOptions = {
   connectPorts: ReadonlySet<number>;
   /** Cuántas credenciales malas se aguantan por IP. Por omisión, 20 por minuto. */
   authFailureLimit?: AuthFailureLimit;
+  /**
+   * Dónde se cuentan esos intentos. El de la aplicación los comparte entre instancias; sin él, un
+   * contador de este proxy con su reloj, que es lo que usan sus pruebas.
+   */
+  rateLimits?: RateLimitStorePort;
   /** Cuánto se recuerda una credencial buena sin volver a la tabla. Como mucho 2 s; por omisión, 1 s. */
   authCacheMs?: number;
   /**
@@ -163,8 +169,9 @@ export class CaptureProxy {
   private readonly decrypted = new WeakMap<object, { session: ProxySession; origin: string }>();
 
   constructor(private readonly options: CaptureProxyOptions) {
-    this.failures = new AuthFailureLimiter(options.authFailureLimit ?? DEFAULT_AUTH_FAILURE_LIMIT, () =>
-      options.now().getTime(),
+    this.failures = new AuthFailureLimiter(
+      options.authFailureLimit ?? DEFAULT_AUTH_FAILURE_LIMIT,
+      options.rateLimits ?? new InMemoryRateLimitStore(() => options.now().getTime()),
     );
     this.authCacheMs = Math.min(2_000, Math.max(0, options.authCacheMs ?? AUTH_CACHE_MS));
     this.inner = createServer({ requestTimeout: options.policy.timeoutMs * 2 });
@@ -265,7 +272,7 @@ export class CaptureProxy {
   private async authenticate(request: IncomingMessage): Promise<ProxySession | Refusal> {
     const ip = request.socket.remoteAddress ?? "desconocida";
     // Antes de mirar la credencial: pasado el tope, ni hash ni búsqueda (ver `auth-failure-limiter.ts`).
-    const retryAfter = this.failures.blocked(ip);
+    const retryAfter = await this.failures.blocked(ip);
     if (retryAfter !== null) {
       return {
         status: 429,
@@ -291,7 +298,7 @@ export class CaptureProxy {
       if (!found || "ended" in found) {
         // El token de una sesión ya cerrada no es adivinar: es un móvil que sigue mandando lo de
         // antes. Contarlo dejaría esa IP sin poder usar la sesión nueva durante un minuto.
-        if (!found) this.failures.failed(ip);
+        if (!found) await this.failures.failed(ip);
         return {
           status: 407,
           refused: found

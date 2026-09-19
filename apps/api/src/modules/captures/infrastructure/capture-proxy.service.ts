@@ -17,12 +17,20 @@
  * instancia corte las conexiones abiertas de una sesión parada; el token deja de valer antes, al
  * caducar su caché (ver `capture-proxy.ts`).
  */
-import { Inject, Injectable, Logger, type OnApplicationBootstrap, type OnModuleDestroy } from "@nestjs/common";
+import {
+  Inject,
+  Injectable,
+  Logger,
+  Optional,
+  type OnApplicationBootstrap,
+  type OnModuleDestroy,
+} from "@nestjs/common";
 
 import { ENV, type Env } from "@/shared/config/env";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { ConflictError } from "@/shared/errors/domain-error";
 import { policyFromEnv } from "@/shared/http/safe-fetch.provider";
+import { RATE_LIMIT_STORE, type RateLimitStorePort } from "@/shared/rate-limit/rate-limit-store";
 import { captureItemFrom, type CaptureLimits, type CaptureSession, type CaptureStopReason } from "../domain/model";
 import { CAPTURE_REPOSITORY, type CaptureRepositoryPort } from "../domain/ports";
 import { CaptureAuthority } from "./capture-authority";
@@ -49,6 +57,7 @@ export class CaptureProxyService implements OnApplicationBootstrap, OnModuleDest
     @Inject(CAPTURE_REPOSITORY) private readonly captures: CaptureRepositoryPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
     private readonly authority: CaptureAuthority,
+    @Optional() @Inject(RATE_LIMIT_STORE) rateLimits: RateLimitStorePort | null = null,
   ) {
     this.proxy = new CaptureProxy({
       // La misma política que `SAFE_FETCH` y los sockets, leída del mismo sitio: es lo que impide
@@ -58,6 +67,8 @@ export class CaptureProxyService implements OnApplicationBootstrap, OnModuleDest
       maxForwardBodyBytes: env.MAX_RESPONSE_BYTES,
       tunnelIdleMs: TUNNEL_IDLE_MS,
       connectPorts: new Set(env.CAPTURE_CONNECT_PORTS),
+      // Los intentos fallidos, contados donde los cuentan todas las instancias.
+      ...(rateLimits ? { rateLimits } : {}),
       // Solo con `CAPTURE_MITM=true`: sin esto, una sesión que pidiera descifrar no descifra.
       ...(env.CAPTURE_MITM ? { mitm: { contextFor: (hostname: string) => authority.contextFor(hostname) } } : {}),
       store: {

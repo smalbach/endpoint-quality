@@ -8,7 +8,8 @@
  * Cada prueba es algo que con dos réplicas estaba roto: el progreso de una corrida que se ejecuta en
  * A no llegaba a quien la miraba desde B; un mensaje de canal mandado por B era un 409 porque el
  * socket lo tenía A; un «Cancelar» que entraba por B no cancelaba nada en A. Y una que ya estaba
- * bien y se comprueba igual: un monitor vencido dispara una vez aunque los dos relojes miren.
+ * bien y se comprueba igual: un monitor vencido dispara una vez aunque los dos relojes miren. Y «una
+ * prueba de carga a la vez», que era por proceso: con dos réplicas, dos cargas contra el mismo destino.
  */
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -374,6 +375,58 @@ describe("un nodo webhook que espera en A, llamado por B", () => {
     // Y la misma URL, otra vez y por la otra instancia, ya no existe.
     const again = await on(a).post(`/hooks/flows/${token}`).send({ status: "paid" });
     assert.equal(again.status, 404);
+    await target.stop();
+  });
+});
+
+describe("pruebas de carga lanzadas por las dos instancias a la vez", () => {
+  test("corre una sola: la otra espera a que termine la primera, y luego corre", async () => {
+    const { target, projectBase, environmentId } = await project(0);
+    const plan = await on(a)
+      .post(`${projectBase}/performance/plans`)
+      .set(as(owner))
+      .send({
+        name: "un segundo",
+        definition: {
+          scenarios: [
+            { id: "leer", name: "Leer", weight: 1, thinkMs: 20, requests: [{ method: "GET", path: "/things" }] },
+          ],
+          profile: { type: "constant", vus: 1, durationS: 1 },
+          thresholds: {},
+        },
+      });
+    assert.equal(plan.status, 201, JSON.stringify(plan.body));
+    const launch = (context: TestContext) =>
+      on(context)
+        .post(`${projectBase}/performance/plans/${plan.body.planId}/runs`)
+        .set(as(owner))
+        .send({ environmentId });
+    const [fromA, fromB] = await Promise.all([launch(a), launch(b)]);
+    assert.equal(fromA.status, 202, JSON.stringify(fromA.body));
+    assert.equal(fromB.status, 202, JSON.stringify(fromB.body));
+
+    // Mirando las dos filas hasta que acaban: nunca las dos «running» a la vez.
+    const read = async (runId: string) =>
+      (await on(a).get(`${projectBase}/performance/runs/${runId}`).set(as(owner))).body as { status: string };
+    const ids = [fromA.body.runId as string, fromB.body.runId as string];
+    const active = (status: string) => ["queued", "running"].includes(status);
+    let overlapped = false;
+    let waited = false;
+    for (let tries = 0; tries < 400; tries += 1) {
+      const [runA, runB] = await Promise.all(ids.map(read));
+      if (runA.status === "running" && runB.status === "running") overlapped = true;
+      if ([runA.status, runB.status].sort().join() === "queued,running") waited = true;
+      if (!active(runA.status) && !active(runB.status)) break;
+      await settle();
+    }
+    assert.equal(overlapped, false, "las dos cargas corrieron a la vez");
+    assert.ok(waited, "no se vio a ninguna esperando mientras la otra corría");
+    const final = await Promise.all(ids.map(read));
+    assert.ok(
+      final.every((run) => !active(run.status)),
+      `alguna no terminó: ${JSON.stringify(final.map((run) => run.status))}`,
+    );
+    assert.equal(a.repositories.executionTurns.rows.size, 0, "quedaron filas en la fila de turnos");
     await target.stop();
   });
 });

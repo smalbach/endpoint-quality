@@ -19,6 +19,7 @@ import { APP_FILTER, APP_GUARD } from "@nestjs/core";
 import { CqrsModule } from "@nestjs/cqrs";
 import { JwtModule } from "@nestjs/jwt";
 import { Test } from "@nestjs/testing";
+import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import type { INestApplication } from "@nestjs/common";
 import cookieParser from "cookie-parser";
 import type { NestExpressApplication } from "@nestjs/platform-express";
@@ -30,6 +31,9 @@ import { ENV, type Env, loadEnv } from "@/shared/config/env";
 import { CLOCK, FixedClock } from "@/shared/clock/clock.port";
 import { INSTANCE_BUS, type InstanceBusPort } from "@/shared/bus/instance-bus";
 import { InMemoryInstanceBus } from "@/shared/bus/in-memory-instance-bus";
+import { InMemoryRateLimitStore, RATE_LIMIT_STORE, type RateLimitStorePort } from "@/shared/rate-limit/rate-limit-store";
+import { throttlerOptions } from "@/shared/rate-limit/shared-throttler-storage";
+import { EXECUTION_TURNS, InMemoryExecutionTurnStore } from "@/shared/turns/execution-turns";
 import { PASSWORD_HASHER, FastTestPasswordHasher } from "@/shared/crypto/password-hasher";
 import { ProblemDetailsFilter } from "@/shared/errors/problem-details.filter";
 import { ACCESS_TOKEN_SERVICE } from "@/modules/auth/domain/access-token";
@@ -324,6 +328,8 @@ export type TestContext = {
     captureAuthorities: InMemoryCaptureAuthorityRepository;
     mergeRequests: InMemoryMergeRequestRepository;
     forks: InMemoryProjectForkRepository;
+    /** La fila de turnos de seguridad y rendimiento: en Postgres de verdad, compartida como él. */
+    executionTurns: InMemoryExecutionTurnStore;
   };
   http: StubSafeFetch;
   /** Los sockets de los canales: guionizados por URL, y los que no, al transporte de verdad. */
@@ -334,6 +340,8 @@ export type TestContext = {
   queue: InMemoryRunQueue;
   /** El bus de esta instancia: propio, o el del hub que comparte con otra aplicación de prueba. */
   bus: InstanceBusPort;
+  /** Los contadores de los límites de peticiones: propios, o los de `sibling`, como un Redis común. */
+  rateLimits: RateLimitStorePort;
   close(): Promise<void>;
 };
 
@@ -355,6 +363,11 @@ export async function createTestApp(
     bus?: InstanceBusPort;
     /** Variables que cambian para esta aplicación, sobre `TEST_ENV`. */
     env?: NodeJS.ProcessEnv;
+    /**
+     * Con el límite de peticiones montado como en `AppModule`. Fuera por omisión: ver el comentario
+     * junto a los guardianes. Lo enciende la prueba que mira el límite, y solo esa.
+     */
+    throttle?: boolean;
   } = {},
 ): Promise<TestContext> {
   const env = loadEnv({ ...TEST_ENV, ...options.env });
@@ -395,6 +408,7 @@ export async function createTestApp(
     captures: new InMemoryCaptureRepository(),
     captureAuthorities: new InMemoryCaptureAuthorityRepository(),
     mergeRequests: new InMemoryMergeRequestRepository(),
+    executionTurns: new InMemoryExecutionTurnStore(),
   };
   const forks = options.sibling?.repositories.forks ?? new InMemoryProjectForkRepository(repositories);
   const allRepositories = { ...repositories, forks };
@@ -412,9 +426,14 @@ export async function createTestApp(
     maxResponseBytes: env.MAX_RESPONSE_BYTES,
   });
   const queue = new InMemoryRunQueue(bus);
+  const rateLimits = options.sibling?.rateLimits ?? new InMemoryRateLimitStore();
 
   const moduleRef = await Test.createTestingModule({
-    imports: [CqrsModule.forRoot(), JwtModule.register({})],
+    imports: [
+      CqrsModule.forRoot(),
+      JwtModule.register({}),
+      ...(options.throttle ? [ThrottlerModule.forRoot(throttlerOptions(rateLimits))] : []),
+    ],
     controllers: [
       AuthController,
       OrganizationsController,
@@ -444,6 +463,8 @@ export async function createTestApp(
       { provide: ENV, useValue: env },
       { provide: CLOCK, useValue: clock },
       { provide: INSTANCE_BUS, useValue: bus },
+      { provide: RATE_LIMIT_STORE, useValue: rateLimits },
+      { provide: EXECUTION_TURNS, useValue: repositories.executionTurns },
       { provide: PASSWORD_HASHER, useClass: FastTestPasswordHasher },
       { provide: ACCESS_TOKEN_SERVICE, useClass: JwtAccessTokenService },
       { provide: USER_REPOSITORY, useValue: repositories.users },
@@ -568,6 +589,7 @@ export async function createTestApp(
       // what these tests check is that the wiring protects what it should. Throttling is left
       // out: it is the one piece whose behaviour is a rate, and asserting it here would make
       // every other test's result depend on how many requests ran before it.
+      ...(options.throttle ? [{ provide: APP_GUARD, useClass: ThrottlerGuard }] : []),
       { provide: APP_GUARD, useClass: AuthGuard },
       { provide: APP_FILTER, useClass: ProblemDetailsFilter },
       AuthGuard,
@@ -624,6 +646,7 @@ export async function createTestApp(
     mailer,
     queue,
     bus,
+    rateLimits,
     close: async () => {
       // Superagent leaves keep-alive sockets behind, and `close()` waits for connections to end.
       // Dropping them first is what keeps a finished suite from hanging at exit.
