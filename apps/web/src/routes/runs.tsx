@@ -17,7 +17,8 @@ export function RunsPage() {
   const { projectId } = useParams();
   const organization = useOrganization();
   const base = `/orgs/${organization?.id}/projects/${projectId}`;
-  const tabs = projectId ? <RunsTabs projectId={projectId} /> : null;
+  // Mounted only under `/p/:projectId/runs`, so the id is always there.
+  const tabs = <RunsTabs projectId={projectId!} />;
 
   const runs = useQuery({
     queryKey: ["runs", projectId],
@@ -390,7 +391,8 @@ export function RunProgressView({ live }: { live: ReturnType<typeof useRunProgre
   if (run.isLoading) return <p className="text-sm text-slate-500">Cargando…</p>;
   if (!run.data) return <p className="text-sm text-rose-600">No se encontró la corrida.</p>;
 
-  const totals = liveTotals ?? run.data.totals;
+  // The hook already falls back to the fetched run's totals, and there is a fetched run here.
+  const totals = liveTotals!;
   const running = run.data.status === "queued" || run.data.status === "running";
   const progress = totals.cases ? Math.round((totals.completed / totals.cases) * 100) : 0;
   // Counted from the rows and not from the totals, because the totals count verdicts and this
@@ -523,12 +525,17 @@ export function RunProgressView({ live }: { live: ReturnType<typeof useRunProgre
               </span>
               {retrying.get(runCase.id)?.done === false && (
                 <span className="inline-flex shrink-0 items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">
-                  <span aria-hidden className="inline-block motion-safe:animate-spin">↻</span>
+                  <span aria-hidden className="inline-block motion-safe:animate-spin">
+                    ↻
+                  </span>
                   intento {retrying.get(runCase.id)?.attempt}/{retrying.get(runCase.id)?.attempts}
                 </span>
               )}
               {retrying.get(runCase.id)?.done && (
-                <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-600" title="Intentos que llevó este caso">
+                <span
+                  className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-600"
+                  title="Intentos que llevó este caso"
+                >
                   ↻ {retrying.get(runCase.id)?.attempt} intentos
                 </span>
               )}

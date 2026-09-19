@@ -71,10 +71,11 @@ export function suggestionsAt(schema: GraphQLSchema | null, query: string, offse
   const masked = query.replace(TEMPLATE, (template) => "0".padEnd(template.length, " "));
 
   const before = masked.slice(0, offset);
-  const prefix = /[_A-Za-z0-9]*$/.exec(before)?.[0] ?? "";
+  // Las dos búsquedas siempre encuentran algo (como poco, el final del texto): no hay -1 que mirar.
+  const prefix = before.slice(before.search(/[_A-Za-z0-9]*$/));
   const dollar = before.charAt(offset - prefix.length - 1) === "$";
   const from = offset - prefix.length - (dollar ? 1 : 0);
-  const to = offset + (/^[_A-Za-z0-9]*/.exec(masked.slice(offset))?.[0].length ?? 0);
+  const to = offset + masked.slice(offset).search(/[^_A-Za-z0-9]|$/);
 
   const line = before.split("\n").length - 1;
   const character = offset - (before.lastIndexOf("\n") + 1);

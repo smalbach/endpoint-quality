@@ -217,7 +217,7 @@ export function EndpointEditorPage() {
   const canEdit = useCan("editor");
   const navigate = useNavigate();
   if (!projectId) return null;
-  const id = endpointId === NEW ? null : (endpointId ?? null);
+  const id = endpointId && endpointId !== NEW ? endpointId : null;
 
   return (
     <div className="flex h-[calc(100dvh-7rem)] min-h-[32rem] flex-col">

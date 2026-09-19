@@ -11,7 +11,7 @@
  * - **Quien solo lee no tiene caja de comentario ni botones.**
  */
 import { describe, expect, test, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
@@ -199,5 +199,125 @@ describe("MergeRequestDetailPage", () => {
   test("si uno de los proyectos ya no se puede comparar, se dice por qué", async () => {
     draw("/p/p/merge-requests/mr-1", () => detail({ current: null, unavailable: "El proyecto original ya no existe" }));
     expect(await screen.findByText("El proyecto original ya no existe")).toBeTruthy();
+  });
+});
+
+describe("MergeRequestsPage, los bordes", () => {
+  test("un error de la lista se enseña", async () => {
+    draw("/p/p/merge-requests", () => {
+      throw new Error("Sin permiso para ver las solicitudes");
+    });
+    expect(await screen.findByText("Sin permiso para ver las solicitudes")).toBeTruthy();
+  });
+
+  test("solo decididas: nada pendiente, y al pedirlas se ven con sus cuentas", async () => {
+    draw("/p/p/merge-requests", () => [
+      { ...summary("c", "merged", "Ya fusionada"), conflicts: 0, comments: 2, approvals: 1 },
+    ]);
+    expect(await screen.findByText("Nada pendiente")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Ver también las decididas (1)"));
+    expect(screen.getByText("2 cambios · 2 comentarios · 1 aprobaciones")).toBeTruthy();
+  });
+
+  test("con las decididas pedidas y ninguna fila dice «Ninguna solicitud»", async () => {
+    // Una decidida que desaparece al volver a leer: la casilla sigue marcada y la lista queda vacía.
+    let rows: MergeRequestSummaryView[] = [summary("c", "merged", "Ya fusionada")];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    call.mockReset();
+    call.mockImplementation(() => Promise.resolve(rows));
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/p/p/merge-requests"]}>
+          <Routes>
+            <Route path="/p/:projectId/merge-requests" element={<MergeRequestsPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByLabelText("Ver también las decididas (1)"));
+    rows = [];
+    await client.invalidateQueries();
+    expect(await screen.findByText("Ninguna solicitud")).toBeTruthy();
+  });
+});
+
+describe("MergeRequestDetailPage, los bordes", () => {
+  test("un error al leerla se enseña", async () => {
+    draw("/p/p/merge-requests/mr-1", () => {
+      throw new Error("No encontrada");
+    });
+    expect(await screen.findByText("No encontrada")).toBeTruthy();
+  });
+
+  test("sin datos dice que no existe", async () => {
+    draw("/p/p/merge-requests/mr-1", () => null);
+    expect(await screen.findByText("La solicitud no existe")).toBeTruthy();
+  });
+
+  test("comentar, retirar y rechazar van a su ruta; un fallo se enseña", async () => {
+    draw("/p/p/merge-requests/mr-1", (path, options) => {
+      if (!options?.method)
+        return detail({
+          approvals: 2,
+          events: [],
+          current: null,
+          can: { approve: false, decline: true, close: true, merge: false, comment: true },
+        });
+      if (path.endsWith("/decline")) throw new Error("No se pudo rechazar");
+      return undefined;
+    });
+    expect(await screen.findByText(/· 2 aprobaciones/)).toBeTruthy();
+    expect(screen.queryByText("Conversación")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Comentario"), { target: { value: "Una duda" } });
+    fireEvent.click(screen.getByRole("button", { name: "Comentar" }));
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith("/orgs/o/projects/p/merge-requests/mr-1/comments", {
+        method: "POST",
+        body: { body: "Una duda" },
+      }),
+    );
+    await waitFor(() => expect((screen.getByLabelText("Comentario") as HTMLTextAreaElement).value).toBe(""));
+
+    fireEvent.click(screen.getByRole("button", { name: "Retirar" }));
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith("/orgs/o/projects/p/merge-requests/mr-1/close", {
+        method: "POST",
+        body: { body: "" },
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Rechazar" }));
+    expect(await screen.findByText("No se pudo rechazar")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Volver a comparar" })).toBeNull();
+  });
+
+  test("quien no puede fusionar ve los conflictos sin elegir lado; con varios los cuenta", async () => {
+    const two = {
+      ...current,
+      entries: [current.entries[0]!, { ...current.entries[0]!, key: "r2", label: "lector" }],
+    };
+    draw("/p/p/merge-requests/mr-1", () => detail({ current: two, can: { ...detail().can, merge: false } }));
+    expect(await screen.findByText("Lo que se fusionaría ahora")).toBeTruthy();
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(screen.queryByText(/Falta/)).toBeNull();
+    cleanup();
+
+    draw("/p/p/merge-requests/mr-1", () => detail({ current: two }));
+    expect(await screen.findByText("Faltan 2 conflictos")).toBeTruthy();
+  });
+
+  test("cancelar la confirmación no fusiona; mientras fusiona lo dice", async () => {
+    draw("/p/p/merge-requests/mr-1", (_path, options) =>
+      options?.method ? new Promise(() => {}) : detail({ current: { ...current, entries: [] } }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Fusionar" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancelar" }));
+    expect(screen.queryByText("Fusionar en «Original»")).toBeNull();
+    expect(call.mock.calls.some(([, options]) => options)).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Fusionar" }));
+    const buttons = await screen.findAllByRole("button", { name: "Fusionar" });
+    fireEvent.click(buttons[buttons.length - 1]!);
+    expect(await screen.findByRole("button", { name: "Fusionando…" })).toBeTruthy();
   });
 });

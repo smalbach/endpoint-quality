@@ -154,6 +154,12 @@ export function WorkflowsPage() {
   }, [environments.data, activeEnvironment]);
 
   const allWorkflows = workflows.data?.workflows ?? [];
+  const requestTemplates = workflows.data?.requestTemplates ?? [];
+  const suites = workflows.data?.suites ?? [];
+  const datasets = workflows.data?.datasets ?? [];
+  const operationList = operations.data?.operations ?? [];
+  const environmentList = environments.data ?? [];
+  const channelList = channels.data?.channels ?? [];
   const saved = allWorkflows.find((item) => item.id === selectedId);
   // Archived flows are hidden unless asked for — but the one open stays visible, so «archivar» does
   // not make the flow you are looking at vanish out from under you.
@@ -161,7 +167,7 @@ export function WorkflowsPage() {
     (item) => showArchived || item.status !== "archived" || item.id === selectedId,
   );
   const archivedCount = allWorkflows.filter((item) => item.status === "archived").length;
-  const templates = (workflows.data?.requestTemplates ?? []).map((template) => templateEdits[template.id] ?? template);
+  const templates = requestTemplates.map((template) => templateEdits[template.id] ?? template);
   const steps = draft?.steps ?? [];
   const problems = flowProblems(steps);
 
@@ -265,8 +271,7 @@ export function WorkflowsPage() {
    * refuses a flow whose step points at a request it cannot find.
    */
   const save = useMutation({
-    mutationFn: async () => {
-      if (!draft) return;
+    mutationFn: async (flow: WorkflowView) => {
       for (const edited of Object.values(templateEdits)) {
         const original = workflows.data?.requestTemplates.find((item) => item.id === edited.id);
         if (original && unchanged(original, edited)) continue;
@@ -287,9 +292,9 @@ export function WorkflowsPage() {
           } satisfies Omit<RequestTemplateView, "id" | "description" | "updatedAt">,
         });
       }
-      await api<void>(`${base}/workflows/${draft.id}`, {
+      await api<void>(`${base}/workflows/${flow.id}`, {
         method: "PUT",
-        body: { name: draft.name, description: draft.description, definition: { steps: draft.steps } },
+        body: { name: flow.name, description: flow.description, definition: { steps: flow.steps } },
       });
     },
     onSuccess: invalidate,
@@ -374,7 +379,7 @@ export function WorkflowsPage() {
     if (event.key === "s" || event.key === "S") {
       event.preventDefault();
       const isDirty = Boolean(draft && saved && (!unchanged(saved, draft) || Object.keys(templateEdits).length > 0));
-      if (canEdit && draft && isDirty && problems.length === 0 && !save.isPending) save.mutate();
+      if (canEdit && draft && isDirty && problems.length === 0 && !save.isPending) save.mutate(draft);
     } else if (event.key === "Enter") {
       event.preventDefault();
       if (draft && environmentId && steps.length && !run.isPending) run.mutate();
@@ -387,13 +392,11 @@ export function WorkflowsPage() {
   }, []);
 
   function setSteps(next: WorkflowStepView[]) {
-    setDraft((current) => (current ? { ...current, steps: next } : current));
+    // Only ever called with a flow open: every caller lives in the canvas, the JSON view or a drawer
+    // that renders under `draft`.
+    setDraft((current) => ({ ...(current as WorkflowView), steps: next }));
     setJson(JSON.stringify({ steps: next }, null, 2));
   }
-
-  /** How many nodes — here and in every other flow — point at one reusable request. */
-  const usageOf = (templateId: string) =>
-    templateUsage(steps, workflows.data?.workflows ?? [], draft?.id ?? "", templateId);
 
   /**
    * Give one node its own copy of a shared request, so editing it stops changing its twins.
@@ -417,11 +420,10 @@ export function WorkflowsPage() {
    * operation, with the status its verb usually answers), then drop it into the open flow. One tap,
    * where before it took the form and then a second click on the created row. */
   async function addOperation(operation: OperationSummary) {
-    if (!draft) return;
     const expectedStatus = DEFAULT_STATUS[operation.method.toUpperCase()] ?? 200;
     const name = uniqueName(
       operation.summary?.trim() || `${operation.method} ${operation.path}`,
-      (workflows.data?.requestTemplates ?? []).map((template) => template.name),
+      requestTemplates.map((template) => template.name),
     );
     setAddingOp(true);
     try {
@@ -439,7 +441,11 @@ export function WorkflowsPage() {
         setSteps(
           withNode.map((item) =>
             item.id === added.id
-              ? { ...item, kind: "login", authorizes: { from: "body", path: "token", header: "Authorization", scheme: "Bearer " } }
+              ? {
+                  ...item,
+                  kind: "login",
+                  authorizes: { from: "body", path: "token", header: "Authorization", scheme: "Bearer " },
+                }
               : item,
           ),
         );
@@ -454,7 +460,7 @@ export function WorkflowsPage() {
   async function makeIndependent(step: WorkflowStepView, overrides?: Partial<RequestTemplateView>) {
     if (!step.requestTemplateId) return;
     const current = templates.find((template) => template.id === step.requestTemplateId);
-    if (!current || !draft) return;
+    if (!current) return;
     const merged = { ...current, ...overrides };
     setForking(true);
     try {
@@ -463,7 +469,7 @@ export function WorkflowsPage() {
         body: {
           name: uniqueTemplateName(
             merged.name,
-            (workflows.data?.requestTemplates ?? []).map((template) => template.name),
+            requestTemplates.map((template) => template.name),
           ),
           operationId: merged.operationId,
           expectedStatus: merged.expectedStatus,
@@ -506,7 +512,7 @@ export function WorkflowsPage() {
       setJsonError(null);
       setAsJson(false);
     } catch (caught) {
-      setJsonError(caught instanceof Error ? caught.message : "JSON inválido");
+      setJsonError((caught as Error).message);
     }
   }
 
@@ -544,7 +550,7 @@ export function WorkflowsPage() {
             }}
           >
             <option value="">Entorno…</option>
-            {(environments.data ?? []).map((item) => (
+            {environmentList.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name}
               </option>
@@ -557,7 +563,8 @@ export function WorkflowsPage() {
             <Button
               className="h-8 px-3 text-xs"
               disabled={!dirty || save.isPending || problems.length > 0}
-              onClick={() => save.mutate()}
+              // Enabled only while dirty, and there is nothing dirty without a flow open.
+              onClick={() => save.mutate(draft as WorkflowView)}
             >
               Guardar
             </Button>
@@ -566,13 +573,11 @@ export function WorkflowsPage() {
       </div>
 
       <div className="relative min-h-0 flex-1">
-        {tab === "run" ? (
+        {/* The tab is only enabled with a run to show, and the run strip that forgets it lives on
+            the canvas side, so this side never lacks one. */}
+        {tab === "run" && activeRunId ? (
           <div className="h-full overflow-y-auto p-4">
-            {activeRunId ? (
-              <RunProgressView live={runProgress} />
-            ) : (
-              <Empty title="Sin ejecuciones" hint="Ejecuta un flujo desde el lienzo para analizar aquí su resultado." />
-            )}
+            <RunProgressView live={runProgress} />
           </div>
         ) : asJson ? (
           <div className="h-full overflow-y-auto p-4">
@@ -590,14 +595,17 @@ export function WorkflowsPage() {
           <>
             {!draft ? (
               <div className="grid h-full place-items-center p-6">
-                <Empty title="Crea tu primer flujo" hint="Abre «Flujos» y crea uno; luego añade pruebas desde la biblioteca." />
+                <Empty
+                  title="Crea tu primer flujo"
+                  hint="Abre «Flujos» y crea uno; luego añade pruebas desde la biblioteca."
+                />
               </div>
             ) : (
               <WorkflowCanvas
                 flowId={draft.id}
                 steps={steps}
                 templates={templates}
-                operations={operations.data?.operations ?? []}
+                operations={operationList}
                 onChange={setSteps}
                 onSelect={(stepId) => {
                   setSelectedStep(stepId);
@@ -838,8 +846,8 @@ export function WorkflowsPage() {
                 )}
                 <div className="mt-4 border-t border-slate-100 pt-3">
                   <SuitesPanel
-                    suites={workflows.data?.suites ?? []}
-                    workflows={workflows.data?.workflows ?? []}
+                    suites={suites}
+                    workflows={allWorkflows}
                     canEdit={canEdit}
                     running={runSuite.isPending || !environmentId}
                     onCreate={(name) => createSuite.mutate(name)}
@@ -860,7 +868,7 @@ export function WorkflowsPage() {
               >
                 <TemplateLibrary
                   templates={templates}
-                  operations={operations.data?.operations ?? []}
+                  operations={operationList}
                   canEdit={canEdit}
                   addDisabled={!draft}
                   error={message(createTemplate.error) ?? message(deleteTemplate.error)}
@@ -877,7 +885,7 @@ export function WorkflowsPage() {
             {drawer === "data" && draft && (
               <Drawer title="Datos" side="right" onClose={() => setDrawer(null)}>
                 <DatasetsPanel
-                  datasets={(workflows.data?.datasets ?? []).filter((dataset) => dataset.workflowId === draft.id)}
+                  datasets={datasets.filter((dataset) => dataset.workflowId === draft.id)}
                   selectedId={datasetId}
                   canEdit={canEdit}
                   onSelect={setDatasetId}
@@ -902,25 +910,26 @@ export function WorkflowsPage() {
                 onClose={() => setInspectorOpen(false)}
               >
                 <WorkflowInspector
-                  flows={workflows.data?.workflows ?? []}
-                  channels={channels.data?.channels ?? []}
+                  flows={allWorkflows}
+                  channels={channelList}
                   base={base}
                   workflow={draft}
                   steps={steps}
                   selectedStep={selectedStep}
                   templates={templates}
-                  operations={operations.data?.operations ?? []}
-                  environments={environments.data ?? []}
+                  operations={operationList}
+                  environments={environmentList}
                   environmentId={environmentId}
                   canEdit={canEdit}
                   onEnvironment={(next) => {
                     setEnvironmentId(next);
                     if (next) setActiveEnvironment(next);
                   }}
-                  onWorkflow={(change) => setDraft((current) => (current ? { ...current, ...change } : current))}
+                  onWorkflow={(change) => setDraft((current) => ({ ...(current as WorkflowView), ...change }))}
                   onSteps={setSteps}
                   onTemplate={(template) => setTemplateEdits((current) => ({ ...current, [template.id]: template }))}
-                  templateUsage={usageOf}
+                  // How many nodes — here and in every other flow — point at one reusable request.
+                  templateUsage={(templateId) => templateUsage(steps, allWorkflows, draft.id, templateId)}
                   onFork={makeIndependent}
                   forking={forking}
                   onRunSettings={() => setSettingsOpen(true)}
@@ -1035,7 +1044,6 @@ function DockButton({
     </button>
   );
 }
-
 
 /**
  * A slim bar that floats over the canvas while a run is watched: the verdict so far and the bar,

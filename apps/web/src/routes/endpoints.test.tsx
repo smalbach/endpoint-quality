@@ -45,6 +45,7 @@ vi.mock("@/components/endpoint-list", () => ({
       <button onClick={() => props.onSelect("e1")}>abrir e1</button>
       <button onClick={() => props.onSelect("e2")}>abrir e2</button>
       <button onClick={() => props.onSelect("e1")}>abrir e1 otra vez</button>
+      <button onClick={() => props.onSelect(null)}>cerrar</button>
       <button onClick={props.onNew}>nuevo</button>
       <button onClick={() => props.onStatus("deleted")}>ver borrados</button>
       <button onClick={() => props.onSearch("pedidos & co")}>buscar</button>
@@ -102,7 +103,10 @@ function draw(at = "/p/p1", hasContract = false) {
 const where = () => screen.getByTestId("where").textContent;
 const click = (name: string) => fireEvent.click(screen.getByRole("button", { name }));
 
-afterEach(() => window.localStorage.clear());
+afterEach(() => {
+  vi.restoreAllMocks();
+  window.localStorage.clear();
+});
 
 describe("clampWidth", () => {
   test("un ancho fuera de los límites o que no es número vuelve al inicial", () => {
@@ -226,6 +230,54 @@ describe("EndpointsPage", () => {
     expect(where()).toBe("/p/p1/endpoints/e1");
     expect(screen.getByText("editor full: e1")).toBeTruthy();
     expect(screen.getByRole("link", { name: "← Endpoints" }).getAttribute("href")).toBe("/p/p1?e=e1");
+  });
+});
+
+describe("EndpointsPage: casos de borde", () => {
+  test("cerrar el endpoint con cambios también pregunta, y descartar lo cierra", async () => {
+    draw("/p/p1?e=e1");
+    expect(await screen.findByText("editor inline: e1")).toBeTruthy();
+    click("ensuciar");
+    click("cerrar");
+    expect(screen.getByText("Cambios sin guardar")).toBeTruthy();
+    click("Descartar");
+    expect(where()).toBe("/p/p1");
+    expect(screen.getByText("Elige un endpoint para verlo y probarlo")).toBeTruthy();
+  });
+
+  test("sin almacenamiento el panel parte del ancho inicial y arrastrarlo sigue funcionando", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("denegado");
+    });
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("denegado");
+    });
+    draw();
+    await screen.findByText("lista lista");
+    const separator = screen.getByRole("separator", { name: "Redimensionar" });
+    const panel = separator.previousElementSibling as HTMLElement;
+    expect(panel.style.width).toBe(`${SPLIT.initial}px`);
+    // Soltar sin haber arrastrado no guarda nada.
+    fireEvent.mouseUp(window);
+    expect(setItem).not.toHaveBeenCalled();
+    fireEvent.mouseDown(separator, { clientX: 100 });
+    fireEvent.mouseMove(window, { clientX: 60 });
+    fireEvent.mouseUp(window);
+    expect(setItem).toHaveBeenCalled();
+    expect(panel.style.width).toBe(`${SPLIT.initial - 40}px`);
+  });
+
+  test("fuera de un proyecto ninguna de las dos páginas pinta nada", () => {
+    const client = new QueryClient();
+    const { container } = render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <EndpointsPage />
+          <EndpointEditorPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(container.textContent).toBe("");
   });
 });
 

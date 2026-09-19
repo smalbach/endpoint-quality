@@ -517,7 +517,7 @@ function NewEnvironment({ base, onDone }: { base: string; onDone: (environmentId
       </form>
       {create.error && (
         <p className="mt-2 text-xs text-rose-700">
-          {(create.error as ApiError).fields[0]?.detail ?? (create.error as Error).message}
+          {(create.error as ApiError).fields?.[0]?.detail ?? create.error.message}
         </p>
       )}
     </Card>
@@ -621,7 +621,7 @@ function CredentialForm({
       </Button>
       {save.error && (
         <p className="w-full text-xs text-rose-700">
-          {(save.error as ApiError).fields[0]?.detail ?? (save.error as Error).message}
+          {(save.error as ApiError).fields?.[0]?.detail ?? save.error.message}
         </p>
       )}
     </form>

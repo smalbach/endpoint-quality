@@ -84,7 +84,16 @@ describe("ProjectsPage", () => {
     can.value = true;
     draw([
       project({}),
-      project({ id: "p2", name: "Pagos", slug: "pagos", contract: null, tags: [], description: "", lastRun: null, baseUrl: "" }),
+      project({
+        id: "p2",
+        name: "Pagos",
+        slug: "pagos",
+        contract: null,
+        tags: [],
+        description: "",
+        lastRun: null,
+        baseUrl: "",
+      }),
       project({ id: "p3", name: "Viejo", archivedAt: "2026-01-01T00:00:00.000Z" }),
     ]);
     expect(screen.getByText("Cargando proyectos…")).toBeTruthy();
@@ -205,6 +214,36 @@ describe("ProjectsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
     await waitFor(() => expect(screen.queryByText("Nuevo proyecto", { selector: "h2" })).toBeNull());
+  });
+});
+
+describe("ProjectsPage: esperas y restauración", () => {
+  test("restaurar un archivado lo confirma", async () => {
+    can.value = true;
+    draw([project({ archivedAt: "2026-01-01T00:00:00.000Z" })]);
+    fireEvent.click(await screen.findByRole("button", { name: "Archivados" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restaurar" }));
+    expect(await screen.findByText("«Tienda» restaurado")).toBeTruthy();
+  });
+
+  test("mientras se archiva, solo se bloquea el botón de ese proyecto", async () => {
+    can.value = true;
+    draw([project({}), project({ id: "p2", name: "Pagos", slug: "pagos" })], () => new Promise(() => {}));
+    const [first, second] = (await screen.findAllByRole("button", { name: "Archivar" })) as HTMLButtonElement[];
+    fireEvent.click(first!);
+    await waitFor(() => expect(first!.disabled).toBe(true));
+    expect(second!.disabled).toBe(false);
+  });
+
+  test("«Nuevo proyecto» abre el alta, y mientras se crea el botón lo dice", async () => {
+    can.value = true;
+    draw([project({})], () => new Promise(() => {}));
+    await screen.findByText("Tienda");
+    fireEvent.click(screen.getByRole("button", { name: "Nuevo proyecto" }));
+    fireEvent.change(screen.getByPlaceholderText("Digital Catalog"), { target: { value: "Catálogo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Crear proyecto" }));
+    const busy = (await screen.findByRole("button", { name: "Creando…" })) as HTMLButtonElement;
+    expect(busy.disabled).toBe(true);
   });
 });
 

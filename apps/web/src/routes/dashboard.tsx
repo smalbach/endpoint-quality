@@ -87,14 +87,12 @@ function ProjectCard({ project }: { project: DashboardProjectView }) {
           <Metric
             label="Tasa de paso"
             value={project.passRate == null ? "—" : `${Math.round(project.passRate * 100)}%`}
-            spark={project.trends.passRates}
-            tone="stroke-emerald-500"
+            trend={{ values: project.trends.passRates, tone: "stroke-emerald-500" }}
           />
           <Metric
             label="p95 carga"
             value={project.perfP95Ms == null ? "—" : `${Math.round(project.perfP95Ms)} ms`}
-            spark={project.trends.perfP95Ms}
-            tone="stroke-sky-500"
+            trend={{ values: project.trends.perfP95Ms, tone: "stroke-sky-500" }}
           />
         </div>
         {project.trends.securityScores.length > 1 && (
@@ -108,20 +106,30 @@ function ProjectCard({ project }: { project: DashboardProjectView }) {
   );
 }
 
-function Metric({ label, value, spark, tone }: { label: string; value: string; spark?: number[]; tone?: string }) {
+function Metric({
+  label,
+  value,
+  trend,
+}: {
+  label: string;
+  value: string;
+  /** Its line, drawn only from two points on: one point is not a trend. */
+  trend?: { values: number[]; tone: string };
+}) {
   return (
     <div>
       <span className="block text-[10px] text-slate-400">{label}</span>
       <span className="flex items-center gap-1.5">
         <span className="font-medium text-slate-700">{value}</span>
-        {spark && spark.length > 1 && <Sparkline values={spark} tone={tone} className="h-4 w-12" />}
+        {trend && trend.values.length > 1 && <Sparkline values={trend.values} tone={trend.tone} className="h-4 w-12" />}
       </span>
     </div>
   );
 }
 
-/** A tiny trend line, scaled to its own min/max — the shape matters, not the axis. */
-function Sparkline({ values, tone, className }: { values: number[]; tone?: string; className?: string }) {
+/** A tiny trend line, scaled to its own min/max — the shape matters, not the axis. Drawn only for
+ * two or more points: one point is not a trend. */
+function Sparkline({ values, tone, className }: { values: number[]; tone: string; className: string }) {
   const width = 100;
   const height = 24;
   const min = Math.min(...values);
@@ -129,7 +137,7 @@ function Sparkline({ values, tone, className }: { values: number[]; tone?: strin
   const span = max - min || 1;
   const points = values
     .map((value, index) => {
-      const x = values.length <= 1 ? width / 2 : (index / (values.length - 1)) * width;
+      const x = (index / (values.length - 1)) * width;
       const y = height - ((value - min) / span) * (height - 4) - 2;
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
@@ -142,13 +150,7 @@ function Sparkline({ values, tone, className }: { values: number[]; tone?: strin
       role="img"
       aria-label="Tendencia"
     >
-      <polyline
-        points={points}
-        fill="none"
-        className={tone ?? "stroke-slate-400"}
-        strokeWidth={2}
-        vectorEffect="non-scaling-stroke"
-      />
+      <polyline points={points} fill="none" className={tone} strokeWidth={2} vectorEffect="non-scaling-stroke" />
     </svg>
   );
 }

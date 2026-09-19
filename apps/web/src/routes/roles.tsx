@@ -479,7 +479,7 @@ function AccessSelect({
   onChange,
 }: {
   label: string;
-  value: RoleAccess | "mixed" | null;
+  value: RoleAccess | "mixed";
   disabled: boolean;
   onChange: (access: RoleAccess) => void;
 }) {
@@ -492,7 +492,7 @@ function AccessSelect({
         value === "deny" && "text-rose-700",
         value === "mixed" && "text-slate-400",
       )}
-      value={value ?? "undecided"}
+      value={value}
       disabled={disabled}
       onChange={(event) => onChange(event.target.value as RoleAccess)}
     >
@@ -562,7 +562,8 @@ function FolderRows({
 }) {
   const ids = endpointIdsOf(folder);
   const open = !closed.has(folder.id);
-  const access = groupAccess(ids, cells);
+  // A folder exists because an endpoint lives under it, so there is always an access to show.
+  const access = groupAccess(ids, cells)!;
   const scope = groupScope(ids, cells);
   return (
     <div>

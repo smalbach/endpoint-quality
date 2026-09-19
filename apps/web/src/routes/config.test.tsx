@@ -23,9 +23,12 @@ import type { ConfigView, ProjectSummary } from "@/lib/types";
 
 const call = vi.hoisted(() => vi.fn());
 const can = vi.hoisted(() => ({ value: true }));
+const org = vi.hoisted(() => ({
+  value: { id: "o", name: "Org", role: "owner" } as { id: string; name: string; role: string } | null,
+}));
 vi.mock("@/lib/api", async (original) => ({ ...(await original<object>()), api: call }));
 vi.mock("@/lib/auth", () => ({
-  useOrganization: () => ({ id: "o", name: "Org", role: "owner" }),
+  useOrganization: () => org.value,
   useCan: () => can.value,
 }));
 // Traer piezas de otro proyecto tiene sus propias pruebas; aquí solo importa que está al lado.
@@ -52,7 +55,13 @@ const project = (over: Partial<ProjectSummary> = {}) =>
   ({
     id: "p1",
     name: "Tienda",
-    contract: { versionId: "v3", title: "Tienda API", version: "3.1", operationCount: 7, importedAt: "2026-02-01T00:00:00.000Z" },
+    contract: {
+      versionId: "v3",
+      title: "Tienda API",
+      version: "3.1",
+      operationCount: 7,
+      importedAt: "2026-02-01T00:00:00.000Z",
+    },
     source: { kind: "url", location: "https://tienda.test/openapi.json", headersStored: true },
     ...over,
   }) as ProjectSummary;
@@ -66,7 +75,8 @@ function draw(options: { project?: ProjectSummary; config?: ConfigView; mutate?:
     if (request?.method) return (options.mutate ?? (() => Promise.resolve(undefined)))(path, request);
     if (path === BASE) return Promise.resolve(options.project ?? project());
     if (path === `${BASE}/config`) return Promise.resolve(options.config ?? config());
-    if (path === `${BASE}/operations`) return Promise.resolve({ operations: [{ id: "createOrder" }, { id: "listOrders" }] });
+    if (path === `${BASE}/operations`)
+      return Promise.resolve({ operations: [{ id: "createOrder" }, { id: "listOrders" }] });
     return new Promise(() => {});
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -100,7 +110,10 @@ describe("ConfigPage: el contrato", () => {
   });
 
   test("desde una URL, la cabecera solo viaja si se escribió", async () => {
-    draw({ project: project({ contract: null, source: null }), mutate: () => Promise.resolve({ operationCount: 12, unchanged: false }) });
+    draw({
+      project: project({ contract: null, source: null }),
+      mutate: () => Promise.resolve({ operationCount: 12, unchanged: false }),
+    });
     expect(await screen.findByText("Todavía no hay contrato. Sin él no hay matriz.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Volver a leerlo de ahí" })).toBeNull();
     const fromUrl = screen.getByRole("button", { name: "Importar desde la URL" }) as HTMLButtonElement;
@@ -163,7 +176,9 @@ describe("ConfigPage: el contrato", () => {
     draw({ canEdit: false });
     await screen.findByText(/Tienda API/);
     expect((screen.getByRole("button", { name: "Volver a leerlo de ahí" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByPlaceholderText("https://api.example.com/openapi.json") as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByPlaceholderText("https://api.example.com/openapi.json") as HTMLInputElement).disabled).toBe(
+      true,
+    );
   });
 });
 
@@ -266,5 +281,54 @@ describe("ConfigPage: las secciones", () => {
     // Plegar la sección.
     fireEvent.click(within(budgets).getByText(SECTION_GUIDE.budgets!.title));
     expect(within(budgets).queryByRole("button", { name: "Guardar" })).toBeNull();
+  });
+});
+
+describe("ConfigPage: casos de borde", () => {
+  test("sin organización ni proyecto todavía no pide nada y dice que no hay contrato", () => {
+    org.value = null;
+    call.mockReset();
+    try {
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <MemoryRouter>
+            <ConfigPage />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+      expect(screen.getByText("Todavía no hay contrato. Sin él no hay matriz.")).toBeTruthy();
+      expect(call).not.toHaveBeenCalled();
+    } finally {
+      org.value = { id: "o", name: "Org", role: "owner" };
+    }
+  });
+
+  test("la última lectura sin credencial guardada no la menciona", async () => {
+    draw({
+      project: project({ source: { kind: "url", location: "https://tienda.test/openapi.json", headersStored: false } }),
+    });
+    expect(await screen.findByText("https://tienda.test/openapi.json")).toBeTruthy();
+    expect(screen.queryByText(/con una credencial guardada/)).toBeNull();
+  });
+
+  test("un grupo sin ninguna de sus secciones en la configuración no se pinta", async () => {
+    const { sections } = config();
+    draw({
+      config: {
+        sections: { parameters: sections.parameters, bodies: sections.bodies, implemented: sections.implemented },
+      },
+    });
+    expect(await screen.findByText("Datos de la corrida")).toBeTruthy();
+    expect(screen.queryByText("Cuándo un caso es rojo")).toBeNull();
+    expect(screen.queryByText("Ajustes avanzados")).toBeNull();
+  });
+
+  test("una sección sin datos se abre vacía y no hay nada que guardar", async () => {
+    draw({ config: config({ bodies: { data: null, configured: false, updatedAt: null } }) });
+    await screen.findByText("Datos de la corrida");
+    const bodies = card(SECTION_GUIDE.bodies!.title);
+    fireEvent.click(within(bodies).getByText(SECTION_GUIDE.bodies!.title));
+    expect(bodies.querySelector("textarea")!.value).toBe("null");
+    expect((within(bodies).getByRole("button", { name: "Guardar" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

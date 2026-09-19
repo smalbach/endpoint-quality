@@ -365,7 +365,8 @@ export function SectionEditor({
       setParseError(null);
       setAsJson(false);
     } catch (error) {
-      setParseError(error instanceof Error ? error.message : "JSON inválido");
+      // JSON.parse only ever throws a SyntaxError.
+      setParseError((error as SyntaxError).message);
     }
   }
 
@@ -377,7 +378,8 @@ export function SectionEditor({
       setDraft(parsed);
       save.mutate(parsed);
     } catch (error) {
-      setParseError(error instanceof Error ? error.message : "JSON inválido");
+      // JSON.parse only ever throws a SyntaxError.
+      setParseError((error as SyntaxError).message);
     }
   }
 

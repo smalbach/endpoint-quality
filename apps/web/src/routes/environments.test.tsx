@@ -151,7 +151,14 @@ describe("EnvironmentsPage", () => {
     draw({
       environments: [
         environment(),
-        environment({ id: "e2", name: "prod", baseUrl: "https://prod.test", active: false, disabledVariables: {}, credentials: [] }),
+        environment({
+          id: "e2",
+          name: "prod",
+          baseUrl: "https://prod.test",
+          active: false,
+          disabledVariables: {},
+          credentials: [],
+        }),
       ],
     });
     await screen.findByText("Entorno activo");
@@ -218,7 +225,10 @@ describe("EnvironmentsPage", () => {
     draw();
     await screen.findByText("Entorno activo");
     const names = screen.getAllByLabelText("Nombre de variable") as HTMLInputElement[];
-    fireEvent.change(names.find((input) => input.value === "userId")!, { target: { value: "1mal" } });
+    fireEvent.change(
+      names.find((input) => input.value === "userId")!,
+      { target: { value: "1mal" } },
+    );
     expect(screen.getByText("Hay variables con problemas")).toBeTruthy();
     expect(saveButton().disabled).toBe(true);
   });
@@ -244,9 +254,7 @@ describe("EnvironmentsPage", () => {
 
     fireEvent.click(screen.getByText("Eliminar entorno"));
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Eliminar" }));
-    await waitFor(() =>
-      expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/environments/e1", { method: "DELETE" }),
-    );
+    await waitFor(() => expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/environments/e1", { method: "DELETE" }));
   });
 
   test("si borrar falla se dice por qué", async () => {
@@ -302,6 +310,36 @@ describe("EnvironmentsPage", () => {
       }),
     );
     expect(await screen.findByText("Demasiado corto")).toBeTruthy();
+  });
+
+  test("un fallo de red al crear, guardar o guardar una credencial se enseña sin romper la pantalla", async () => {
+    draw({ write: () => Promise.reject(new TypeError("Failed to fetch")) });
+    await screen.findByText("Entorno activo");
+
+    fireEvent.change(fieldByLabel("URL base"), { target: { value: "https://otro.test" } });
+    fireEvent.click(saveButton());
+    expect(await screen.findByText("Failed to fetch")).toBeTruthy();
+
+    const secret = screen.getByText("Secreto", { selector: "label" }).querySelector("input") as HTMLInputElement;
+    fireEvent.change(secret, { target: { value: "tok" } });
+    fireEvent.submit(secret.closest("form")!);
+    await waitFor(() => expect(screen.getAllByText("Failed to fetch")).toHaveLength(2));
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Nuevo" }));
+    fireEvent.change(screen.getByPlaceholderText("e2e"), { target: { value: "x" } });
+    fireEvent.change(screen.getByPlaceholderText("https://api.ejemplo.com"), { target: { value: "https://x.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Crear" }));
+    await waitFor(() => expect(screen.getAllByText("Failed to fetch")).toHaveLength(3));
+  });
+
+  test("un admin puede ver los secretos: se piden al servidor y se enseñan", async () => {
+    draw({
+      environments: [environment({ variables: { userId: { initial: "••••", current: "••••", sensitive: true } } })],
+    });
+    await screen.findByText("Entorno activo");
+    fireEvent.click(screen.getByRole("button", { name: "Ver secretos" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/environments/e1/variables/reveal"));
+    expect(await screen.findByDisplayValue("42")).toBeTruthy();
   });
 
   test("sin admin no hay formulario de credenciales; sin editor los campos están quietos", async () => {

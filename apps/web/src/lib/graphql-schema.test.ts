@@ -115,3 +115,121 @@ describe("lo que ofrece el esquema", () => {
     expect(operationFor(schema, "query", "nadie")).toBeNull();
   });
 });
+
+describe("lo que no se deja leer", () => {
+  test("un JSON sin `__schema` ni `errors` pide el SDL", () => {
+    expect(schemaFromIntrospection({ data: null })).toEqual({
+      ok: false,
+      problem:
+        "La respuesta no trae «__schema»: puede que la introspección esté apagada. Carga el SDL desde un fichero",
+    });
+    // `errors` que no es una lista, o sin mensajes de texto: igual que sin errores.
+    const noMessage = schemaFromIntrospection({ errors: [{ message: 3 }, "x"] });
+    expect(noMessage.ok).toBe(false);
+    if (!noMessage.ok) expect(noMessage.problem).toMatch(/Carga el SDL/);
+    expect(schemaFromIntrospection({ errors: "apagada" })).toEqual(noMessage);
+  });
+
+  test("un `__schema` a medias dice por qué no vale", () => {
+    const read = schemaFromIntrospection({ data: { __schema: {} } });
+    expect(read.ok).toBe(false);
+    // Sin tipos no hay de dónde construirlo; es un error de JavaScript, sin línea.
+    if (!read.ok) {
+      expect(read.problem).toMatch(/^El esquema no se pudo leer: \S/);
+      expect(read.problem).not.toMatch(/línea/);
+    }
+  });
+
+  test("un valor por defecto roto en la introspección dice su línea", () => {
+    const saved = introspectionFromSchema(schema) as unknown as {
+      __schema: {
+        types: { name: string; fields: { name: string; args: { defaultValue: string | null }[] }[] | null }[];
+      };
+    };
+    const query = saved.__schema.types.find((type) => type.name === "Query")!;
+    query.fields!.find((field) => field.name === "users")!.args[0]!.defaultValue = "{";
+    const read = schemaFromIntrospection(saved);
+    expect(read.ok).toBe(false);
+    if (!read.ok) expect(read.problem).toMatch(/^El esquema no se pudo leer: .*\(línea 1, columna 2\)$/);
+  });
+
+  test("un fichero vacío, y uno de SDL", () => {
+    expect(schemaFromText("  \n ")).toEqual({ ok: false, problem: "El fichero está vacío" });
+    const sdl = schemaFromText("\n type Query { a: Int }\n");
+    expect(sdl.ok).toBe(true);
+    if (sdl.ok) expect(rootFields(sdl.schema).map((field) => field.name)).toEqual(["a"]);
+  });
+
+  test("un SDL que nombra un tipo que no existe no tiene línea en el mensaje", () => {
+    const read = schemaFromSdl("type Query { a: Nada }");
+    expect(read.ok).toBe(false);
+    if (!read.ok) expect(read.problem).toMatch(/^El SDL no se pudo leer: .*Nada/);
+  });
+});
+
+describe("la operación contra un esquema raro", () => {
+  test("una operación vacía no tiene problemas", () => {
+    expect(queryProblems(schema, "  \n")).toEqual([]);
+  });
+
+  test("un esquema que se deja construir pero no es válido no tumba el editor: lo dice", () => {
+    const broken = buildSchema("type Query { a: I } interface I { x: Int } type T implements I { y: Int }");
+    const problems = queryProblems(broken, "{ a { x } }");
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatchObject({ line: null, column: null });
+    expect(problems[0]!.message).toMatch(/Interface field I\.x expected but T does not provide it/);
+  });
+});
+
+describe("lo que se genera en los bordes", () => {
+  const odd = buildSchema(`
+    interface Node { id: ID! }
+    type Thing implements Node { id: ID! old: Int @deprecated(reason: "no") }
+    type Bare { needs(x: Int!): Int }
+    type Empty { needs(x: Int!): Int deep: Bare }
+    union Any = Thing
+    enum Nothing
+    input Level3 { n: Int! }
+    input Level2 { l: Level3! }
+    input Level1 { l: Level2! }
+    input Top { l: Level1! f: Float! b: Boolean! s: String! }
+    type Query {
+      node(ids: [ID!]!, count: Int!, top: Top!, none: Nothing!): Node
+      any: Any
+      empty: Empty
+      scalar: String
+    }
+    type Subscription { ticked: Thing }
+  `);
+
+  test("una suscripción, con su selección", () => {
+    expect(operationFor(odd, "subscription", "ticked")?.query).toBe(
+      "subscription Ticked {\n  ticked {\n    id\n  }\n}",
+    );
+    expect(operationFor(odd, "mutation", "ticked")).toBeNull();
+  });
+
+  test("un campo hoja no lleva selección; una unión pide `__typename`", () => {
+    expect(operationFor(odd, "query", "scalar")?.query).toBe("query Scalar {\n  scalar\n}");
+    expect(operationFor(odd, "query", "any")?.query).toBe("query Any {\n  any {\n    __typename\n  }\n}");
+  });
+
+  test("una interfaz enseña sus campos; un tipo sin nada que pedir, `__typename`", () => {
+    const node = operationFor(odd, "query", "node")!;
+    expect(node.query).toMatch(/node\(ids: \$ids, count: \$count, top: \$top, none: \$none\) \{\n {4}id\n {2}\}/);
+    // `needs` tiene un argumento obligatorio y `Bare` no tiene nada más que pedir: queda `__typename`.
+    expect(operationFor(odd, "query", "empty")?.query).toBe(
+      "query Empty {\n  empty {\n    deep {\n      __typename\n    }\n  }\n}",
+    );
+  });
+
+  test("los valores de ejemplo: listas, números, booleanos, un enum sin valores y el fondo de los inputs", () => {
+    const node = operationFor(odd, "query", "node")!;
+    expect(JSON.parse(node.variables)).toEqual({
+      ids: [""],
+      count: 0,
+      top: { l: { l: { l: {} } }, f: 0, b: false, s: "" },
+      none: "",
+    });
+  });
+});

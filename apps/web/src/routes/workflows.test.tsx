@@ -83,7 +83,11 @@ vi.mock("@/components/workflow-canvas", () => ({
       <button onClick={() => props.onToggleBreakpoint("s1")}>lienzo: parada en s1</button>
       <button
         onClick={() =>
-          props.onChange([...props.steps.slice(0, 1), { ...props.steps[1]!, dependsOn: ["zz"] }, ...props.steps.slice(2)])
+          props.onChange([
+            ...props.steps.slice(0, 1),
+            { ...props.steps[1]!, dependsOn: ["zz"] },
+            ...props.steps.slice(2),
+          ])
         }
       >
         lienzo: romper
@@ -122,6 +126,7 @@ vi.mock("@/components/workflow-inspector", () => ({
       </button>
       <button onClick={() => props.onTemplate({ ...props.templates[0]! })}>inspector: tocar t1</button>
       <button onClick={() => props.onFork(props.steps[1]!, { operationId: "op2" })}>inspector: independizar s2</button>
+      <button onClick={() => props.onFork(props.steps[0]!)}>inspector: independizar s1</button>
       <button onClick={() => props.onFork({ id: "b", kind: "branch" })}>inspector: independizar rama</button>
       <button onClick={() => props.onEnvironment("e2")}>inspector: entorno e2</button>
       <button onClick={props.onRunSettings}>inspector: ajustes</button>
@@ -156,7 +161,16 @@ const flow = (patch: Partial<WorkflowView> & { id: string; name: string }): Work
 });
 
 const environment = (id: string, name: string, active: boolean) =>
-  ({ id, name, active, baseUrl: "http://x", specUrl: null, variables: {}, disabledVariables: {}, writesAllowed: true }) as unknown as Environment;
+  ({
+    id,
+    name,
+    active,
+    baseUrl: "http://x",
+    specUrl: null,
+    variables: {},
+    disabledVariables: {},
+    writesAllowed: true,
+  }) as unknown as Environment;
 
 type Server = {
   view: WorkflowsView;
@@ -186,7 +200,9 @@ function freshServer(): Server {
       datasets: [
         { id: "d1", workflowId: "w1", name: "clientes", columns: ["email"], rowCount: 2, updatedAt: "2026-03-01" },
       ],
-      suites: [{ id: "su1", name: "Antes de publicar", description: null, workflowIds: ["w1"], updatedAt: "2026-03-01" }],
+      suites: [
+        { id: "su1", name: "Antes de publicar", description: null, workflowIds: ["w1"], updatedAt: "2026-03-01" },
+      ],
     },
     environments: [environment("e1", "staging", true), environment("e2", "prod", false)],
     run: {
@@ -219,6 +235,7 @@ function freshServer(): Server {
 const operations = [
   { id: "op1", method: "post", path: "/orders", summary: "Crear pedido" },
   { id: "op2", method: "GET", path: "/orders/{id}", summary: "" },
+  { id: "op3", method: "HEAD", path: "/health", summary: "" },
 ];
 
 let created = 0;
@@ -340,7 +357,9 @@ describe("WorkflowsPage: abrir y guardar", () => {
     const dialog = await screen.findByRole("dialog", { name: "Nuevo flujo" });
     fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "Alta de pedido" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Crear" }));
-    await waitFor(() => expect(calls("POST", "/workflows")).toEqual([expect.objectContaining({ body: { name: "Alta de pedido" } })]));
+    await waitFor(() =>
+      expect(calls("POST", "/workflows")).toEqual([expect.objectContaining({ body: { name: "Alta de pedido" } })]),
+    );
     expect(await screen.findByTestId("canvas")).toBeTruthy();
     expect(screen.getAllByText("Alta de pedido").length).toBeGreaterThan(0);
   });
@@ -422,7 +441,9 @@ describe("WorkflowsPage: abrir y guardar", () => {
     fireEvent.click(button("Diagrama"));
     expect(screen.getByText("El documento es { steps: [...] }")).toBeTruthy();
 
-    fireEvent.change(textarea, { target: { value: JSON.stringify({ steps: [{ id: "solo", requestTemplateId: "t1" }] }) } });
+    fireEvent.change(textarea, {
+      target: { value: JSON.stringify({ steps: [{ id: "solo", requestTemplateId: "t1" }] }) },
+    });
     fireEvent.click(button("Diagrama"));
     expect(screen.getByTestId("canvas-steps").textContent).toBe("solo");
     expect(button("Guardar").disabled).toBe(false);
@@ -499,7 +520,9 @@ describe("WorkflowsPage: ejecutar", () => {
     fireEvent.change(screen.getByTitle("Entorno"), { target: { value: "e2" } });
     await waitFor(() => expect(calls("POST", "/environments/e2/activate")).toHaveLength(1));
     fireEvent.keyDown(window, { key: "Enter", ctrlKey: true });
-    await waitFor(() => expect(calls("POST", "/runs")[0]!.body).toEqual(expect.objectContaining({ environmentId: "e2" })));
+    await waitFor(() =>
+      expect(calls("POST", "/runs")[0]!.body).toEqual(expect.objectContaining({ environmentId: "e2" })),
+    );
     expect(await screen.findByText("El entorno no admite escrituras")).toBeTruthy();
   });
 
@@ -664,7 +687,12 @@ describe("WorkflowsPage: el cajón de flujos", () => {
     const run = within(drawer).getAllByRole("button", { name: "Ejecutar" }).at(-1)!;
     fireEvent.click(run);
     await waitFor(() =>
-      expect(calls("POST", "/runs")[0]!.body).toEqual({ environmentId: "e1", suiteId: "su1", delayMs: 300, concurrency: 1 }),
+      expect(calls("POST", "/runs")[0]!.body).toEqual({
+        environmentId: "e1",
+        suiteId: "su1",
+        delayMs: 300,
+        concurrency: 1,
+      }),
     );
 
     fireEvent.click(within(drawer).getByRole("button", { name: "Eliminar" }));
@@ -716,7 +744,9 @@ describe("WorkflowsPage: biblioteca, datos e inspector", () => {
     fireEvent.change(within(drawer).getByPlaceholderText("Actualizar perfil"), { target: { value: "Leer" } });
     fireEvent.click(within(drawer).getByRole("button", { name: "Crear prueba" }));
     await waitFor(() =>
-      expect(calls("POST", "/request-templates")[0]!.body).toEqual(expect.objectContaining({ name: "Leer", operationId: "op1" })),
+      expect(calls("POST", "/request-templates")[0]!.body).toEqual(
+        expect.objectContaining({ name: "Leer", operationId: "op1" }),
+      ),
     );
 
     fireEvent.click(within(drawer).getByRole("button", { name: "Eliminar" }));
@@ -731,7 +761,9 @@ describe("WorkflowsPage: biblioteca, datos e inspector", () => {
 
     fireEvent.click(within(drawer).getByRole("button", { name: "editar" }));
     await waitFor(() => expect(calls("GET", "/datasets/d1")).toHaveLength(1));
-    await waitFor(() => expect((within(drawer).getAllByRole("textbox").at(-1) as HTMLTextAreaElement).value).toContain("a@b.c"));
+    await waitFor(() =>
+      expect((within(drawer).getAllByRole("textbox").at(-1) as HTMLTextAreaElement).value).toContain("a@b.c"),
+    );
     fireEvent.click(within(drawer).getByRole("button", { name: "Guardar filas" }));
     await waitFor(() => expect(calls("PUT", "/datasets/d1")[0]!.body).toEqual({ rows: [{ email: "a@b.c" }] }));
 
@@ -739,7 +771,9 @@ describe("WorkflowsPage: biblioteca, datos e inspector", () => {
     const dialog = await screen.findByRole("dialog", { name: "Nuevo conjunto de datos" });
     fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "precios" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Crear" }));
-    await waitFor(() => expect(calls("POST", "/workflows/w1/datasets")[0]!.body).toEqual({ name: "precios", rows: [] }));
+    await waitFor(() =>
+      expect(calls("POST", "/workflows/w1/datasets")[0]!.body).toEqual({ name: "precios", rows: [] }),
+    );
 
     fireEvent.click(play());
     await waitFor(() => expect(calls("POST", "/runs")[0]!.body).toEqual(expect.objectContaining({ datasetId: "d1" })));
@@ -773,7 +807,9 @@ describe("WorkflowsPage: biblioteca, datos e inspector", () => {
     fireEvent.click(within(inspector).getByRole("button", { name: "inspector: entorno e2" }));
     expect(within(inspector).getByText("entorno: e2")).toBeTruthy();
     fireEvent.click(within(inspector).getByRole("button", { name: "inspector: ejecutar" }));
-    await waitFor(() => expect(calls("POST", "/runs")[0]!.body).toEqual(expect.objectContaining({ environmentId: "e2" })));
+    await waitFor(() =>
+      expect(calls("POST", "/runs")[0]!.body).toEqual(expect.objectContaining({ environmentId: "e2" })),
+    );
 
     fireEvent.click(within(inspector).getByRole("button", { name: "inspector: ajustes" }));
     expect(await screen.findByRole("dialog", { name: "Configurar ejecución" })).toBeTruthy();
@@ -781,5 +817,157 @@ describe("WorkflowsPage: biblioteca, datos e inspector", () => {
 
     fireEvent.click(within(inspector).getByRole("button", { name: "inspector: borrar" }));
     await waitFor(() => expect(calls("DELETE", "/workflows/w1")).toHaveLength(1));
+  });
+});
+
+describe("WorkflowsPage: atajos, cierres y casos de borde", () => {
+  /** Reemplaza el grafo abierto desde la vista JSON y vuelve al lienzo. */
+  function setGraph(steps: WorkflowStepView[]) {
+    fireEvent.click(button("JSON"));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: JSON.stringify({ steps }) } });
+    fireEvent.click(button("Diagrama"));
+  }
+
+  test("una «s» sin Ctrl no guarda; Ctrl+S guarda aunque sólo se haya tocado una petición", async () => {
+    await ready();
+    fireEvent.click(screen.getByTitle("Ajustes"));
+    fireEvent.click(await screen.findByRole("button", { name: "inspector: tocar t1" }));
+    fireEvent.keyDown(window, { key: "s" });
+    expect(calls("PUT")).toHaveLength(0);
+
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    await waitFor(() => expect(calls("PUT", "/workflows/w1")).toHaveLength(1));
+    expect(calls("PATCH")).toHaveLength(0);
+    expect(calls("PUT", "/workflows/w1")[0]!.body).toEqual(expect.objectContaining({ name: "Pedidos" }));
+  });
+
+  test("cada cajón se cierra con su botón del muelle o con «Cerrar»", async () => {
+    await ready();
+    for (const label of ["Flujos", "Biblioteca", "Datos"] as const) {
+      await openDrawer(label);
+      fireEvent.click(screen.getByTitle(label));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      const drawer = await openDrawer(label);
+      fireEvent.click(within(drawer).getByRole("button", { name: "Cerrar" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+    }
+    fireEvent.click(button("lienzo: abrir s1"));
+    const inspector = await screen.findByRole("dialog", { name: "Nodo" });
+    fireEvent.click(within(inspector).getByRole("button", { name: "Cerrar" }));
+    expect(screen.queryByTestId("inspector")).toBeNull();
+  });
+
+  test("cancelar el nuevo flujo o el renombrado no escribe nada", async () => {
+    await ready();
+    const drawer = await openDrawer("Flujos");
+    fireEvent.click(within(drawer).getByRole("button", { name: "+ Nuevo" }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog", { name: "Nuevo flujo" })).getByRole("button", { name: "Cancelar" }),
+    );
+    expect(screen.queryByRole("dialog", { name: "Nuevo flujo" })).toBeNull();
+
+    fireEvent.click(within(drawer).getByRole("button", { name: "Renombrar" }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog", { name: "Renombrar flujo" })).getByRole("button", { name: "Cancelar" }),
+    );
+    expect(screen.queryByRole("dialog", { name: "Renombrar flujo" })).toBeNull();
+    expect(calls("POST", "/workflows")).toHaveLength(0);
+    expect(calls("PUT")).toHaveLength(0);
+  });
+
+  test("mientras se lanza, «Ejecutar» dice «Lanzando…» y Ctrl+Enter no lanza otra vez", async () => {
+    mocks.call.mockImplementation((path: string, options?: Options) =>
+      options?.method === "POST" && path.endsWith("/runs") ? new Promise(() => {}) : respond(path, options),
+    );
+    await ready();
+    fireEvent.click(play());
+    await waitFor(() => expect(play().textContent).toContain("Lanzando…"));
+    expect(play().disabled).toBe(true);
+    fireEvent.keyDown(window, { key: "Enter", metaKey: true });
+    expect(calls("POST", "/runs")).toHaveLength(1);
+  });
+
+  test("una pausa en un nodo de otro flujo se nombra por su id, y la pestaña «Ejecución» abre la corrida", async () => {
+    server.run = { ...server.run, paused: { caseId: "c1", stepId: "sub-9" } };
+    await ready();
+    fireEvent.click(play());
+    expect(await screen.findByText("sub-9", { selector: "span.font-semibold" })).toBeTruthy();
+    fireEvent.click(button(/Ejecución/));
+    expect(await screen.findByText("Flujo Pedidos")).toBeTruthy();
+    expect(screen.queryByTestId("canvas")).toBeNull();
+  });
+
+  test("el diálogo de paradas nombra un nodo sin petición por su tipo, aunque la etiqueta no lo conozca", async () => {
+    window.localStorage.setItem(
+      "eq.run-settings.w1",
+      JSON.stringify({ pauseMode: "breakpoints", breakpoints: ["s1"] }),
+    );
+    await ready();
+    setGraph([
+      { id: "s1", requestTemplateId: "t1" },
+      { id: "x", kind: "script", dependsOn: ["s1"] } as WorkflowStepView,
+      { id: "y", requestTemplateId: "borrada", dependsOn: ["s1"] },
+    ]);
+    fireEvent.click(screen.getByText("1 parada"));
+    const dialog = await screen.findByRole("dialog", { name: "Configurar ejecución" });
+    expect(within(dialog).getByText("script · x")).toBeTruthy();
+    expect(within(dialog).getByText("script")).toBeTruthy();
+    expect(within(dialog).getByText("Petición · y")).toBeTruthy();
+  });
+
+  test("una suite sí hereda el paso a paso de este flujo", async () => {
+    window.localStorage.setItem("eq.run-settings.w1", JSON.stringify({ pauseMode: "step" }));
+    await ready();
+    const drawer = await openDrawer("Flujos");
+    fireEvent.click(within(drawer).getByRole("button", { name: /Antes de publicar/ }));
+    fireEvent.click(within(drawer).getAllByRole("button", { name: "Ejecutar" }).at(-1)!);
+    await waitFor(() =>
+      expect(calls("POST", "/runs")[0]!.body).toEqual(expect.objectContaining({ suiteId: "su1", pauseMode: "step" })),
+    );
+  });
+
+  test("un verbo sin estado habitual (HEAD) empieza esperando 200", async () => {
+    await ready();
+    const drawer = await openDrawer("Biblioteca");
+    fireEvent.click(within(drawer).getByRole("button", { name: /\/health/ }));
+    await waitFor(() =>
+      expect(calls("POST", "/request-templates")[0]!.body).toEqual(
+        expect.objectContaining({ name: "HEAD /health", operationId: "op3", expectedStatus: 200 }),
+      ),
+    );
+  });
+
+  test("independizar el último nodo que usaba una petición suelta su edición pendiente: guardar no la escribe", async () => {
+    await ready();
+    fireEvent.click(button("lienzo: abrir s1"));
+    const inspector = await screen.findByTestId("inspector");
+    fireEvent.click(within(inspector).getByRole("button", { name: "inspector: editar t1" }));
+    fireEvent.click(within(inspector).getByRole("button", { name: "inspector: independizar s2" }));
+    await waitFor(() => expect(within(inspector).getByText("usos de t1: 2")).toBeTruthy());
+    fireEvent.click(within(inspector).getByRole("button", { name: "inspector: independizar s1" }));
+    await waitFor(() => expect(within(inspector).getByText("usos de t1: 1")).toBeTruthy());
+    expect(calls("POST", "/request-templates")).toHaveLength(2);
+    expect(calls("POST", "/request-templates")[1]!.body).toEqual(
+      expect.objectContaining({ name: "Crear pedido (copia)", operationId: "op1", expectedStatus: 202 }),
+    );
+
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    await waitFor(() => expect(calls("PUT", "/workflows/w1")).toHaveLength(1));
+    expect(calls("PATCH")).toHaveLength(0);
+    const saved = (calls("PUT", "/workflows/w1")[0]!.body as { definition: { steps: WorkflowStepView[] } }).definition
+      .steps;
+    expect(saved.map((step) => step.requestTemplateId)).not.toContain("t1");
+  });
+
+  test("un nodo que apunta a una petición que ya no existe no se puede independizar", async () => {
+    await ready();
+    setGraph([
+      { id: "s1", requestTemplateId: "t1" },
+      { id: "s2", requestTemplateId: "borrada", dependsOn: ["s1"] },
+    ]);
+    fireEvent.click(button("lienzo: abrir s1"));
+    fireEvent.click(await screen.findByRole("button", { name: "inspector: independizar s2" }));
+    await act(async () => {});
+    expect(calls("POST", "/request-templates")).toHaveLength(0);
   });
 });

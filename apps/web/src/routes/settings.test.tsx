@@ -124,6 +124,15 @@ describe("SettingsPage", () => {
     expect(await screen.findByText("No se puede sacar ahora")).toBeTruthy();
   });
 
+  test("sacar a alguien bien vuelve a pedir la lista y recarga la sesión", async () => {
+    draw("owner", () => Promise.resolve({}));
+    await screen.findByText("ana@acme.test");
+    const lists = call.mock.calls.filter(([path]) => path === "/orgs/o/members").length;
+    fireEvent.click(within(row("ana@acme.test")).getByRole("button", { name: "Sacar" }));
+    await waitFor(() => expect(session.reload).toHaveBeenCalled());
+    expect(call.mock.calls.filter(([path]) => path === "/orgs/o/members").length).toBeGreaterThan(lists);
+  });
+
   test("invitar manda correo y rol, y enseña el enlace", async () => {
     draw("admin", (path) =>
       path === "/orgs/o/invitations" ? Promise.resolve({ token: "inv-123" }) : Promise.resolve({}),
@@ -178,6 +187,16 @@ describe("SettingsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Revocar" }));
     await waitFor(() => expect(call).toHaveBeenCalledWith("/orgs/o/tokens/t1", { method: "DELETE" }));
+  });
+
+  test("sin credenciales de servicio lo dice", async () => {
+    const saved = tokens.splice(0, tokens.length);
+    try {
+      draw("owner", () => Promise.resolve({}));
+      expect(await screen.findByText("Todavía no hay ninguna.")).toBeTruthy();
+    } finally {
+      tokens.push(...saved);
+    }
   });
 
   test("emitir un token que falla dice por qué", async () => {

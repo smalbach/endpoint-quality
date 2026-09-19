@@ -153,10 +153,11 @@ export function refreshOnce(): Promise<boolean> {
       return true;
     } catch {
       setAccessToken(null);
-      return false;
     } finally {
       refreshing = null;
     }
+    // Only a refresh that threw gets here: the network failed, which is as anonymous as a 401.
+    return false;
   })();
   return refreshing;
 }
@@ -226,7 +227,8 @@ export async function streamRun(
     // Events are separated by a blank line; a chunk can split one in half, so the tail stays in
     // the buffer until its terminator arrives.
     const parts = buffer.split("\n\n");
-    buffer = parts.pop() ?? "";
+    // `split` always returns at least one element, so there is always a tail to keep.
+    buffer = parts.pop()!;
     for (const part of parts) {
       const type = /^event:\s*(.*)$/m.exec(part)?.[1]?.trim() ?? "message";
       const raw = part

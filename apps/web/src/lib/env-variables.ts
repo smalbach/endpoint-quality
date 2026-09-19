@@ -169,7 +169,8 @@ function fromJson(
   try {
     parsed = JSON.parse(text);
   } catch (caught) {
-    return { ok: false, error: caught instanceof Error ? caught.message : "JSON inválido" };
+    // `JSON.parse` only ever throws a `SyntaxError`, whose message says where the text broke.
+    return { ok: false, error: (caught as SyntaxError).message };
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     return { ok: false, error: "Las variables son un objeto de nombre a valor" };

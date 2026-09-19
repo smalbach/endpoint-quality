@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   call: vi.fn(),
   stream: vi.fn(),
   canEdit: { value: true },
+  signedOut: { value: false },
 }));
 vi.mock("@/lib/api", async (original) => ({
   ...(await original<object>()),
@@ -33,7 +34,7 @@ vi.mock("@/lib/api", async (original) => ({
   streamRun: mocks.stream,
 }));
 vi.mock("@/lib/auth", () => ({
-  useOrganization: () => ({ id: "o", name: "Org" }),
+  useOrganization: () => (mocks.signedOut.value ? null : { id: "o", name: "Org" }),
   useCan: () => mocks.canEdit.value,
 }));
 
@@ -41,6 +42,7 @@ const call = mocks.call;
 
 afterEach(() => {
   mocks.canEdit.value = true;
+  mocks.signedOut.value = false;
   call.mockReset();
   mocks.stream.mockReset();
 });
@@ -149,6 +151,8 @@ describe("RunsPage", () => {
         source: { kind: "workflow", workflowId: "w", name: null, datasetId: null, datasetName: null, rows: 1 },
       }),
       runRow({ id: "e", source: { kind: "suite", suiteId: "s", name: null, flowNames: ["a", null] } }),
+      runRow({ id: "f", source: { kind: "channel", channelId: "ch", name: null } }),
+      runRow({ id: "g", source: { kind: "channel", channelId: "ch", name: "Chat" } }),
     ]);
     renderRuns();
     expect(await screen.findByText("Matriz · crítico, pagos · 2 operaciones")).toBeTruthy();
@@ -156,6 +160,8 @@ describe("RunsPage", () => {
     expect(screen.getByText("Flujo Pedidos · (datos eliminados), 3 filas")).toBeTruthy();
     expect(screen.getByText("Flujo (eliminado)")).toBeTruthy();
     expect(screen.getByText("Suite (eliminada) · 2 flujos")).toBeTruthy();
+    expect(screen.getByText("Canal (eliminado)")).toBeTruthy();
+    expect(screen.getByText("Canal Chat")).toBeTruthy();
     // Los fallos y los no ejecutados sólo aparecen cuando los hay.
     expect(screen.getByText("2 ✗")).toBeTruthy();
     expect(screen.getByText("1 ⃠")).toBeTruthy();
@@ -167,6 +173,8 @@ describe("RunsPage", () => {
       "/p/p/runs/c",
       "/p/p/runs/d",
       "/p/p/runs/e",
+      "/p/p/runs/f",
+      "/p/p/runs/g",
     ]);
   });
 });
@@ -179,14 +187,25 @@ const liveRun = (patch: Partial<RunView> = {}): RunView => ({
     source: { kind: "workflow", workflowId: "w", name: "Pedidos", datasetId: null, datasetName: null, rows: 1 },
     finishedAt: null,
   }),
-  cases: [
-    runCase({ id: "c1", position: 0 }),
-    runCase({ id: "c2", position: 1, method: "POST", path: "/orders" }),
-  ],
+  cases: [runCase({ id: "c1", position: 0 }), runCase({ id: "c2", position: 1, method: "POST", path: "/orders" })],
   ...patch,
 });
 
 describe("RunDetailPage", () => {
+  test("sin organización todavía no pide nada: espera", () => {
+    mocks.signedOut.value = true;
+    renderRuns("/p/p/runs/r1");
+    expect(screen.getByText("Cargando…")).toBeTruthy();
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  test("una corrida sin casos enseña el progreso a 0 %, no NaN", async () => {
+    openStream();
+    call.mockResolvedValue(liveRun({ totals: totals({ cases: 0 }), cases: [] }));
+    renderRuns("/p/p/runs/r1");
+    expect(await screen.findByText("0/0 · 0%")).toBeTruthy();
+  });
+
   test("una corrida que no existe lo dice", async () => {
     openStream();
     call.mockRejectedValue(new Error("404"));
@@ -269,6 +288,19 @@ describe("RunDetailPage", () => {
     expect(await screen.findByText("consultando cada 2 s (el stream no está disponible)")).toBeTruthy();
   });
 
+  test("un nodo webhook que se pone a esperar vuelve a pedir la corrida, que trae su URL", async () => {
+    const { emit } = openStream();
+    call.mockResolvedValue(liveRun());
+    renderRuns("/p/p/runs/r1");
+    await screen.findByText("conectando…");
+    const before = call.mock.calls.filter(([path]) => path === "/orgs/o/projects/p/runs/r1").length;
+    emit("waiting", { stepId: "hook" });
+    await waitFor(() =>
+      expect(call.mock.calls.filter(([path]) => path === "/orgs/o/projects/p/runs/r1").length).toBe(before + 1),
+    );
+    expect(screen.getByText("en vivo")).toBeTruthy();
+  });
+
   test("cancelar manda el POST; sin permiso de edición no hay botón", async () => {
     openStream();
     call.mockImplementation((_path: string, options?: { method?: string }) =>
@@ -277,9 +309,7 @@ describe("RunDetailPage", () => {
     renderRuns("/p/p/runs/r1");
     expect(await screen.findByText("El entorno no responde")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
-    await waitFor(() =>
-      expect(call).toHaveBeenCalledWith("/orgs/o/projects/p/runs/r1/cancel", { method: "POST" }),
-    );
+    await waitFor(() => expect(call).toHaveBeenCalledWith("/orgs/o/projects/p/runs/r1/cancel", { method: "POST" }));
   });
 
   test("quien sólo mira no ve los controles", async () => {
@@ -444,7 +474,9 @@ describe("RunDetailPage", () => {
       ],
     };
     call.mockImplementation((path: string) =>
-      Promise.resolve(path.endsWith("/cases/c1") ? detail : liveRun({ status: "passed", cases: [runCase({ id: "c1" })] })),
+      Promise.resolve(
+        path.endsWith("/cases/c1") ? detail : liveRun({ status: "passed", cases: [runCase({ id: "c1" })] }),
+      ),
     );
     renderRuns("/p/p/runs/r1");
     fireEvent.click(await screen.findByRole("button", { name: /\/items\/c1/ }));

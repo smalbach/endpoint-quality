@@ -82,7 +82,14 @@ const envs: Environment[] = [
     authEnforced: true,
     active: true,
     credentials: [
-      { id: "c1", name: "vendedor", role: "vendedor", kind: "bearer", headerName: null, updatedAt: "2026-03-01T10:00:00.000Z" },
+      {
+        id: "c1",
+        name: "vendedor",
+        role: "vendedor",
+        kind: "bearer",
+        headerName: null,
+        updatedAt: "2026-03-01T10:00:00.000Z",
+      },
     ],
   },
 ];
@@ -165,8 +172,26 @@ describe("RolesPage", () => {
     expect(await screen.findByText("Permisos de")).toBeTruthy();
     await waitFor(() => expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/roles/r1/permissions"));
 
+    fireEvent.keyDown(roleCard("comprador"), { key: "Tab" });
+    expect(call).not.toHaveBeenCalledWith("/orgs/o/projects/p1/roles/r2/permissions");
     fireEvent.keyDown(roleCard("comprador"), { key: "Enter" });
     await waitFor(() => expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/roles/r2/permissions"));
+    // Y con el ratón, de vuelta al primero.
+    const sellerFetches = () =>
+      call.mock.calls.filter(([path]) => path === "/orgs/o/projects/p1/roles/r1/permissions").length;
+    const before = sellerFetches();
+    fireEvent.click(roleCard("vendedor"));
+    await waitFor(() => expect(sellerFetches()).toBeGreaterThan(before));
+  });
+
+  test("mientras se guarda un rol el botón lo dice y no deja repetir", async () => {
+    draw({ write: () => new Promise(() => {}) });
+    await screen.findByText("Gestiona su catálogo");
+    fireEvent.click(within(roleCard("vendedor")).getByRole("button", { name: "Editar" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Guardar" }));
+    const pending = await within(dialog).findByRole("button", { name: "Guardando…" });
+    expect((pending as HTMLButtonElement).disabled).toBe(true);
   });
 
   test("crear un rol manda nombre, descripción, color y aislamiento, y lo deja elegido", async () => {
@@ -308,7 +333,7 @@ describe("RolesPage", () => {
     // El alcance de datos solo se decide sobre lo permitido.
     expect(select("Datos en POST /orders").disabled).toBe(true);
     expect(select("Datos en GET /orders").disabled).toBe(false);
-    expect((button("Guardar permisos")).disabled).toBe(true);
+    expect(button("Guardar permisos").disabled).toBe(true);
 
     fireEvent.change(select("Acceso a orders"), { target: { value: "allow" } });
     expect(select("Acceso a POST /orders").value).toBe("allow");
@@ -331,6 +356,25 @@ describe("RolesPage", () => {
       }),
     );
     expect(await screen.findByText("Permisos de «vendedor» guardados")).toBeTruthy();
+  });
+
+  test("una carpeta con alcances distintos en lo permitido dice «Mixto» hasta que se elige uno", async () => {
+    draw({
+      permissions: [
+        { endpointId: "a", access: "allow", dataScope: "all" },
+        { endpointId: "b", access: "allow", dataScope: "own" },
+      ],
+    });
+    await screen.findByLabelText("Acceso a GET /orders");
+    const folder = select("Datos en orders");
+    expect(folder.value).toBe("mixed");
+    const mixed = Array.from(folder.options).find((option) => option.value === "mixed")!;
+    expect(mixed.textContent).toBe("Mixto");
+    expect(mixed.disabled).toBe(true);
+    fireEvent.change(folder, { target: { value: "none" } });
+    expect(select("Datos en GET /orders").value).toBe("none");
+    expect(select("Datos en POST /orders").value).toBe("none");
+    expect(Array.from(select("Datos en orders").options).some((option) => option.value === "mixed")).toBe(false);
   });
 
   test("descartar vuelve a lo guardado, y un error al guardar se avisa", async () => {
@@ -391,14 +435,22 @@ describe("RolesPage", () => {
   });
 
   test("descartar reglas vuelve a lo guardado, y un error al guardarlas se avisa", async () => {
-    draw({ write: () => Promise.reject(new Error("reglas rotas")) });
-    const write = await screen.findByLabelText("vendedor cambiar datos de comprador");
-    fireEvent.click(write);
-    const card = screen.getByText("Reglas entre roles").parentElement as HTMLElement;
-    fireEvent.click(within(card).getByRole("button", { name: "Descartar" }));
-    expect(write.getAttribute("aria-pressed")).toBe("false");
+    draw({
+      rules: [{ sourceRoleId: "r2", targetRoleId: "r1", canRead: true, canWrite: false, canDelete: false }],
+      write: () => Promise.reject(new Error("reglas rotas")),
+    });
+    const write = () => screen.getByLabelText("vendedor cambiar datos de comprador");
+    // Las reglas guardadas ya están: lo que se toque después no lo pisa su llegada.
+    const read = await screen.findByLabelText("vendedor leer datos de comprador");
+    await waitFor(() => expect(read.getAttribute("aria-pressed")).toBe("true"));
+    fireEvent.click(write());
+    expect(write().getAttribute("aria-pressed")).toBe("true");
+    const actions = button("Guardar reglas").parentElement as HTMLElement;
+    fireEvent.click(within(actions).getByRole("button", { name: "Descartar" }));
+    expect(write().getAttribute("aria-pressed")).toBe("false");
+    expect(button("Guardar reglas").disabled).toBe(true);
 
-    fireEvent.click(write);
+    fireEvent.click(write());
     fireEvent.click(button("Guardar reglas"));
     expect(await screen.findByText("reglas rotas")).toBeTruthy();
   });
@@ -426,8 +478,24 @@ describe("RolesPage", () => {
         sections: { access: { data: { access: { roles: [] } }, configured: true, updatedAt: null } },
       },
     });
-    expect(await screen.findByText("Matriz del contrato: rechazos y casos entre roles")).toBeTruthy();
+    const heading = await screen.findByText("Matriz del contrato: rechazos y casos entre roles");
     await waitFor(() => expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/operations"));
+
+    // Guardarla vuelve a pedir la configuración, para que lo que se ve sea lo guardado.
+    const card = heading.closest("div.overflow-hidden") as HTMLElement;
+    if (!within(card).queryByRole("button", { name: "Guardar" })) fireEvent.click(heading);
+    const configFetches = () => call.mock.calls.filter(([path]) => path === "/orgs/o/projects/p1/config").length;
+    const before = configFetches();
+    fireEvent.click(within(card).getByRole("button", { name: "Ver como JSON" }));
+    fireEvent.change(card.querySelector("textarea")!, { target: { value: '{ "access": { "roles": [], "x": 1 } }' } });
+    fireEvent.click(within(card).getByRole("button", { name: "Guardar" }));
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/config/access", {
+        method: "PUT",
+        body: { access: { roles: [], x: 1 } },
+      }),
+    );
+    await waitFor(() => expect(configFetches()).toBeGreaterThan(before));
   });
 
   test("sin editor no se crea, edita ni guarda; sin admin no se borra", async () => {

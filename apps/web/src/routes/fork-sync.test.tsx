@@ -58,10 +58,14 @@ const diff = (direction: "pull" | "merge"): ForkDiffView => ({
   ],
 });
 
-function draw(direction: "pull" | "merge", post: (body: unknown) => Promise<unknown> = () => Promise.resolve(outcome)) {
+function draw(
+  direction: "pull" | "merge",
+  post: (body: unknown) => Promise<unknown> = () => Promise.resolve(outcome),
+  view: ForkDiffView = diff(direction),
+) {
   call.mockReset();
   call.mockImplementation((_path: string, options?: { method?: string; body?: unknown }) =>
-    options?.method === "POST" ? post(options.body) : Promise.resolve(diff(direction)),
+    options?.method === "POST" ? post(options.body) : Promise.resolve(view),
   );
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -197,5 +201,100 @@ describe("ForkSyncPage", () => {
     );
     expect(await screen.findByText("Nada que sincronizar")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Traer cambios" })).toBeNull();
+  });
+
+  test("si la comparación falla se dice por qué", async () => {
+    call.mockReset();
+    call.mockRejectedValue(new Error("No es una bifurcación"));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/p/f/fork/pull"]}>
+          <Routes>
+            <Route path="/p/:projectId/fork/:direction" element={<ForkSyncPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText("Comparando…")).toBeTruthy();
+    expect(await screen.findByText("No es una bifurcación")).toBeTruthy();
+  });
+
+  test("con varios conflictos los cuenta; mientras se aplica el botón lo dice", async () => {
+    const view = diff("pull");
+    const conflict = view.entries[0]!;
+    view.entries = [conflict, { ...conflict, key: "GET /users", label: "GET /users" }];
+    call.mockReset();
+    call.mockImplementation((_path: string, options?: { method?: string }) =>
+      options?.method === "POST" ? new Promise(() => {}) : Promise.resolve(view),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/p/f/fork/pull"]}>
+          <Routes>
+            <Route path="/p/:projectId/fork/:direction" element={<ForkSyncPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("Faltan 2 conflictos")).toBeTruthy();
+    for (const group of screen.getAllByRole("radiogroup"))
+      fireEvent.click(within(group).getByLabelText("Quedarse con Original"));
+    fireEvent.click(screen.getByRole("button", { name: "Traer cambios" }));
+    const busy = await screen.findByRole("button", { name: "Aplicando…" });
+    expect((busy as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("lo que solo se queda o ya es igual no escribe nada, y así lo dice el resultado", async () => {
+    const view = diff("pull");
+    view.entries = [
+      { ...view.entries[1]!, status: "kept", sourceChange: "none", targetChange: "modified", pairedByName: false },
+      {
+        ...view.entries[1]!,
+        key: "w2",
+        label: "Pagos",
+        status: "same",
+        sourceChange: "modified",
+        targetChange: "modified",
+        pairedByName: false,
+      },
+    ];
+    draw(
+      "pull",
+      () =>
+        Promise.resolve({
+          ...outcome,
+          applied: { endpoint: 0, template: 0, workflow: 0, environment: 0 },
+          skipped: [],
+        }),
+      view,
+    );
+    expect(await screen.findByText("Nada de esto escribe en Mi bifurcación.")).toBeTruthy();
+    expect(screen.getByText(/1 se quedan como están · 1 ya iguales/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Traer cambios" }));
+    expect(await screen.findByText(/nada que escribir\./)).toBeTruthy();
+  });
+
+  test("un elemento se abre y se cierra para ver sus campos", async () => {
+    draw("pull");
+    const flow = await screen.findByTestId("entry-workflow:w1");
+    const toggle = within(flow).getByRole("button", { name: "Pedidos" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(within(flow).queryByText("Pedidos v2")).toBeNull();
+    fireEvent.click(toggle);
+    expect(within(flow).getByText("Pedidos v2")).toBeTruthy();
+    fireEvent.click(toggle);
+    expect(within(flow).queryByText("Pedidos v2")).toBeNull();
+  });
+
+  test("cancelar la confirmación de fusión no escribe nada", async () => {
+    draw("merge");
+    fireEvent.click(await screen.findByLabelText("Quedarse con Mi bifurcación"));
+    fireEvent.click(screen.getByRole("button", { name: "Fusionar" }));
+    await screen.findByText("Fusionar en «Original»");
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByText("Fusionar en «Original»")).toBeNull());
+    expect(call).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ method: "POST" }));
   });
 });

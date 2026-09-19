@@ -8,7 +8,20 @@
  * script can read it would hand an XSS the thing the cookie was protecting.
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api, ApiError, getAccessToken, login, logout, refreshOnce, setAccessToken } from "./api";
+import {
+  absoluteApiUrl,
+  api,
+  ApiError,
+  getAccessToken,
+  login,
+  logout,
+  onAccessTokenChange,
+  openReport,
+  refreshOnce,
+  register,
+  setAccessToken,
+  streamRun,
+} from "./api";
 
 type Reply = { status: number; body?: unknown; headers?: Record<string, string> };
 
@@ -164,5 +177,197 @@ describe("errores", () => {
     respond("/api/auth/logout", { status: 500, body: { title: "Error interno", status: 500, detail: "", type: "" } });
     await expect(logout()).rejects.toBeTruthy();
     expect(getAccessToken()).toBeNull();
+  });
+});
+
+describe("bordes de la petición", () => {
+  test("un formulario viaja tal cual, sin Content-Type a mano", async () => {
+    respond("/api/uploads", { status: 200, body: { ok: true } });
+    const form = new FormData();
+    form.append("file", "contenido");
+    await api("/uploads", { method: "POST", body: form });
+    const { init } = calls.at(-1)!;
+    // The browser writes the multipart boundary itself; a hand-set header would lose it.
+    expect(init.body).toBe(form);
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBeUndefined();
+  });
+
+  test("un JSON viaja serializado, con su señal y sus cabeceras extra", async () => {
+    respond("/api/docs", { status: 200, body: { ok: true } });
+    const controller = new AbortController();
+    await api("/docs", { method: "PUT", body: { a: 1 }, signal: controller.signal, headers: { "x-api-key": "k" } });
+    const { init } = calls.at(-1)!;
+    expect(init.body).toBe('{"a":1}');
+    expect(init.signal).toBe(controller.signal);
+    expect(init.headers).toMatchObject({ "Content-Type": "application/json", "x-api-key": "k" });
+  });
+
+  test("un 200 sin cuerpo resuelve a null", async () => {
+    respond("/api/empty", { status: 200 });
+    await expect(api("/empty")).resolves.toBeNull();
+  });
+
+  test("un error sin cuerpo usa el texto del estado", async () => {
+    vi.stubGlobal("fetch", async () => new Response("", { status: 503, statusText: "Service Unavailable" }));
+    const error = await api("/x").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).message).toBe("Service Unavailable");
+    expect((error as ApiError).fields).toEqual([]);
+  });
+
+  test("el mensaje del error cae al título y luego al estado HTTP", () => {
+    expect(new ApiError(400, { type: "", title: "Petición mala", status: 400, detail: "" }).message).toBe(
+      "Petición mala",
+    );
+    expect(new ApiError(418, { type: "", title: "", status: 418, detail: "" }).message).toBe("HTTP 418");
+  });
+
+  test("una renovación cuya red falla deja la sesión anónima", async () => {
+    setAccessToken("caducado");
+    vi.stubGlobal("fetch", async () => {
+      throw new TypeError("sin red");
+    });
+    await expect(refreshOnce()).resolves.toBe(false);
+    expect(getAccessToken()).toBeNull();
+  });
+
+  test("absoluteApiUrl compone la dirección sobre el origen de la pestaña", () => {
+    expect(absoluteApiUrl("/mocks/m1")).toBe(`${window.location.origin}/api/mocks/m1`);
+  });
+});
+
+describe("oyentes del token", () => {
+  test("se avisa a cada oyente hasta que se da de baja", () => {
+    const seen: (string | null)[] = [];
+    const off = onAccessTokenChange((token) => seen.push(token));
+    setAccessToken("t1");
+    setAccessToken(null);
+    off();
+    setAccessToken("t2");
+    expect(seen).toEqual(["t1", null]);
+  });
+});
+
+describe("registro y cierre", () => {
+  test("registrarse inicia la sesión con las mismas credenciales", async () => {
+    respond("/api/auth/register", { status: 201, body: { id: "u1" } });
+    respond("/api/auth/login", { status: 200, body: { userId: "u1", accessToken: "token-r", expiresIn: 900 } });
+    await register({ email: "ada@example.com", password: "una-contraseña-larga", name: "Ada" });
+    expect(calls.map((call) => call.url)).toEqual(["/api/auth/register", "/api/auth/login"]);
+    expect(JSON.parse(calls[1]!.init.body as string)).toEqual({
+      email: "ada@example.com",
+      password: "una-contraseña-larga",
+    });
+    expect(getAccessToken()).toBe("token-r");
+  });
+
+  test("un logout que sale bien también limpia el token", async () => {
+    setAccessToken("token-a");
+    respond("/api/auth/logout", { status: 204 });
+    await logout();
+    expect(getAccessToken()).toBeNull();
+  });
+});
+
+describe("openReport", () => {
+  test("abre el informe como blob en otra pestaña, con la sesión en la cabecera", async () => {
+    vi.useFakeTimers();
+    setAccessToken("token-a");
+    const fetchMock = vi.fn(async () => new Response("<html></html>", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    // jsdom does not implement blob URLs, so the two statics are stood in for the test.
+    const create = vi.fn(() => "blob:informe");
+    const revoke = vi.fn();
+    Object.assign(URL, { createObjectURL: create, revokeObjectURL: revoke });
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    try {
+      await openReport("/runs/r1/report.html");
+      expect(fetchMock).toHaveBeenCalledWith("/api/runs/r1/report.html", {
+        headers: { Authorization: "Bearer token-a" },
+        credentials: "include",
+      });
+      expect(create).toHaveBeenCalledOnce();
+      expect(open).toHaveBeenCalledWith("blob:informe", "_blank", "noopener");
+      expect(revoke).not.toHaveBeenCalled();
+      // Revoked later, not at once: the new tab still has to read the blob.
+      vi.advanceTimersByTime(60_000);
+      expect(revoke).toHaveBeenCalledWith("blob:informe");
+    } finally {
+      Reflect.deleteProperty(URL, "createObjectURL");
+      Reflect.deleteProperty(URL, "revokeObjectURL");
+      open.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  test("sin sesión no manda Authorization, y un fallo se nota", async () => {
+    const fetchMock = vi.fn(async () => new Response("", { status: 403 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(openReport("/runs/r1/report.html")).rejects.toThrow("No se pudo abrir el informe");
+    expect(fetchMock).toHaveBeenCalledWith("/api/runs/r1/report.html", { headers: {}, credentials: "include" });
+  });
+});
+
+describe("streamRun", () => {
+  function streamOf(chunks: string[]): ReadableStream<Uint8Array> {
+    const encoder = new TextEncoder();
+    return new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+        controller.close();
+      },
+    });
+  }
+
+  test("parsea SSE aunque un evento llegue partido, y salta lo que no es JSON", async () => {
+    setAccessToken("token-a");
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          streamOf([
+            'event: step\ndata: {"a":',
+            "1}\n\n",
+            "data: 2\n\n: ping\n\ndata: {roto\n\n",
+            "event: fin\ndata: {}\n\ncola sin terminar",
+          ]),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const events: { type: string; data: unknown }[] = [];
+    const controller = new AbortController();
+    await streamRun("/runs/r1/stream", { onEvent: (event) => events.push(event), signal: controller.signal });
+
+    expect(events).toEqual([
+      { type: "step", data: { a: 1 } },
+      { type: "message", data: 2 },
+      { type: "fin", data: {} },
+    ]);
+    expect(fetchMock).toHaveBeenCalledWith("/api/runs/r1/stream", {
+      headers: { Accept: "text/event-stream", Authorization: "Bearer token-a" },
+      credentials: "include",
+      signal: controller.signal,
+    });
+  });
+
+  test("un stream que no abre es un ApiError", async () => {
+    vi.stubGlobal("fetch", async () => new Response("", { status: 403 }));
+    const signal = new AbortController().signal;
+    await expect(streamRun("/runs/r1/stream", { onEvent: () => {}, signal })).rejects.toMatchObject({
+      status: 403,
+      message: "No se pudo abrir el stream",
+    });
+  });
+
+  test("una respuesta sin cuerpo tampoco abre el stream", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const signal = new AbortController().signal;
+    await expect(streamRun("/s", { onEvent: () => {}, signal })).rejects.toBeInstanceOf(ApiError);
+    expect(fetchMock).toHaveBeenCalledWith("/api/s", {
+      headers: { Accept: "text/event-stream" },
+      credentials: "include",
+      signal,
+    });
   });
 });

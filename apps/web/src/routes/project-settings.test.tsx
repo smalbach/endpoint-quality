@@ -42,7 +42,13 @@ const project = (over: Partial<ProjectSummary> = {}): ProjectSummary => ({
   tags: ["prod"],
   auth: { ...EMPTY_AUTH, type: "bearer", token: MASK },
   lastRun: null,
-  contract: { versionId: "v", title: "Tienda API", version: "2.0", operationCount: 3, importedAt: "2026-01-01T00:00:00.000Z" },
+  contract: {
+    versionId: "v",
+    title: "Tienda API",
+    version: "2.0",
+    operationCount: 3,
+    importedAt: "2026-01-01T00:00:00.000Z",
+  },
   source: null,
   fork: null,
   ...over,
@@ -204,5 +210,42 @@ describe("ProjectGeneralPage", () => {
     draw("viewer", project());
     expect(((await screen.findByDisplayValue("Tienda")) as HTMLInputElement).disabled).toBe(true);
     expect(screen.queryByRole("button", { name: "Guardar settings" })).toBeNull();
+  });
+
+  test("cambiar la descripción cuenta como cambio; mientras guarda, el botón lo dice", async () => {
+    draw("admin", project(), () => new Promise(() => {}));
+    await screen.findByDisplayValue("Tienda");
+    fireEvent.change(screen.getByDisplayValue("API de la tienda"), { target: { value: "La API de pedidos" } });
+    expect(saveButton().disabled).toBe(false);
+    fireEvent.click(saveButton());
+    const busy = (await screen.findByRole("button", { name: "Guardando…" })) as HTMLButtonElement;
+    expect(busy.disabled).toBe(true);
+    expect(call).toHaveBeenCalledWith(
+      "/orgs/o/projects/p1",
+      expect.objectContaining({ body: expect.objectContaining({ description: "La API de pedidos" }) }),
+    );
+  });
+
+  test("cancelar la confirmación de archivar no archiva", async () => {
+    draw("admin", project());
+    fireEvent.click(await screen.findByRole("button", { name: "Archivar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByText(/dejará de aparecer/)).toBeNull());
+    expect(call).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ method: "PATCH" }));
+  });
+
+  test("restaurar un archivado lo dice al terminar", async () => {
+    draw("admin", project({ archivedAt: "2026-02-01T00:00:00.000Z" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Restaurar" }));
+    expect(await screen.findByText("Proyecto restaurado")).toBeTruthy();
+  });
+
+  test("mientras se elimina, el botón lo dice y no se puede repetir", async () => {
+    draw("admin", project(), () => new Promise(() => {}));
+    fireEvent.click(await screen.findByRole("button", { name: "Eliminar" }));
+    fireEvent.change(screen.getByLabelText(/Escribe «Tienda» para confirmar/), { target: { value: "Tienda" } });
+    fireEvent.click(screen.getByRole("button", { name: "Eliminar para siempre" }));
+    const busy = (await screen.findByRole("button", { name: "Eliminando…" })) as HTMLButtonElement;
+    expect(busy.disabled).toBe(true);
   });
 });

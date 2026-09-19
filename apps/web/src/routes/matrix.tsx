@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { resolveActive, useActiveEnvironment } from "@/lib/active-environment";
 import { useNavigate, useParams } from "react-router-dom";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { AssertionRow, Badge, Button, Card, Empty, Json } from "@/components/ui";
@@ -57,6 +57,9 @@ export function MatrixPage() {
     queryFn: () =>
       api<ScenariosView>(`${base}/scenarios?order=${order}${environmentId ? `&environmentId=${environmentId}` : ""}`),
     retry: false,
+    // Changing the environment or the order asks again; the matrix on screen stays until the new
+    // one arrives instead of the whole page dropping back to «Cargando la matriz…».
+    placeholderData: keepPreviousData,
   });
 
   /**

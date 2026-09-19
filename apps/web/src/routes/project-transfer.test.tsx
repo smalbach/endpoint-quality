@@ -123,7 +123,9 @@ describe("ProjectTransferPage", () => {
     fireEvent.click(screen.getByLabelText(/Planes de rendimiento/));
     fireEvent.click(screen.getAllByRole("button", { name: "Descargar .json" })[0]!);
     await waitFor(() =>
-      expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/export?parts=settings,config,endpoints,roles,flows,environments"),
+      expect(call).toHaveBeenCalledWith(
+        "/orgs/o/projects/p1/export?parts=settings,config,endpoints,roles,flows,environments",
+      ),
     );
     await waitFor(() => expect(download).toHaveBeenCalled());
     expect(download.mock.calls[0]![0]).toMatch(/^mi-api-\d{4}-\d{2}-\d{2}\.eq\.json$/);
@@ -189,9 +191,7 @@ describe("ProjectTransferPage", () => {
 
     // Sin él, las peticiones se comprueban contra el contrato de aquí.
     fireEvent.click(screen.getAllByLabelText(/^Contrato/)[1]!);
-    expect(
-      await screen.findByText(/El contrato de este proyecto no tiene la operación de 1 petición/),
-    ).toBeTruthy();
+    expect(await screen.findByText(/El contrato de este proyecto no tiene la operación de 1 petición/)).toBeTruthy();
     expect(screen.getByText("Crear pedido (createOrder)")).toBeTruthy();
     expect(screen.getByText(/Marca «Contrato» para traer el del fichero/)).toBeTruthy();
 
@@ -237,5 +237,62 @@ describe("ProjectTransferPage", () => {
     draw(() => Promise.resolve({}), true);
     expect(await screen.findByText(/El proyecto está archivado/)).toBeTruthy();
     expect(document.querySelector('input[type="file"]')).toBeNull();
+  });
+
+  test("mientras se prepara cada exportación su botón lo dice", async () => {
+    draw(() => new Promise(() => {}));
+    const [own, postman] = screen.getAllByRole("button", { name: "Descargar .json" });
+    fireEvent.click(own!);
+    fireEvent.click(postman!);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Preparando…" })).toHaveLength(2));
+  });
+
+  test("cerrar el selector sin elegir fichero no cambia nada", async () => {
+    draw(() => Promise.resolve({}));
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [] } });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(screen.queryByRole("button", { name: "Importar" })).toBeNull();
+    expect(screen.queryByText(/El fichero no/)).toBeNull();
+  });
+
+  test("un fichero sin nombre ni fecha se presenta como tal, y muchas peticiones sin operación se resumen", async () => {
+    const requestTemplates = Array.from({ length: 6 }, (_, index) => ({
+      name: `P${index}`,
+      operationId: `op${index}`,
+    }));
+    draw((path, options) => {
+      if (path.endsWith("/operations")) return Promise.resolve({ operations: [{ id: "otra" }] });
+      if (options?.method === "POST") return new Promise(() => {});
+      return Promise.resolve({});
+    });
+    pick(
+      JSON.stringify(
+        bundle({ project: {}, exportedAt: undefined, flows: { workflows: [{ id: "w" }], requestTemplates } }),
+      ),
+    );
+    expect(await screen.findByText("Fichero de proyecto.")).toBeTruthy();
+    expect(await screen.findByText(/El contrato de este proyecto no tiene la operación de 6 peticiones/)).toBeTruthy();
+    // Se nombran cinco y el resto se indica.
+    expect(screen.getByText(/P4 \(op4\)…/)).toBeTruthy();
+    expect(screen.queryByText(/P5/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Importar" }));
+    const busy = (await screen.findByRole("button", { name: "Importando…" })) as HTMLButtonElement;
+    expect(busy.disabled).toBe(true);
+  });
+
+  test("si las operaciones no se pueden consultar por otro motivo, no se inventa un aviso", async () => {
+    draw((path) =>
+      path.endsWith("/operations")
+        ? Promise.reject(new ApiError(500, { type: "", title: "", status: 500, detail: "Caído" }))
+        : Promise.resolve({}),
+    );
+    pick(JSON.stringify(bundle()));
+    expect(await screen.findByText(/Exportado de «Origen»/)).toBeTruthy();
+    await waitFor(() => expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/operations"));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(screen.queryByText(/no se podrán ejecutar/)).toBeNull();
+    expect((screen.getByRole("button", { name: "Importar" }) as HTMLButtonElement).disabled).toBe(false);
   });
 });

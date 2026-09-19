@@ -37,3 +37,61 @@ describe("las reglas de contraseña del formulario", () => {
     expect(passwordIsStrong("ÁrbolÑandúes12")).toBe(false);
   });
 });
+
+describe("cada tipo, entero", () => {
+  test("sin vista de la API, el borrador vacío; con ella, se respeta el método que trae", () => {
+    expect(authDraft(undefined)).toBe(EMPTY_AUTH);
+    const draft = authDraft({ ...EMPTY_AUTH, type: "bearer", loginMethod: "PUT", headerName: "X-Clave" });
+    expect(draft.loginMethod).toBe("PUT");
+    expect(draft.headerName).toBe("X-Clave");
+    expect(authDraft({ ...EMPTY_AUTH, loginMethod: "" }).loginMethod).toBe("POST");
+  });
+
+  test("ninguna manda solo el tipo; bearer manda su login recortado", () => {
+    expect(authPayload({ ...EMPTY_AUTH, token: "t" })).toEqual({ type: "none" });
+    expect(
+      authPayload({
+        ...EMPTY_AUTH,
+        type: "bearer",
+        token: MASK,
+        loginUrl: " /login ",
+        loginMethod: "POST",
+        loginBody: '{"u":"a"}',
+        tokenPath: " data.token ",
+        password: "no-viaja",
+      }),
+    ).toEqual({
+      type: "bearer",
+      token: MASK,
+      loginUrl: "/login",
+      loginMethod: "POST",
+      loginBody: '{"u":"a"}',
+      tokenPath: "data.token",
+    });
+  });
+
+  test("bearer: la URL de login es http(s) o una ruta, y el cuerpo un objeto JSON", () => {
+    expect(authProblems({ ...EMPTY_AUTH, type: "bearer", token: "t", loginUrl: "ftp://x" })).toEqual({
+      "auth.loginUrl": "Una URL http(s) o una ruta que empiece por /",
+    });
+    expect(authProblems({ ...EMPTY_AUTH, type: "bearer", loginUrl: "https://api/login", loginBody: "{" })).toEqual({
+      "auth.loginBody": "No es JSON válido",
+    });
+    expect(authProblems({ ...EMPTY_AUTH, type: "bearer", loginUrl: "HTTP://api/login", loginBody: '{"u":1}' })).toEqual(
+      {},
+    );
+    // The mask is «unchanged» to the API: it is not JSON and must not be judged as such.
+    expect(authProblems({ ...EMPTY_AUTH, type: "bearer", loginUrl: "/login", loginBody: MASK })).toEqual({});
+  });
+
+  test("basic completo no tiene problemas", () => {
+    expect(authProblems({ ...EMPTY_AUTH, type: "basic", username: "ana", password: "x" })).toEqual({});
+  });
+
+  test("api key: un nombre de cabecera válido y una clave", () => {
+    expect(authProblems({ ...EMPTY_AUTH, type: "api_key", headerName: "X Clave", apiKey: "" })).toEqual({
+      "auth.headerName": "No es un nombre de cabecera válido",
+      "auth.apiKey": "Falta la clave",
+    });
+  });
+});

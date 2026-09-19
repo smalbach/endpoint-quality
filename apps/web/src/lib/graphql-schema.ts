@@ -25,11 +25,9 @@ import {
   getNamedType,
   isEnumType,
   isInputObjectType,
-  isInterfaceType,
   isLeafType,
   isListType,
   isNonNullType,
-  isObjectType,
   isUnionType,
   parse,
   validate,
@@ -102,12 +100,10 @@ export function schemaFromText(text: string): SchemaRead {
   return trimmed.startsWith("{") ? schemaFromIntrospection(trimmed) : schemaFromSdl(trimmed);
 }
 
+/** Lo que `graphql-js` lanza es siempre un `Error`; con línea cuando es un `GraphQLError` con sitio. */
 function messageOf(error: unknown): string {
-  if (error instanceof GraphQLError) {
-    const at = error.locations?.[0];
-    return at ? `${error.message} (línea ${at.line}, columna ${at.column})` : error.message;
-  }
-  return error instanceof Error ? error.message : String(error);
+  const { line, column } = problemOf(error);
+  return line === null ? (error as Error).message : `${(error as Error).message} (línea ${line}, columna ${column})`;
 }
 
 export type QueryProblem = { message: string; line: number | null; column: number | null };
@@ -134,13 +130,20 @@ export function queryProblems(schema: GraphQLSchema | null, query: string): Quer
     return [problemOf(error)];
   }
   if (!schema || templated) return [];
-  return validate(schema, document).map(problemOf);
+  try {
+    return validate(schema, document).map(problemOf);
+  } catch (error) {
+    // `buildSchema` no valida el esquema entero (una interfaz mal implementada pasa), y `validate`
+    // lanza entonces en vez de devolver: se dice qué le pasa al esquema en lugar de tumbar el editor.
+    return [problemOf(error)];
+  }
 }
 
+/** Lo que lanza o devuelve `graphql-js`, que siempre es un `Error`. */
 function problemOf(error: unknown): QueryProblem {
   const at = error instanceof GraphQLError ? error.locations?.[0] : undefined;
   return {
-    message: error instanceof Error ? error.message : String(error),
+    message: (error as Error).message,
     line: at?.line ?? null,
     column: at?.column ?? null,
   };
@@ -227,7 +230,7 @@ function selectionOf(type: GraphQLOutputType, depth: number, indent: string): st
   const named = getNamedType(type);
   if (isLeafType(named)) return "";
   if (isUnionType(named)) return ` {\n${indent}  __typename\n${indent}}`;
-  if (!isObjectType(named) && !isInterfaceType(named)) return "";
+  // Lo que queda de un tipo de salida es un objeto o una interfaz.
   const lines: string[] = [];
   for (const field of Object.values(named.getFields()) as GraphQLField<unknown, unknown>[]) {
     // Un campo con argumentos obligatorios no se puede pedir sin inventar sus valores.

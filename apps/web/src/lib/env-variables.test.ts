@@ -4,6 +4,8 @@ import {
   declaredRoles,
   MASKED_VALUE,
   bulkFrom,
+  emptyRow,
+  isBlank,
   mapsFrom,
   parseBulk,
   problemsWith,
@@ -179,5 +181,38 @@ describe("los roles que puede tener una credencial", () => {
       "alternate",
       "vendedor",
     ]);
+  });
+});
+
+describe("filas en blanco y texto en bruto", () => {
+  test("la fila fantasma nace vacía y cuenta como en blanco hasta que se escribe algo", () => {
+    const ghost = emptyRow();
+    expect(ghost).toEqual({ name: "", initial: "", current: "", sensitive: false, enabled: true });
+    expect(isBlank(ghost)).toBe(true);
+    expect(isBlank({ ...ghost, name: "  " })).toBe(true);
+    expect(isBlank({ ...ghost, current: "x" })).toBe(false);
+    expect(isBlank({ ...ghost, initial: "x" })).toBe(false);
+  });
+
+  test("una fila sin nombre no es un problema: todavía se está escribiendo", () => {
+    expect(problemsWith([emptyRow(), { ...emptyRow(), name: "  ", current: "x" }])).toEqual([]);
+  });
+
+  test("un texto vacío son cero variables, y las líneas en blanco se saltan", () => {
+    expect(parseBulk("   ")).toEqual({ ok: true, rows: [] });
+    const parsed = parseBulk("a:1\n\n   \nb=2");
+    expect(parsed.ok && parsed.rows.map((row) => [row.name, row.current])).toEqual([
+      ["a", "1"],
+      ["b", "2"],
+    ]);
+  });
+
+  test("una línea sin separador, o que empieza por él, dice cuál es", () => {
+    expect(parseBulk("a:1\nsolo-nombre")).toEqual({ ok: false, error: "Línea 2: falta «nombre:valor»" });
+    expect(parseBulk(":valor")).toEqual({ ok: false, error: "Línea 1: falta «nombre:valor»" });
+  });
+
+  test("en JSON, un nombre que no es de variable se rechaza por su nombre", () => {
+    expect(parseBulk('{"1malo": "x"}')).toEqual({ ok: false, error: "«1malo» no es un nombre de variable válido" });
   });
 });

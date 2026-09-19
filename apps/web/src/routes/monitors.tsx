@@ -155,7 +155,7 @@ export function MonitorsPage() {
   });
 
   const monitors = list.data?.monitors ?? [];
-  const noEnvironments = environments.isSuccess && (environments.data?.length ?? 0) === 0;
+  const noEnvironments = environments.isSuccess && environments.data.length === 0;
 
   return (
     <div className="max-w-3xl space-y-4">

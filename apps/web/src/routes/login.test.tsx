@@ -146,6 +146,16 @@ describe("ForgotPasswordPage", () => {
       retryOnUnauthorized: false,
     });
   });
+
+  test("cuando la petición sale bien dice exactamente lo mismo", async () => {
+    reset();
+    call.mockResolvedValue(undefined);
+    draw(<ForgotPasswordPage />, "/forgot-password");
+    type(/Correo/, "ada@example.com");
+    fireEvent.click(screen.getByRole("button", { name: "Enviar el enlace" }));
+    expect(await screen.findByText(/Si hay una cuenta con ese correo/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Volver a entrar" }).getAttribute("href")).toBe("/login");
+  });
 });
 
 describe("ResetPasswordPage", () => {

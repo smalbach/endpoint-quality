@@ -74,8 +74,7 @@ import { AssertionRow, Button, Field, inputClass } from "@/components/ui";
 /** Lo que se ofrece para firmar un socket: lo que no necesita pedir un reto al servidor antes. */
 const SOCKET_AUTH_TYPES = ["none", "bearer", "basic", "apikey"] as const;
 
-const message = (error: unknown) =>
-  error instanceof ApiError || error instanceof Error ? error.message : String(error);
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 export function ChannelsPage() {
   const { projectId } = useParams();
@@ -407,11 +406,10 @@ function Conversation({
   const [emit, setEmit] = useState<SocketIoEmitDraft>(BLANK_EMIT);
   const bottom = useRef<HTMLDivElement>(null);
 
-  const setSessionId = (id: string | null) =>
+  const setSessionId = (id: string) =>
     setParams((current) => {
       const next = new URLSearchParams(current);
-      if (id) next.set("s", id);
-      else next.delete("s");
+      next.set("s", id);
       return next;
     });
 
@@ -452,7 +450,8 @@ function Conversation({
         });
       })
       .catch((error: unknown) => {
-        if (!cancelled && !controller.signal.aborted) toast.error(message(error));
+        // `cancelled` va con el `abort`: lo que falla por haberse ido de la sesión no se dice.
+        if (!cancelled) toast.error(message(error));
       });
     return () => {
       cancelled = true;

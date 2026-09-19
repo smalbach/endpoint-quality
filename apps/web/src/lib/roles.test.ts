@@ -49,4 +49,10 @@ describe("salir o sacar a alguien", () => {
     expect(canRemove("owner", { role: "owner", isSelf: true }, 1)).toMatch(/único owner/);
     expect(canRemove("owner", { role: "owner", isSelf: true }, 2)).toBe(null);
   });
+
+  test("un admin saca a quien está por debajo, y solo un owner saca a otro owner", () => {
+    expect(canRemove("admin", { role: "editor", isSelf: false }, 1)).toBe(null);
+    expect(canRemove("admin", { role: "owner", isSelf: false }, 2)).toBe("Solo un owner puede sacar a otro owner");
+    expect(canRemove("owner", { role: "owner", isSelf: false }, 2)).toBe(null);
+  });
 });

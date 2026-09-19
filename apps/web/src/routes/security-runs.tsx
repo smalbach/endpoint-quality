@@ -532,7 +532,7 @@ function FindingCard({
             <p className="flex flex-wrap gap-2">
               {finding.references.map((reference) => (
                 <a key={reference} href={reference} target="_blank" rel="noreferrer" className="text-sky-700 underline">
-                  {new URL(reference).hostname}
+                  {referenceLabel(reference)}
                 </a>
               ))}
             </p>
@@ -541,6 +541,15 @@ function FindingCard({
       )}
     </li>
   );
+}
+
+/** A reference is named by its host; one that is not an absolute URL is shown as written. */
+function referenceLabel(reference: string): string {
+  try {
+    return new URL(reference).hostname;
+  } catch {
+    return reference;
+  }
 }
 
 function ProbeRow({ probe, endpointLabel }: { probe: SecurityProbe; endpointLabel: (id: string | null) => string }) {

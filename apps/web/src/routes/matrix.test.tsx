@@ -134,17 +134,22 @@ const coverage = (gaps: boolean): CoverageView => ({
 type Handlers = {
   environments?: Environment[];
   scenarios?: () => Promise<unknown>;
-  coverage?: CoverageView;
+  /** `null`: the coverage cannot be computed. */
+  coverage?: CoverageView | null;
   run?: () => Promise<unknown>;
 };
 
 function draw(handlers: Handlers = {}) {
   call.mockImplementation((path: string, options?: { method?: string }) => {
-    if (options?.method === "POST" && path.endsWith("/runs")) return (handlers.run ?? (() => Promise.resolve({ runId: "r9" })))();
+    if (options?.method === "POST" && path.endsWith("/runs"))
+      return (handlers.run ?? (() => Promise.resolve({ runId: "r9" })))();
     if (options?.method === "POST") return Promise.resolve(undefined);
     if (path.endsWith("/environments")) return Promise.resolve(handlers.environments ?? []);
     if (path.includes("/scenarios")) return (handlers.scenarios ?? (() => Promise.resolve(scenarios())))();
-    if (path.endsWith("/coverage")) return Promise.resolve(handlers.coverage ?? coverage(true));
+    if (path.endsWith("/coverage"))
+      return handlers.coverage === null
+        ? Promise.reject(new Error("sin cobertura"))
+        : Promise.resolve(handlers.coverage ?? coverage(true));
     return Promise.reject(new Error(`inesperado ${path}`));
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -185,7 +190,9 @@ describe("MatrixPage", () => {
   test("sin contrato explica qué falta y lleva a configuración", async () => {
     draw({
       scenarios: () =>
-        Promise.reject(new ApiError(404, { type: "about:blank", title: "Not Found", status: 404, detail: "sin contrato" })),
+        Promise.reject(
+          new ApiError(404, { type: "about:blank", title: "Not Found", status: 404, detail: "sin contrato" }),
+        ),
     });
     expect(await screen.findByText("Este proyecto todavía no tiene contrato")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Ir a configuración" }));
@@ -251,7 +258,9 @@ describe("MatrixPage", () => {
   });
 
   test("elegir un entorno lo activa y el orden cambia la consulta", async () => {
-    draw({ environments: [environment({ id: "e1", name: "staging" }), environment({ id: "e2", name: "prod", active: true })] });
+    draw({
+      environments: [environment({ id: "e1", name: "staging" }), environment({ id: "e2", name: "prod", active: true })],
+    });
     await screen.findByText("Lista los pedidos");
     await waitFor(() => expect((screen.getByLabelText("Entorno") as HTMLSelectElement).value).toBe("e2"));
     fireEvent.change(screen.getByLabelText("Entorno"), { target: { value: "e1" } });
@@ -321,7 +330,10 @@ describe("MatrixPage", () => {
   });
 
   test("si la corrida no arranca se enseña el error", async () => {
-    draw({ environments: [environment({ id: "e1", active: true })], run: () => Promise.reject(new Error("ya hay una corrida")) });
+    draw({
+      environments: [environment({ id: "e1", active: true })],
+      run: () => Promise.reject(new Error("ya hay una corrida")),
+    });
     await screen.findByText("Lista los pedidos");
     await waitFor(() => expect(runButton().disabled).toBe(false));
     fireEvent.click(runButton());
@@ -337,5 +349,34 @@ describe("MatrixPage", () => {
     fireEvent.change(screen.getByLabelText(/^Entorno/), { target: { value: "" } });
     await waitFor(() => expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/scenarios?order=safe"));
     expect(call).not.toHaveBeenCalledWith(expect.stringContaining("/activate"), expect.anything());
+  });
+
+  test("cambiar el orden deja la matriz anterior a la vista mientras llega la nueva", async () => {
+    let pending = false;
+    draw({ scenarios: () => (pending ? new Promise(() => {}) : Promise.resolve(scenarios())) });
+    await screen.findByText("Lista los pedidos");
+    pending = true;
+    fireEvent.change(screen.getByLabelText("Orden"), { target: { value: "contract" } });
+    await waitFor(() => expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/scenarios?order=contract"));
+    expect(screen.queryByText("Cargando la matriz…")).toBeNull();
+    expect(screen.getByText("Lista los pedidos")).toBeTruthy();
+    expect((screen.getByLabelText("Orden") as HTMLSelectElement).value).toBe("contract");
+  });
+
+  test("sin cobertura calculada no la afirma, y una operación sin etiquetas propias no pasa ese filtro", async () => {
+    const [orders, users, health] = operations;
+    const { labels: _labels, ...unlabelled } = users;
+    draw({
+      coverage: null,
+      scenarios: () =>
+        Promise.resolve({ ...scenarios(), operations: [orders, unlabelled as OperationScenarios, health] }),
+    });
+    await screen.findByText("Lista los pedidos");
+    await waitFor(() => expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/coverage"));
+    expect(screen.queryByText(/respuestas del contrato con/)).toBeNull();
+    expect(screen.getByLabelText("Seleccionar createUser")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Etiqueta propia"), { target: { value: "crítico" } });
+    expect(screen.queryByLabelText("Seleccionar createUser")).toBeNull();
+    expect(screen.getByLabelText("Seleccionar listOrders")).toBeTruthy();
   });
 });

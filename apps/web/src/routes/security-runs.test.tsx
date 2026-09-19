@@ -14,12 +14,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
 import { SecurityRunDetailPage, SecurityRunsPage } from "@/routes/security-runs";
 import { ToastProvider } from "@/components/toast";
-import type {
-  SecurityFinding,
-  SecurityProbe,
-  SecurityRunDetailView,
-  SecurityRunSummaryView,
-} from "@/lib/types";
+import type { SecurityFinding, SecurityProbe, SecurityRunDetailView, SecurityRunSummaryView } from "@/lib/types";
 
 type StreamHandlers = { onEvent: (event: { type: string; data: unknown }) => void; signal: AbortSignal };
 
@@ -358,10 +353,7 @@ describe("el detalle de una corrida", () => {
     answersDetail(
       detail({
         probes: {
-          data: [
-            probe(),
-            probe({ id: "pr2", status: 0, bodyText: "", error: "ECONNRESET", path: "/boom" }),
-          ],
+          data: [probe(), probe({ id: "pr2", status: 0, bodyText: "", error: "ECONNRESET", path: "/boom" })],
           page: 1,
           pageSize: 50,
           total: 2,
@@ -409,7 +401,10 @@ describe("el detalle de una corrida", () => {
 
   test("la paginación de peticiones pide la página siguiente y la anterior", async () => {
     answersDetail(() => {
-      const last = calls().filter(([path]) => path.includes("/security-runs/r1?")).at(-1)?.[0] ?? "";
+      const last =
+        calls()
+          .filter(([path]) => path.includes("/security-runs/r1?"))
+          .at(-1)?.[0] ?? "";
       const page = Number(new URLSearchParams(last.split("?")[1]).get("page"));
       return detail({ probes: { data: [probe()], page, pageSize: 50, total: 120 } });
     });
@@ -543,7 +538,7 @@ describe("el detalle de una corrida", () => {
               }
             : null,
         }),
-      (path, options) => {
+      (path) => {
         if (!path.endsWith("/ai")) return undefined;
         analysed = true;
         return Promise.resolve(undefined);
@@ -559,16 +554,16 @@ describe("el detalle de una corrida", () => {
   });
 
   test("si el análisis falla, se avisa con el error del servidor", async () => {
-    answersDetail(detail(), (path) => (path.endsWith("/ai") ? Promise.reject(new Error("Sin clave de IA")) : undefined));
+    answersDetail(detail(), (path) =>
+      path.endsWith("/ai") ? Promise.reject(new Error("Sin clave de IA")) : undefined,
+    );
     draw("/p/p1/security/r1");
     fireEvent.click(await screen.findByRole("button", { name: "Analizar con IA" }));
     await screen.findByText("Sin clave de IA");
   });
 
   test("eliminar pide confirmación; confirmado, borra y vuelve a la lista", async () => {
-    answersDetail(detail(), (path, options) =>
-      options?.method === "DELETE" ? Promise.resolve(undefined) : undefined,
-    );
+    answersDetail(detail(), (path, options) => (options?.method === "DELETE" ? Promise.resolve(undefined) : undefined));
     draw("/p/p1/security/r1");
     fireEvent.click(await screen.findByRole("button", { name: "Eliminar" }));
     const dialog = await screen.findByText("La corrida y sus hallazgos se eliminan. No se puede deshacer.");
@@ -601,5 +596,48 @@ describe("el detalle de una corrida", () => {
     answersDetail(detail({ status: "error", error: "El entorno no respondió" }));
     draw("/p/p1/security/r1");
     await screen.findByText("El entorno no respondió");
+  });
+});
+
+describe("casos de borde de las corridas de seguridad", () => {
+  test("fuera de un proyecto la lista no pinta nada", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { container } = render(
+      <QueryClientProvider client={client}>
+        <ToastProvider>
+          <MemoryRouter initialEntries={["/security"]}>
+            <Routes>
+              <Route path="/security" element={<SecurityRunsPage />} />
+            </Routes>
+          </MemoryRouter>
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+    expect(container.textContent).toBe("");
+    expect(mocks.api).not.toHaveBeenCalled();
+  });
+
+  test("si la lista no se puede pedir, se queda en el vacío en vez de romperse", async () => {
+    mocks.api.mockRejectedValue(new Error("500"));
+    draw("/p/p1/security");
+    await waitFor(() => expect(screen.getByText("Ninguna corrida de seguridad todavía")).toBeTruthy());
+  });
+
+  test("una referencia que no es una URL absoluta se enseña tal cual y no rompe el detalle", async () => {
+    answersDetail(detail({ findings: [finding({ references: ["/docs/api1", "https://owasp.org/API1"] })] }));
+    draw("/p/p1/security/r1");
+    fireEvent.click(await screen.findByText("Un usuario lee pedidos ajenos"));
+    expect(screen.getByRole("link", { name: "/docs/api1" }).getAttribute("href")).toBe("/docs/api1");
+    expect(screen.getByRole("link", { name: "owasp.org" })).toBeTruthy();
+  });
+
+  test("sin riesgo la puntuación va sola, y mientras se analiza el botón lo dice", async () => {
+    answersDetail(detail({ risk: null }), (path) => (path.endsWith("/ai") ? new Promise(() => undefined) : undefined));
+    draw("/p/p1/security/r1");
+    const score = await screen.findByText("Puntuación");
+    expect(score.parentElement?.textContent).toBe("Puntuación62");
+    fireEvent.click(screen.getByRole("button", { name: "Analizar con IA" }));
+    const busy = await screen.findByRole("button", { name: "Analizando…" });
+    expect((busy as HTMLButtonElement).disabled).toBe(true);
   });
 });

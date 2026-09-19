@@ -106,6 +106,26 @@ describe("DashboardPage", () => {
     draw(<DashboardPage />);
     expect((await screen.findByText("20")).className).toContain("text-rose-600");
   });
+
+  test("si el panel no se puede pedir, no pinta nada en vez de romperse", async () => {
+    call.mockReset();
+    call.mockRejectedValue(new Error("500"));
+    const { container } = draw(<DashboardPage />);
+    await waitFor(() => expect(screen.queryByText("Cargando…")).toBeNull());
+    expect(container.textContent).toBe("");
+  });
+
+  test("una tendencia plana se dibuja a media altura en vez de dividir por cero", async () => {
+    call.mockReset();
+    call.mockResolvedValue({
+      totals: { projects: 1, endpoints: 12, avgSecurityScore: 91 },
+      projects: [project({ trends: { passRates: [0.5, 0.5], securityScores: [], perfP95Ms: [] } })],
+    } satisfies DashboardView);
+    draw(<DashboardPage />);
+    await screen.findByText("Tienda");
+    const line = screen.getByRole("img", { name: "Tendencia" }).querySelector("polyline")!;
+    expect(line.getAttribute("points")).toBe("0.0,22.0 100.0,22.0");
+  });
 });
 
 const entry = (over: Partial<HistoryEntryView>): HistoryEntryView => ({
@@ -166,7 +186,9 @@ describe("HistoryPage", () => {
       expect(call).toHaveBeenLastCalledWith("/orgs/o/history?search=&kind=performance&page=1&pageSize=25"),
     );
 
-    fireEvent.change(screen.getByPlaceholderText("Buscar por proyecto o título…"), { target: { value: "tienda & co" } });
+    fireEvent.change(screen.getByPlaceholderText("Buscar por proyecto o título…"), {
+      target: { value: "tienda & co" },
+    });
     await waitFor(() =>
       expect(call).toHaveBeenLastCalledWith(
         "/orgs/o/history?search=tienda%20%26%20co&kind=performance&page=1&pageSize=25",

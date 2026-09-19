@@ -35,7 +35,9 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**/*.{ts,tsx}"],
-      exclude: ["src/**/*.test.{ts,tsx}", "src/test/**", "src/main.tsx", "src/**/*.d.ts"],
+      // `src/lib/types.ts` es solo `export type { … }` desde `@eq/contracts`: no tiene una línea que
+      // ejecutar, y v8 la contaría como un fichero al 0 %.
+      exclude: ["src/**/*.test.{ts,tsx}", "src/test/**", "src/**/*.d.ts", "src/lib/types.ts"],
       reporter: ["text-summary", "html", "json-summary"],
       reportsDirectory: "coverage",
       thresholds: { lines: 46, statements: 46, branches: 81, functions: 64 },

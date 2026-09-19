@@ -176,9 +176,7 @@ describe("los planes de carga", () => {
       runRow({ id: "run2", status: "failed", summary: null }),
     ]);
     draw("/p/p1/performance");
-    await waitFor(() =>
-      expect((screen.getByLabelText("Nombre del plan") as HTMLInputElement).value).toBe("Catálogo"),
-    );
+    await waitFor(() => expect((screen.getByLabelText("Nombre del plan") as HTMLInputElement).value).toBe("Catálogo"));
     expect((screen.getByLabelText("Descripción") as HTMLTextAreaElement).value).toBe("Lectura del catálogo");
     expect(screen.getAllByText("10 usuarios · 30 s").length).toBeGreaterThan(0);
     await waitFor(() => expect((screen.getByLabelText("Entorno") as HTMLSelectElement).value).toBe("env-1"));
@@ -190,9 +188,7 @@ describe("los planes de carga", () => {
     // Cambiar de plan pide su historial.
     fireEvent.click(screen.getByText("Checkout"));
     await waitFor(() => expect(mocks.api).toHaveBeenCalledWith(`${BASE}/performance/runs?planId=pl2`));
-    await waitFor(() =>
-      expect((screen.getByLabelText("Nombre del plan") as HTMLInputElement).value).toBe("Checkout"),
-    );
+    await waitFor(() => expect((screen.getByLabelText("Nombre del plan") as HTMLInputElement).value).toBe("Checkout"));
   });
 
   test("una corrida del historial lleva a su detalle", async () => {
@@ -203,7 +199,11 @@ describe("los planes de carga", () => {
   });
 
   test("sin entorno activo no se propone ninguno, y elegir uno lo activa", async () => {
-    answersPlans([plan()], undefined, environments.map((e) => ({ ...e, active: false })));
+    answersPlans(
+      [plan()],
+      undefined,
+      environments.map((e) => ({ ...e, active: false })),
+    );
     draw("/p/p1/performance");
     const select = (await screen.findByLabelText("Entorno")) as HTMLSelectElement;
     await screen.findByRole("option", { name: "producción" });
@@ -332,13 +332,9 @@ describe("los planes de carga", () => {
       },
     );
     draw("/p/p1/performance");
-    await waitFor(() =>
-      expect((screen.getByLabelText("Nombre del plan") as HTMLInputElement).value).toBe("Catálogo"),
-    );
+    await waitFor(() => expect((screen.getByLabelText("Nombre del plan") as HTMLInputElement).value).toBe("Catálogo"));
     fireEvent.click(screen.getByRole("button", { name: "Eliminar plan" }));
-    await waitFor(() =>
-      expect((screen.getByLabelText("Nombre del plan") as HTMLInputElement).value).toBe("Checkout"),
-    );
+    await waitFor(() => expect((screen.getByLabelText("Nombre del plan") as HTMLInputElement).value).toBe("Checkout"));
     expect(mocks.api).toHaveBeenCalledWith(`${BASE}/performance/plans/pl1`, { method: "DELETE" });
   });
 
@@ -487,9 +483,7 @@ describe("el detalle de una corrida de carga", () => {
     fireEvent.change(select, { target: { value: "" } });
     expect(screen.getByTestId("where").textContent).toBe("/p/p1/performance/run1");
     fireEvent.change(select, { target: { value: "run0" } });
-    await waitFor(() =>
-      expect(screen.getByTestId("where").textContent).toBe("/p/p1/performance/compare/run0/run1"),
-    );
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/p/p1/performance/compare/run0/run1"));
   });
 });
 
@@ -641,11 +635,11 @@ describe("comparar dos corridas", () => {
     draw("/p/p1/performance/compare/run0/run1");
     await screen.findByText("Catálogo v2");
     const [base, target] = screen.getAllByRole("combobox") as HTMLSelectElement[];
-    expect(within(base).getAllByRole("option").map((o) => (o as HTMLOptionElement).value)).toEqual([
-      "run0",
-      "run1",
-      "run2",
-    ]);
+    expect(
+      within(base)
+        .getAllByRole("option")
+        .map((o) => (o as HTMLOptionElement).value),
+    ).toEqual(["run0", "run1", "run2"]);
     expect(base.value).toBe("run0");
     expect(target.value).toBe("run1");
 
@@ -653,13 +647,9 @@ describe("comparar dos corridas", () => {
     expect(screen.getByTestId("where").textContent).toBe("/p/p1/performance/compare/run0/run1");
 
     fireEvent.change(target, { target: { value: "run2" } });
-    await waitFor(() =>
-      expect(screen.getByTestId("where").textContent).toBe("/p/p1/performance/compare/run0/run2"),
-    );
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/p/p1/performance/compare/run0/run2"));
     fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: "run1" } });
-    await waitFor(() =>
-      expect(screen.getByTestId("where").textContent).toBe("/p/p1/performance/compare/run1/run2"),
-    );
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/p/p1/performance/compare/run1/run2"));
   });
 
   test("«← Pruebas de carga» vuelve a los planes", async () => {
@@ -667,5 +657,63 @@ describe("comparar dos corridas", () => {
     draw("/p/p1/performance/compare/run0/run1");
     fireEvent.click(screen.getByRole("button", { name: "← Pruebas de carga" }));
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/p/p1/performance"));
+  });
+});
+
+describe("pruebas de carga: casos de borde", () => {
+  test("cambiar un umbral deja el plan sin guardar y guardar manda la definición nueva", async () => {
+    answersPlans([plan({ description: null })]);
+    draw("/p/p1/performance");
+    await waitFor(() => expect((screen.getByLabelText("Nombre del plan") as HTMLInputElement).value).toBe("Catálogo"));
+    // Sin descripción, la caja sale vacía.
+    expect((screen.getByLabelText("Descripción") as HTMLTextAreaElement).value).toBe("");
+    fireEvent.change(screen.getByLabelText("p95 (ms)"), { target: { value: "800" } });
+    expect(screen.getByText("Guarda los cambios antes de ejecutar.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(calls().some(([, options]) => options?.method === "PUT")).toBe(true));
+    const put = calls().find(([, options]) => options?.method === "PUT");
+    expect((put?.[1]?.body as { definition: { thresholds: object } }).definition.thresholds).toEqual({
+      p95Ms: 800,
+      maxErrorRate: 0.01,
+    });
+  });
+
+  test("si crear un plan falla, el error se enseña", async () => {
+    answersPlans([plan()], (path, options) =>
+      options?.method === "POST" && path.endsWith("/performance/plans")
+        ? Promise.reject(new Error("Nombre repetido"))
+        : undefined,
+    );
+    draw("/p/p1/performance");
+    fireEvent.click(await screen.findByRole("button", { name: "+ Nuevo" }));
+    fireEvent.change(await screen.findByPlaceholderText("Catálogo bajo carga"), { target: { value: "Catálogo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Crear" }));
+    expect(await screen.findByText("Nombre repetido")).toBeTruthy();
+  });
+
+  test("una corrida con una sola ventana se dibuja igual, y sin historial no ofrece comparar", async () => {
+    answersRun(runDetail({ windows: [runDetail().windows[0]!] }), [], (path, options) =>
+      !options && path.endsWith("/performance/runs") ? Promise.reject(new Error("500")) : undefined,
+    );
+    draw("/p/p1/performance/run1");
+    const chart = await screen.findByRole("img", { name: "Evolución de la corrida" });
+    expect(chart.querySelector("rect")?.getAttribute("x")).not.toBe("NaN");
+    expect(screen.getByText("5 s")).toBeTruthy();
+    await waitFor(() => expect(mocks.api).toHaveBeenCalledWith(`${BASE}/performance/runs`));
+    expect(screen.queryByRole("combobox")).toBeNull();
+  });
+
+  test("un delta que sube lleva su signo más, en valor y en porcentaje", async () => {
+    answersCompare(
+      comparison({
+        metrics: [{ metric: "rps", label: "req/s", base: 40, target: 45, delta: 5, pct: 0.125, better: "target" }],
+        endpoints: [],
+        thresholds: [],
+      }),
+    );
+    draw("/p/p1/performance/compare/run0/run1");
+    const cell = await screen.findByText("+5");
+    expect(cell.textContent).toBe("+5(+12.5%)");
+    expect(cell.className).toContain("text-emerald-600");
   });
 });

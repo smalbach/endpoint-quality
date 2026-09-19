@@ -124,7 +124,7 @@ export function PerformancePage() {
 
   const dirty = Boolean(draft && saved && !sameJson(draft, saved));
   const setDefinition = (definition: PerformancePlanDefinitionView) =>
-    setDraft((current) => (current ? { ...current, definition } : current));
+    setDraft((current) => current && { ...current, definition });
 
   if (plans.isLoading) return <p className="text-sm text-slate-500">Cargando…</p>;
 
@@ -580,7 +580,7 @@ const betterClass = (better: "target" | "base" | "same") =>
   better === "target" ? "text-emerald-600" : better === "base" ? "text-rose-600" : "text-slate-400";
 
 export function PerformanceComparePage() {
-  const { projectId, baseRunId, targetRunId } = useParams();
+  const { projectId, baseRunId = "", targetRunId = "" } = useParams();
   const organization = useOrganization();
   const navigate = useNavigate();
   const base = `/orgs/${organization?.id}/projects/${projectId}`;
@@ -630,12 +630,12 @@ export function PerformanceComparePage() {
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
           <div>
             <p className="text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Base</p>
-            <div className="mt-1">{picker(baseRunId ?? "", (id) => go(id, targetRunId ?? ""))}</div>
+            <div className="mt-1">{picker(baseRunId, (id) => go(id, targetRunId))}</div>
           </div>
           <span className="hidden text-slate-300 sm:block">vs</span>
           <div>
             <p className="text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Comparada</p>
-            <div className="mt-1">{picker(targetRunId ?? "", (id) => go(baseRunId ?? "", id))}</div>
+            <div className="mt-1">{picker(targetRunId, (id) => go(baseRunId, id))}</div>
           </div>
         </div>
       </Card>
