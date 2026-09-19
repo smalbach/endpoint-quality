@@ -2919,3 +2919,24 @@ migraciones 36 a 40 aplicadas:
 No comprobado: las pantallas en el navegador, el MITM con un navegador o un móvil reales, y Socket.IO
 contra un servidor público. Y `SECRETS_KEY` sigue sin tocar: con ella, el MITM se niega y crear una
 variable secreta es un 500.
+
+### Límites y turnos de todo el despliegue (cierre de la ola 14)
+
+Lo que quedaba por proceso con varias réplicas. Los contadores del límite de peticiones van por un
+puerto (`RATE_LIMIT_STORE`): memoria, o Redis con `REDIS_URL` (Lua `INCR`+`PEXPIRE`, ventana fija).
+Cuentan ahí el throttler global, cada `@Throttle` por ruta y el tope de credenciales malas del proxy
+de captura; con Redis caído, cada instancia cuenta en su memoria, como antes, y lo avisa. «Una
+corrida de seguridad o de rendimiento a la vez» es ahora de todo el despliegue: tabla
+`execution_turns` (`ExecutionTurns1700000041000`), `UPDATE` condicionado bajo
+`pg_advisory_xact_lock`, orden de llegada, latido de 5 s y caducidad a los 30 s; el bus avisa al
+soltar. La cola de contrato sigue siendo una por instancia, como BullMQ: un webhook esperando no
+puede parar los monitores de todo el despliegue.
+
+Y dos cosas cerradas a mano: la prueba de que un evento Socket.IO mandado por otra instancia llega con
+su nombre y su acuse (falla sin el arreglo de la integración), y Socket.IO contra un servidor público,
+el eco de Postman (`ws.postman-echo.com`): conecta por WebSocket y emite con las variables resueltas.
+Ese servidor no contesta a ningún evento —tampoco a una conexión hecha a mano, sin este código—, así
+que la ida y vuelta con acuse sigue probada solo contra el servidor en proceso.
+
+`api 1292 · web 602 · db 31 (Postgres real) · lint 0 errores`. En la pila, la migración 41 aplicada y
+el login número 11 en un minuto, 429.
