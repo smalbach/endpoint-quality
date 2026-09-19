@@ -39,6 +39,7 @@ import {
   type ScriptSandboxPort,
 } from "@/shared/scripts/script-sandbox";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
+import { maskSecrets } from "@/modules/runs/domain/mask-secrets";
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
 import type { Project } from "@/modules/projects/domain/model";
 import {
@@ -312,7 +313,12 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
     const now = this.clock.now();
     const jar = liveCookies(await this.cookieJar.list(command.actorId, project.id), now.getTime());
     const cookiesSent = matchingCookies(sending.url, jar, now.getTime());
-    for (const cookie of cookiesSent) run.secrets.push(cookie.value);
+    for (const cookie of cookiesSent) {
+      run.secrets.push(cookie.value);
+      // Del tarro de quien envía: vinieron en respuestas que ya vio. En la consola se tapan; en la
+      // respuesta no, que una cookie como `tema=claro` taparía la palabra en todo el cuerpo.
+      run.visible.add(cookie.value);
+    }
 
     let result;
     try {
@@ -369,7 +375,10 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
 
     return {
       request: echo,
-      response,
+      // Lo que se enseña, con los secretos tapados por su valor: un servidor que repite la cabecera
+      // que recibió (un eco, un error que la cita) devolvería entero el valor sensible que el botón
+      // de revelar le niega a quien envía. Los scripts y la captura del token ya leyeron la de verdad.
+      response: { ...response, headers: maskSecrets(response.headers, run.hidden()), body: maskSecrets(response.body, run.hidden()) },
       error: null,
       auth,
       environment: environmentView,
@@ -573,7 +582,11 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
       params: Object.fromEntries(Object.entries(auth.params).map(([key, value]) => [key, interpolate(value)])),
     };
     for (const [key, value] of Object.entries(resolved.params)) {
-      if (SECRET_PARAMS.has(key) && value) run.secrets.push(value);
+      if (!SECRET_PARAMS.has(key) || !value) continue;
+      run.secrets.push(value);
+      // Escrito a mano en la petición, quien envía ya lo tiene: taparlo en la respuesta no protege
+      // nada. Si vino de una `{{variable}}` sensible, esa variable ya está en la lista por su cuenta.
+      if (!/\{\{/.test(auth.params[key] ?? "")) run.visible.add(value);
     }
 
     let note = "";
@@ -700,6 +713,8 @@ class ScriptSession {
   requestVariables: Record<string, string> = {};
   /** Everything the console must not print: sensitive variables, and every credential used. */
   readonly secrets: string[];
+  /** Secretos que quien envía ya conoce —los que escribió, las cookies de su tarro—: la consola los tapa, la respuesta no. */
+  readonly visible = new Set<string>();
   private environment: Environment | null;
 
   constructor(
@@ -718,6 +733,11 @@ class ScriptSession {
           .map(([name]) => this.values[name])
       : [];
     this.secrets = [...secrets, ...sensitive.filter((value): value is string => Boolean(value))];
+  }
+
+  /** Lo que se tapa en la respuesta enseñada: los secretos que quien envía no podría leer de otro modo. */
+  hidden(): string[] {
+    return this.secrets.filter((secret) => !this.visible.has(secret));
   }
 
   async execute(script: Omit<ScriptInput, "environment">): Promise<{ raw: ScriptOutcome; view: ScriptRunView }> {

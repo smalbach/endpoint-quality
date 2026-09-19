@@ -27,6 +27,12 @@ const as = (actor: Actor) => ({ Authorization: `Bearer ${actor.token}` });
 let echo: Server;
 let origin: string;
 let hits = 0;
+/**
+ * Lo que el servidor recibió de verdad, petición a petición. La respuesta que «Enviar» enseña tapa
+ * los secretos que el eco repite, así que lo que llegó se mira aquí y no en el eco.
+ */
+const received: { url?: string; headers: Record<string, unknown> }[] = [];
+const lastReceived = () => received[received.length - 1]!;
 
 let owner: Actor;
 let outsider: Actor;
@@ -62,6 +68,7 @@ before(async () => {
     incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
     incoming.on("end", () => {
       hits += 1;
+      received.push({ url: incoming.url, headers: { ...incoming.headers } });
       response.writeHead(200, { "content-type": "application/json" });
       response.end(
         JSON.stringify({
@@ -165,13 +172,14 @@ describe("el token de sesión", () => {
 
     const me = await send({ method: "GET", path: "/me" });
     assert.equal(me.body.auth, "Token de sesión (del login)");
-    assert.equal(JSON.parse(me.body.response.body).headers.authorization, `Bearer ${token}`);
+    assert.equal(lastReceived().headers.authorization, `Bearer ${token}`);
+    assert.equal(JSON.parse(me.body.response.body).headers.authorization, "Bearer ••••••••");
 
     const cleared = await api().delete(`${base()}/session-token`).set(as(owner));
     assert.equal(cleared.status, 204);
     const again = await send({ method: "GET", path: "/me" });
     assert.equal(again.body.auth, "Login del proyecto");
-    assert.equal(JSON.parse(again.body.response.body).headers.authorization, 'Bearer {"user":"demo"}');
+    assert.equal(lastReceived().headers.authorization, 'Bearer {"user":"demo"}');
   });
 
   test("uno caducado no se usa, y la respuesta lo dice", async () => {
@@ -186,6 +194,50 @@ describe("el token de sesión", () => {
     const me = await send({ method: "GET", path: "/me" });
     assert.equal(me.body.auth, "Login del proyecto · el token de sesión caducó");
     await api().delete(`${base()}/session-token`).set(as(owner));
+  });
+});
+
+describe("un secreto que el servidor repite", () => {
+  test("no queda en el informe de una corrida, aunque llegue al servidor y el nodo siguiente lo lea", async () => {
+    const environmentId = await createEnvironment("eco-corrida", {
+      writesAllowed: true,
+      variables: { apiSecret: { initial: "secreto-del-eco-9", current: "", sensitive: true } },
+    });
+    const created = await api()
+      .post(`${base()}/workflows`)
+      .set(as(owner))
+      .send({
+        name: "eco del secreto",
+        definition: {
+          steps: [
+            {
+              id: "firmar",
+              kind: "fetch",
+              fetch: { method: "GET", url: "/eco", headers: { "X-Sig": "{{apiSecret}}" }, expectedStatus: 200 },
+              captures: [{ variable: "vuelto", from: "body", path: "headers.x-sig" }],
+            },
+            {
+              id: "leer",
+              kind: "script",
+              dependsOn: ["firmar"],
+              script: { code: 'pm.test("volvió", () => pm.expect(pm.variables.get("vuelto")).to.have.lengthOf(17));' },
+            },
+          ],
+        },
+      });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const started = await api()
+      .post(`${base()}/runs`)
+      .set(as(owner))
+      .send({ environmentId, workflowId: created.body.workflowId });
+    assert.equal(started.status, 202, JSON.stringify(started.body));
+    await context.queue.idle();
+    const run = await api().get(`${base()}/runs/${started.body.runId}`).set(as(owner));
+    assert.equal(run.body.status, "passed", JSON.stringify(run.body.cases));
+    assert.equal(lastReceived().headers["x-sig"], "secreto-del-eco-9");
+    const stored = JSON.stringify([...context.repositories.runs.steps.values()]);
+    assert.equal(stored.includes("secreto-del-eco-9"), false, "el eco del secreto quedó en run_steps");
+    assert.ok(stored.includes("••••••••"));
   });
 });
 
@@ -220,7 +272,9 @@ describe("los scripts de «Enviar»", () => {
     assert.equal(response.status, 200, JSON.stringify(response.body));
     const echoed = JSON.parse(response.body.response.body);
     assert.equal(echoed.url, "/items/9?q=zapatos");
-    assert.equal(echoed.headers["x-sig"], "secreto-del-api");
+    // Llegó, y el eco que se enseña no lo repite.
+    assert.equal(lastReceived().headers["x-sig"], "secreto-del-api");
+    assert.equal(echoed.headers["x-sig"], "••••••••");
 
     const { pre, post } = response.body.scripts;
     assert.deepEqual(pre.logs, [{ level: "log", text: "firmando con ••••••••" }]);
@@ -290,7 +344,8 @@ describe("los scripts de «Enviar»", () => {
     assert.equal(stored.body.token.source, "script");
     assert.equal(stored.body.token.claims, null);
     const me = await send({ environmentId, method: "GET", path: "/me" });
-    assert.equal(JSON.parse(me.body.response.body).headers.authorization, "Bearer tok-200");
+    assert.equal(me.status, 200, JSON.stringify(me.body));
+    assert.equal(lastReceived().headers.authorization, "Bearer tok-200");
     await api().delete(`${base()}/session-token`).set(as(owner));
   });
 });

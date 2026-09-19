@@ -33,11 +33,19 @@ let projectId: string;
 let environmentId: string;
 const base = () => `/orgs/${owner.organizationId}/projects/${projectId}`;
 
+/**
+ * Lo que el servidor recibió de verdad, petición a petición. La respuesta que «Enviar» enseña tapa
+ * los secretos que el eco repite, así que lo que llegó se mira aquí y no en el eco.
+ */
+const received: { url?: string; headers: Record<string, unknown> }[] = [];
+const lastReceived = () => received[received.length - 1]!;
+
 before(async () => {
   echo = createServer((incoming, response) => {
     const chunks: Buffer[] = [];
     incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
     incoming.on("end", () => {
+      received.push({ url: incoming.url, headers: { ...incoming.headers } });
       // Un login como los de verdad: 302 a otra ruta y **dos** cabeceras `Set-Cookie`, una de
       // ellas con una fecha que lleva una coma dentro. Las dos cosas juntas son lo que rompe un
       // cliente que no sigue la redirección de un POST o que lee las cookies como una sola cadena.
@@ -326,7 +334,9 @@ describe("enviar", () => {
     assert.equal(response.status, 200, JSON.stringify(response.body));
     const answered = JSON.parse(response.body.response.body);
     assert.equal(answered.url, "/users/42?expand=roles");
-    assert.equal(answered.headers.authorization, "Bearer tok-secreto");
+    // Llegó al servidor, y el eco que se enseña no lo repite: el token es una variable sensible.
+    assert.equal(lastReceived().headers.authorization, "Bearer tok-secreto");
+    assert.equal(answered.headers.authorization, "Bearer ••••••••");
     assert.equal(answered.headers["x-trace"], "t-1");
     assert.equal(response.body.response.status, 200);
     assert.equal(response.body.request.headers.Authorization, "••••••••");
@@ -339,7 +349,8 @@ describe("enviar", () => {
     const response = await send({ method: "GET", path: "/missing", body: { mode: "none" } });
     assert.equal(response.status, 200, JSON.stringify(response.body));
     assert.equal(response.body.response.status, 404);
-    assert.equal(JSON.parse(response.body.response.body).headers["x-api-key"], "clave-del-proyecto");
+    assert.equal(lastReceived().headers["x-api-key"], "clave-del-proyecto");
+    assert.equal(JSON.parse(response.body.response.body).headers["x-api-key"], "••••••••");
     assert.equal(response.body.auth, "API key del proyecto");
   });
 
@@ -542,7 +553,7 @@ describe("enviar", () => {
       auth: { mode: "bearer", token: "{{token}}" },
     });
     assert.equal(response.status, 200, JSON.stringify(response.body));
-    assert.equal(JSON.parse(response.body.response.body).headers.authorization, "Bearer tok-secreto");
+    assert.equal(lastReceived().headers.authorization, "Bearer tok-secreto");
   });
 
   /**

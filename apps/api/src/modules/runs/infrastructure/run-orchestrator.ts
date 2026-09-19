@@ -66,6 +66,7 @@ import { CaseExecutor, computedSeed, type ExecutedCase, type ExecutedStep } from
 import { SAFE_FETCH, type SafeFetchPort } from "@/shared/http/safe-fetch";
 import { sendNotification } from "./notify-step";
 import { ExecutionContextFactory, type ExecutionContext } from "./execution-context";
+import { maskSecrets } from "../domain/mask-secrets";
 import { flattenPrepared, nestedScenarioId } from "./subflow-support";
 import { mockStep } from "./mock-node";
 import { channelStep } from "./channel-node";
@@ -111,13 +112,40 @@ export class RunOrchestrator {
     this.queue.process((runId) => this.execute(runId));
   }
 
+  /** El contexto de cada corrida mientras se ejecuta aquí: lo que `saveSteps` necesita para tapar. */
+  private readonly live = new Map<string, ExecutionContext>();
+
+  /**
+   * Toda fila de paso pasa por aquí antes de guardarse, con los secretos del entorno y el token de
+   * sesión de ese momento tapados por su valor (ver `maskSecrets`).
+   */
+  private saveSteps(run: Run, rows: RunStep[]): Promise<void> {
+    const context = this.live.get(run.id);
+    const secrets = context
+      ? [...(context.target.secrets ?? []), ...(context.target.session ? [context.target.session.value] : [])]
+      : [];
+    return this.runs.saveSteps(
+      rows.map((row) => ({
+        ...row,
+        request: maskSecrets(row.request, secrets),
+        actual: maskSecrets(row.actual, secrets),
+        assertions: maskSecrets(row.assertions, secrets),
+      })),
+    );
+  }
+
   async execute(runId: string): Promise<void> {
     const run = await this.runs.findById(runId);
     if (!run) return;
 
     try {
       const context = await this.contexts.build(run);
-      await this.walk(run, context);
+      this.live.set(run.id, context);
+      try {
+        await this.walk(run, context);
+      } finally {
+        this.live.delete(run.id);
+      }
     } catch (error) {
       // A run that cannot be set up — no environment, an unreadable contract — is `error` and not
       // `failed`: nothing was measured, and reporting it as a failing matrix would be a finding
@@ -215,7 +243,7 @@ export class RunOrchestrator {
         samples: run.plan.samples,
       });
 
-      await this.runs.saveSteps(toRunSteps(runCase.id, executed.steps));
+      await this.saveSteps(run, toRunSteps(runCase.id, executed.steps));
 
       const finishedAt = this.clock.now();
       const finished: RunCase = {
@@ -1192,7 +1220,7 @@ export class RunOrchestrator {
         if (last) last.ok = last.ok && holds(last.assertions);
       }
 
-      await this.runs.saveSteps(toRunSteps(runCase.id, executed.steps));
+      await this.saveSteps(run, toRunSteps(runCase.id, executed.steps));
       status = caseStatusFor(executed);
       allPassed = allPassed && status === "passed";
       const finished: RunCase = {
@@ -1620,7 +1648,7 @@ export class RunOrchestrator {
     const hook = await this.hooks.open(run.id, item.runCase, item.step.id, config);
     const rowId = randomUUID();
     const writeRow = (step: ExecutedStep) =>
-      this.runs.saveSteps(toRunSteps(item.runCase.id, [step]).map((row) => ({ ...row, id: rowId })));
+      this.saveSteps(run, toRunSteps(item.runCase.id, [step]).map((row) => ({ ...row, id: rowId })));
     const expiresAt = new Date(hook.expiresAt).toISOString();
     await writeRow(
       hookStep(item.runCase, hook, {
@@ -1879,7 +1907,8 @@ export class RunOrchestrator {
       auth: "none",
       samples: 1,
     };
-    await this.runs.saveSteps(
+    await this.saveSteps(
+      run,
       toRunSteps(
         item.runCase.id,
         result.steps ?? [

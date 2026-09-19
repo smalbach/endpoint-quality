@@ -24,6 +24,7 @@ import {
 } from "@eq/runner-core";
 
 import type { RunCase } from "../domain/model";
+import { maskSecrets } from "../domain/mask-secrets";
 import type { ExecutedStep } from "./case-executor";
 
 export function mockStep(
@@ -111,21 +112,5 @@ export function mockStep(
  * The unmasked answer is still what the nodes after it read.
  */
 function redacted(actual: ActualResponse, secrets: string[]): ActualResponse {
-  const hidden = [...new Set(secrets.filter((secret) => secret.length >= 4))].sort((a, b) => b.length - a.length);
-  if (!hidden.length) return actual;
-  const text = (value: string) => hidden.reduce((result, secret) => result.split(secret).join("••••••••"), value);
-  const deep = (value: unknown): unknown =>
-    typeof value === "string"
-      ? text(value)
-      : Array.isArray(value)
-        ? value.map(deep)
-        : value && typeof value === "object"
-          ? Object.fromEntries(Object.entries(value).map(([key, item]) => [text(key), deep(item)]))
-          : value;
-  return {
-    ...actual,
-    headers: deep(actual.headers) as Record<string, string>,
-    body: deep(actual.body),
-    raw: text(actual.raw),
-  };
+  return maskSecrets(actual, secrets);
 }
