@@ -87,6 +87,42 @@ describe("un cuerpo de formulario", () => {
  * dejar un `form-data` sin `disabledFields`: media variante pasa el compilador de quien la
  * construye y falla en el serializador, que ya no sabe de dónde vino.
  */
+describe("escribir el cuerpo", () => {
+  function spy(initial: RequestBodyView) {
+    const seen: RequestBodyView[] = [];
+    function Harness() {
+      const [body, setBody] = useState(initial);
+      return (
+        <RequestBodyEditor
+          body={body}
+          canEdit
+          onChange={(next) => {
+            seen.push(next);
+            setBody(next);
+          }}
+        />
+      );
+    }
+    render(<Harness />);
+    return seen;
+  }
+
+  test("un JSON se guarda al salir del campo, ya como objeto", () => {
+    const seen = spy({ type: "json", json: {} });
+    const box = screen.getByLabelText("Body JSON");
+    fireEvent.change(box, { target: { value: '{"email":"{{email}}"}' } });
+    fireEvent.blur(box);
+    expect(seen.at(-1)).toEqual({ type: "json", json: { email: "{{email}}" } });
+  });
+
+  test("en texto se escriben el Content-Type y el cuerpo", () => {
+    const seen = spy({ type: "raw", text: "", contentType: "application/json" });
+    fireEvent.change(screen.getByLabelText("Content-Type"), { target: { value: "application/xml" } });
+    fireEvent.change(screen.getByLabelText("Cuerpo en texto"), { target: { value: "<a/>" } });
+    expect(seen.at(-1)).toEqual({ type: "raw", text: "<a/>", contentType: "application/xml" });
+  });
+});
+
 describe("el cuerpo vacío de un tipo", () => {
   test("cada tipo trae todos sus campos", () => {
     expect(emptyOf("none")).toEqual({ type: "none" });

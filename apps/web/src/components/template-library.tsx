@@ -253,7 +253,8 @@ function TemplateCreator({
             setName("");
             setError(null);
           } catch (caught) {
-            setError(caught instanceof Error ? caught.message : "JSON inválido");
+            // Lo único que lanza aquí es `JSON.parse`, y lanza un `SyntaxError` con el motivo.
+            setError((caught as Error).message);
           }
         }}
       >

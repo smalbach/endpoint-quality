@@ -15,7 +15,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 
 import { WorkflowCanvas } from "@/components/workflow-canvas";
 import type { OperationSummary, RetryNote } from "@/lib/workflow-draft";
-import type { CaseStatus, RequestTemplateView, WorkflowStepView } from "@/lib/types";
+import type { CaseStatus, ChannelView, RequestTemplateView, WorkflowStepView } from "@/lib/types";
 
 beforeAll(() => {
   class ResizeObserverStub {
@@ -595,5 +595,166 @@ describe("llevar la vista al nodo nuevo", () => {
     } finally {
       panel.remove();
     }
+  });
+});
+
+describe("lo que queda de cada nodo", () => {
+  test("cualquier nodo, sea del tipo que sea, se resalta al seleccionarlo", async () => {
+    const steps = [...FULL, { id: "gancho", kind: "webhook", position: { x: 300, y: 1400 } } as WorkflowStepView];
+    const { onSelect } = mount(steps);
+    await waitFor(() => expect(nodeEl("gancho")).toBeTruthy());
+    for (const step of steps) {
+      fireEvent.click(nodeEl(step.id));
+      await waitFor(() => expect(nodeEl(step.id).firstElementChild!.className).toContain("border-slate-900"));
+      expect(onSelect).toHaveBeenLastCalledWith(step.id);
+    }
+  });
+
+  test("el webhook dice qué verbo espera, hasta cuándo, y lo que comprueba y captura", async () => {
+    mount(
+      [
+        {
+          id: "pago",
+          kind: "webhook",
+          webhook: { timeoutMs: 120_000, method: "PUT" },
+          checks: [check],
+          captures: [{ variable: "a" } as never],
+          position: { x: 0, y: 0 },
+        } as WorkflowStepView,
+        { id: "vacio", kind: "webhook", position: { x: 300, y: 0 } } as WorkflowStepView,
+      ],
+      { runStatus: { pago: "running" } },
+    );
+    await waitFor(() => expect(nodeEl("vacio")).toBeTruthy());
+    expect(nodeEl("pago").textContent).toContain("Webhook · pago");
+    expect(nodeEl("pago").textContent).toMatch(/espera un PUT · hasta /);
+    expect(nodeEl("pago").textContent).toContain("1 comprob. · 1 capturas");
+    expect(within(nodeEl("pago")).getByTitle("Ejecutando")).toBeTruthy();
+    expect(nodeEl("vacio").textContent).toContain("espera un POST");
+    expect(nodeEl("vacio").textContent).toContain("sin comprobaciones");
+    expect(nodeEl("vacio").textContent).not.toContain("capturas");
+  });
+
+  test("un subflujo con varias entradas y sin salidas, y un canal de notificación desconocido por su nombre", async () => {
+    mount([
+      {
+        id: "sub",
+        kind: "subflow",
+        subflow: { workflowId: "w", inputs: [{ variable: "a", value: "1" }, { variable: "b", value: "2" }], outputs: [] },
+        position: { x: 0, y: 0 },
+      },
+      {
+        id: "aviso",
+        kind: "notify",
+        notify: { channel: "discord" as never, urlVariable: "URL", message: "Hola" },
+        position: { x: 300, y: 0 },
+      },
+    ]);
+    await waitFor(() => expect(nodeEl("aviso")).toBeTruthy());
+    expect(nodeEl("sub").textContent).toContain("2 entradas · 0 salidas");
+    expect(nodeEl("aviso").textContent).toContain("discord · URL");
+  });
+
+  test("un canal elegido lleva su nombre y protocolo; uno que ya no existe lo avisa", async () => {
+    const channels = [{ id: "ch-1", name: "Chat", protocol: "ws" }] as ChannelView[];
+    mount(
+      [
+        { id: "vivo", kind: "channel", channel: { channelId: "ch-1" }, position: { x: 0, y: 0 } },
+        { id: "roto", kind: "channel", channel: { channelId: "ch-x" }, position: { x: 300, y: 0 } },
+      ],
+      { channels },
+    );
+    await waitFor(() => expect(nodeEl("roto")).toBeTruthy());
+    expect(nodeEl("vivo").textContent).toContain("Chat");
+    expect(nodeEl("vivo").textContent).toContain("WebSocket");
+    expect(within(nodeEl("vivo")).queryByRole("alert")).toBeNull();
+    expect(within(nodeEl("roto")).getByRole("alert").textContent).toContain("El canal ya no existe en este proyecto");
+    expect(nodeEl("roto").textContent).toContain("Canal · roto");
+  });
+});
+
+describe("las aristas y la vista, en los bordes", () => {
+  test("una arista que se deja de seleccionar ya no se corta con Supr", async () => {
+    const { onChange } = mount(FULL.slice(0, 2));
+    const edge = await waitFor(() => {
+      const found = document.querySelector(".react-flow__edge[data-id]") as HTMLElement;
+      expect(found).toBeTruthy();
+      return found;
+    });
+    fireEvent.click(edge);
+    await waitFor(() => expect(document.querySelector(".react-flow__edge.selected")).toBeTruthy());
+    fireEvent.click(document.querySelector(".react-flow__pane")!);
+    await waitFor(() => expect(document.querySelector(".react-flow__edge.selected")).toBeNull());
+    fireEvent.keyDown(document.body, { key: "Delete", code: "Delete" });
+    fireEvent.keyUp(document.body, { key: "Delete", code: "Delete" });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  test("un nodo añadido y quitado antes de dibujarse no mueve la vista", async () => {
+    const base = FULL.slice(0, 2);
+    const { rerender } = mount(base, { flowId: "f1" });
+    await waitFor(() => expect(nodeEl("list")).toBeTruthy());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    const viewport = document.querySelector(".react-flow__viewport") as HTMLElement;
+    const before = viewport.style.transform;
+    rerender({ flowId: "f1", steps: [...base, { id: "fugaz", kind: "wait", waitMs: 1, position: { x: 5000, y: 5000 } }] });
+    rerender({ flowId: "f1", steps: base });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+    expect(nodeEl("fugaz")).toBeNull();
+    expect(viewport.style.transform).toBe(before);
+  });
+
+  test("el nodo nuevo se centra en la parte del lienzo que el panel lateral deja a la vista", async () => {
+    const PANE = { left: 0, right: 1200, top: 0, bottom: 800, width: 1200, height: 800, x: 0, y: 0 };
+    /** Dónde acaba la vista según dónde esté el panel: a la derecha, a la izquierda, o de lado a lado. */
+    async function landing(panel: { left: number; right: number }) {
+      const drawer = document.createElement("div");
+      drawer.setAttribute("role", "dialog");
+      drawer.setAttribute("aria-modal", "false");
+      document.body.appendChild(drawer);
+      const original = Element.prototype.getBoundingClientRect;
+      const spy = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+        if (this === drawer) return { ...PANE, ...panel, width: panel.right - panel.left, toJSON() {} } as DOMRect;
+        if (this.classList.contains("relative") && this.classList.contains("flex-1")) return { ...PANE, toJSON() {} } as DOMRect;
+        return original.call(this);
+      });
+      try {
+        const base = FULL.slice(0, 2);
+        const view = mount(base, { flowId: "f1" });
+        await waitFor(() => expect(nodeEl("list")).toBeTruthy());
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        });
+        const viewport = document.querySelector(".react-flow__viewport") as HTMLElement;
+        const before = viewport.style.transform;
+        view.rerender({ flowId: "f1", steps: [...base, { id: "lejos", kind: "wait", waitMs: 1, position: { x: 5000, y: 5000 } }] });
+        await waitFor(() => expect(viewport.style.transform).not.toBe(before), { timeout: 2000 });
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 600));
+        });
+        const after = viewport.style.transform;
+        view.container.remove();
+        return after;
+      } finally {
+        spy.mockRestore();
+        drawer.remove();
+      }
+    }
+
+    const right = await landing({ left: 800, right: 1200 });
+    const left = await landing({ left: 0, right: 400 });
+    const covering = await landing({ left: 100, right: 1200 });
+    // Con el panel a la derecha el nodo se va a la izquierda, y al revés; un panel que no está a un
+    // lado (lo tapa casi todo) no cuenta, y el nodo se centra sin más.
+    expect(right).not.toBe(left);
+    expect(covering).not.toBe(right);
+    expect(covering).not.toBe(left);
   });
 });

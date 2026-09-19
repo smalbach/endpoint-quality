@@ -174,6 +174,18 @@ describe("la nueva corrida de seguridad", () => {
     await waitFor(() => expect(screen.getByText("Entorno borrado")).toBeTruthy());
   });
 
+  test("mientras se lanza el botón lo dice y no deja pulsarlo; un rechazo sin campos enseña su detalle", async () => {
+    let reject!: (error: unknown) => void;
+    mount(() => new Promise((_resolve, fail) => (reject = fail)));
+    await waitFor(() => expect(launch().disabled).toBe(false));
+    fireEvent.click(launch());
+    const pending = (await screen.findByRole("button", { name: "Lanzando…" })) as HTMLButtonElement;
+    expect(pending.disabled).toBe(true);
+    reject(new ApiError(409, { type: "about:blank", title: "Conflicto", status: 409, detail: "Ya hay una corrida en marcha" }));
+    await waitFor(() => expect(screen.getByText("Ya hay una corrida en marcha")).toBeTruthy());
+    expect(launch().disabled).toBe(false);
+  });
+
   test("un error que no es del API enseña su mensaje, y Cancelar cierra", async () => {
     const { onClose } = mount(() => Promise.reject(new Error("Sin red")));
     await waitFor(() => expect(launch().disabled).toBe(false));

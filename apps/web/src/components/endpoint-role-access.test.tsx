@@ -11,10 +11,15 @@ vi.mock("@/lib/api", async (original) => ({ ...(await original<object>()), api: 
 
 const BASE = "/orgs/o/projects/p";
 
-function mount(roles: unknown[], endpointId: string | null = "e1") {
+function mount(
+  roles: unknown[],
+  endpointId: string | null = "e1",
+  { operationId = "getOrder", fail = false }: { operationId?: string | null; fail?: boolean } = {},
+) {
   call.mockReset();
   call.mockImplementation(async (path: string, options?: { method?: string }) => {
     if (path === `${BASE}/endpoints/e1/role-access` && !options?.method) return { roles };
+    if (fail) throw new Error("No tienes permiso para esto");
     return { updated: 1 };
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -22,7 +27,7 @@ function mount(roles: unknown[], endpointId: string | null = "e1") {
     <MemoryRouter>
       <QueryClientProvider client={client}>
         <ToastProvider>
-          <EndpointRoleAccess base={BASE} projectId="p" endpointId={endpointId} operationId="getOrder" canEdit />
+          <EndpointRoleAccess base={BASE} projectId="p" endpointId={endpointId} operationId={operationId} canEdit />
         </ToastProvider>
       </QueryClientProvider>
     </MemoryRouter>,
@@ -63,5 +68,40 @@ describe("el acceso por rol de un endpoint", () => {
   test("un endpoint nuevo pide guardarlo antes", () => {
     mount([], null);
     expect(screen.getByText(/Guarda el endpoint para decidir/)).toBeDefined();
+  });
+
+  test("cambiar el alcance cuenta como cambio, y «Descartar» vuelve a lo guardado", async () => {
+    mount(
+      [
+        { roleId: "r1", name: "vendedor", color: "#6366f1", access: "allow", dataScope: "own" },
+        { roleId: "r2", name: "comprador", color: "#8b5cf6", access: "undecided", dataScope: "all" },
+      ],
+      "e1",
+      { operationId: null },
+    );
+    const scope = await screen.findByLabelText<HTMLSelectElement>("Datos de vendedor");
+    expect(screen.getByText(/no está en el contrato/)).toBeDefined();
+    fireEvent.change(scope, { target: { value: "all" } });
+    fireEvent.change(screen.getByLabelText("Acceso de comprador"), { target: { value: "allow" } });
+    expect(screen.getByText("2 cambios")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Descartar" }));
+    expect(screen.getByLabelText<HTMLSelectElement>("Datos de vendedor").value).toBe("own");
+    expect(screen.queryByText(/cambios?$/)).toBeNull();
+  });
+
+  test("guardar dice que se guardó, o por qué no", async () => {
+    mount([{ roleId: "r1", name: "vendedor", color: "#6366f1", access: "allow", dataScope: "own" }]);
+    fireEvent.change(await screen.findByLabelText("Acceso de vendedor"), { target: { value: "deny" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar permisos" }));
+    expect(await screen.findByText("Permisos por rol guardados")).toBeDefined();
+  });
+
+  test("un guardado rechazado se cuenta", async () => {
+    mount([{ roleId: "r1", name: "vendedor", color: "#6366f1", access: "allow", dataScope: "own" }], "e1", {
+      fail: true,
+    });
+    fireEvent.change(await screen.findByLabelText("Acceso de vendedor"), { target: { value: "deny" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar permisos" }));
+    expect(await screen.findByText("No tienes permiso para esto")).toBeDefined();
   });
 });

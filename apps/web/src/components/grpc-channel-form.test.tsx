@@ -10,7 +10,7 @@
  * - **La reflexión se pide con el entorno activo**, y sus servicios alimentan el mismo selector.
  */
 import { useState } from "react";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -51,7 +51,7 @@ const SCHEMA: GrpcSchemaView = {
 
 const START: GrpcSettingsView = { source: "proto", service: "", method: "", message: "{}", deadlineMs: null };
 
-function show(initial: GrpcSettingsView = START) {
+function show(initial: GrpcSettingsView = START, environmentId: string | null = "env-1") {
   const seen: GrpcSettingsView[] = [];
   function Harness() {
     const [value, setValue] = useState(initial);
@@ -65,7 +65,7 @@ function show(initial: GrpcSettingsView = START) {
           setValue(next);
         }}
         canEdit
-        environmentId="env-1"
+        environmentId={environmentId}
       />
     );
   }
@@ -167,5 +167,154 @@ describe("el formulario de un canal gRPC", () => {
         [true, true],
       ].map(([clientStreaming, serverStreaming]) => callKind({ clientStreaming, serverStreaming })),
     ).toEqual(["unaria", "stream de servidor", "stream de cliente", "bidireccional"]);
+  });
+
+  test("el mensaje y el plazo se escriben; un plazo vacío es «sin plazo»", async () => {
+    call.mockReset();
+    call.mockResolvedValue(SCHEMA);
+    const seen = show();
+    fireEvent.change(screen.getByLabelText("Mensaje de la petición"), { target: { value: '{"a":1}' } });
+    expect(seen.at(-1)!.message).toBe('{"a":1}');
+    const deadline = screen.getByRole("spinbutton");
+    fireEvent.change(deadline, { target: { value: "1500" } });
+    expect(seen.at(-1)!.deadlineMs).toBe(1500);
+    fireEvent.change(deadline, { target: { value: "" } });
+    expect(seen.at(-1)!.deadlineMs).toBeNull();
+  });
+
+  test("los problemas que devolvió «Guardar» salen junto a su campo", async () => {
+    call.mockReset();
+    call.mockResolvedValue(SCHEMA);
+    const problems: Record<string, string> = {
+      "grpc.service": "Elige un servicio",
+      "grpc.method": "Elige un método",
+      "grpc.message": "El mensaje no es JSON",
+      "grpc.deadlineMs": "Tiene que ser positivo",
+    };
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <GrpcChannelForm
+          base="/orgs/o/projects/p1"
+          channelId="c1"
+          value={START}
+          onChange={vi.fn()}
+          canEdit
+          environmentId={null}
+          problemOf={(field) => problems[field]}
+        />
+      </QueryClientProvider>,
+    );
+    for (const text of Object.values(problems)) expect(screen.getAllByText(text).length).toBeGreaterThan(0);
+  });
+
+  test("elegir la reflexión cambia la fuente", async () => {
+    call.mockReset();
+    call.mockResolvedValue(SCHEMA);
+    const seen = show();
+    fireEvent.click(screen.getByRole("radio", { name: "Reflexión del servidor" }));
+    expect(seen.at(-1)!.source).toBe("reflection");
+    expect(screen.getByRole("button", { name: "Cargar servicios" })).toBeTruthy();
+  });
+
+  test("un .proto guardado que no se puede leer dice por qué", async () => {
+    call.mockReset();
+    call.mockResolvedValue({
+      files: [{ path: "roto.proto", bytes: 3 }],
+      services: [],
+      problem: "roto.proto:1: falta syntax",
+    });
+    show();
+    expect(await screen.findByText("roto.proto:1: falta syntax")).toBeTruthy();
+  });
+
+  test("una subida rechazada se cuenta, y el selector sin ficheros no manda nada", async () => {
+    call.mockReset();
+    call.mockImplementation(async (_path: string, options?: { method?: string }) => {
+      if (options?.method === "PUT") throw new Error("import sin resolver: common/money.proto");
+      return { files: [], services: [], problem: null };
+    });
+    show();
+    await screen.findByText("Ningún .proto todavía.");
+    fireEvent.change(screen.getByLabelText("Ficheros .proto"), { target: { files: null } });
+    expect(call).toHaveBeenCalledTimes(1);
+    fireEvent.change(screen.getByLabelText("Ficheros .proto"), { target: { files: [new File(["x"], "a.proto")] } });
+    expect(await screen.findByText("import sin resolver: common/money.proto")).toBeTruthy();
+  });
+
+  test("sin entorno la reflexión se pide sin él; mientras pregunta lo dice, y un fallo se cuenta", async () => {
+    call.mockReset();
+    let fail: (reason: unknown) => void = () => {};
+    call.mockImplementation((path: string) =>
+      path.endsWith("/reflection")
+        ? new Promise((_, reject) => (fail = reject))
+        : Promise.resolve({ files: [], services: [], problem: null }),
+    );
+    show({ ...START, source: "reflection" }, null);
+    fireEvent.click(screen.getByRole("button", { name: "Cargar servicios" }));
+    expect(await screen.findByRole("button", { name: "Preguntando…" })).toBeTruthy();
+    expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/channels/c1/grpc/reflection", { method: "POST", body: {} });
+    fail("UNIMPLEMENTED: reflection");
+    expect(await screen.findByText("UNIMPLEMENTED: reflection")).toBeTruthy();
+  });
+});
+
+describe("leer un .proto", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** Un `FileReader` que contesta lo que se le dice, para los casos que el de jsdom no da. */
+  function reader(outcome: { result?: unknown; error?: unknown }) {
+    vi.stubGlobal(
+      "FileReader",
+      class {
+        result: unknown = null;
+        error: unknown = null;
+        onload: () => void = () => {};
+        onerror: () => void = () => {};
+        readAsText() {
+          queueMicrotask(() => {
+            if ("result" in outcome) {
+              this.result = outcome.result;
+              this.onload();
+            } else {
+              this.error = outcome.error;
+              this.onerror();
+            }
+          });
+        }
+      },
+    );
+  }
+
+  const upload = async (name: string) => {
+    call.mockReset();
+    call.mockImplementation(async (_path: string, options?: { method?: string }) =>
+      options?.method === "PUT" ? SCHEMA : { files: [], services: [], problem: null },
+    );
+    show();
+    await screen.findByText("Ningún .proto todavía.");
+    fireEvent.change(screen.getByLabelText("Ficheros .proto"), { target: { files: [new File(["x"], name)] } });
+  };
+
+  test("un fichero que el navegador no deja leer dice cuál", async () => {
+    reader({ error: null });
+    await upload("vacio.proto");
+    expect(await screen.findByText("No se pudo leer vacio.proto")).toBeTruthy();
+  });
+
+  test("y con el error del navegador cuando lo hay", async () => {
+    reader({ error: new Error("NotReadableError") });
+    await upload("a.proto");
+    expect(await screen.findByText("NotReadableError")).toBeTruthy();
+  });
+
+  test("un resultado vacío se manda como texto vacío", async () => {
+    reader({ result: null });
+    await upload("a.proto");
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/channels/c1/grpc/protos", {
+        method: "PUT",
+        body: { files: [{ path: "a.proto", content: "" }] },
+      }),
+    );
   });
 });

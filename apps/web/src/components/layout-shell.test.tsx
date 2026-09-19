@@ -25,6 +25,7 @@ const auth = vi.hoisted(() => ({
   organizations: [{ id: "o", name: "Org" }] as { id: string; name: string }[],
   signOut: vi.fn(() => Promise.resolve()),
   selectOrganization: vi.fn(),
+  organization: { id: "o", name: "Org", role: "admin" } as { id: string; name: string; role: string } | null,
 }));
 vi.mock("@/lib/auth", () => ({
   useAuth: () => ({
@@ -32,7 +33,7 @@ vi.mock("@/lib/auth", () => ({
     signOut: auth.signOut,
     selectOrganization: auth.selectOrganization,
   }),
-  useOrganization: () => ({ id: "o", name: "Org", role: "admin" }),
+  useOrganization: () => auth.organization,
   useCan: () => auth.canEdit,
 }));
 
@@ -82,6 +83,8 @@ const project = { id: "p1", name: "Pedidos", contract: { title: "API Pedidos", v
 beforeEach(() => {
   auth.canEdit = true;
   auth.organizations = [{ id: "o", name: "Org" }];
+  auth.organization = { id: "o", name: "Org", role: "admin" };
+  vi.restoreAllMocks();
   auth.signOut.mockClear();
   auth.selectOrganization.mockClear();
   importer.open.mockClear();
@@ -125,6 +128,18 @@ describe("AppLayout", () => {
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "o2" } });
     expect(auth.selectOrganization).toHaveBeenCalledWith("o2");
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/projects"));
+  });
+
+  test("con varias organizaciones y ninguna elegida todavía, el selector sale igual y elegir una la elige", () => {
+    auth.organizations = [
+      { id: "o", name: "Org" },
+      { id: "o2", name: "Otra" },
+    ];
+    auth.organization = null;
+    draw("/projects");
+    expect(screen.getByRole("link", { name: "ajustes" })).toBeTruthy();
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "o2" } });
+    expect(auth.selectOrganization).toHaveBeenCalledWith("o2");
   });
 
   test("dentro de un proyecto: «Proyectos» marcado, el nombre enlaza y el entorno aparece", async () => {
@@ -186,6 +201,19 @@ describe("ProjectLayout", () => {
   test("arranca plegada si así se dejó", () => {
     window.localStorage.setItem("eq.sidebar-collapsed", "true");
     draw("/p/p1/roles");
+    expect(screen.getByTitle("Expandir barra lateral")).toBeTruthy();
+  });
+
+  test("sin almacenamiento arranca desplegada y plegar sigue funcionando en esta pestaña", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("SecurityError");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("SecurityError");
+    });
+    draw("/p/p1/roles");
+    expect(screen.getByTitle("Plegar barra lateral")).toBeTruthy();
+    fireEvent.click(screen.getByTitle("Plegar barra lateral"));
     expect(screen.getByTitle("Expandir barra lateral")).toBeTruthy();
   });
 

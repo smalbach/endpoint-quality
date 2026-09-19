@@ -76,14 +76,17 @@ export function GraphqlSuggest({
   function track(always: boolean) {
     const element = field.current;
     if (!element || !schema) return;
-    const caret = element.selectionStart ?? 0;
+    // Es siempre un `textarea`, cuyo `selectionStart` es un número (sólo es nulo en `<input>` que
+    // no son de texto).
+    const caret = element.selectionStart as number;
     const before = element.value.slice(0, caret);
     if (!always && !OPENS.test(before)) {
       setOpen(null);
       return;
     }
     const lines = before.split("\n");
-    const word = /[_A-Za-z0-9$@]*$/.exec(before)?.[0].length ?? 0;
+    // Un patrón que acaba en `*$` casa siempre, aunque sea con la cadena vacía.
+    const word = /[_A-Za-z0-9$@]*$/.exec(before)![0].length;
     const column = lines[lines.length - 1].length - word;
     const height = element.clientHeight;
     const width = element.clientWidth;
@@ -95,9 +98,9 @@ export function GraphqlSuggest({
     setHighlighted(0);
   }
 
+  /** Sólo se acepta desde la lista a la vista, y la lista sólo se ve con `found`. */
   function accept(item: GraphqlSuggestion) {
-    if (!found) return;
-    const applied = applyGraphqlSuggestion(value, found, item);
+    const applied = applyGraphqlSuggestion(value, found!, item);
     pendingCaret.current = applied.caret;
     inner.onChange({ target: { value: applied.text } });
     setOpen(null);

@@ -189,7 +189,8 @@ function fromJson(text: string): ParsedRows {
   try {
     parsed = JSON.parse(text);
   } catch (caught) {
-    return { ok: false, error: caught instanceof Error ? caught.message : "JSON inválido" };
+    // `JSON.parse` sólo lanza `SyntaxError`, que siempre trae su mensaje.
+    return { ok: false, error: (caught as SyntaxError).message };
   }
   if (!Array.isArray(parsed)) return { ok: false, error: "Los datos son una lista de filas" };
 
@@ -338,8 +339,8 @@ function splitCsv(text: string, separator: string): { ok: true; records: CsvReco
       index += 1;
       continue;
     }
+    // A «\r» at the very end cannot reach here: `parseRows` trims the text first.
     if (text[index] === "\r") index += 1;
-    if (index >= text.length) break;
     if (text[index] !== "\n") return { ok: false, error: `Línea ${began}: sobra texto tras las comillas` };
     index += 1;
     line += 1;

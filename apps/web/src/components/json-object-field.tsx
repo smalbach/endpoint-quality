@@ -42,7 +42,8 @@ export function JsonObjectField({
                 onChange(JSON.parse(text) as Record<string, unknown>);
                 setError(null);
               } catch (caught) {
-                setError(caught instanceof Error ? caught.message : "JSON inválido");
+                // `JSON.parse` sólo lanza `SyntaxError`, que siempre trae su mensaje.
+                setError((caught as SyntaxError).message);
               }
             }}
           />

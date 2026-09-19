@@ -6,8 +6,8 @@
  * debajo de treinta líneas, y que un lenguaje guardado que ya no existe no deja la pantalla en
  * blanco.
  */
-import { describe, expect, test, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, test, beforeEach, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 
 import { CodeModal } from "@/components/code-modal";
 import type { SnippetRequest } from "@/lib/snippets";
@@ -79,5 +79,60 @@ describe("lo que el fragmento no puede llevar", () => {
     render(<CodeModal request={request()} onClose={() => {}} />);
     expect(screen.queryByText(/la firma se calcula/)).toBeNull();
     expect(screen.queryByText(/quedan sin sustituir/)).toBeNull();
+  });
+});
+
+describe("sin almacenamiento", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  test("una ventana privada que no deja leer ni escribir usa cURL y deja cambiar igual", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("SecurityError");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("SecurityError");
+    });
+    render(<CodeModal request={request()} onClose={() => {}} />);
+    expect(code()).toContain("curl -X POST");
+    fireEvent.change(screen.getByLabelText("Lenguaje"), { target: { value: "go" } });
+    expect(screen.getByText(/package main/)).toBeTruthy();
+  });
+});
+
+describe("copiar", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  test("copia el código del lenguaje elegido y el botón lo dice dos segundos", async () => {
+    vi.useFakeTimers();
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    render(<CodeModal request={request()} onClose={() => {}} />);
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Copiar" })));
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("curl -X POST"));
+    expect(screen.getByRole("button", { name: "Copiado" })).toBeTruthy();
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(screen.getByRole("button", { name: "Copiar" })).toBeTruthy();
+  });
+
+  test("si el portapapeles no deja, el botón no miente", async () => {
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { writeText: vi.fn(async () => Promise.reject(new Error("no"))) },
+    });
+    render(<CodeModal request={request()} onClose={() => {}} />);
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Copiar" })));
+    expect(screen.getByRole("button", { name: "Copiar" })).toBeTruthy();
+  });
+
+  test("«Cerrar» cierra", () => {
+    const onClose = vi.fn();
+    render(<CodeModal request={request()} onClose={onClose} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Cerrar" }).at(-1)!);
+    expect(onClose).toHaveBeenCalled();
   });
 });

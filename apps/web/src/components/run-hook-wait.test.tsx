@@ -31,6 +31,20 @@ describe("la espera de un webhook en la corrida", () => {
     expect(writeText).toHaveBeenCalledWith(URL);
   });
 
+  test("si el portapapeles falla lo dice y deja la URL para seleccionarla a mano", async () => {
+    Object.assign(navigator, { clipboard: { writeText: vi.fn().mockRejectedValue(new Error("sin foco")) } });
+    // El caso aún no llegó a la lista: la tarjeta sale igual, sin la ruta del caso.
+    render(<RunHookWait hooks={[hook]} cases={[]} />);
+    expect(screen.queryByText(/espera 60 s ·/)).toBeNull();
+    const input = screen.getByLabelText("URL del webhook") as HTMLInputElement;
+    fireEvent.focus(input);
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(URL.length);
+    fireEvent.click(screen.getByRole("button", { name: "Copiar URL" }));
+    await screen.findByText(/No se pudo copiar/);
+    expect(screen.getByRole("button", { name: "Copiar URL" })).toBeTruthy();
+  });
+
   test("cuando su caso ya terminó no queda nada que copiar", () => {
     const { container } = render(<RunHookWait hooks={[hook]} cases={[runCase("passed")]} />);
     expect(container.textContent).toBe("");

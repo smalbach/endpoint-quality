@@ -126,6 +126,14 @@ describe("un secreto guardado", () => {
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ [key]: MASK }));
   });
 
+  test("un cuerpo de login sin guardar se vacía de verdad", () => {
+    const form = mount({ type: "bearer" });
+    const box = screen.getByLabelText(/^Body del login/);
+    fireEvent.change(box, { target: { value: '{"a":1}' } });
+    fireEvent.change(box, { target: { value: "" } });
+    expect(form.saved().loginBody).toBe("");
+  });
+
   test("bloqueado no se ofrece quitarlo ni se puede escribir", () => {
     mount({ type: "api_key", apiKey: MASK }, { disabled: true });
     expect(screen.queryByRole("button", { name: "Quitar el guardado" })).toBeNull();

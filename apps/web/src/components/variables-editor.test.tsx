@@ -100,6 +100,13 @@ describe("la tabla de variables", () => {
     expect(editor.saved().map((entry) => entry.name)).toEqual(["b", ""]);
   });
 
+  test("una fila con valor pero sin nombre también se puede borrar", () => {
+    const editor = mount([row({ name: "", initial: "x", current: "x" }), row({ name: "b" })]);
+    expect(screen.getAllByLabelText("Aplicar la variable")).toHaveLength(2);
+    fireEvent.click(screen.getByLabelText("Eliminar la variable"));
+    expect(editor.saved().map((entry) => entry.name)).toEqual(["b", ""]);
+  });
+
   test("el problema de una fila se dice debajo de ella", () => {
     mount([row(), row()], { problems: [{ index: 1, detail: "Ya hay una variable con ese nombre" }] });
     expect(screen.getByText("Ya hay una variable con ese nombre")).toBeDefined();

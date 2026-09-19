@@ -106,10 +106,10 @@ export default function GraphqlBodyEditor({
   const fields = useMemo(() => (schema ? rootFields(schema) : []), [schema]);
   const shown = fields.filter((field) => field.name.toLowerCase().includes(filter.trim().toLowerCase()));
 
+  // Sólo se llama desde la lista de operaciones, que sale del esquema cargado: el esquema está y
+  // el campo es uno de sus campos raíz, así que `operationFor` siempre tiene qué escribir.
   const use = (field: RootField) => {
-    if (!schema) return;
-    const generated = operationFor(schema, field.operation, field.name);
-    if (!generated) return;
+    const generated = operationFor(schema!, field.operation, field.name)!;
     onChange({ text: generated.query, variables: generated.variables });
     toast.success(`Operación «${field.name}» escrita: revisa las variables antes de enviar`);
   };

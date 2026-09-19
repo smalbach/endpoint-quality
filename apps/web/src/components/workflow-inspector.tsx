@@ -36,6 +36,7 @@ import {
   effectiveScript,
   untilText,
   type ChannelNodeView,
+  type ScriptStepView,
 } from "@/lib/channel-node-draft";
 import { ChannelScriptEditor } from "@/components/channel-script-editor";
 import type {
@@ -413,8 +414,8 @@ function NodePanel({
   removeLabel?: string;
   onRemove: () => void;
 }) {
-  const shell = useContext(InspectorShell);
-  if (!shell) throw new Error("NodePanel outside WorkflowInspector");
+  // NodePanel no se exporta: solo lo montan los inspectores de nodo, siempre dentro del proveedor.
+  const shell = useContext(InspectorShell)!;
   const all: InspectorTab[] = [...tabs, { id: "help", label: "Ayuda", content: <NodeHelpView kind={kind} /> }, shell.flowTab];
   const current = all.find((item) => item.id === shell.active) ?? all[0];
 
@@ -959,7 +960,7 @@ function StepInspector({
   // that spend it are two tabs of the same node.
   const [sampleBody, setSampleBody] = useState<unknown>(undefined);
   const operation = template && operations.find((item) => item.id === template.operationId);
-  const countOf = (map: Record<string, string> | undefined) => Object.keys(map ?? {}).length;
+  const countOf = (map: Record<string, string>) => Object.keys(map).length;
 
   const requestTab: InspectorTab = {
     id: "request",
@@ -1381,7 +1382,7 @@ function GraphqlInspector({
   const call: StepGraphqlView = step.graphql ?? { url: "", query: "" };
   const setCall = (change: Partial<StepGraphqlView>) => onChange({ ...step, graphql: { ...call, ...change } });
   const variablesProblem = graphqlVariablesProblem(call.variables);
-  const badName = Boolean(call.operationName) && !GRAPHQL_OPERATION_NAME.test(call.operationName ?? "");
+  const badName = call.operationName ? !GRAPHQL_OPERATION_NAME.test(call.operationName) : false;
 
   return (
     <NodePanel
@@ -2248,6 +2249,15 @@ function WebhookInspector({
   );
 }
 
+/** Una línea del guion heredado del canal: «tema ← cuerpo», o solo el cuerpo. */
+function inheritedLine(action: ScriptStepView): string {
+  // El guion heredado sale de los mensajes guardados del canal (`effectiveScript`), que son siempre
+  // envíos: esperar y terminar solo existen en un guion propio. La guarda la pide el tipo.
+  /* v8 ignore next -- @preserve */
+  if (action.action !== "send") return action.action;
+  return `${action.topic ? `${action.topic} ← ` : ""}${action.body}`;
+}
+
 /**
  * A channel node: which channel it runs, what it sends, and when the conversation is over. What the
  * channel expects is not edited here — it is the channel's, and its verdict is the case's.
@@ -2415,7 +2425,7 @@ function ChannelInspector({
                 <ol className="grid gap-1 text-[11px] text-slate-600">
                   {script.map((action, index) => (
                     <li key={index} className="truncate font-mono">
-                      {index + 1}. {action.action === "send" ? `${action.topic ? `${action.topic} ← ` : ""}${action.body}` : action.action}
+                      {index + 1}. {inheritedLine(action)}
                     </li>
                   ))}
                   {script.length === 0 && <li>Nada que mandar: la sesión escucha.</li>}
@@ -3150,7 +3160,7 @@ function RequestFieldsRows({
   canEdit: boolean;
   onChange: (maps: { enabled: Record<string, string>; disabled: Record<string, string> }) => void;
 }) {
-  const rows = fieldRowsFrom(enabled ?? {}, disabledMap ?? {});
+  const rows = fieldRowsFrom(enabled, disabledMap);
   return (
     <RequestFieldsEditor
       label={label}

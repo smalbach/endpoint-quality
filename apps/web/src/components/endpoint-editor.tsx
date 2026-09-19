@@ -29,7 +29,6 @@ import { ExamplePanel } from "@/components/example-panel";
 import { VariableSuggest } from "@/components/variable-suggest";
 import { cn, formatBytes, formatDuration, httpStatusStyle, methodStyle } from "@/lib/format";
 import {
-  EMPTY_BODY,
   METHODS,
   NEW_ENDPOINT,
   NO_FILES,
@@ -214,14 +213,11 @@ export function EndpointEditor({
     });
 
   const canSend = canEdit && draft.path.trim().length > 0 && missing.length === 0 && !send.isPending;
-  const keyHandlers = useRef({ save: () => {}, send: () => {} });
-  keyHandlers.current = {
-    save: () => {
-      if (dirty && !save.isPending) save.mutate();
-    },
-    send: () => {
-      if (canSend) send.mutate();
-    },
+  const saveByKey = () => {
+    if (dirty && !save.isPending) save.mutate();
+  };
+  const sendByKey = () => {
+    if (canSend) send.mutate();
   };
 
   if (endpointId && endpoint.isLoading) return <p className="p-4 text-sm text-slate-500">Cargando endpoint…</p>;
@@ -490,10 +486,10 @@ export function EndpointEditor({
         if (!(event.metaKey || event.ctrlKey)) return;
         if (event.key === "s") {
           event.preventDefault();
-          keyHandlers.current.save();
+          saveByKey();
         } else if (event.key === "Enter") {
           event.preventDefault();
-          keyHandlers.current.send();
+          sendByKey();
         }
       }}
     >
@@ -613,7 +609,8 @@ export function EndpointEditor({
               className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700"
               value={environment?.id ?? ""}
               disabled={!environments.data?.length}
-              onChange={(event) => setActiveEnvironment(event.target.value || null)}
+              // Con entornos, toda opción lleva su id: la vacía solo existe cuando la lista está apagada.
+              onChange={(event) => setActiveEnvironment(event.target.value)}
             >
               {!environments.data?.length && <option value="">Sin entornos · URL base del proyecto</option>}
               {environments.data?.map((entry) => (
@@ -832,7 +829,7 @@ function BodyTab({
   introspect: (query: string) => Promise<SentRequestView>;
 }) {
   const toast = useToast();
-  const body = draft.body ?? EMPTY_BODY;
+  const body = draft.body;
   const setBody = (patch: Partial<typeof body>) => set({ body: { ...body, ...patch } });
   const jsonProblem = useMemo(() => {
     if (body.mode !== "json" || !body.text.trim()) return null;

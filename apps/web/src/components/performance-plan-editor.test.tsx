@@ -178,6 +178,43 @@ describe("PerformancePlanEditor · escenarios y peticiones", () => {
   });
 });
 
+describe("PerformancePlanEditor · varias filas", () => {
+  test("editar una extracción o una comprobación deja intactas las demás; sin valor, el campo sale vacío", () => {
+    const plan = base();
+    plan.scenarios[0]!.requests[0] = {
+      method: "GET",
+      path: "/items",
+      extract: [
+        { variable: "a", path: "data.a" },
+        { variable: "b", path: "data.b" },
+      ],
+      checks: [
+        { source: "status", operator: "equals", value: 200 },
+        { source: "body", path: "data.ok", operator: "equals" },
+      ],
+    };
+    const { last } = draw(plan);
+    fireEvent.click(screen.getByRole("button", { name: "…" }));
+
+    const [firstVariable] = screen.getAllByPlaceholderText("variable");
+    fireEvent.change(firstVariable!, { target: { value: "id" } });
+    const [, secondPath] = screen.getAllByPlaceholderText("data.id");
+    fireEvent.change(secondPath!, { target: { value: "data.c" } });
+    expect(last().scenarios[0]!.requests[0]!.extract).toEqual([
+      { variable: "id", path: "data.a" },
+      { variable: "b", path: "data.c" },
+    ]);
+
+    const [status, body] = screen.getAllByPlaceholderText("valor") as HTMLInputElement[];
+    expect(body!.value).toBe("");
+    fireEvent.change(status!, { target: { value: "201" } });
+    expect(last().scenarios[0]!.requests[0]!.checks).toEqual([
+      { source: "status", operator: "equals", value: "201" },
+      { source: "body", path: "data.ok", operator: "equals" },
+    ]);
+  });
+});
+
 describe("PerformancePlanEditor · solo lectura", () => {
   test("todo deshabilitado y sin botones de añadir ni quitar", () => {
     const plan = base();

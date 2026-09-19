@@ -89,9 +89,11 @@ describe("ImportElements", () => {
     });
     expect(screen.getByText(/Importado: 2 endpoints, 1 flujos, 0\s+entornos\. 1 avisos\./)).toBeTruthy();
     // Lo marcado se vacía tras importar.
-    expect(within(section("Endpoints")).getAllByRole("checkbox").every((box) => !(box as HTMLInputElement).checked)).toBe(
-      true,
-    );
+    expect(
+      within(section("Endpoints"))
+        .getAllByRole("checkbox")
+        .every((box) => !(box as HTMLInputElement).checked),
+    ).toBe(true);
 
     fireEvent.click(within(section("Endpoints")).getByRole("button", { name: "Todos" }));
     fireEvent.click(within(section("Endpoints")).getByRole("button", { name: "Ninguno" }));
@@ -99,6 +101,23 @@ describe("ImportElements", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Cerrar" }));
     expect(screen.getByRole("button", { name: "Importar por elementos" })).toBeTruthy();
+  });
+
+  test("los canales importados se cuentan, y sin avisos no se habla de ellos", async () => {
+    const { onImported } = mount({
+      importer: () => Promise.resolve({ endpoints: 1, workflows: 0, environments: 0, channels: 2, skipped: [] }),
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Importar por elementos" }));
+    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    await waitFor(() => expect(select.options).toHaveLength(2));
+    fireEvent.change(select, { target: { value: "q" } });
+    await waitFor(() => expect(screen.getByText("GET /users")).toBeTruthy());
+    fireEvent.click(within(section("Endpoints")).getAllByRole("checkbox")[0]!);
+    fireEvent.click(screen.getByRole("button", { name: "Importar (1)" }));
+    await waitFor(() => expect(onImported).toHaveBeenCalled());
+    const summary = screen.getByText(/^Importado:/).textContent!;
+    expect(summary).toContain(", 2 canales.");
+    expect(summary).not.toContain("avisos");
   });
 
   test("sin otro proyecto del que importar, lo dice", async () => {

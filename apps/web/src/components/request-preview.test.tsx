@@ -144,6 +144,17 @@ describe("enviar una petición de prueba", () => {
     expect(screen.getByText("No hubo cabeceras")).toBeDefined();
   });
 
+  test("mientras se envía el botón dice «Enviando…» y no deja mandarla dos veces", async () => {
+    let resolve!: (value: RequestPreviewView) => void;
+    call.mockReturnValue(new Promise((done) => (resolve = done)));
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    expect(((await screen.findByRole("button", { name: "Enviando…" })) as HTMLButtonElement).disabled).toBe(true);
+    resolve(preview());
+    expect(await screen.findByText("200")).toBeDefined();
+    expect(call).toHaveBeenCalledTimes(1);
+  });
+
   test("un rechazo de la API se dice con su mensaje, y cualquier otro fallo con uno genérico", async () => {
     call.mockRejectedValueOnce(
       new ApiError(409, { type: "about:blank", title: "Conflict", status: 409, detail: "Escrituras no permitidas" }),

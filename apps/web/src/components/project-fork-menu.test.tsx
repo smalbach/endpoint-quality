@@ -5,12 +5,14 @@
 import { describe, expect, test, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 
-import { ForkBadge, ProjectMenu } from "@/components/project-fork-menu";
+import { ForkBadge, ForkModal, ProjectMenu } from "@/components/project-fork-menu";
 import { ToastProvider } from "@/components/toast";
 import type { ProjectSummary } from "@/lib/types";
 
+const call = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/api", async (original) => ({ ...(await original<object>()), api: call }));
 const can = vi.hoisted(() => ({ edit: true }));
 vi.mock("@/lib/auth", () => ({ useOrganization: () => ({ id: "o", name: "Org" }), useCan: () => can.edit }));
 
@@ -78,5 +80,98 @@ describe("ForkBadge", () => {
   test("un original borrado se dice", () => {
     draw(<ForkBadge project={project({ ...forked.fork!, parentName: null })} />);
     expect(screen.getByText("el original ya no existe")).toBeTruthy();
+  });
+
+  test("un proyecto que no es bifurcación no lleva insignia", () => {
+    draw(<ForkBadge project={project(null)} />);
+    expect(screen.queryByTitle("Bifurcación")).toBeNull();
+  });
+});
+
+describe("ProjectMenu: cerrar", () => {
+  test("salir del menú con el ratón lo cierra", () => {
+    draw(<ProjectMenu project={forked} />);
+    fireEvent.click(screen.getByRole("button", { name: "Acciones del proyecto" }));
+    fireEvent.mouseLeave(screen.getByRole("menu"));
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  test.each(["Solicitudes de fusión", "Traer cambios del original", "Fusionar en el original"])(
+    "ir a «%s» cierra el menú",
+    (name) => {
+      draw(<ProjectMenu project={forked} />);
+      fireEvent.click(screen.getByRole("button", { name: "Acciones del proyecto" }));
+      fireEvent.click(screen.getByRole("menuitem", { name }));
+      expect(screen.queryByRole("menu")).toBeNull();
+    },
+  );
+
+  test("«Cancelar» en el formulario de bifurcar lo cierra", () => {
+    draw(<ProjectMenu project={forked} />);
+    fireEvent.click(screen.getByRole("button", { name: "Acciones del proyecto" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Bifurcar…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(screen.queryByLabelText("Nombre de la bifurcación")).toBeNull();
+  });
+});
+
+describe("ForkModal", () => {
+  function modal() {
+    const onClose = vi.fn();
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false } } })}>
+        <ToastProvider>
+          <MemoryRouter initialEntries={["/p/f"]}>
+            <Routes>
+              <Route path="/p/f" element={<ForkModal project={forked} onClose={onClose} />} />
+              <Route path="/p/:id" element={<p>proyecto nuevo</p>} />
+            </Routes>
+          </MemoryRouter>
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+    return onClose;
+  }
+  const name = () => screen.getByLabelText("Nombre de la bifurcación");
+  const submit = () => screen.getByRole("button", { name: /^(Bifurcar|Bifurcando…)$/ });
+
+  test("sin nombre no se puede bifurcar, ni enviando el formulario", () => {
+    call.mockReset();
+    modal();
+    fireEvent.change(name(), { target: { value: "   " } });
+    expect((submit() as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.submit(name().closest("form")!);
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  test("bifurca con el nombre limpio, lo dice mientras tanto y lleva al proyecto nuevo", async () => {
+    call.mockReset();
+    let done: (value: unknown) => void = () => {};
+    call.mockReturnValue(new Promise((resolve) => (done = resolve)));
+    const onClose = modal();
+    fireEvent.change(name(), { target: { value: "  Mi copia  " } });
+    fireEvent.click(submit());
+    expect(await screen.findByRole("button", { name: "Bifurcando…" })).toBeTruthy();
+    expect(call).toHaveBeenCalledWith("/orgs/o/projects/f/fork", { method: "POST", body: { name: "Mi copia" } });
+    done({ projectId: "n1", skipped: [] });
+    expect(await screen.findByText("proyecto nuevo")).toBeTruthy();
+    expect(screen.getByText("Bifurcado")).toBeTruthy();
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  test("lo que quedó por rellenar se cuenta en el aviso", async () => {
+    call.mockReset();
+    call.mockResolvedValue({ projectId: "n1", skipped: [{ kind: "secret" }, { kind: "credential" }] });
+    modal();
+    fireEvent.click(submit());
+    expect(await screen.findByText("Bifurcado. 2 cosas por rellenar: están en su lista.")).toBeTruthy();
+  });
+
+  test("un rechazo del servidor se queda en el formulario", async () => {
+    call.mockReset();
+    call.mockRejectedValue(new Error("Nombre repetido"));
+    modal();
+    fireEvent.click(submit());
+    expect(await screen.findByText("Nombre repetido")).toBeTruthy();
   });
 });

@@ -29,9 +29,14 @@ const cookie = (patch: Partial<CookieView> = {}): CookieView => ({
   ...patch,
 });
 
-function mount(cookies: CookieView[]) {
+function mount(
+  cookies: CookieView[],
+  { baseUrl = "https://api.ejemplo.com", fail = false }: { baseUrl?: string; fail?: boolean } = {},
+) {
   call.mockReset();
-  call.mockImplementation((path: string) => {
+  call.mockImplementation((path: string, options?: { method?: string }) => {
+    if (fail && options?.method) return Promise.reject(new Error("el servidor dijo que no"));
+    if (options?.method === "POST") return Promise.resolve({ cookie: cookie({ name: "manual" }) });
     if (path.includes("reveal=true"))
       return Promise.resolve({ cookies: cookies.map((row) => ({ ...row, value: "s3cr3t0" })) });
     if (path.includes("/cookies")) return Promise.resolve({ cookies });
@@ -41,7 +46,7 @@ function mount(cookies: CookieView[]) {
   render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <CookieManager projectId="p" baseUrl="https://api.ejemplo.com" onClose={() => {}} />
+        <CookieManager projectId="p" baseUrl={baseUrl} onClose={() => {}} />
       </ToastProvider>
     </QueryClientProvider>,
   );
@@ -111,6 +116,67 @@ describe("el gestor del tarro", () => {
         }),
       ).toBe(true),
     );
+  });
+});
+
+describe("el gestor del tarro: el resto", () => {
+  test("vaciar borra el tarro entero con un DELETE sin clave", async () => {
+    mount([cookie()]);
+    await waitFor(() => expect(screen.getByText("session")).toBeTruthy());
+    fireEvent.click(screen.getByText("Vaciar"));
+    await waitFor(() => expect(screen.getByText("Tarro vacío")).toBeTruthy());
+    expect(call).toHaveBeenCalledWith("/orgs/o/projects/p/cookies", { method: "DELETE" });
+  });
+
+  test("borrar una dice cuál, y si falla lo dice también", async () => {
+    mount([cookie()]);
+    await waitFor(() => expect(screen.getByText("borrar")).toBeTruthy());
+    fireEvent.click(screen.getByText("borrar"));
+    await waitFor(() => expect(screen.getByText("Borrada session")).toBeTruthy());
+  });
+
+  test("un borrado rechazado se cuenta", async () => {
+    mount([cookie()], { fail: true });
+    await waitFor(() => expect(screen.getByText("borrar")).toBeTruthy());
+    fireEvent.click(screen.getByText("borrar"));
+    await waitFor(() => expect(screen.getByText("el servidor dijo que no")).toBeTruthy());
+  });
+
+  test("una cookie sin valor, de subdominios, sin marcas y con caducidad se lee como tal", async () => {
+    const expiresAt = "2030-01-02T03:04:05.000Z";
+    mount([cookie({ value: "", hostOnly: false, secure: false, httpOnly: false, expiresAt })]);
+    await waitFor(() => expect(screen.getByText("y subdominios")).toBeTruthy());
+    expect(screen.getByText("•".repeat(8))).toBeTruthy();
+    expect(screen.getByText(new Date(expiresAt).toLocaleString())).toBeTruthy();
+  });
+
+  test("revelar y volver a tapar", async () => {
+    mount([cookie()]);
+    fireEvent.click(screen.getByText("Ver valores"));
+    fireEvent.click(screen.getByText("Tapar valores"));
+    expect(screen.getByText("Ver valores")).toBeTruthy();
+  });
+
+  test("escribir una para otra URL la manda con esa URL y la línea se vacía", async () => {
+    mount([], { baseUrl: "" });
+    expect(screen.getByPlaceholderText("https://api.ejemplo.com")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Set-Cookie"), { target: { value: "manual=1" } });
+    fireEvent.change(screen.getByLabelText("URL para la que vale"), { target: { value: "https://otra.com" } });
+    fireEvent.click(screen.getByText("Guardar"));
+    await waitFor(() => expect(screen.getByText("Guardada manual")).toBeTruthy());
+    expect(call).toHaveBeenCalledWith("/orgs/o/projects/p/cookies", {
+      method: "POST",
+      body: { url: "https://otra.com", setCookie: "manual=1" },
+    });
+    expect((screen.getByLabelText("Set-Cookie") as HTMLInputElement).value).toBe("");
+  });
+
+  test("una línea rechazada se cuenta y se queda escrita", async () => {
+    mount([], { fail: true });
+    fireEvent.change(screen.getByLabelText("Set-Cookie"), { target: { value: "ajena=1; Domain=otro.com" } });
+    fireEvent.click(screen.getByText("Guardar"));
+    await waitFor(() => expect(screen.getByText("el servidor dijo que no")).toBeTruthy());
+    expect((screen.getByLabelText("Set-Cookie") as HTMLInputElement).value).toBe("ajena=1; Domain=otro.com");
   });
 });
 

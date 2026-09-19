@@ -99,6 +99,12 @@ describe("apagar una fila", () => {
     expect(screen.getByText("2 apagados")).toBeDefined();
   });
 
+  test("una fila con valor y sin nombre se borra por el nombre de la tabla", () => {
+    const table = mount([row("", "suelto"), row("pagina", "2")]);
+    fireEvent.click(screen.getByLabelText("Eliminar parámetros"));
+    expect(table.saved().map((entry) => entry.name)).toEqual(["pagina"]);
+  });
+
   test("borrar se lleva esa fila y deja las demás", () => {
     const table = mount([row("estado", "activo"), row("pagina", "2")]);
     fireEvent.click(screen.getByLabelText("Eliminar estado"));

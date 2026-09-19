@@ -99,6 +99,9 @@ type Setup = {
   save?: () => unknown;
   endpointError?: boolean;
   onOpenFull?: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  /** El proyecto no llega nunca: lo que se ve mientras carga. */
+  projectPending?: boolean;
 };
 
 function mount(setup: Setup = {}) {
@@ -112,6 +115,7 @@ function mount(setup: Setup = {}) {
     if (path === `${BASE}/environments`) return setup.environments ?? [];
     if (path === `${BASE}/endpoints/send`) return setup.send ? setup.send() : SENT;
     if (path === `${BASE}/session-token`) return { token: setup.sessionToken ?? null };
+    if (path === BASE && setup.projectPending) return new Promise(() => {});
     if (path === BASE)
       return (
         setup.project ?? {
@@ -143,6 +147,7 @@ function mount(setup: Setup = {}) {
             canEdit
             onSaved={onSaved}
             onOpenFull={setup.onOpenFull}
+            onDirtyChange={setup.onDirtyChange}
           />
         </ToastProvider>
       </QueryClientProvider>
@@ -653,5 +658,179 @@ describe("Código y Cookies", () => {
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     fireEvent.click(screen.getAllByRole("button", { name: "Cookies" })[0]);
     expect(await screen.findByRole("dialog", { name: "Cookies" })).toBeDefined();
+  });
+});
+
+describe("lo que el resto de pruebas no toca", () => {
+  const sent = () => waitFor(() => expect(call.mock.calls.some(([path]) => path === `${BASE}/endpoints/send`)).toBe(true));
+
+  test("avisa a quien lo pide de si hay cambios sin guardar", async () => {
+    const onDirtyChange = vi.fn();
+    mount({ onDirtyChange });
+    await screen.findByDisplayValue("/users/{id}");
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    fireEvent.change(screen.getByLabelText("Descripción"), { target: { value: "Otra" } });
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+  });
+
+  test("con un entorno activo, el envío y la carga del esquema van contra él", async () => {
+    mount({ environments: [ENVIRONMENT] });
+    await screen.findByDisplayValue("/users/{id}");
+    await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>("Entorno").value).toBe("env1"));
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    await sent();
+    expect(sentRequest().request.environmentId).toBe("env1");
+
+    call.mockClear();
+    tab("Body");
+    fireEvent.click(screen.getByRole("button", { name: "GraphQL" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cargar esquema" }));
+    await sent();
+    expect(sentRequest().request.environmentId).toBe("env1");
+  });
+
+  test("con dos parámetros de ruta, editar uno deja el otro como estaba", async () => {
+    mount();
+    const path = await screen.findByDisplayValue("/users/{id}");
+    fireEvent.change(path, { target: { value: "/users/{id}/posts/{postId}" } });
+    fireEvent.change(screen.getByLabelText("Tipo de postId"), { target: { value: "number" } });
+    fireEvent.change(screen.getByLabelText("Valor de postId"), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText("Descripción de postId"), { target: { value: "El post" } });
+    expect(screen.getByLabelText<HTMLSelectElement>("Tipo de postId").value).toBe("number");
+    expect(screen.getByLabelText<HTMLInputElement>("Descripción de postId").value).toBe("El post");
+    expect(screen.getByLabelText<HTMLInputElement>("Valor de id").value).toBe("7");
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    await sent();
+    expect(sentRequest().request.pathParameters).toEqual([
+      { name: "id", value: "7" },
+      { name: "postId", value: "3" },
+    ]);
+  });
+
+  test("elegir otro tipo de autenticación se guarda con el endpoint", async () => {
+    mount();
+    await screen.findByDisplayValue("/users/{id}");
+    tab("Auth");
+    fireEvent.change(screen.getByLabelText("Tipo de autenticación"), { target: { value: "none" } });
+    expect(screen.getByText("No se añade ninguna credencial.")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: /Guardar/ }));
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith(
+        `${BASE}/endpoints/e1`,
+        expect.objectContaining({ method: "PATCH", body: expect.objectContaining({ auth: { type: "none", params: {} } }) }),
+      ),
+    );
+  });
+
+  test("mientras el proyecto carga, «Heredar» no se inventa lo que hará", async () => {
+    mount({ projectPending: true });
+    await screen.findByDisplayValue("/users/{id}");
+    tab("Auth");
+    expect(screen.getByText("…")).toBeDefined();
+  });
+
+  test("una tecla sin Ctrl ni Cmd, o Ctrl con otra tecla, no guarda ni envía", async () => {
+    mount();
+    const path = await screen.findByDisplayValue("/users/{id}");
+    fireEvent.change(screen.getByLabelText("Descripción"), { target: { value: "Otra" } });
+    fireEvent.keyDown(path, { key: "s" });
+    fireEvent.keyDown(path, { key: "Enter" });
+    fireEvent.keyDown(path, { key: "x", ctrlKey: true });
+    expect(call.mock.calls.some(([, options]) => options?.method === "PATCH" || options?.method === "POST")).toBe(false);
+    // Cmd+S sí guarda.
+    fireEvent.keyDown(path, { key: "s", metaKey: true });
+    expect(await screen.findByText("Endpoint guardado")).toBeDefined();
+  });
+
+  test("mientras envía y mientras guarda, los botones lo dicen", async () => {
+    let answer!: (value: unknown) => void;
+    let stored!: (value: unknown) => void;
+    mount({
+      send: () => new Promise((resolve) => (answer = resolve)),
+      save: () => new Promise((resolve) => (stored = resolve)),
+    });
+    await screen.findByDisplayValue("/users/{id}");
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    expect(await screen.findByRole("button", { name: "Enviando…" })).toBeDefined();
+    expect(screen.getByText("Enviando…", { selector: "p" })).toBeDefined();
+    answer(SENT);
+    expect(await screen.findByText("200")).toBeDefined();
+
+    fireEvent.change(screen.getByLabelText("Descripción"), { target: { value: "Otra" } });
+    fireEvent.click(screen.getByRole("button", { name: /Guardar/ }));
+    expect(await screen.findByRole("button", { name: /Guardando…/ })).toBeDefined();
+    stored({ ...VIEW, description: "Otra" });
+    expect(await screen.findByText("Endpoint guardado")).toBeDefined();
+  });
+
+  test("el tarro de cookies se cierra con Escape", async () => {
+    mount();
+    await screen.findByDisplayValue("/users/{id}");
+    fireEvent.click(screen.getAllByRole("button", { name: "Cookies" })[0]);
+    const dialog = await screen.findByRole("dialog", { name: "Cookies" });
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Cookies" })).toBeNull());
+  });
+
+  test("borrar lo tecleado en la fila nueva no deja dos filas en blanco", async () => {
+    mount();
+    await screen.findByDisplayValue("/users/{id}");
+    fireEvent.change(screen.getByPlaceholderText("nombre"), { target: { value: "p" } });
+    expect(screen.getAllByLabelText("Nombre")).toHaveLength(2);
+    fireEvent.change(screen.getAllByLabelText("Nombre")[0], { target: { value: "" } });
+    expect(screen.getAllByLabelText("Nombre")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Params" })).toBeDefined();
+  });
+
+  test("una fila guardada sin descripción ni nombre se enseña y se puede borrar", async () => {
+    mount({
+      view: {
+        ...VIEW,
+        query: [{ name: "", value: "suelto", enabled: true } as EndpointView["query"][number]],
+      },
+    });
+    await screen.findByDisplayValue("/users/{id}");
+    // La primera es la guardada; la segunda, la fila en blanco de siempre.
+    expect(screen.getAllByLabelText<HTMLInputElement>("Descripción de fila")[0].value).toBe("");
+    fireEvent.click(screen.getByLabelText("Eliminar fila"));
+    expect(screen.queryByDisplayValue("suelto")).toBeNull();
+  });
+
+  test("cerrar el selector de fichero sin elegir ninguno no cambia nada", async () => {
+    mount();
+    await screen.findByDisplayValue("/users/{id}");
+    tab("Body");
+    fireEvent.click(screen.getByRole("button", { name: "binary" }));
+    fireEvent.change(screen.getByLabelText("Fichero binario"), { target: { files: [] } });
+    expect(screen.getByText("Haz clic para elegir el fichero que se envía como cuerpo")).toBeDefined();
+    expect(screen.getByText("Falta elegir el fichero de: cuerpo binario.")).toBeDefined();
+  });
+
+  test("form-data con dos campos: editar uno deja el otro", async () => {
+    mount();
+    await screen.findByDisplayValue("/users/{id}");
+    tab("Body");
+    fireEvent.click(screen.getByRole("button", { name: "form-data" }));
+    fireEvent.change(screen.getByPlaceholderText("clave"), { target: { value: "a" } });
+    fireEvent.change(screen.getByPlaceholderText("clave"), { target: { value: "b" } });
+    fireEvent.change(screen.getByLabelText("Valor de a"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("Valor de b"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    await sent();
+    expect(sentRequest().request.body.fields).toEqual([
+      { name: "a", value: "1", enabled: true, kind: "text" },
+      { name: "b", value: "2", enabled: true, kind: "text" },
+    ]);
+  });
+
+  test("sin respuesta, las cabeceras están vacías; sin script posterior, «Visualizar» explica cómo dibujar", async () => {
+    mount({ send: () => ({ ...SENT, response: null, error: "ECONNREFUSED" }) });
+    const path = await screen.findByDisplayValue("/users/{id}");
+    fireEvent.keyDown(path, { key: "Enter", ctrlKey: true });
+    await screen.findByText("Sin respuesta: ECONNREFUSED");
+    tab("Cabeceras");
+    expect(screen.queryByText("(sin cuerpo)")).toBeNull();
+    tab("Visualizar");
+    expect(await screen.findByText(/Sin visualización\./)).toBeDefined();
   });
 });

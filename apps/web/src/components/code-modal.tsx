@@ -45,7 +45,8 @@ export function CodeModal({ request, onClose }: { request: SnippetRequest; onClo
   const [id, setId] = useState(remembered);
   const [copied, setCopied] = useState(false);
 
-  const language = SNIPPET_LANGUAGES.find((entry) => entry.id === id) ?? SNIPPET_LANGUAGES[0]!;
+  // `id` sale de `remembered`, que ya descarta lo que no existe, o de una opción del selector.
+  const language = SNIPPET_LANGUAGES.find((entry) => entry.id === id)!;
   const code = renderSnippet(language.id, request);
   const notes = snippetNotes(request, authPlan(request.auth, request.headers));
 
@@ -108,9 +109,7 @@ export function CodeModal({ request, onClose }: { request: SnippetRequest; onClo
                 <optgroup key={entry.group} label={entry.group}>
                   {entry.languages.map((item) => (
                     <option key={item.id} value={item.id}>
-                      {entry.languages.length > 1 || entry.group !== item.label
-                        ? `${entry.group} · ${item.label}`
-                        : item.label}
+                      {entry.group} · {item.label}
                     </option>
                   ))}
                 </optgroup>

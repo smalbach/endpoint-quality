@@ -320,14 +320,16 @@ function AuthField({
         )}
       </span>
       {field.kind === "select" ? (
+        // Todo desplegable de AUTH_FIELDS trae sus opciones y su valor por defecto (lo fija la
+        // prueba «todo desplegable tiene opciones y un valor por defecto»).
         <select
           aria-label={field.label}
           className="h-8 w-full rounded-lg border border-slate-200 px-2 text-xs outline-none focus:border-slate-900 disabled:bg-slate-50"
-          value={value || field.fallback || ""}
+          value={value || field.fallback}
           disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
         >
-          {(field.options ?? []).map((option) => (
+          {field.options!.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>

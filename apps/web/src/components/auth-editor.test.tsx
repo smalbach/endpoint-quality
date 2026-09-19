@@ -37,6 +37,10 @@ describe("el editor de autenticación", () => {
     fireEvent.change(select, { target: { value: "basic" } });
     expect(screen.getByLabelText("Usuario")).toBeTruthy();
     expect(screen.queryByLabelText("Access key")).toBeNull();
+
+    fireEvent.change(select, { target: { value: "none" } });
+    expect(screen.getByText("No se añade ninguna credencial.")).toBeTruthy();
+    expect(screen.queryByLabelText("Usuario")).toBeNull();
   });
 
   test("cambiar de tipo conserva lo escrito, como el cuerpo conserva cada modo", () => {
@@ -77,6 +81,39 @@ describe("el editor de autenticación", () => {
       for (const field of fields) expect(field.name, `${type}.${field.label}`).toBeTruthy();
     }
     expect(Object.keys(AUTH_LABELS).sort()).toEqual(Object.keys(AUTH_FIELDS).sort());
+  });
+
+  test("todo desplegable tiene opciones y un valor por defecto", () => {
+    // El editor pinta el desplegable con `options` y parte de `fallback`: uno sin ellos sería un
+    // selector vacío que no deja elegir nada.
+    for (const [type, fields] of Object.entries(AUTH_FIELDS))
+      for (const field of fields.filter((entry) => entry.kind === "select")) {
+        expect(field.options?.length, `${type}.${field.name}`).toBeGreaterThan(0);
+        expect(field.fallback, `${type}.${field.name}`).toBeTruthy();
+      }
+  });
+
+  test("JWT: los desplegables parten de su valor por defecto, y el payload es un área de texto", () => {
+    const onChange = vi.fn();
+    render(<AuthEditor auth={{ type: "jwt", params: {} }} onChange={onChange} variables={[]} />);
+    expect((screen.getByLabelText("Algoritmo") as HTMLSelectElement).value).toBe("HS256");
+    expect(screen.getByPlaceholderText("Bearer por defecto")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Algoritmo"), { target: { value: "RS256" } });
+    expect(onChange).toHaveBeenLastCalledWith({ type: "jwt", params: { algorithm: "RS256" } });
+    fireEvent.change(screen.getByLabelText("Payload"), { target: { value: '{"sub":"1"}' } });
+    expect(onChange).toHaveBeenLastCalledWith({ type: "jwt", params: { payload: '{"sub":"1"}' } });
+  });
+
+  test("un tipo que esta versión no conoce no pinta campos en vez de romper", () => {
+    render(
+      <AuthEditor
+        auth={{ type: "kerberos" as RequestAuthView["type"], params: {} }}
+        onChange={vi.fn()}
+        variables={[]}
+      />,
+    );
+    expect(screen.queryByRole("textbox")).toBeNull();
   });
 
   test("deshabilitado no deja escribir", () => {

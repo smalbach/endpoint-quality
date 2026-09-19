@@ -78,8 +78,8 @@ export function RequestPreviewPanel({
    * got a JSON tree, and had no way to know whether anything had been copied. A block they can
    * select is the version that has no failure mode.
    */
+  // Solo lo llama el botón «cURL», que solo existe con una respuesta en pantalla.
   async function copyCurl() {
-    if (!preview) return;
     setShowingCurl(true);
     try {
       await navigator.clipboard.writeText(curl);

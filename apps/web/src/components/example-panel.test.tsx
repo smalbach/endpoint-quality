@@ -80,9 +80,12 @@ function mount(options: {
   endpointId?: string | null;
   canEdit?: boolean;
   saved?: SavedExampleView;
+  /** Lo que contestan guardar y borrar, cuando no es lo de siempre. */
+  write?: () => Promise<unknown>;
 }) {
   call.mockReset();
   call.mockImplementation((path: string, init?: { method?: string }) => {
+    if (init?.method && options.write) return options.write();
     if (init?.method === "POST")
       return Promise.resolve(options.saved ?? { example: example(), redaction: redaction() });
     if (init?.method === "DELETE") return Promise.resolve(undefined);
@@ -221,5 +224,53 @@ describe("permisos y borrado", () => {
         }),
       ).toBe(true),
     );
+  });
+
+  test("un borrado que falla lo dice", async () => {
+    mount({ examples: [example()], write: () => Promise.reject(new Error("No se pudo borrar")) });
+    fireEvent.click(await screen.findByText("borrar"));
+    expect(await screen.findByText("No se pudo borrar")).toBeTruthy();
+  });
+
+  test("un borrado que sale bien lo dice con el nombre", async () => {
+    mount({ examples: [example()] });
+    fireEvent.click(await screen.findByText("borrar"));
+    expect(await screen.findByText("Borrado «200 correcto»")).toBeTruthy();
+  });
+});
+
+describe("los bordes", () => {
+  test("una petición que no llegó a tener respuesta no se puede guardar", async () => {
+    mount({ sent: { ...sent(), response: null, error: "ECONNREFUSED" } as SentRequestView });
+    const button = (await screen.findByText("Guardar la respuesta")).closest("button")!;
+    expect(button.disabled).toBe(true);
+  });
+
+  test("mientras guarda lo dice, y si falla también", async () => {
+    let fail: (error: Error) => void = () => {};
+    mount({ sent: sent(), write: () => new Promise((_, reject) => (fail = reject)) });
+    fireEvent.click(screen.getByText("Guardar la respuesta"));
+    expect(await screen.findByText("Guardando…")).toBeTruthy();
+    fail(new Error("Demasiado grande"));
+    expect(await screen.findByText("Demasiado grande")).toBeTruthy();
+  });
+
+  test("el color del estado: redirección en azul, error del servidor en rojo", async () => {
+    mount({
+      examples: [
+        example({ id: "r", name: "redirige", response: { ...example().response, status: 302 } }),
+        example({ id: "s", name: "revienta", response: { ...example().response, status: 503 } }),
+      ],
+    });
+    expect((await screen.findByText("302")).className).toContain("sky");
+    expect(screen.getByText("503").className).toContain("rose");
+  });
+
+  test("pulsar otra vez el abierto lo cierra", async () => {
+    mount({ examples: [example()] });
+    fireEvent.click(await screen.findByText("200 correcto"));
+    expect(screen.getByText(/POST https:/)).toBeTruthy();
+    fireEvent.click(screen.getByText("200 correcto"));
+    expect(screen.queryByText(/POST https:/)).toBeNull();
   });
 });

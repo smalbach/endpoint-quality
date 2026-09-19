@@ -61,9 +61,9 @@ export function VariableSuggest({
   const matches = token && variables.length ? suggestionsFor(variables, token.query) : [];
   const showing = matches.length > 0;
 
+  /** Only reachable from the list on screen, and the list only shows with an open token. */
   function accept(name: string) {
-    if (!token || !open) return;
-    const applied = applySuggestion(value, token, open.caret, name);
+    const applied = applySuggestion(value, token!, open!.caret, name);
     pendingCaret.current = applied.caret;
     onChange(applied.text);
     setOpen(null);

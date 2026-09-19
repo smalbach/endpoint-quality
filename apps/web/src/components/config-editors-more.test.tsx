@@ -379,3 +379,69 @@ describe("los permisos entre roles", () => {
     });
   });
 });
+
+/**
+ * Reglas escritas a mano en el documento, a las que les falta algo: el formulario las enseña con
+ * los campos vacíos (o con el valor que el motor usaría) y tocar uno no inventa los demás.
+ */
+describe("las reglas escritas a mano con campos de menos", () => {
+  const next = (text: string) => screen.getByText(text, { selector: "p" }).nextElementSibling as HTMLInputElement;
+
+  test("un presupuesto con solo su id sale en blanco y a cero", () => {
+    const editor = mount("budgets", { budgets: [{ id: "a" }] });
+    expect(next("Etiqueta").value).toBe("");
+    expect(next("Umbral (ms)").value).toBe("0");
+    expect(next("Origen").value).toBe("");
+    fireEvent.change(next("Origen"), { target: { value: "slo" } });
+    expect(editor.saved().budgets).toEqual([{ id: "a", source: "slo" }]);
+  });
+
+  test("una regla de envoltorio sin criterio ni forma", () => {
+    const editor = mount("envelope", { envelope: { rules: [{ id: "e" }] } });
+    expect(next("Forma").value).toBe("");
+    fireEvent.change(next("La ruta acaba en"), { target: { value: "/x" } });
+    expect((editor.saved().envelope as Draft).rules).toEqual([{ id: "e", match: { pathSuffix: "/x" } }]);
+  });
+
+  test("una regla de autorización sin credencial ni estado usa los del motor: none y 401", () => {
+    const editor = mount("authorization", { authRules: [{ id: "x" }] });
+    expect((next("Credencial") as unknown as HTMLSelectElement).value).toBe("none");
+    expect(next("Espera").value).toBe("401");
+    fireEvent.change(next("Si el contrato declara"), { target: { value: "404" } });
+    expect(editor.saved().authRules).toEqual([{ id: "x", when: { declaredStatus: 404 } }]);
+  });
+
+  test("una regla entre roles vacía: cambiar quién lo crea escribe solo eso", () => {
+    const editor = mount("access", { access: { roles: ["vendedor", "comprador"], crossRole: [{}] } });
+    fireEvent.change(next("Lo crea"), { target: { value: "comprador" } });
+    expect((editor.saved().access as Draft).crossRole).toEqual([{ source: "comprador" }]);
+  });
+});
+
+describe("los pares clave-valor con varias filas", () => {
+  test("editar la clave o el valor de una fila deja las demás como estaban", () => {
+    const editor = mount("text", { text: { a: "A", b: "B" } });
+    fireEvent.change(screen.getByDisplayValue("B"), { target: { value: "Bee" } });
+    expect(editor.saved().text).toEqual({ a: "A", b: "Bee" });
+    fireEvent.change(screen.getByDisplayValue("a"), { target: { value: "z" } });
+    expect(editor.saved().text).toEqual({ z: "A", b: "Bee" });
+  });
+
+  test("quitar el último valor de ruta de una operación lo borra de ella en vez de dejar {}", () => {
+    const editor = mount("parameters", {
+      operationParameters: { getWidget: { missingIdValue: "x", pathDefaults: { id: "7" } } },
+    });
+    fireEvent.click(button("Quitar"));
+    expect(editor.saved().operationParameters).toEqual({ getWidget: { missingIdValue: "x" } });
+  });
+
+  test("pasar una celda de «debe pasar» a «no debe pasar» mueve el rol de lista", () => {
+    const editor = mount("access", {
+      access: { roles: ["vendedor"], rules: [{ operationId: "getWidget", allow: ["vendedor"], deny: [] }] },
+    });
+    fireEvent.change(screen.getByLabelText("getWidget para vendedor"), { target: { value: "deny" } });
+    expect((editor.saved().access as Draft).rules).toEqual([
+      { operationId: "getWidget", allow: [], deny: ["vendedor"] },
+    ]);
+  });
+});

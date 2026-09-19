@@ -83,7 +83,8 @@ export function CaptureTraffic({
   }, [overview.data, session]);
 
   const sessionId = session?.id;
-  const active = session?.status === "active";
+  const activeSession = session?.status === "active" ? session : null;
+  const active = activeSession !== null;
 
   useEffect(() => {
     if (!sessionId) return;
@@ -150,11 +151,10 @@ export function CaptureTraffic({
     }
   };
 
-  const stop = async () => {
-    if (!session) return;
+  const stop = async (current: CaptureSessionView) => {
     setBusy("stop");
     try {
-      setSession(await api<CaptureSessionView>(`${base}/${session.id}/stop`, { method: "POST" }));
+      setSession(await api<CaptureSessionView>(`${base}/${current.id}/stop`, { method: "POST" }));
     } catch (error) {
       setProblem(error);
     } finally {
@@ -162,14 +162,13 @@ export function CaptureTraffic({
     }
   };
 
-  const importSelected = async () => {
-    if (!session) return;
+  const importSelected = async (current: CaptureSessionView) => {
     setBusy("import");
     setProblem(null);
     try {
       const itemIds = items.filter((item) => selected.has(item.id)).map((item) => item.id);
       onResult(
-        await api<ImportAnythingResult>(`${base}/${session.id}/import`, {
+        await api<ImportAnythingResult>(`${base}/${current.id}/import`, {
           method: "POST",
           body: { itemIds, flow },
         }),
@@ -207,8 +206,13 @@ export function CaptureTraffic({
   return (
     <div className="mt-3 space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        {active ? (
-          <Button variant="danger" className="h-8 text-xs" disabled={busy !== null} onClick={() => void stop()}>
+        {activeSession ? (
+          <Button
+            variant="danger"
+            className="h-8 text-xs"
+            disabled={busy !== null}
+            onClick={() => void stop(activeSession)}
+          >
             {busy === "stop" ? "Parando…" : "Parar la captura"}
           </Button>
         ) : (
@@ -260,7 +264,11 @@ export function CaptureTraffic({
             <input type="checkbox" checked={flow} onChange={(event) => setFlow(event.target.checked)} />
             Crear también un flujo, en el orden capturado
           </label>
-          <Button className="h-8 text-xs" disabled={!chosen || busy !== null} onClick={() => void importSelected()}>
+          <Button
+            className="h-8 text-xs"
+            disabled={!chosen || busy !== null}
+            onClick={() => void importSelected(session)}
+          >
             {busy === "import" ? "Importando…" : `Importar ${chosen} ${chosen === 1 ? "petición" : "peticiones"}`}
           </Button>
         </div>

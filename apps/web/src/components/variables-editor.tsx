@@ -93,14 +93,13 @@ export function VariablesEditor({
     setAsText(false);
   }
 
-  async function reveal() {
-    if (!onReveal) return;
+  async function reveal(load: () => Promise<Record<string, string>>) {
     setRevealing(true);
     setError(null);
     try {
       // Only the current value is shown. `initial` stays masked, and the mask is what tells the
       // API to leave the shared value exactly as it was — revealing a secret must not rewrite one.
-      setRevealed(await onReveal());
+      setRevealed(await load());
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "No se pudieron leer los secretos");
     } finally {
@@ -131,7 +130,7 @@ export function VariablesEditor({
           <Button
             variant="ghost"
             className="ml-auto h-7 px-2 text-xs"
-            onClick={() => void reveal()}
+            onClick={() => void reveal(onReveal)}
             disabled={revealing}
           >
             {revealing ? "Leyendo…" : "Ver secretos"}

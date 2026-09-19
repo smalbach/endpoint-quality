@@ -45,13 +45,14 @@ const environment = (id: string, name: string, active: boolean): Environment => 
 let environments: Environment[];
 let onPost: (body: unknown) => unknown;
 let onPatch: (body: unknown) => unknown;
+let project: { baseUrl?: string };
 
 function mount() {
   call.mockReset();
   call.mockImplementation(async (path: string, options?: { method?: string; body?: unknown }) => {
     if (path === `${BASE}/environments` && !options?.method) return environments;
     if (path === `${BASE}/environments` && options?.method === "POST") return onPost(options.body);
-    if (path === BASE) return { baseUrl: "https://proyecto.example.com" };
+    if (path === BASE) return project;
     if (options?.method === "PATCH") return onPatch(options.body);
     if (path.endsWith("/variables/reveal")) return { userId: "42" };
     return undefined;
@@ -78,6 +79,7 @@ beforeEach(() => {
   environments = [environment("a", "local", true), environment("b", "staging", false)];
   onPost = () => ({});
   onPatch = () => undefined;
+  project = { baseUrl: "https://proyecto.example.com" };
 });
 
 describe("la lista de entornos", () => {
@@ -148,6 +150,31 @@ describe("la lista de entornos", () => {
     fireEvent.change(screen.getByLabelText("URL base del entorno"), { target: { value: "nada" } });
     fireEvent.click(screen.getByRole("button", { name: "Crear" }));
     expect(await screen.findByText("La URL no es válida")).toBeDefined();
+  });
+
+  test("sin URL en el proyecto el nuevo parte vacío, y un rechazo sin campo se dice con su mensaje", async () => {
+    onPost = () => {
+      throw problem("Ya hay un entorno con ese nombre");
+    };
+    project = {};
+    mount();
+    await screen.findByText("local");
+    fireEvent.click(screen.getByText("+ Nuevo entorno"));
+    expect(screen.getByLabelText<HTMLInputElement>("URL base del entorno").value).toBe("");
+    fireEvent.change(screen.getByLabelText("Nombre del entorno"), { target: { value: "local" } });
+    fireEvent.change(screen.getByLabelText("URL base del entorno"), { target: { value: "https://x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Crear" }));
+    expect(await screen.findByText("Ya hay un entorno con ese nombre")).toBeDefined();
+  });
+
+  test("cancelar la confirmación de borrado no borra nada", async () => {
+    mount();
+    await screen.findByText("local");
+    fireEvent.click(screen.getAllByRole("button", { name: "Eliminar" })[1]);
+    expect(screen.getByText(/«staging» se elimina/)).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(screen.queryByText(/«staging» se elimina/)).toBeNull();
+    expect(call.mock.calls.some(([, options]) => options?.method === "DELETE")).toBe(false);
   });
 
   test("Cancelar y Escape cierran el formulario sin crear nada", async () => {
@@ -253,6 +280,16 @@ describe("editar un entorno", () => {
     fireEvent.change(name, { target: { value: "local" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
     expect(await screen.findByText("El nombre ya existe")).toBeDefined();
+  });
+
+  test("si el servidor señala un campo al guardar, sale su motivo", async () => {
+    onPatch = () => {
+      throw problem("Inválido", [{ field: "baseUrl", detail: "La URL no es válida" }]);
+    };
+    const name = await open();
+    fireEvent.change(name, { target: { value: "otro" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    expect(await screen.findByText("La URL no es válida")).toBeDefined();
   });
 
   test("«← Entornos» vuelve a la lista", async () => {

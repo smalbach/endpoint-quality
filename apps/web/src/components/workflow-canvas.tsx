@@ -1210,16 +1210,15 @@ function PaletteButton({
   title: string;
   onClick?: () => void;
   /** The node kind a drag onto the canvas adds. */
-  drag?: string;
+  drag: string;
 }) {
   return (
     <button
       onClick={onClick}
       disabled={!onClick}
       title={title}
-      draggable={Boolean(onClick && drag)}
+      draggable={Boolean(onClick)}
       onDragStart={(event) => {
-        if (!drag) return;
         event.dataTransfer.setData(PALETTE_MIME, drag);
         event.dataTransfer.effectAllowed = "copy";
       }}

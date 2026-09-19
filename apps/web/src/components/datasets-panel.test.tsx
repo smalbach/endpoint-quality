@@ -7,7 +7,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
-import { DatasetsPanel } from "@/components/datasets-panel";
+import { DatasetsPanel, parseRows } from "@/components/datasets-panel";
 import type { DatasetView } from "@/lib/types";
 
 const datasets = [
@@ -113,5 +113,33 @@ describe("DatasetsPanel", () => {
     expect(screen.queryByRole("button", { name: "+ Conjunto" })).toBeNull();
     expect(screen.queryByRole("button", { name: "editar" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Eliminar Clientes" })).toBeNull();
+  });
+});
+
+/** Los bordes del lector de filas que la lista de `dataset-rows.test.ts` no pisa. */
+describe("parseRows, en los bordes", () => {
+  test("una fila JSON que no es un objeto se señala con su número", () => {
+    for (const text of ["[null]", "[1]", '[{"a":"b"}, ["x"]]']) {
+      const parsed = parseRows(text);
+      expect(parsed.ok).toBe(false);
+      expect(!parsed.ok && parsed.error).toMatch(/^Fila \d: cada fila es un objeto de nombre a valor$/);
+    }
+  });
+
+  test("un CSV que sólo trae un valor vacío entre comillas son cero filas", () => {
+    expect(parseRows('""')).toEqual({ ok: true, rows: [] });
+  });
+
+  test("el separador de una cabecera con comillas lo cuentan sólo las que están fuera", () => {
+    expect(parseRows('"a,b";c\n1;2')).toEqual({ ok: false, error: "Línea 1: «a,b» no es un nombre válido" });
+    expect(parseRows('"nombre" ; precio\n"x"\t;2')).toEqual({ ok: true, rows: [{ nombre: "x", precio: "2" }] });
+  });
+
+  test("un valor entre comillas antes de un salto de Windows cierra la fila", () => {
+    expect(parseRows('nombre\r\n"uno"\r\n"dos"')).toEqual({ ok: true, rows: [{ nombre: "uno" }, { nombre: "dos" }] });
+  });
+
+  test("texto pegado tras las comillas de cierre es un error con su línea", () => {
+    expect(parseRows('nombre\n"uno"x')).toEqual({ ok: false, error: "Línea 2: sobra texto tras las comillas" });
   });
 });
