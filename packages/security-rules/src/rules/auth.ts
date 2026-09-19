@@ -1,7 +1,7 @@
 /** Authentication rules: the token itself, and forged variants of it. */
 import { byTestType, isSuccess, type Finding, type SecurityRule } from "../types.ts";
 import { decodeJwt } from "../jwt.ts";
-import { finder, refs, type RuleMeta } from "./helpers.ts";
+import { finder, refs, suffix, type RuleMeta } from "./helpers.ts";
 
 const AUTH_META: RuleMeta = {
   key: "auth_jwt",
@@ -57,7 +57,7 @@ export const authJwtRule: SecurityRule = {
         );
       break;
     }
-    return dedupe(findings);
+    return findings;
   },
 };
 
@@ -80,7 +80,7 @@ export const jwtAttackRule: SecurityRule = {
     return byTestType(results, "jwt-attack")
       .filter((result) => result.token && isSuccess(result.status))
       .map((result) => {
-        const attack = result.testType.split(":")[1] ?? "";
+        const attack = suffix(result.testType);
         return make(attack === "alg-none" || attack === "tampered" ? "critical" : "high", result.endpointId, {
           title: `El servidor aceptó ${LABEL[attack] ?? attack}`,
           detail: `${result.method} ${result.path} respondió ${result.status} con ${LABEL[attack] ?? attack}: no valida la firma o la caducidad.`,
@@ -91,14 +91,3 @@ export const jwtAttackRule: SecurityRule = {
       });
   },
 };
-
-/** One finding per (rule, endpoint, title): the token shape repeats across probes. */
-function dedupe(findings: Finding[]): Finding[] {
-  const seen = new Set<string>();
-  return findings.filter((finding) => {
-    const key = `${finding.endpointId}:${finding.title}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}

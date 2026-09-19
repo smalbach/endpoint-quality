@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 import { evaluateRules, RULE_BY_KEY, RULES } from "../src/registry.ts";
 import { DEFAULT_RULES, normalizeSelection, PRESETS, RULE_GROUPS } from "../src/presets.ts";
 import { summarize } from "../src/score.ts";
-import { byTestType, isDenied, isSuccess, RULE_KEYS, SEVERITIES, type Finding, type Severity } from "../src/types.ts";
-import { similar } from "../src/rules/helpers.ts";
+import { byTestType, isSuccess, RULE_KEYS, SEVERITIES, type Finding, type Severity } from "../src/types.ts";
+import { similar, suffix } from "../src/rules/helpers.ts";
 import { context, endpoint, result } from "./fixtures.ts";
 
 const finding = (severity: Severity, endpointId: string | null = "a"): Finding => ({
@@ -162,9 +162,15 @@ describe("las selecciones de reglas", () => {
 });
 
 describe("las utilidades de los veredictos", () => {
-  it("2xx es éxito; 401 y 403 son rechazo; 404 no es ninguno", () => {
+  it("2xx es éxito y nada más lo es", () => {
     assert.deepEqual([199, 200, 299, 300].map(isSuccess), [false, true, true, false]);
-    assert.deepEqual([401, 403, 404, 200].map(isDenied), [true, true, false, false]);
+  });
+
+  it("suffix lee el rol, id, ataque o verbo tras el primer «:», y nada si el tipo va pelado", () => {
+    assert.equal(suffix("auth:admin"), "admin");
+    assert.equal(suffix("bola-real-id:admin:11"), "admin");
+    assert.equal(suffix("content-type:application/xml"), "application/xml");
+    assert.equal(suffix("auth"), "");
   });
 
   it("byTestType casa el tipo exacto o el prefijo con dos puntos, no un sufijo", () => {

@@ -75,7 +75,8 @@ export function parseDocument(raw: string): Record<string, unknown> {
     try {
       return JSON.parse(trimmed) as Record<string, unknown>;
     } catch (error) {
-      throw new Error(`El documento no es JSON válido: ${error instanceof Error ? error.message : "sin detalle"}`);
+      // JSON.parse only ever throws a SyntaxError, so the message is always there.
+      throw new Error(`El documento no es JSON válido: ${(error as SyntaxError).message}`);
     }
   }
   const parsed = parseYaml(raw) as unknown;

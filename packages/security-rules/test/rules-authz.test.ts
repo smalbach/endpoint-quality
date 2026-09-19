@@ -228,6 +228,15 @@ describe("regla cross_user_access", () => {
     );
   });
 
+  it("aislamiento: un rol aislado que no se probó en ese endpoint no se compara con los demás", () => {
+    const findings = run(
+      "cross_user_access",
+      [reach("d", "vendedor", "11", 200, 500), reach("d", "vendedor", "12", 200, 500)],
+      context({ endpoints: [detail], roles: [{ name: "cliente", sameRoleDataIsolation: true }] }),
+    );
+    assert.deepEqual(findings, []);
+  });
+
   it("no juzga nada si el destino no aplica autorización o no hubo sondas con ids reales", () => {
     assert.deepEqual(
       run(
@@ -262,6 +271,14 @@ describe("regla method_tampering", () => {
 
   it("405, 404 o 401 ante el verbo cambiado pasan", () => {
     assert.deepEqual(run("method_tampering", [tamper("DELETE", 405), tamper("PUT", 404), tamper("PATCH", 401)]), []);
+  });
+
+  it("una sonda sin verbo en su tipo se nombra por el método que envió", () => {
+    const [finding] = run("method_tampering", [
+      result({ endpointId: "l", testType: "method-tamper", method: "DELETE", path: "/orders", status: 200 }),
+    ]);
+    assert.equal(finding.severity, "high");
+    assert.equal(finding.title, "El método DELETE fue aceptado en /orders");
   });
 
   it("el detalle usa la nota del plan cuando la hay", () => {

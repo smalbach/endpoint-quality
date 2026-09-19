@@ -1,8 +1,6 @@
 /** Authorization rules: who reached what, and who should have been refused. */
 import { byTestType, isSuccess, type Finding, type ProbeResult, type SecurityRule } from "../types.ts";
-import { finder, refs, similar, type RuleMeta } from "./helpers.ts";
-
-const roleOf = (testType: string) => testType.split(":")[1] ?? "";
+import { finder, refs, similar, suffix, type RuleMeta } from "./helpers.ts";
 
 const BOLA_META: RuleMeta = {
   key: "bola_idor",
@@ -26,7 +24,7 @@ export const bolaRule: SecurityRule = {
         findings.push(
           make("critical", endpoint.id, {
             title: `Se alcanzó un objeto arbitrario en ${endpoint.method} ${endpoint.path}`,
-            detail: `Pedir el id ${roleId(highId.testType)} devolvió 2xx: el endpoint no comprueba que el objeto sea del solicitante.`,
+            detail: `Pedir el id ${suffix(highId.testType)} devolvió 2xx: el endpoint no comprueba que el objeto sea del solicitante.`,
             remediation:
               "Comprueba la propiedad del objeto en cada acceso: que el id pertenezca al usuario autenticado.",
             reproduce: [`GET ${highId.path}`, `Respuesta ${highId.status} en lugar de 403/404`],
@@ -40,14 +38,13 @@ export const bolaRule: SecurityRule = {
             detail: "Varios ids consecutivos respondieron 2xx con cuerpos diferentes: se enumeran objetos de otros.",
             remediation: "Autoriza por objeto, no solo por autenticación.",
             reproduce: reached.slice(0, 2).map((result) => `GET ${result.path} → ${result.status}`),
-            evidence: { ids: reached.map((result) => roleId(result.testType)) },
+            evidence: { ids: reached.map((result) => suffix(result.testType)) },
           }),
         );
     }
     return findings;
   },
 };
-const roleId = (testType: string) => testType.split(":")[1] ?? "";
 
 const BFLA_META: RuleMeta = {
   key: "bfla",
@@ -67,7 +64,7 @@ export const bflaRule: SecurityRule = {
       const declared = context.permissions.filter((permission) => permission.endpointId === endpoint.id);
       const authProbes = byTestType(results, "auth").filter((result) => result.endpointId === endpoint.id);
       for (const permission of declared) {
-        const probe = authProbes.find((result) => roleOf(result.testType) === permission.roleName);
+        const probe = authProbes.find((result) => suffix(result.testType) === permission.roleName);
         if (!probe) continue;
         if (permission.access === "deny" && isSuccess(probe.status))
           findings.push(
@@ -96,12 +93,12 @@ export const bflaRule: SecurityRule = {
           if (isSuccess(probe.status))
             findings.push(
               make("high", endpoint.id, {
-                title: `«${roleOf(probe.testType)}» alcanzó ${endpoint.method} ${endpoint.path}`,
+                title: `«${suffix(probe.testType)}» alcanzó ${endpoint.method} ${endpoint.path}`,
                 detail:
                   "Un rol no privilegiado ejecutó una función sensible. Declara el permiso del rol para afinarlo.",
                 remediation: "Restringe la función por rol y decláralo en la sección Roles.",
-                reproduce: [`${endpoint.method} ${probe.path} como ${roleOf(probe.testType)} → ${probe.status}`],
-                evidence: { role: roleOf(probe.testType), status: probe.status },
+                reproduce: [`${endpoint.method} ${probe.path} como ${suffix(probe.testType)} → ${probe.status}`],
+                evidence: { role: suffix(probe.testType), status: probe.status },
               }),
             );
     }
@@ -126,7 +123,7 @@ export const crossUserRule: SecurityRule = {
     const byRole = (list: ProbeResult[]) => {
       const map = new Map<string, ProbeResult[]>();
       for (const result of list) {
-        const role = result.testType.split(":")[1] ?? "";
+        const role = suffix(result.testType);
         map.set(role, [...(map.get(role) ?? []), result]);
       }
       return map;
@@ -192,7 +189,7 @@ export const methodTamperingRule: SecurityRule = {
     return byTestType(results, "method-tamper")
       .filter((result) => isSuccess(result.status))
       .map((result) => {
-        const swapped = result.testType.split(":")[1] ?? result.method;
+        const swapped = suffix(result.testType) || result.method;
         return make(swapped === "DELETE" ? "high" : "medium", result.endpointId, {
           title: `El método ${swapped} fue aceptado en ${result.path}`,
           detail: `${result.note || swapped} respondió ${result.status}: el endpoint no restringe el verbo.`,

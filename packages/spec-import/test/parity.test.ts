@@ -33,7 +33,9 @@ describe("el importador reproduce el generador de Python", { skip: AVAILABLE ? f
 
   test("lee el documento sin errores", () => {
     assert.equal(imported!.openapiVersion, "3.1.0");
-    assert.equal(imported!.version, "1.8.0");
+    // The contract's own version moves with every release of the other repository; what this
+    // suite cares about is that it was read, not which release is checked out beside it.
+    assert.match(imported!.version, /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/, "info.version debe ser semver");
     const errors = imported!.problems.filter((problem) => problem.severity === "error");
     assert.deepEqual(errors, [], "el contrato del cliente no debería producir errores de importación");
   });

@@ -18,7 +18,7 @@ export function finder(meta: RuleMeta) {
       detail: string;
       remediation: string;
       reproduce: string[];
-      evidence?: Record<string, unknown>;
+      evidence: Record<string, unknown>;
     },
   ): Finding => ({
     ruleKey: meta.key,
@@ -32,9 +32,13 @@ export function finder(meta: RuleMeta) {
     remediation: parts.remediation,
     references: meta.references,
     reproduce: parts.reproduce,
-    evidence: parts.evidence ?? {},
+    evidence: parts.evidence,
   });
 }
+
+/** What follows the first `:` of a test type — the role, id, attack or verb a probe was about.
+ * `auth:admin` → `admin`, `bola-real-id:admin:11` → `admin`; a bare `auth` has none, so `""`. */
+export const suffix = (testType: string): string => testType.split(":")[1] ?? "";
 
 const lower = (headers: Record<string, string>): Record<string, string> =>
   Object.fromEntries(Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value]));

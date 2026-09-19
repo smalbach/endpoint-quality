@@ -144,11 +144,8 @@ export interface SecurityRule {
 
 /** 2xx, the way every rule asks the question. */
 export const isSuccess = (status: number): boolean => status >= 200 && status < 300;
-export const isDenied = (status: number): boolean => status === 401 || status === 403;
 
-/** The probe results of one endpoint, and every result with a given test type. */
-export const byEndpoint = (results: ProbeResult[], endpointId: string): ProbeResult[] =>
-  results.filter((result) => result.endpointId === endpointId);
+/** Every result with a given test type: the bare prefix or `prefix:<anything>`. */
 export const byTestType = (results: ProbeResult[], prefix: string): ProbeResult[] =>
   results.filter((result) => result.testType === prefix || result.testType.startsWith(`${prefix}:`));
 

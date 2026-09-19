@@ -151,7 +151,8 @@ export function detectImport(filename: string, text: string): Detected {
     };
   }
   if (/^[ \t]*curl[\s\\]/m.test(trimmed)) {
-    const commands = (trimmed.match(/^[ \t]*curl[\s\\]/gm) ?? []).length;
+    // The same pattern just matched above, so there is at least one.
+    const commands = trimmed.match(/^[ \t]*curl[\s\\]/gm)!.length;
     return {
       kind: "curl",
       name: label,
@@ -312,8 +313,8 @@ function fromJson(parsed: unknown, label: string): Detected {
 function collectionPiece(document: Record<string, unknown>, name: string): DetectedPiece {
   let requests = 0;
   let folders = 0;
-  const walk = (items: unknown) => {
-    for (const entry of Array.isArray(items) ? items : []) {
+  const walk = (items: unknown[]) => {
+    for (const entry of items) {
       const item = asRecord(entry);
       if (!item) continue;
       if (Array.isArray(item.item)) {
@@ -322,14 +323,16 @@ function collectionPiece(document: Record<string, unknown>, name: string): Detec
       } else if (item.request) requests += 1;
     }
   };
-  walk(document.item);
+  // Both callers checked `document.item` is an array before handing the document over.
+  walk(document.item as unknown[]);
   const parts = [plural(requests, "petición", "peticiones")];
   if (folders) parts.push(plural(folders, "carpeta", "carpetas"));
   return { kind: "postman-collection", name, detail: parts.join(" · "), text: JSON.stringify(document) };
 }
 
 function environmentPiece(document: Record<string, unknown>, name: string): DetectedPiece {
-  const values = Array.isArray(document.values) ? document.values : [];
+  // Both callers checked `document.values` is an array before handing the document over.
+  const values = document.values as unknown[];
   const secrets = values.filter((entry) => {
     const type = asString(asRecord(entry)?.type);
     return type === "secret" || type === "password";

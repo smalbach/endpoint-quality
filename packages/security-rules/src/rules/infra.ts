@@ -1,6 +1,6 @@
 /** Error handling, rate limiting, headers, CORS, content type, versioning and size anomalies. */
 import { byTestType, isSuccess, type Finding, type ProbeResult, type SecurityRule } from "../types.ts";
-import { bodyIncludes, finder, header, refs, similar, type RuleMeta } from "./helpers.ts";
+import { bodyIncludes, finder, header, refs, similar, suffix, type RuleMeta } from "./helpers.ts";
 
 const ERROR_META: RuleMeta = {
   key: "error_disclosure",
@@ -215,7 +215,7 @@ export const contentTypeRule: SecurityRule = {
     return byTestType(results, "content-type")
       .filter((result) => isSuccess(result.status))
       .map((result) => {
-        const type = result.testType.split(":")[1] ?? "";
+        const type = suffix(result.testType);
         return make("medium", result.endpointId, {
           title: `${result.path} acepta un Content-Type incorrecto`,
           detail: `Un cuerpo con Content-Type «${type}» respondió ${result.status} en lugar de 415.`,
