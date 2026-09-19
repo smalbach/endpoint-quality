@@ -115,8 +115,9 @@ export function WorkflowListPage({ projectId }: { projectId: string }) {
   const allFlows = useMemo(() => workflows.data?.workflows ?? [], [workflows.data]);
   const suites = useMemo(() => workflows.data?.suites ?? [], [workflows.data]);
   const connections = useMemo(() => flowConnections(allFlows, suites), [allFlows, suites]);
-  const nameOf = (id: string) => allFlows.find((flow) => flow.id === id)?.name ?? "flujo borrado";
-  const suiteName = (id: string) => suites.find((suite) => suite.id === id)?.name ?? id;
+  // `connections` only names flows and suites it was built from, so both lookups always find one.
+  const nameOf = (id: string) => allFlows.find((flow) => flow.id === id)!.name;
+  const suiteName = (id: string) => suites.find((suite) => suite.id === id)!.name;
 
   const needle = query.trim().toLowerCase();
   const visible = allFlows.filter((flow) => {
@@ -210,8 +211,8 @@ export function WorkflowListPage({ projectId }: { projectId: string }) {
                   href={flowPath(flow.id)}
                   flowPath={flowPath}
                   tree={subflowTree(allFlows, flow.id)}
-                  calledBy={connections[flow.id]?.calledBy ?? []}
-                  suites={(connections[flow.id]?.suites ?? []).map(suiteName)}
+                  calledBy={connections[flow.id].calledBy}
+                  suites={connections[flow.id].suites.map(suiteName)}
                   nameOf={nameOf}
                   canEdit={canEdit}
                   busy={patchWorkflow.isPending || duplicateWorkflow.isPending || exportWorkflow.isPending}

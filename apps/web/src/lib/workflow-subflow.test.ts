@@ -39,6 +39,13 @@ describe("subflowTree", () => {
     expect(tree[0].children[0]).toMatchObject({ id: "a", cycle: true, children: [] });
   });
 
+  test("a root that is not in the project has no tree, and the walk stops at maxDepth", () => {
+    expect(subflowTree([flow("a", [call("n", "b")])], "gone")).toEqual([]);
+    const chain = [flow("a", [call("n", "b")]), flow("b", [call("n", "c")]), flow("c", [call("n", "d")]), flow("d")];
+    const [b] = subflowTree(chain, "a", 2);
+    expect(b!.children[0]).toMatchObject({ id: "c", children: [] });
+  });
+
   test("keeps a missing flow as a dangling leaf", () => {
     expect(subflowTree([flow("a", [call("n", "gone")])], "a")[0]).toMatchObject({ id: "gone", flow: null });
   });

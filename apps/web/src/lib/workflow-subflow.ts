@@ -20,7 +20,10 @@ export type SubflowChoice = {
 
 /** Every other flow of the project, as the selector lists it. The open flow is left out: a subflow
  * cannot run the flow that contains it. */
-export function subflowChoices(flows: Pick<WorkflowView, "id" | "name" | "status" | "steps">[], currentFlowId: string): SubflowChoice[] {
+export function subflowChoices(
+  flows: Pick<WorkflowView, "id" | "name" | "status" | "steps">[],
+  currentFlowId: string,
+): SubflowChoice[] {
   return flows
     .filter((flow) => flow.id !== currentFlowId)
     .map((flow) => ({

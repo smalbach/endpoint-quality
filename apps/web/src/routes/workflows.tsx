@@ -160,7 +160,6 @@ function WorkflowEditor({ projectId, workflowId }: { projectId: string; workflow
 
   const allWorkflows = workflows.data?.workflows ?? [];
   const requestTemplates = workflows.data?.requestTemplates ?? [];
-  const suites = workflows.data?.suites ?? [];
   const datasets = workflows.data?.datasets ?? [];
   const operationList = operations.data?.operations ?? [];
   const environmentList = environments.data ?? [];
@@ -795,7 +794,6 @@ function WorkflowEditor({ projectId, workflowId }: { projectId: string; workflow
           onClose={() => setSettingsOpen(false)}
         />
       )}
-
     </div>
   );
 }

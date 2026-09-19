@@ -215,6 +215,14 @@ describe("las páginas de un proyecto", () => {
   });
 });
 
+describe("el editor de un flujo", () => {
+  test("/p/p1/workflows/w1 abre el mismo editor perezoso con el id del flujo", async () => {
+    draw("/p/p1/workflows/w1");
+    expect((await screen.findByTestId("page")).textContent).toBe("WorkflowsPage p1 w1");
+    expect(screen.getByTestId("project-layout")).toBeTruthy();
+  });
+});
+
 describe("shouldRetry", () => {
   const problem = (status: number) => new ApiError(status, { type: "", title: "", status, detail: "" });
 

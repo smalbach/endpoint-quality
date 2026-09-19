@@ -1,5 +1,5 @@
 /**
- * El editor de flujos: el lienzo, sus cajones y el lanzamiento en el sitio.
+ * El editor de un flujo (`workflows/:workflowId`): el lienzo, sus cajones y el lanzamiento en el sitio.
  *
  * Lo que decide algo:
  *
@@ -7,21 +7,23 @@
  *   cambios y sin problemas en el flujo. Una petición editada que quedó igual no se manda.
  * - **Ejecutar lanza con el entorno, el flujo, los datos y los ajustes de ejecución**, y la corrida
  *   se sigue encima del lienzo sin irse a otra pantalla; en pausa se reanuda desde la barra.
- * - **Una parada sin nodos no deja lanzar**, y una suite no hereda las paradas de este flujo.
+ * - **Una parada sin nodos no deja lanzar**.
  * - **La vista JSON y el lienzo son el mismo documento**: un JSON roto no se aplica y se dice por qué.
- * - **Cada cajón escribe lo que dice**: flujos (crear, renombrar, duplicar, exportar, estado,
- *   suites), biblioteca (una operación del contrato es un nodo de un toque; un login lo marca),
- *   datos (el conjunto elegido viaja con la corrida y se suelta al borrarlo).
+ * - **Cada cajón escribe lo que dice**: biblioteca (una operación del contrato es un nodo de un
+ *   toque; un login lo marca), datos (el conjunto elegido viaja con la corrida y se suelta al borrarlo).
  * - **Quien sólo mira no ve lo que escribe.**
+ * - **La dirección manda**: sin id es la lista; un id que no existe lo dice y lleva de vuelta; otro id
+ *   abre el editor desde cero; volver con cambios sin guardar pregunta antes.
  *
  * El lienzo (React Flow) y el inspector son componentes de miles de líneas con sus propias pruebas;
- * aquí se sustituyen por dobles que enseñan lo que reciben y llaman a lo que se les da. El resto
- * —cajones, diálogos, biblioteca, datos, suites, ajustes y el progreso en vivo— es el real.
+ * aquí se sustituyen por dobles que enseñan lo que reciben y llaman a lo que se les da, y la lista
+ * (con sus propias pruebas) por un rótulo. El resto —cajones, diálogos, biblioteca, datos, ajustes y
+ * el progreso en vivo— es el real.
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 
 import { WorkflowsPage } from "@/routes/workflows";
 import type {
@@ -39,8 +41,6 @@ type Options = { method?: string; body?: unknown };
 const mocks = vi.hoisted(() => ({
   call: vi.fn(),
   stream: vi.fn(),
-  openImport: vi.fn(),
-  download: vi.fn(),
   canEdit: { value: true },
 }));
 vi.mock("@/lib/api", async (original) => ({
@@ -52,10 +52,8 @@ vi.mock("@/lib/auth", () => ({
   useOrganization: () => ({ id: "o", name: "Org" }),
   useCan: () => mocks.canEdit.value,
 }));
-vi.mock("@/components/import-provider", () => ({ useImport: () => ({ open: mocks.openImport }) }));
-vi.mock("@/lib/project-bundle", async (original) => ({
-  ...(await original<object>()),
-  downloadJson: mocks.download,
+vi.mock("@/routes/workflow-list", () => ({
+  WorkflowListPage: ({ projectId }: { projectId: string }) => <p>lista de flujos de {projectId}</p>,
 }));
 
 type CanvasProps = {
@@ -250,17 +248,7 @@ function respond(path: string, options?: Options): Promise<unknown> {
     if (route === "/environments") return Promise.resolve(server.environments);
     if (route === "/channels") return Promise.resolve({ channels: [] });
     if (route.startsWith("/runs/")) return Promise.resolve(server.run);
-    if (route.startsWith("/export")) return Promise.resolve({ bundle: true });
     if (route === "/datasets/d1") return Promise.resolve({ id: "d1", name: "clientes", rows: [{ email: "a@b.c" }] });
-  }
-  if (method === "POST" && route === "/workflows") {
-    const id = `w-new-${++created}`;
-    server.view.workflows.push(flow({ id, name: (options!.body as { name: string }).name }));
-    return Promise.resolve({ workflowId: id });
-  }
-  if (method === "POST" && /\/workflows\/.*\/duplicate$/.test(route)) {
-    server.view.workflows.push(flow({ id: "w1-copia", name: "Pedidos (copia)" }));
-    return Promise.resolve({ workflowId: "w1-copia" });
   }
   if (method === "POST" && route === "/request-templates") {
     const id = `t-new-${++created}`;
@@ -298,26 +286,33 @@ afterEach(() => {
   mocks.canEdit.value = true;
   mocks.call.mockReset();
   mocks.stream.mockReset();
-  mocks.openImport.mockReset();
-  mocks.download.mockReset();
+  vi.restoreAllMocks();
 });
 
-function draw() {
+/** Salta a otro flujo sin pasar por la lista, como lo hace abrir un sub-flujo desde el inspector. */
+function Jump() {
+  const navigate = useNavigate();
+  return <button onClick={() => void navigate("/p/p/workflows/w3")}>ir a w3</button>;
+}
+
+function draw(path = "/p/p/workflows/w1") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/p/p/workflows"]}>
+      <MemoryRouter initialEntries={[path]}>
+        <Jump />
         <Routes>
           <Route path="/p/:projectId/workflows" element={<WorkflowsPage />} />
+          <Route path="/p/:projectId/workflows/:workflowId" element={<WorkflowsPage />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
-/** Espera a que el primer flujo esté abierto en el lienzo y el entorno activo elegido. */
-async function ready() {
-  draw();
+/** Espera a que el flujo esté abierto en el lienzo y el entorno activo elegido. */
+async function ready(path?: string) {
+  draw(path);
   expect(await screen.findByTestId("canvas-steps")).toBeTruthy();
   await waitFor(() => expect((screen.getByTitle("Entorno") as HTMLSelectElement).value).toBe("e1"));
 }
@@ -325,7 +320,7 @@ async function ready() {
 const button = (name: string | RegExp) => screen.getByRole("button", { name }) as HTMLButtonElement;
 const play = () => screen.getByTitle(/Ejecutar flujo|Elige un entorno|Marca al menos/) as HTMLButtonElement;
 
-async function openDrawer(label: "Flujos" | "Biblioteca" | "Datos") {
+async function openDrawer(label: "Biblioteca" | "Datos") {
   fireEvent.click(screen.getByTitle(label));
   return screen.findByRole("dialog");
 }
@@ -345,23 +340,65 @@ describe("WorkflowsPage: abrir y guardar", () => {
     expect(button("Ejecución").disabled).toBe(true);
   });
 
-  test("sin flujos invita a crear uno, y el creado se abre", async () => {
-    server.view.workflows = [];
-    server.view.suites = [];
-    draw();
-    expect(await screen.findByText("Crear tu primer flujo".replace("Crear", "Crea"))).toBeTruthy();
-    expect(screen.queryByTitle(/Ejecutar flujo/)).toBeNull();
-    const drawer = await openDrawer("Flujos");
-    expect(within(drawer).getByText("Ninguno todavía.")).toBeTruthy();
-    fireEvent.click(within(drawer).getByRole("button", { name: "+ Nuevo" }));
-    const dialog = await screen.findByRole("dialog", { name: "Nuevo flujo" });
-    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "Alta de pedido" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Crear" }));
-    await waitFor(() =>
-      expect(calls("POST", "/workflows")).toEqual([expect.objectContaining({ body: { name: "Alta de pedido" } })]),
-    );
-    expect(await screen.findByTestId("canvas")).toBeTruthy();
-    expect(screen.getAllByText("Alta de pedido").length).toBeGreaterThan(0);
+  test("sin id de flujo, la dirección es la lista", async () => {
+    draw("/p/p/workflows");
+    expect(screen.getByText("lista de flujos de p")).toBeTruthy();
+    expect(screen.queryByTestId("canvas")).toBeNull();
+  });
+
+  test("un id que no existe lo dice, no deja hacer nada y lleva de vuelta a la lista", async () => {
+    draw("/p/p/workflows/nope");
+    expect(await screen.findByText("Este flujo no existe")).toBeTruthy();
+    expect(screen.queryByTestId("canvas")).toBeNull();
+    expect(screen.queryByTitle(/Ejecutar flujo|Elige un entorno/)).toBeNull();
+    expect(button("JSON").disabled).toBe(true);
+    for (const label of ["Biblioteca", "Datos", "Ajustes"])
+      expect((screen.getByTitle(label) as HTMLButtonElement).disabled).toBe(true);
+    const back = screen.getByRole("link", { name: "Ver flujos" });
+    expect(back.getAttribute("href")).toBe("/p/p/workflows");
+    fireEvent.click(back);
+    expect(await screen.findByText("lista de flujos de p")).toBeTruthy();
+  });
+
+  test("abrir otro flujo monta el editor desde cero", async () => {
+    await ready();
+    fireEvent.click(button("JSON"));
+    expect(screen.queryByTestId("canvas")).toBeNull();
+    fireEvent.click(button("ir a w3"));
+    expect(await screen.findByTestId("canvas-steps")).toBeTruthy();
+    expect(screen.getByTestId("canvas-steps").textContent).toBe("p1");
+    expect(screen.getByText("Pagos")).toBeTruthy();
+    expect(screen.queryByText("Pedidos")).toBeNull();
+    expect(button("JSON")).toBeTruthy();
+    expect(button("Guardar").disabled).toBe(true);
+  });
+
+  test("«← Flujos» vuelve a la lista; con cambios sin guardar pregunta antes", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    await ready();
+    fireEvent.click(button("lienzo: romper"));
+    fireEvent.click(screen.getByRole("link", { name: "← Flujos" }));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("canvas")).toBeTruthy();
+    fireEvent.click(screen.getByRole("link", { name: "← Flujos" }));
+    expect(await screen.findByText("lista de flujos de p")).toBeTruthy();
+    expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
+  test("sin cambios, «← Flujos» vuelve sin preguntar", async () => {
+    const confirm = vi.spyOn(window, "confirm");
+    await ready();
+    fireEvent.click(screen.getByRole("link", { name: "← Flujos" }));
+    expect(await screen.findByText("lista de flujos de p")).toBeTruthy();
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  test("un flujo sin nodos no se puede ejecutar, ni con Ctrl+Enter", async () => {
+    await ready("/p/p/workflows/w2");
+    expect(screen.getByTestId("canvas-steps").textContent).toBe("");
+    expect(play().disabled).toBe(true);
+    fireEvent.keyDown(window, { key: "Enter", ctrlKey: true });
+    expect(calls("POST", "/runs")).toHaveLength(0);
   });
 
   test("guardar manda las peticiones que cambiaron y después el grafo; una que quedó igual no", async () => {
@@ -449,14 +486,16 @@ describe("WorkflowsPage: abrir y guardar", () => {
     expect(button("Guardar").disabled).toBe(false);
   });
 
-  test("quien sólo mira no puede guardar, crear ni añadir nodos", async () => {
+  test("quien sólo mira no puede guardar ni añadir nodos, tampoco con Ctrl+S", async () => {
     mocks.canEdit.value = false;
     await ready();
     expect(screen.queryByRole("button", { name: "Guardar" })).toBeNull();
     expect(screen.queryByRole("button", { name: "lienzo: + petición" })).toBeNull();
-    const drawer = await openDrawer("Flujos");
-    expect(within(drawer).queryByRole("button", { name: "+ Nuevo" })).toBeNull();
-    expect(within(drawer).queryByRole("button", { name: "Renombrar" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "lienzo: + login" })).toBeNull();
+    fireEvent.click(screen.getByTitle("Ajustes"));
+    fireEvent.click(await screen.findByRole("button", { name: "inspector: renombrar" }));
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    expect(calls("PUT")).toHaveLength(0);
   });
 });
 
@@ -605,101 +644,6 @@ describe("WorkflowsPage: ejecutar", () => {
   });
 });
 
-describe("WorkflowsPage: el cajón de flujos", () => {
-  test("los archivados se esconden salvo que se pidan; elegir uno lo abre", async () => {
-    await ready();
-    const drawer = await openDrawer("Flujos");
-    expect(within(drawer).queryByText("Viejo")).toBeNull();
-    fireEvent.click(within(drawer).getByRole("button", { name: "Ver archivados (1)" }));
-    fireEvent.click(within(drawer).getByRole("button", { name: /Viejo/ }));
-    expect(screen.getByTestId("canvas-steps").textContent).toBe("");
-    // Sin nodos no hay nada que ejecutar.
-    expect(play().disabled).toBe(true);
-    fireEvent.click(within(drawer).getByRole("button", { name: "Ocultar archivados" }));
-    // El abierto sigue a la vista aunque esté archivado.
-    expect(within(drawer).getByRole("button", { name: /Viejo/ })).toBeTruthy();
-  });
-
-  test("renombrar, duplicar, exportar, cambiar de estado e importar", async () => {
-    await ready();
-    const drawer = await openDrawer("Flujos");
-
-    fireEvent.click(within(drawer).getByRole("button", { name: "Renombrar" }));
-    const dialog = await screen.findByRole("dialog", { name: "Renombrar flujo" });
-    const input = within(dialog).getByRole("textbox") as HTMLInputElement;
-    expect(input.value).toBe("Pedidos");
-    fireEvent.change(input, { target: { value: "Pedidos de alta" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Crear" }));
-    await waitFor(() => expect(calls("PUT", "/workflows/w1")[0]!.body).toEqual({ name: "Pedidos de alta" }));
-
-    // El mismo nombre no escribe.
-    fireEvent.click(within(drawer).getByRole("button", { name: "Renombrar" }));
-    const again = await screen.findByRole("dialog", { name: "Renombrar flujo" });
-    fireEvent.click(within(again).getByRole("button", { name: "Crear" }));
-    expect(calls("PUT", "/workflows/w1")).toHaveLength(1);
-
-    fireEvent.change(within(drawer).getByTitle("Estado del flujo"), { target: { value: "ready" } });
-    await waitFor(() => expect(calls("PUT", "/workflows/w1")[1]!.body).toEqual({ status: "ready" }));
-
-    fireEvent.click(within(drawer).getByRole("button", { name: "Exportar" }));
-    await waitFor(() => expect(mocks.download).toHaveBeenCalledTimes(1));
-    expect(calls("GET", "/export?parts=flows,contract&workflowIds=w1")).toHaveLength(1);
-    expect(mocks.download.mock.calls[0]![0]).toMatch(/^pedidos-\d{4}-\d{2}-\d{2}\.eq\.json$/);
-    expect(mocks.download.mock.calls[0]![1]).toEqual({ bundle: true });
-
-    fireEvent.click(within(drawer).getByRole("button", { name: "Importar" }));
-    expect(mocks.openImport).toHaveBeenCalled();
-
-    fireEvent.click(within(drawer).getByRole("button", { name: "Duplicar" }));
-    await waitFor(() => expect(calls("POST", "/workflows/w1/duplicate")).toHaveLength(1));
-    expect(await screen.findByText("Pedidos (copia)", { selector: "span.hidden" })).toBeTruthy();
-  });
-
-  test("duplicar y exportar dicen su error", async () => {
-    server.fail["POST /workflows/w1/duplicate"] = new Error("No se pudo duplicar");
-    server.fail["GET /export?parts=flows,contract&workflowIds=w1"] = new Error("No se pudo exportar");
-    await ready();
-    const drawer = await openDrawer("Flujos");
-    fireEvent.click(within(drawer).getByRole("button", { name: "Duplicar" }));
-    fireEvent.click(within(drawer).getByRole("button", { name: "Exportar" }));
-    expect(await within(drawer).findByText("No se pudo duplicar")).toBeTruthy();
-    expect(await within(drawer).findByText("No se pudo exportar")).toBeTruthy();
-  });
-
-  test("las suites se crean, se editan, se borran y se ejecutan sin las paradas de este flujo", async () => {
-    window.localStorage.setItem(
-      "eq.run-settings.w1",
-      JSON.stringify({ pauseMode: "breakpoints", breakpoints: ["s1"], delayMs: 300 }),
-    );
-    await ready();
-    const drawer = await openDrawer("Flujos");
-
-    fireEvent.click(within(drawer).getByRole("button", { name: "+ Nueva" }));
-    const dialog = await screen.findByRole("dialog", { name: "Nueva suite" });
-    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "Humo" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Crear" }));
-    await waitFor(() => expect(calls("POST", "/suites")[0]!.body).toEqual({ name: "Humo" }));
-
-    fireEvent.click(within(drawer).getByRole("button", { name: /Antes de publicar/ }));
-    fireEvent.change(within(drawer).getByDisplayValue("Añadir flujo…"), { target: { value: "w3" } });
-    await waitFor(() => expect(calls("PUT", "/suites/su1")[0]!.body).toEqual({ workflowIds: ["w1", "w3"] }));
-
-    const run = within(drawer).getAllByRole("button", { name: "Ejecutar" }).at(-1)!;
-    fireEvent.click(run);
-    await waitFor(() =>
-      expect(calls("POST", "/runs")[0]!.body).toEqual({
-        environmentId: "e1",
-        suiteId: "su1",
-        delayMs: 300,
-        concurrency: 1,
-      }),
-    );
-
-    fireEvent.click(within(drawer).getByRole("button", { name: "Eliminar" }));
-    await waitFor(() => expect(calls("DELETE", "/suites/su1")).toHaveLength(1));
-  });
-});
-
 describe("WorkflowsPage: biblioteca, datos e inspector", () => {
   test("una operación del contrato es un nodo de un toque, donde se soltó y con el estado de su verbo", async () => {
     await ready();
@@ -815,8 +759,10 @@ describe("WorkflowsPage: biblioteca, datos e inspector", () => {
     expect(await screen.findByRole("dialog", { name: "Configurar ejecución" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Listo" }));
 
+    // Borrarlo lleva a la lista: el flujo ya no está para mostrarlo.
     fireEvent.click(within(inspector).getByRole("button", { name: "inspector: borrar" }));
     await waitFor(() => expect(calls("DELETE", "/workflows/w1")).toHaveLength(1));
+    expect(await screen.findByText("lista de flujos de p")).toBeTruthy();
   });
 });
 
@@ -843,7 +789,7 @@ describe("WorkflowsPage: atajos, cierres y casos de borde", () => {
 
   test("cada cajón se cierra con su botón del muelle o con «Cerrar»", async () => {
     await ready();
-    for (const label of ["Flujos", "Biblioteca", "Datos"] as const) {
+    for (const label of ["Biblioteca", "Datos"] as const) {
       await openDrawer(label);
       fireEvent.click(screen.getByTitle(label));
       expect(screen.queryByRole("dialog")).toBeNull();
@@ -855,24 +801,6 @@ describe("WorkflowsPage: atajos, cierres y casos de borde", () => {
     const inspector = await screen.findByRole("dialog", { name: "Nodo" });
     fireEvent.click(within(inspector).getByRole("button", { name: "Cerrar" }));
     expect(screen.queryByTestId("inspector")).toBeNull();
-  });
-
-  test("cancelar el nuevo flujo o el renombrado no escribe nada", async () => {
-    await ready();
-    const drawer = await openDrawer("Flujos");
-    fireEvent.click(within(drawer).getByRole("button", { name: "+ Nuevo" }));
-    fireEvent.click(
-      within(await screen.findByRole("dialog", { name: "Nuevo flujo" })).getByRole("button", { name: "Cancelar" }),
-    );
-    expect(screen.queryByRole("dialog", { name: "Nuevo flujo" })).toBeNull();
-
-    fireEvent.click(within(drawer).getByRole("button", { name: "Renombrar" }));
-    fireEvent.click(
-      within(await screen.findByRole("dialog", { name: "Renombrar flujo" })).getByRole("button", { name: "Cancelar" }),
-    );
-    expect(screen.queryByRole("dialog", { name: "Renombrar flujo" })).toBeNull();
-    expect(calls("POST", "/workflows")).toHaveLength(0);
-    expect(calls("PUT")).toHaveLength(0);
   });
 
   test("mientras se lanza, «Ejecutar» dice «Lanzando…» y Ctrl+Enter no lanza otra vez", async () => {
@@ -913,17 +841,6 @@ describe("WorkflowsPage: atajos, cierres y casos de borde", () => {
     expect(within(dialog).getByText("script · x")).toBeTruthy();
     expect(within(dialog).getByText("script")).toBeTruthy();
     expect(within(dialog).getByText("Petición · y")).toBeTruthy();
-  });
-
-  test("una suite sí hereda el paso a paso de este flujo", async () => {
-    window.localStorage.setItem("eq.run-settings.w1", JSON.stringify({ pauseMode: "step" }));
-    await ready();
-    const drawer = await openDrawer("Flujos");
-    fireEvent.click(within(drawer).getByRole("button", { name: /Antes de publicar/ }));
-    fireEvent.click(within(drawer).getAllByRole("button", { name: "Ejecutar" }).at(-1)!);
-    await waitFor(() =>
-      expect(calls("POST", "/runs")[0]!.body).toEqual(expect.objectContaining({ suiteId: "su1", pauseMode: "step" })),
-    );
   });
 
   test("un verbo sin estado habitual (HEAD) empieza esperando 200", async () => {
