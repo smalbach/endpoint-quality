@@ -28,6 +28,8 @@ import { CodeScanModule } from "./modules/code-scan/code-scan.module";
 import { DashboardModule } from "./modules/dashboard/dashboard.module";
 import { AuthGuard } from "./modules/auth/infrastructure/guards/auth.guard";
 import { HealthController } from "./shared/health.controller";
+import { RATE_LIMIT_STORE, type RateLimitStorePort } from "./shared/rate-limit/rate-limit-store";
+import { throttlerOptions } from "./shared/rate-limit/shared-throttler-storage";
 
 /**
  * `AuthGuard` is registered globally and routes opt *out* with `@Public()`.
@@ -42,7 +44,11 @@ import { HealthController } from "./shared/health.controller";
     SharedModule,
     DatabaseModule,
     CqrsModule.forRoot(),
-    ThrottlerModule.forRoot([{ name: "default", ttl: 60_000, limit: 120 }]),
+    // Los contadores, donde los cuenten todas las réplicas (ver `shared-throttler-storage.ts`).
+    ThrottlerModule.forRootAsync({
+      inject: [RATE_LIMIT_STORE],
+      useFactory: (store: RateLimitStorePort) => throttlerOptions(store),
+    }),
     AuthModule,
     IamModule,
     ProjectsModule,

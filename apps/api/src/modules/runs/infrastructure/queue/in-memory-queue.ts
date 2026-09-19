@@ -25,6 +25,12 @@ const RUN_SIGNAL_TOPIC = "run.signal";
  * A run in flight dies with the process. That is the trade the Redis adapter exists to remove,
  * and the reason `QUEUE_DRIVER` is a deployment decision rather than a default.
  *
+ * **«Una a la vez» es por instancia, a propósito**, y no pide turno a la fila compartida como las de
+ * seguridad y rendimiento. Es lo mismo que hace la cola de Redis (`concurrency: 1` por worker: más
+ * réplicas, más corridas a la vez), y una corrida de contrato puede quedarse minutos esperando un
+ * webhook o un mensaje de canal: con un turno de todo el despliegue, esa espera pararía cada monitor
+ * de cada proyecto. Las que no pueden solaparse contra un objetivo son las de carga y seguridad.
+ *
  * **Las señales van por el bus.** Con dos instancias y esta cola, la corrida la ejecuta la que la
  * encoló, pero cancelar, pausar o reanudar puede llegar a la otra —la que le tocó al navegador—. Con
  * los mapas solo en memoria, eso era un «Cancelar» que no cancelaba y un «Reanudar» que contestaba

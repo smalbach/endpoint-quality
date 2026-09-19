@@ -7,6 +7,10 @@ import { BrevoMailer, LogMailer, MAILER } from "./mail/mailer";
 import { INSTANCE_BUS } from "./bus/instance-bus";
 import { InMemoryInstanceBus } from "./bus/in-memory-instance-bus";
 import { RedisInstanceBus } from "./bus/redis-instance-bus";
+import { InMemoryRateLimitStore, RATE_LIMIT_STORE } from "./rate-limit/rate-limit-store";
+import { RedisRateLimitStore } from "./rate-limit/redis-rate-limit-store";
+import { EXECUTION_TURNS } from "./turns/execution-turns";
+import { TypeOrmExecutionTurnStore } from "./turns/typeorm-execution-turns";
 
 /**
  * The cross-cutting providers every module needs and none owns.
@@ -49,7 +53,18 @@ import { RedisInstanceBus } from "./bus/redis-instance-bus";
       inject: [ENV],
       useFactory: (env: Env) => (env.REDIS_URL ? new RedisInstanceBus(env.REDIS_URL) : new InMemoryInstanceBus()),
     },
+    // Los contadores de los límites de peticiones, por la misma razón y con la misma variable: con
+    // un contador por réplica, N réplicas son un límite N veces más flojo.
+    {
+      provide: RATE_LIMIT_STORE,
+      inject: [ENV],
+      useFactory: (env: Env) => (env.REDIS_URL ? new RedisRateLimitStore(env.REDIS_URL) : new InMemoryRateLimitStore()),
+    },
+    // El turno de las corridas que van de una en una en todo el despliegue (seguridad y
+    // rendimiento). En la base y no en Redis: es lo que comparten todas las réplicas siempre, con
+    // `REDIS_URL` o sin él, y una fila con su latido sobrevive a que Redis se caiga.
+    { provide: EXECUTION_TURNS, useClass: TypeOrmExecutionTurnStore },
   ],
-  exports: [CLOCK, SECRET_CIPHER, MAILER, INSTANCE_BUS],
+  exports: [CLOCK, SECRET_CIPHER, MAILER, INSTANCE_BUS, RATE_LIMIT_STORE, EXECUTION_TURNS],
 })
 export class SharedModule {}

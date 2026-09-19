@@ -31,6 +31,7 @@ import {
 import { TypeOrmRunRepository } from "@/modules/runs/infrastructure/persistence/typeorm-run.repository";
 import { TypeOrmCaptureRepository } from "@/modules/captures/infrastructure/persistence/typeorm-capture.repository";
 import { TypeOrmCaptureAuthorityRepository } from "@/modules/captures/infrastructure/persistence/typeorm-capture-authority.repository";
+import { TypeOrmExecutionTurnStore } from "@/shared/turns/typeorm-execution-turns";
 
 const DATABASE_URL = process.env.EQ_TEST_DATABASE_URL;
 const REASON =
@@ -90,6 +91,7 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
       "endpoints",
       "environment_credentials",
       "environments",
+      "execution_turns",
       "flow_hooks",
       "fork_merge_request_events",
       "fork_merge_requests",
@@ -1009,5 +1011,69 @@ describe("la CA de captura", { skip: DATABASE_URL ? false : REASON }, () => {
     assert.equal(stored?.certificatePem, "PRIMERA");
     assert.equal(stored?.privateKeyCiphertext, "v1.a.b.c");
     await dataSource!.query(`DELETE FROM capture_authorities`);
+  });
+});
+
+describe("la fila de turnos de seguridad y rendimiento", { skip: DATABASE_URL ? false : REASON }, () => {
+  /**
+   * Lo que la fila en memoria no puede probar: que empezar es exclusivo contra Postgres. Cinco
+   * instancias, cada una con su corrida en la fila, piden turno todas a la vez y varias veces por el
+   * pool: sin el candado, dos `UPDATE` sobre filas distintas se verían sin empezar y ganarían las dos.
+   */
+  test("con cinco instancias pidiendo a la vez empieza una, y la primera en llegar", async () => {
+    const store = new TypeOrmExecutionTurnStore(dataSource!);
+    const runs = Array.from({ length: 5 }, () => ({ runId: randomUUID(), holder: `i-${randomUUID()}` }));
+    for (const run of runs) await store.join("security", run.runId, run.holder);
+    // Apuntarse otra vez no cambia el sitio.
+    await store.join("security", runs[0].runId, runs[0].holder);
+
+    for (let round = 0; round < 3; round += 1) {
+      const started = await Promise.all(
+        runs.flatMap((run) => [0, 1].map(() => store.tryStart("security", run.runId, run.holder, 30_000))),
+      );
+      assert.equal(started.filter(Boolean).length, round === 0 ? 1 : 0, `ronda ${round}: ${started.join()}`);
+    }
+    const [row]: { runId: string }[] = await dataSource!.query(
+      `SELECT "runId" FROM execution_turns WHERE kind = 'security' AND "startedAt" IS NOT NULL`,
+    );
+    assert.equal(row.runId, runs[0].runId, "empezó una que no era la primera");
+
+    // Otro tipo no espera a este.
+    const other = randomUUID();
+    await store.join("performance", other, "i-otra");
+    assert.equal(await store.tryStart("performance", other, "i-otra", 30_000), true);
+    await store.leave(other, "i-otra");
+
+    // Al dejarla, la siguiente en llegar; y dejar una ajena no hace nada.
+    await store.leave(runs[0].runId, "i-que-no-es");
+    assert.equal(await store.tryStart("security", runs[1].runId, runs[1].holder, 30_000), false);
+    await store.leave(runs[0].runId, runs[0].holder);
+    assert.equal(await store.tryStart("security", runs[2].runId, runs[2].holder, 30_000), false);
+    assert.equal(await store.tryStart("security", runs[1].runId, runs[1].holder, 30_000), true);
+    for (const run of runs) await store.leave(run.runId, run.holder);
+  });
+
+  test("la fila de una instancia que dejó de latir caduca y la siguiente empieza; latir la mantiene", async () => {
+    const store = new TypeOrmExecutionTurnStore(dataSource!);
+    const dead = randomUUID();
+    const alive = randomUUID();
+    await store.join("performance", dead, "i-muerta");
+    assert.equal(await store.tryStart("performance", dead, "i-muerta", 30_000), true);
+    await store.join("performance", alive, "i-viva");
+    // La muerta latió por última vez hace un minuto; la viva, ahora.
+    await dataSource!.query(
+      `UPDATE execution_turns SET "heartbeatAt" = now() - interval '60 seconds' WHERE "runId" = $1`,
+      [dead],
+    );
+    assert.deepEqual(await store.heartbeat("i-viva"), [alive]);
+    assert.equal(await store.tryStart("performance", alive, "i-viva", 90_000), false, "caducó antes de tiempo");
+    assert.equal(await store.tryStart("performance", alive, "i-viva", 30_000), true);
+    const [{ count }]: { count: string }[] = await dataSource!.query(
+      `SELECT count(*) FROM execution_turns WHERE "runId" = $1`,
+      [dead],
+    );
+    assert.equal(Number(count), 0, "la fila muerta sigue ahí");
+    assert.deepEqual(await store.heartbeat("i-muerta"), []);
+    await store.leave(alive, "i-viva");
   });
 });
