@@ -363,6 +363,15 @@ export function useRunProgress(base: string, runId: string) {
  * shows it here without leaving the canvas.
  */
 export function RunProgress({ base, runId }: { base: string; runId: string }) {
+  return <RunProgressView live={useRunProgress(base, runId)} />;
+}
+
+/**
+ * The view alone, over progress somebody already follows. The flow editor holds one
+ * {@link useRunProgress} for the canvas; rendering {@link RunProgress} next to it opened a second
+ * stream to the same run, and the run tab said «conectando…» while the canvas was already live.
+ */
+export function RunProgressView({ live }: { live: ReturnType<typeof useRunProgress> }) {
   const {
     run,
     cases,
@@ -376,7 +385,7 @@ export function RunProgress({ base, runId }: { base: string; runId: string }) {
     resume,
     paused,
     canCancel,
-  } = useRunProgress(base, runId);
+  } = live;
 
   if (run.isLoading) return <p className="text-sm text-slate-500">Cargando…</p>;
   if (!run.data) return <p className="text-sm text-rose-600">No se encontró la corrida.</p>;
