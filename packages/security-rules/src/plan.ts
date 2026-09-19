@@ -290,23 +290,11 @@ export function planProbes(endpoints: EndpointMeta[], options: PlanOptions, real
             note: attack,
           }),
         );
-
-    if (options.rules.cross_user_access && options.crossUserPermutations)
-      for (const role of authed)
-        probes.push(
-          probe({
-            endpointId: endpoint.id,
-            testType: `cross-user:${role.name}`,
-            method: endpoint.method,
-            path: endpoint.path,
-            credential: role.name,
-            body,
-            contentType: body ? "application/json" : null,
-          }),
-        );
   });
 
-  // Cross-user BOLA with the ids discovery found: reach a real object as every role.
+  // Cross-user BOLA with the ids discovery found: reach a real object as every role. Only with real
+  // ids: without an object there is no «another user's» to reach, and the endpoint as each role is
+  // already `auth:<role>` — the same request, sent twice, that no rule read.
   if (options.rules.cross_user_access && options.crossUserPermutations && realIds.length)
     for (const endpoint of endpoints.filter(hasPathParam))
       for (const id of realIds.slice(0, 2))

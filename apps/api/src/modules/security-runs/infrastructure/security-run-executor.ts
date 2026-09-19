@@ -10,8 +10,10 @@
  * - **Cancellation is checked between probes**, never inside one, so a created resource is not left
  *   half-made.
  * - **Progress and probes are persisted as they go**, so a worker that dies mid-run leaves evidence.
- * - **The console never sees a secret**: rules read bodies, but the credentials themselves stay in
- *   this method and the masked request is what is stored.
+ * - **The console never sees a secret**: the rules judge the probes as they were sent — the JWT
+ *   checks read the real Authorization — and only what is stored is masked: the credential headers
+ *   by name, and every credential by value wherever it reappears (an echoing target repeats it in
+ *   its body).
  */
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import {
@@ -34,6 +36,7 @@ import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "@/modules/environments/domain/ports";
 import { credentialHeader } from "@/modules/environments/domain/model";
+import { maskSecrets, SECRET_MASK } from "@/modules/runs/domain/mask-secrets";
 import { ENDPOINT_REPOSITORY, type EndpointRepositoryPort } from "@/modules/endpoints/domain/ports";
 import { pathParameterNames, type EndpointBody } from "@/modules/endpoints/domain/model";
 import { ROLE_REPOSITORY, type RoleRepositoryPort } from "@/modules/roles/domain/ports";
@@ -150,6 +153,7 @@ export class SecurityRunExecutor {
     };
 
     const send = (probe: Probe) => this.send(probe, environment.baseUrl, roleAuth, roleHeaderName);
+    const hide = storedProbes(roleAuth, roleHeaderName);
 
     // Phase 1: discovery.
     await this.advance(run, { progress: prog("Descubriendo ids", 5, "", 0, endpointMeta.length) });
@@ -182,7 +186,7 @@ export class SecurityRunExecutor {
       if (index % 10 === 0 || index === planned.length - 1) {
         const pct = 5 + Math.round((index / planned.length) * 75);
         await this.advance(run, {
-          probes: [...discovery, ...results],
+          probes: hide([...discovery, ...results]),
           progress: prog("Ejecutando sondas", pct, `${index + 1}/${planned.length}`, tested.size, endpointMeta.length),
         });
       }
@@ -196,8 +200,8 @@ export class SecurityRunExecutor {
     await this.finish({
       ...run,
       status: statusFromFindings(findings),
-      findings,
-      probes: [...discovery, ...results],
+      findings: hide.value(findings),
+      probes: hide([...discovery, ...results]),
       summary,
       score: summary.score,
       risk: summary.risk,
@@ -235,8 +239,8 @@ export class SecurityRunExecutor {
     const url = `${baseUrl.replace(/\/+$/, "")}${probe.path.startsWith("/") ? "" : "/"}${probe.path}`;
     const base: ProbeResult = {
       ...probe,
-      // The stored probe shows Authorization masked; the rules ran on the real one already.
-      headers: sentAuthorization ? { ...headers, Authorization: "••••••••" } : headers,
+      // The real headers: the rules read the token's shape from them. Masked on the way to storage.
+      headers,
       status: 0,
       responseHeaders: {},
       bodyText: "",
@@ -294,6 +298,36 @@ export class SecurityRunExecutor {
       risk: run.risk,
     });
   }
+}
+
+/**
+ * The probes as they may be stored and shown. The credential headers go by name —a forged token is
+ * no less a credential— and each credential by value, whole, bare and by its JWT signature (the
+ * forged `expired` and `tampered` tokens carry the real one), wherever the target echoed it back.
+ */
+function storedProbes(roleAuth: Map<string, string>, roleHeaderName: Map<string, string>) {
+  const names = new Set(["authorization", ...[...roleHeaderName.values()].map((name) => name.toLowerCase())]);
+  const secrets = [...roleAuth.values()].flatMap((value) => {
+    const bare = value.replace(/^(Bearer|Basic)\s+/i, "").trim();
+    const parts = bare.split(".");
+    return [value, bare, ...(parts.length === 3 && parts[2] ? [parts[2]] : [])];
+  });
+  const value = <T>(input: T): T => maskSecrets(input, secrets);
+  const hide = (probes: ProbeResult[]): ProbeResult[] =>
+    probes.map((probe) =>
+      value({
+        ...probe,
+        headers: probe.sentAuthorization
+          ? Object.fromEntries(
+              Object.entries(probe.headers).map(([name, header]) => [
+                name,
+                names.has(name.toLowerCase()) ? SECRET_MASK : header,
+              ]),
+            )
+          : probe.headers,
+      }),
+    );
+  return Object.assign(hide, { value });
 }
 
 const prog = (phase: string, percentage: number, detail: string, endpointsTested: number, endpointsTotal: number) => ({

@@ -273,22 +273,22 @@ describe("la matriz de sondas", () => {
 
   it("cross-user necesita la regla y las permutaciones", () => {
     const withoutPermutations = planProbes([detail], options({ rules: only("cross_user_access") }), ["5"]);
-    assert.equal(ofType(withoutPermutations, "cross-user").length, 0);
     assert.equal(ofType(withoutPermutations, "bola-real-id").length, 0);
 
     const withoutRule = planProbes([detail], options({ crossUserPermutations: true }), ["5"]);
     assert.equal(ofType(withoutRule, "bola-real-id").length, 0);
   });
 
-  it("cross-user sin ids reales solo manda una sonda por rol", () => {
+  it("cross-user sin ids reales no manda nada: el endpoint como cada rol ya es auth:<rol>", () => {
     const probes = planProbes(
       [list, detail],
       options({ rules: only("cross_user_access"), crossUserPermutations: true }),
       [],
     );
+    const without = planProbes([list, detail], options({ rules: only("cross_user_access") }), []);
     assert.deepEqual(
-      ofType(probes, "cross-user:").map((probe) => `${probe.endpointId}/${probe.credential}`),
-      ["list/admin", "list/vendedor", "detail/admin", "detail/vendedor"],
+      probes.map((probe) => probe.id),
+      without.map((probe) => probe.id),
     );
     assert.equal(ofType(probes, "bola-real-id").length, 0);
   });

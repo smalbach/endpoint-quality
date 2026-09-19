@@ -41,9 +41,11 @@ async function finished(runId: string) {
 
 before(async () => {
   // Answers 200 to everything, so an endpoint that requires auth appears unprotected — the finding.
+  // It also repeats the Authorization it got, like httpbin: a secret that comes back in the body.
   echo = createServer((incoming, response) => {
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ id: 1, email: "a@b.c", items: [{ id: 1 }] }));
+    const seen = incoming.headers.authorization ? { seen: incoming.headers.authorization } : {};
+    response.end(JSON.stringify({ id: 1, email: "a@b.c", items: [{ id: 1 }], ...seen }));
   });
   await new Promise<void>((resolve) => echo.listen(0, "127.0.0.1", resolve));
   origin = `http://127.0.0.1:${(echo.address() as AddressInfo).port}`;
@@ -162,5 +164,62 @@ describe("las corridas de seguridad", () => {
       .get(`/orgs/${outsider.organizationId}/projects/${projectId}/security-runs`)
       .set(as(outsider));
     assert.equal(denied.status, 404);
+  });
+});
+
+describe("el token del entorno", () => {
+  const segment = (object: unknown) => Buffer.from(JSON.stringify(object)).toString("base64url");
+  const signature = "firma-que-no-se-guarda-7";
+  // Sin firmar de verdad y sin exp: justo lo que las comprobaciones de auth_jwt buscan.
+  const token = `${segment({ alg: "none", typ: "JWT" })}.${segment({ sub: "42", role: "admin" })}.${signature}`;
+
+  test("las reglas leen el token real (alg: none, sin exp) y lo guardado lo lleva tapado", async () => {
+    const project = await api().post(`/orgs/${owner.organizationId}/projects`).set(as(owner)).send({ name: "JWT" });
+    const projectBase = `/orgs/${owner.organizationId}/projects/${project.body.projectId}`;
+    const environment = await api()
+      .post(`${projectBase}/environments`)
+      .set(as(owner))
+      .send({ name: "local", baseUrl: origin, authEnforced: true });
+    await api()
+      .post(`${projectBase}/endpoints`)
+      .set(as(owner))
+      .send({ method: "GET", path: "/me", requiresAuth: true });
+    assert.equal((await api().post(`${projectBase}/roles`).set(as(owner)).send({ name: "admin" })).status, 201);
+    const credential = await api()
+      .put(`${projectBase}/environments/${environment.body.environmentId}/credentials`)
+      .set(as(owner))
+      .send({ name: "admin", role: "admin", kind: "bearer", secret: token });
+    assert.equal(credential.status, 200, JSON.stringify(credential.body));
+
+    const started = await api().post(`${projectBase}/security-runs`).set(as(owner)).send({ adminRole: "admin" });
+    assert.equal(started.status, 202, JSON.stringify(started.body));
+    let run: { status: string; findings: { ruleKey: string; title: string }[] } | undefined;
+    for (let attempt = 0; attempt < 200 && (!run || ["queued", "running"].includes(run.status)); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      run = (await api().get(`${projectBase}/security-runs/${started.body.runId}?pageSize=200`).set(as(owner))).body;
+    }
+    assert.ok(run && !["queued", "running"].includes(run.status), "la corrida no terminó");
+
+    // El token de verdad salió hacia el objetivo…
+    assert.ok(context.http.calls.some((call) => call.headers.authorization === `Bearer ${token}`));
+    // …y las reglas lo juzgaron: antes veían «••••••••» y estas dos no saltaban nunca.
+    const jwt = run.findings.filter((finding) => finding.ruleKey === "auth_jwt").map((finding) => finding.title);
+    assert.ok(jwt.includes("El token viaja con alg: none"), JSON.stringify(jwt));
+    assert.ok(jwt.includes("El token no caduca"), JSON.stringify(jwt));
+
+    // Lo guardado y lo devuelto: la cabecera tapada, y el token ni entero, ni desnudo, ni su firma
+    // (que los tokens falsificados de jwt-attack conservan), tampoco en el cuerpo que el eco repitió.
+    const stored = await context.repositories.securityRuns.findById(started.body.runId);
+    assert.ok(stored);
+    const auth = stored.probes.find((probe) => probe.testType === "auth:admin");
+    assert.ok(auth);
+    assert.equal(auth.headers.Authorization, "••••••••");
+    assert.match(auth.bodyText, /"seen":"••••••••"/);
+    const returned = (await api().get(`${projectBase}/security-runs/${started.body.runId}?pageSize=200`).set(as(owner)))
+      .text;
+    for (const text of [JSON.stringify(stored), returned]) {
+      assert.ok(!text.includes(token));
+      assert.ok(!text.includes(signature));
+    }
   });
 });
