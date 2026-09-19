@@ -2940,3 +2940,39 @@ que la ida y vuelta con acuse sigue probada solo contra el servidor en proceso.
 
 `api 1292 · web 602 · db 31 (Postgres real) · lint 0 errores`. En la pila, la migración 41 aplicada y
 el login número 11 en un minuto, 429.
+
+## Prueba de todo en la pila, con la clave nueva — y un secreto que se guardaba por el eco
+
+Con `SECRETS_KEY` ya válida (la cambió la persona a cargo; aquí no hay nada cifrado que se perdiera:
+las siete columnas cifradas estaban vacías), dos pasadas contra la pila desplegada.
+
+**HTTPS descifrado, por fin probado**: `CAPTURE_MITM=true` con un ajuste temporal fuera del
+repositorio. La CA se genera, su clave se guarda cifrada (`v1.…`, sin `PRIVATE KEY` en claro) y lo
+descargable es solo el certificado. Con `curl` confiando en la CA solo para ese comando: 200 y la
+petición grabada entera; sin confiar, el cliente la rechaza y el motivo queda grabado; un destino con
+certificado inválido, 502 (la validación del destino real sigue en pie); el puerto 22, rechazado. Los
+secretos de la prueba, en 0 filas; lo descifrado se importa. La CA de la prueba se borró.
+
+**Pasada de punta a punta** con un usuario nuevo: Enviar REST por HTTPS con `pm.test` y
+`pm.visualizer`; Enviar GraphQL; import de Postman con formularios y export de vuelta (el fichero
+vuelve como fichero, la contraseña literal no sale); un flujo **sin contrato** que mezcla `fetch`,
+`graphql`, canales gRPC (reflexión), MQTT, WebSocket y Socket.IO, un webhook llamado desde fuera y un
+script que comprueba lo capturado por el camino: todo en verde. Bifurcar copia los cuatro canales y
+deja el secreto vacío; una solicitud de fusión lleva el cambio al original; un monitor de un canal
+gRPC, verde.
+
+**Y el fallo que salió.** El entorno tenía `token` sensible y la petición llevaba `Bearer {{token}}`
+a httpbin, que devuelve las cabeceras que recibe. La petición enseñada iba tapada; la **respuesta**
+no: el valor volvía entero en «Enviar» y quedaba en claro en `run_steps` (`actual.raw` y
+`actual.body`). Es la misma vía que la consola de los scripts ya tapaba: el informe y la respuesta los
+lee gente a la que el botón de revelar se lo niega. Ahora toda fila de paso pasa por un único
+`saveSteps` que tapa por su **valor** los secretos del entorno y el token de sesión en petición,
+respuesta y aserciones (`maskSecrets`, sacado del nodo mock, que ya lo hacía). «Enviar» tapa lo mismo
+en la respuesta que enseña, salvo lo que quien envía ya tiene: lo que escribió en la auth de la
+petición y las cookies de su propio tarro (una cookie `tema=claro` taparía la palabra en todo el
+cuerpo). Los scripts y la captura del token siguen leyendo la respuesta de verdad. Las pruebas que
+leían el eco para demostrar que una credencial llegó al servidor ahora miran lo que el servidor
+recibió; la nueva, la de la corrida, falla sin el arreglo. Repetida la pasada: el token en **0**
+filas de `run_steps`, `run_cases`, `channel_messages` y `environments`.
+
+`api 1293 · lint 0 errores`. No comprobado todavía: las pantallas en el navegador.
