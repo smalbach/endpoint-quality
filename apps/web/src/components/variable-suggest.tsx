@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "@/lib/format";
 import { applySuggestion, openTokenAt, suggestionsFor } from "@/lib/variable-suggestions";
@@ -51,6 +51,9 @@ export function VariableSuggest({
    * end, which is the wrong place in `{{id}}/detalle`.
    */
   const pendingCaret = useRef<number | null>(null);
+  // The blur's delayed close, cleared on unmount so it never sets state on a field that is gone.
+  const closing = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(closing.current), []);
   useLayoutEffect(() => {
     if (pendingCaret.current === null || !field.current) return;
     field.current.setSelectionRange(pendingCaret.current, pendingCaret.current);
@@ -113,7 +116,9 @@ export function VariableSuggest({
           }
         },
         // A frame's delay, because a click on a suggestion blurs the field before the click lands.
-        onBlur: () => window.setTimeout(() => setOpen(null), 120),
+        onBlur: () => {
+          closing.current = window.setTimeout(() => setOpen(null), 120);
+        },
       })}
 
       {showing && (

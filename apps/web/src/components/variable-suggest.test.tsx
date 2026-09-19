@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 
 import { VariableSuggest } from "@/components/variable-suggest";
@@ -148,5 +148,25 @@ describe("elegir un nombre", () => {
     await suggest.type("{{ped}}/detalle", "{{ped".length);
     fireEvent.keyDown(suggest.field, { key: "Enter" });
     expect(suggest.field.value).toBe("{{pedidoId}}/detalle");
+  });
+
+  test("perder el foco y desmontarse antes de que cierre no deja un cierre pendiente", async () => {
+    vi.useFakeTimers();
+    try {
+      function Harness() {
+        const [value, setValue] = useState("{{");
+        return (
+          <VariableSuggest variables={VARIABLES} value={value} onChange={setValue}>
+            {(suggest) => <input {...suggest} aria-label="Valor" />}
+          </VariableSuggest>
+        );
+      }
+      const { unmount } = render(<Harness />);
+      fireEvent.blur(screen.getByLabelText("Valor"));
+      unmount();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -217,7 +217,8 @@ describe("el escáner de código", () => {
 
   test("si guardar falla, el error se enseña", async () => {
     answers({
-      extra: (_path, options) => (options?.method === "PUT" ? Promise.reject(new Error("Repo no encontrado")) : undefined),
+      extra: (_path, options) =>
+        options?.method === "PUT" ? Promise.reject(new Error("Repo no encontrado")) : undefined,
     });
     draw();
     await waitFor(() => expect(input("owner/repo").value).toBe("acme/api"));
@@ -287,14 +288,22 @@ describe("el escáner de código", () => {
     await waitFor(() => expect(input("Prefijo global").value).toBe("api"));
     const file = source("@Controller('orders') export class OrdersController {}", "orders.controller.ts");
     fireEvent.change(screen.getByLabelText("Subir ficheros"), { target: { files: [file] } });
-    await screen.findByText("3 controladores · 4 ficheros · 1 rutas", {}, { timeout: 3000 });
-    expect(mocks.api).toHaveBeenCalledWith(`${BASE}/code-scan/scans/upload`, {
-      method: "POST",
-      body: {
-        files: [{ path: "orders.controller.ts", content: "@Controller('orders') export class OrdersController {}" }],
-        prefix: "api",
-      },
-    });
+    // Leer el fichero es asíncrono (`file.text()`): bajo carga la subida sale tarde, así que se
+    // espera a la petición antes de mirar lo que pinta.
+    await waitFor(
+      () =>
+        expect(mocks.api).toHaveBeenCalledWith(`${BASE}/code-scan/scans/upload`, {
+          method: "POST",
+          body: {
+            files: [
+              { path: "orders.controller.ts", content: "@Controller('orders') export class OrdersController {}" },
+            ],
+            prefix: "api",
+          },
+        }),
+      { timeout: 5000 },
+    );
+    await screen.findByText("3 controladores · 4 ficheros · 1 rutas", {}, { timeout: 5000 });
     // Subida: ni ref de GitHub en el historial ni en la cabecera.
     expect(screen.getAllByText("subida").length).toBeGreaterThan(0);
   });
@@ -302,7 +311,9 @@ describe("el escáner de código", () => {
   test("elegir sin ficheros no sube nada; si la subida falla, se dice", async () => {
     answers({
       extra: (path, options) =>
-        options?.method === "POST" && path.endsWith("/upload") ? Promise.reject(new Error("Fichero enorme")) : undefined,
+        options?.method === "POST" && path.endsWith("/upload")
+          ? Promise.reject(new Error("Fichero enorme"))
+          : undefined,
     });
     draw();
     await screen.findByText("Escáner de código");
