@@ -43,6 +43,19 @@ cp docker/.env.example docker/.env    # y genera los tres secretos: ver más aba
 docker compose -f docker/compose.yml up -d
 ```
 
+### Ver los cambios del código en Docker
+
+Los contenedores sirven la imagen con la que se construyeron: un cambio en el código no aparece
+hasta reconstruirla. Compilar primero hace que un error de tipos salga aquí y no a mitad del
+`docker build`:
+
+```bash
+pnpm --filter @eq/web build && pnpm --filter @eq/api build && docker compose -f docker/compose.yml up -d --build api web
+```
+
+`migrate` vuelve a correr solo antes de que arranque `api`. Después, recarga el navegador sin caché
+(Cmd+Shift+R) para no quedarte con el JavaScript anterior.
+
 Cuatro servicios: `postgres`, `migrate`, `api`, `web`. `migrate` es un paso propio con su propio
 código de salida, y `api` no arranca hasta que termina bien. No es `migrationsRun` al arrancar a
 propósito: eso ata «el esquema cambió» a «un proceso arrancó», cada réplica de un despliegue lo

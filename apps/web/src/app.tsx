@@ -119,6 +119,14 @@ export function AppRoutes() {
               </Suspense>
             }
           />
+          <Route
+            path="workflows/:workflowId"
+            element={
+              <Suspense fallback={<p className="text-sm text-slate-500">Cargando editor…</p>}>
+                <WorkflowsPage />
+              </Suspense>
+            }
+          />
           <Route path="runs" element={<RunsPage />} />
           <Route path="runs/:runId" element={<RunDetailPage />} />
           <Route path="security" element={<SecurityRunsPage />} />

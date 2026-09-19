@@ -6,15 +6,14 @@
  * deleted, edge still pointing at it» a state that cannot be stored.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useParams } from "react-router-dom";
-import { Drawer, PromptDialog } from "@/components/overlay";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { Drawer } from "@/components/overlay";
 import { RunProgressView, useRunProgress } from "@/routes/runs";
 import { resolveActive, useActiveEnvironment } from "@/lib/active-environment";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
-import { useImport } from "@/components/import-provider";
 import { Button, Card, Empty } from "@/components/ui";
 import { cn } from "@/lib/format";
 import { unchanged } from "@/lib/config-draft";
@@ -35,8 +34,7 @@ import { WorkflowCanvas } from "@/components/workflow-canvas";
 import { WorkflowInspector } from "@/components/workflow-inspector";
 import { TemplateLibrary, type NewTemplate } from "@/components/template-library";
 import { DatasetsPanel } from "@/components/datasets-panel";
-import { SuitesPanel } from "@/components/suites-panel";
-import { bundleFileName, downloadJson } from "@/lib/project-bundle";
+import { WorkflowListPage } from "@/routes/workflow-list";
 import { RunSettingsDialog } from "@/components/run-settings-dialog";
 import {
   DEFAULT_RUN_SETTINGS,
@@ -55,8 +53,6 @@ import type {
   Environment,
   RequestTemplateView,
   RunView,
-  SuiteView,
-  WorkflowStatusView,
   WorkflowStepView,
   WorkflowView,
   WorkflowsView,
@@ -68,15 +64,27 @@ const message = (error: unknown) => (error as Error | null)?.message ?? null;
  * change — most GETs answer 200, a POST 201, a DELETE 204. */
 const DEFAULT_STATUS: Record<string, number> = { GET: 200, POST: 201, PUT: 200, PATCH: 200, DELETE: 204 };
 
+/**
+ * `workflows` lists the flows and how they connect; `workflows/:workflowId` opens one on the canvas.
+ * Two routes rather than a drawer over the canvas, so the list is the way in and the back button
+ * returns to it.
+ */
 export function WorkflowsPage() {
-  const { projectId } = useParams();
+  const { projectId = "", workflowId } = useParams();
+  if (!workflowId) return <WorkflowListPage projectId={projectId} />;
+  // Keyed by the flow, so opening another one (a subflow from the inspector, say) starts clean.
+  return <WorkflowEditor key={workflowId} projectId={projectId} workflowId={workflowId} />;
+}
+
+function WorkflowEditor({ projectId, workflowId }: { projectId: string; workflowId: string }) {
+  const navigate = useNavigate();
+  const listPath = `/p/${projectId}/workflows`;
   const organization = useOrganization();
   const canEdit = useCan("editor");
-  const { open: openImport } = useImport();
   const queryClient = useQueryClient();
   const base = `/orgs/${organization?.id}/projects/${projectId}`;
 
-  const [selectedId, setSelectedId] = useState("");
+  const selectedId = workflowId;
   const [selectedStep, setSelectedStep] = useState("");
   const [draft, setDraft] = useState<WorkflowView | null>(null);
   const [templateEdits, setTemplateEdits] = useState<Record<string, RequestTemplateView>>({});
@@ -86,9 +94,6 @@ export function WorkflowsPage() {
   const [environmentId, setEnvironmentId] = useState("");
   const [activeEnvironment, setActiveEnvironment] = useActiveEnvironment(projectId);
   const preselected = useRef(false);
-  const [naming, setNaming] = useState(false);
-  const [renaming, setRenaming] = useState(false);
-  const [showArchived, setShowArchived] = useState(false);
   const [datasetId, setDatasetId] = useState("");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   // The canvas is the screen now; everything else is pulled over it. `tab` swaps the whole area
@@ -96,7 +101,7 @@ export function WorkflowsPage() {
   // side panel is open, and `inspectorOpen` the node/settings panel — split out because a node
   // click opens it while the dock buttons open the others.
   const [tab, setTab] = useState<"editor" | "run">("editor");
-  const [drawer, setDrawer] = useState<null | "flows" | "library" | "data">(null);
+  const [drawer, setDrawer] = useState<null | "library" | "data">(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
 
   // The live run being watched, if any. The hook no-ops on an empty id, so it is safe to call
@@ -161,12 +166,6 @@ export function WorkflowsPage() {
   const environmentList = environments.data ?? [];
   const channelList = channels.data?.channels ?? [];
   const saved = allWorkflows.find((item) => item.id === selectedId);
-  // Archived flows are hidden unless asked for — but the one open stays visible, so «archivar» does
-  // not make the flow you are looking at vanish out from under you.
-  const visibleWorkflows = allWorkflows.filter(
-    (item) => showArchived || item.status !== "archived" || item.id === selectedId,
-  );
-  const archivedCount = allWorkflows.filter((item) => item.status === "archived").length;
   const templates = requestTemplates.map((template) => templateEdits[template.id] ?? template);
   const steps = draft?.steps ?? [];
   const problems = flowProblems(steps);
@@ -192,10 +191,6 @@ export function WorkflowsPage() {
 
   // The draft follows the selection, and a refetch replaces it: the server's copy is the one that
   // went through validation, so keeping a local version on top of it would hide what it changed.
-  useEffect(() => {
-    const first = workflows.data?.workflows[0];
-    if (!selectedId && first) setSelectedId(first.id);
-  }, [workflows.data, selectedId]);
   useEffect(() => {
     if (!saved) return;
     setDraft(saved);
@@ -225,45 +220,13 @@ export function WorkflowsPage() {
     mutationFn: (templateId: string) => api<void>(`${base}/request-templates/${templateId}`, { method: "DELETE" }),
     onSuccess: invalidate,
   });
-  const createWorkflow = useMutation({
-    mutationFn: (name: string) => api<{ workflowId: string }>(`${base}/workflows`, { method: "POST", body: { name } }),
-    onSuccess: async ({ workflowId }) => {
-      await invalidate();
-      setSelectedId(workflowId);
-    },
-  });
   const deleteWorkflow = useMutation({
     mutationFn: (workflowId: string) => api<void>(`${base}/workflows/${workflowId}`, { method: "DELETE" }),
     onSuccess: async () => {
-      setSelectedId("");
-      setDraft(null);
       await invalidate();
+      void navigate(listPath);
     },
   });
-  /** One flow as a file: with the requests, datasets and sub-flows it needs to run elsewhere. */
-  const exportWorkflow = useMutation({
-    mutationFn: async (flow: { id: string; name: string }) => ({
-      bundle: await api<unknown>(`${base}/export?parts=flows,contract&workflowIds=${flow.id}`),
-      name: flow.name,
-    }),
-    onSuccess: ({ bundle, name }) => downloadJson(bundleFileName(name), bundle),
-  });
-  const duplicateWorkflow = useMutation({
-    mutationFn: (workflowId: string) =>
-      api<{ workflowId: string }>(`${base}/workflows/${workflowId}/duplicate`, { method: "POST" }),
-    onSuccess: async ({ workflowId }) => {
-      await invalidate();
-      setSelectedId(workflowId);
-    },
-  });
-  // Rename and status are partial writes of the row, not the graph: they go straight to the server
-  // rather than through the draft, so «archivar» is one click and does not wait on a valid diagram.
-  const patchWorkflow = useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; status?: WorkflowStatusView }) =>
-      api<void>(`${base}/workflows/${id}`, { method: "PUT", body }),
-    onSuccess: invalidate,
-  });
-
   /**
    * One save: the requests that changed, then the graph.
    *
@@ -316,24 +279,6 @@ export function WorkflowsPage() {
     onSuccess: ({ runId }) => setActiveRunId(runId),
   });
 
-  const runSuite = useMutation({
-    mutationFn: (suiteId: string) =>
-      api<{ runId: string }>(`${base}/runs`, {
-        method: "POST",
-        // A suite walks other flows too, whose nodes this flow's breakpoints do not name: only what
-        // means the same in every flow travels.
-        body: {
-          environmentId,
-          suiteId,
-          ...runSettingsBody({
-            ...launchSettings,
-            pauseMode: launchSettings.pauseMode === "breakpoints" ? "none" : launchSettings.pauseMode,
-          }),
-        },
-      }),
-    onSuccess: ({ runId }) => setActiveRunId(runId),
-  });
-
   const createDataset = useMutation({
     mutationFn: (name: string) =>
       api<{ datasetId: string }>(`${base}/workflows/${draft?.id}/datasets`, {
@@ -355,20 +300,6 @@ export function WorkflowsPage() {
       if (datasetId === id) setDatasetId("");
       await invalidate();
     },
-  });
-
-  const createSuite = useMutation({
-    mutationFn: (name: string) => api<{ suiteId: string }>(`${base}/suites`, { method: "POST", body: { name } }),
-    onSuccess: invalidate,
-  });
-  const saveSuite = useMutation({
-    mutationFn: (suite: SuiteView) =>
-      api<void>(`${base}/suites/${suite.id}`, { method: "PUT", body: { workflowIds: suite.workflowIds } }),
-    onSuccess: invalidate,
-  });
-  const deleteSuite = useMutation({
-    mutationFn: (suiteId: string) => api<void>(`${base}/suites/${suiteId}`, { method: "DELETE" }),
-    onSuccess: invalidate,
   });
 
   // Ctrl/Cmd+S guarda, Ctrl/Cmd+Enter ejecuta. Por un ref actualizado en cada render, para que el
@@ -525,7 +456,27 @@ export function WorkflowsPage() {
       {/* La barra superior es lo único fijo: las dos pestañas a la izquierda, y a la derecha lo que
           se aplica a todo el flujo (entorno, JSON, guardar). Todo lo demás flota sobre el lienzo. */}
       <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-2">
-        <div className="flex items-center gap-1">
+        <div className="flex min-w-0 items-center gap-1">
+          <Link
+            to={listPath}
+            onClick={(event) => {
+              if (dirty && !window.confirm("Hay cambios sin guardar en este flujo. ¿Volver a la lista y descartarlos?"))
+                event.preventDefault();
+            }}
+            className="mr-1 flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+            title="Volver a la lista de flujos"
+          >
+            ← Flujos
+          </Link>
+          {saved && (
+            <span className="mr-2 flex min-w-0 items-center gap-1.5 border-l border-slate-200 pl-3">
+              <span
+                className={cn("h-1.5 w-1.5 shrink-0 rounded-full", WORKFLOW_STATUS_META[saved.status].dot)}
+                title={WORKFLOW_STATUS_META[saved.status].label}
+              />
+              <span className="truncate text-xs font-semibold text-slate-800">{saved.name}</span>
+            </span>
+          )}
           <TopTab active={tab === "editor"} onClick={() => setTab("editor")}>
             Lienzo
           </TopTab>
@@ -539,7 +490,6 @@ export function WorkflowsPage() {
           </TopTab>
         </div>
         <div className="flex min-w-0 items-center gap-2">
-          {saved && <span className="hidden truncate text-xs font-medium text-slate-500 sm:block">{saved.name}</span>}
           <select
             className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-600"
             value={environmentId}
@@ -596,8 +546,13 @@ export function WorkflowsPage() {
             {!draft ? (
               <div className="grid h-full place-items-center p-6">
                 <Empty
-                  title="Crea tu primer flujo"
-                  hint="Abre «Flujos» y crea uno; luego añade pruebas desde la biblioteca."
+                  title="Este flujo no existe"
+                  hint="Puede que lo hayan borrado. Vuelve a la lista para abrir otro."
+                  action={
+                    <Link to={listPath} className="text-xs font-medium text-slate-700 underline">
+                      Ver flujos
+                    </Link>
+                  }
                 />
               </div>
             ) : (
@@ -626,7 +581,6 @@ export function WorkflowsPage() {
             {/* Muelle flotante a la izquierda: bajo la barra de conductas del lienzo, para no taparla. */}
             <div className="pointer-events-none absolute top-14 left-3 z-30 flex flex-col gap-2">
               <div className="pointer-events-auto flex flex-col gap-1 rounded-2xl border border-slate-200 bg-white/95 p-1 shadow-lg backdrop-blur">
-                <DockButton glyph="≣" label="Flujos" onClick={() => setDrawer(drawer === "flows" ? null : "flows")} />
                 <DockButton
                   glyph="◈"
                   label="Biblioteca"
@@ -744,121 +698,6 @@ export function WorkflowsPage() {
               />
             )}
 
-            {/* Drawer: Flujos (lista, estado, suites). */}
-            {drawer === "flows" && (
-              <Drawer title="Flujos" side="left" onClose={() => setDrawer(null)}>
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Flujos</p>
-                  {canEdit && (
-                    <span className="flex items-center gap-1">
-                      {/* El mismo «Importar» de la cabecera. Aquí había una puerta propia que sólo
-                          leía un proyecto exportado de este producto, así que una colección de
-                          Postman soltada en ella no se reconocía en absoluto. */}
-                      <Button variant="ghost" className="h-7 px-2 text-xs" onClick={() => openImport()}>
-                        Importar
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        className="h-7 px-2 text-xs"
-                        disabled={createWorkflow.isPending}
-                        onClick={() => setNaming(true)}
-                      >
-                        + Nuevo
-                      </Button>
-                    </span>
-                  )}
-                </div>
-                <div className="mt-2 space-y-1">
-                  {allWorkflows.length === 0 && <p className="text-[11px] text-slate-400">Ninguno todavía.</p>}
-                  {visibleWorkflows.map((item) => {
-                    const meta = WORKFLOW_STATUS_META[item.status];
-                    const active = item.id === selectedId;
-                    return (
-                      <button
-                        key={item.id}
-                        onClick={() => setSelectedId(item.id)}
-                        className={cn(
-                          "w-full rounded-lg px-2 py-2 text-left text-xs",
-                          active ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50",
-                        )}
-                      >
-                        <span className="flex items-center gap-1.5">
-                          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", meta.dot)} title={meta.label} />
-                          <span className="flex-1 truncate font-medium">{item.name}</span>
-                        </span>
-                        <span className={cn("mt-0.5 block text-[10px]", active ? "text-slate-300" : "text-slate-400")}>
-                          {item.steps.length} pasos · {meta.label}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-                {archivedCount > 0 && (
-                  <button
-                    className="mt-2 text-[10px] text-slate-400 hover:text-slate-600"
-                    onClick={() => setShowArchived((value) => !value)}
-                  >
-                    {showArchived ? "Ocultar archivados" : `Ver archivados (${archivedCount})`}
-                  </button>
-                )}
-                {canEdit && saved && (
-                  <div className="mt-3 flex flex-wrap gap-1 border-t border-slate-100 pt-3">
-                    <Button variant="ghost" className="h-6 px-1.5 text-[11px]" onClick={() => setRenaming(true)}>
-                      Renombrar
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      className="h-6 px-1.5 text-[11px]"
-                      disabled={duplicateWorkflow.isPending}
-                      onClick={() => duplicateWorkflow.mutate(saved.id)}
-                    >
-                      Duplicar
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      className="h-6 px-1.5 text-[11px]"
-                      disabled={exportWorkflow.isPending}
-                      onClick={() => exportWorkflow.mutate({ id: saved.id, name: saved.name })}
-                      title="Descargar este flujo, con sus peticiones, datasets y sub-flujos, como .json"
-                    >
-                      Exportar
-                    </Button>
-                    <select
-                      value={saved.status}
-                      disabled={patchWorkflow.isPending}
-                      onChange={(event) =>
-                        patchWorkflow.mutate({ id: saved.id, status: event.target.value as WorkflowStatusView })
-                      }
-                      className="h-6 rounded-md border border-slate-200 bg-white px-1 text-[11px] text-slate-600"
-                      title="Estado del flujo"
-                    >
-                      <option value="draft">Borrador</option>
-                      <option value="ready">Listo</option>
-                      <option value="archived">Archivado</option>
-                    </select>
-                  </div>
-                )}
-                {message(duplicateWorkflow.error) && (
-                  <p className="mt-2 text-[11px] text-rose-700">{message(duplicateWorkflow.error)}</p>
-                )}
-                {message(exportWorkflow.error) && (
-                  <p className="mt-2 text-[11px] text-rose-700">{message(exportWorkflow.error)}</p>
-                )}
-                <div className="mt-4 border-t border-slate-100 pt-3">
-                  <SuitesPanel
-                    suites={suites}
-                    workflows={allWorkflows}
-                    canEdit={canEdit}
-                    running={runSuite.isPending || !environmentId}
-                    onCreate={(name) => createSuite.mutate(name)}
-                    onChange={(suite) => saveSuite.mutate(suite)}
-                    onDelete={(suiteId) => deleteSuite.mutate(suiteId)}
-                    onRun={(suiteId) => runSuite.mutate(suiteId)}
-                  />
-                </div>
-              </Drawer>
-            )}
-
             {/* Drawer: Biblioteca de peticiones reutilizables + importación. */}
             {drawer === "library" && draft && (
               <Drawer
@@ -957,33 +796,6 @@ export function WorkflowsPage() {
         />
       )}
 
-      {/* Los diálogos de nombrar/renombrar viven fuera del lienzo: valen en cualquier pestaña. */}
-      {naming && (
-        <PromptDialog
-          title="Nuevo flujo"
-          label="Nombre del flujo"
-          hint="Lo que recorre, en pocas palabras: «alta y baja de pedido»."
-          placeholder="Alta de pedido"
-          onClose={() => setNaming(false)}
-          onSubmit={(name) => {
-            setNaming(false);
-            createWorkflow.mutate(name);
-          }}
-        />
-      )}
-      {renaming && saved && (
-        <PromptDialog
-          title="Renombrar flujo"
-          label="Nombre del flujo"
-          hint="Lo que recorre, en pocas palabras."
-          initialValue={saved.name}
-          onClose={() => setRenaming(false)}
-          onSubmit={(name) => {
-            setRenaming(false);
-            if (name.trim() && name !== saved.name) patchWorkflow.mutate({ id: saved.id, name });
-          }}
-        />
-      )}
     </div>
   );
 }
