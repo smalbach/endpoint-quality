@@ -282,9 +282,13 @@ export function pinnedBrokerStream(
   // Un upgrade que no es un 101 se dice con su número, como en un canal WebSocket.
   socket.once("unexpected-response", (request, response: IncomingMessage) => {
     request.destroy();
-    stream.destroy(
-      Object.assign(new Error(`el upgrade contestó ${response.statusCode ?? 0}`), { code: "EQ_MQTT_UPGRADE" }),
-    );
+    const rejected = { message: `el upgrade contestó ${response.statusCode ?? 0}`, code: "EQ_MQTT_UPGRADE" };
+    // Destruir el stream con el socket a medio abrir llama a `terminate()`, y el error de ese aborto
+    // («WebSocket was closed before…», sin código) es el que el stream acaba emitiendo, no el que se
+    // le pasa. MQTT se traga un error sin código, y la sesión decía «el broker cerró la conexión» sin
+    // el número: el aborto se lleva el motivo de aquí. Escuchado antes de destruir, para ir primero.
+    socket.once("error", (aborted: Error) => Object.assign(aborted, rejected));
+    stream.destroy(Object.assign(new Error(rejected.message), { code: rejected.code }));
   });
   return stream;
 }

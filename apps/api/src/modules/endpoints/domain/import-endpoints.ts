@@ -274,7 +274,15 @@ function bodyFrom(body: RequestBody, formRows?: FormRow[]): EndpointBody {
 }
 
 function parseOpenApi(text: string): ParsedFile {
-  const parsed = importSpec(text);
+  let parsed: ReturnType<typeof importSpec>;
+  try {
+    parsed = importSpec(text);
+  } catch (error) {
+    // Un `.yaml` que no es YAML —o que no tiene un objeto en la raíz— es un fichero que no se pudo
+    // leer, no un fallo del servidor: se dice como salto, igual que un documento sin versión.
+    const reason = error instanceof Error ? error.message : "El documento no se pudo leer";
+    return { format: "openapi", drafts: [], skipped: [{ method: "", path: "", name: "", reason }] };
+  }
   const errors = parsed.problems.filter((problem) => problem.severity === "error");
   if (errors.length && !parsed.operations.length) {
     return {
