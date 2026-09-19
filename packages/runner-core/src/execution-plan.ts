@@ -42,7 +42,8 @@ export function orderOperations(
   customOrder: string[],
 ): ResolvedOperation[] {
   const contractIndex = new Map(list.map((operation, index) => [operation.id, index]));
-  const contractRank = (operation: ResolvedOperation) => contractIndex.get(operation.id) ?? list.length;
+  // Only ever asked about operations of `list`, so the index always has them.
+  const contractRank = (operation: ResolvedOperation) => contractIndex.get(operation.id)!;
   if (mode === "contract") return [...list];
   if (mode === "safe")
     return [...list].sort((a, b) => methodRank[a.method] - methodRank[b.method] || contractRank(a) - contractRank(b));

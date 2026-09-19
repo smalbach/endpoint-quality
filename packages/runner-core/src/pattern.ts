@@ -37,23 +37,25 @@ export function exampleFromPattern(pattern: string, minLength = 0): string | und
   if (!pattern || pattern.length > 400) return undefined;
   const cursor: Cursor = { source: pattern, index: 0, minLength, depth: 0 };
   const value = alternation(cursor);
+  // No length check here: `sequence` and `quantified` already refuse anything past `MAX_OUTPUT`.
   if (value === undefined || cursor.index < pattern.length) return undefined;
-  return value.length <= MAX_OUTPUT ? value : undefined;
+  return value;
 }
 
 /** `a|b`: the first branch that can be built. A choice in a contract is a choice, and the first
  * one is as good as any — but if it uses something unsupported the others may not. */
 function alternation(cursor: Cursor): string | undefined {
-  if (cursor.depth++ > MAX_DEPTH) return undefined;
+  // Checked before counting: a level that bails must not leave the counter raised, or every
+  // later branch of the same pattern would be judged one level deeper than it is.
+  if (cursor.depth > MAX_DEPTH) return undefined;
+  cursor.depth += 1;
   let chosen: string | undefined;
   for (;;) {
     const start = cursor.index;
     const branch = sequence(cursor);
     if (branch !== undefined && chosen === undefined) chosen = branch;
-    if (branch === undefined) {
-      // Skip to the next `|` at this level so a broken branch does not poison a good one.
-      if (!skipBranch(cursor, start)) return undefined;
-    }
+    // Skip to the next `|` at this level so a broken branch does not poison a good one.
+    if (branch === undefined) skipBranch(cursor, start);
     if (cursor.source[cursor.index] !== "|") break;
     cursor.index += 1;
   }
@@ -62,28 +64,34 @@ function alternation(cursor: Cursor): string | undefined {
 }
 
 /** Walks a failed branch to the `|` or `)` that ends it, respecting nesting and escapes. */
-function skipBranch(cursor: Cursor, start: number): boolean {
+function skipBranch(cursor: Cursor, start: number): void {
   let depth = 0;
+  let inClass = false;
   for (let index = start; index < cursor.source.length; index += 1) {
     const character = cursor.source[index];
     if (character === "\\") {
       index += 1;
       continue;
     }
-    if (character === "(") depth += 1;
+    // Inside `[…]` a `|` or `)` is a literal, not the end of the branch.
+    if (inClass) {
+      if (character === "]") inClass = false;
+      continue;
+    }
+    if (character === "[") inClass = true;
+    else if (character === "(") depth += 1;
     else if (character === ")") {
       if (depth === 0) {
         cursor.index = index;
-        return true;
+        return;
       }
       depth -= 1;
     } else if (character === "|" && depth === 0) {
       cursor.index = index;
-      return true;
+      return;
     }
   }
   cursor.index = cursor.source.length;
-  return true;
 }
 
 function sequence(cursor: Cursor): string | undefined {
@@ -261,15 +269,12 @@ function classEscape(cursor: Cursor): string[] | undefined {
   cursor.index += 2;
   const shorthand = SHORTHAND[character];
   if (shorthand) return shorthand;
-  if (
-    character === "d" ||
-    character === "w" ||
-    character === "s" ||
-    character === "D" ||
-    character === "W" ||
-    character === "S"
-  )
-    return undefined;
+  // Inside a class `\b` is a backspace, not a word boundary.
+  if (character === "b") return ["\b"];
+  // The negated shorthands, and the escapes that name a character by code (`\x41`, `\u0041`,
+  // `\cA`) or by table (`\p{L}`), would all be read here as their bare letter — a value the class
+  // does not admit. Bail instead.
+  if (/[DWS1-9pPkcux]/.test(character)) return undefined;
   return [LITERAL_ESCAPE[character] ?? character];
 }
 
@@ -287,7 +292,7 @@ function escaped(cursor: Cursor): string | undefined {
   cursor.index += 2;
   // A backreference has to equal a group this does not track, and `\p{…}` needs the Unicode
   // tables. Both bail, and the placeholder stands.
-  if (/[1-9pPkbBu]/.test(character)) {
+  if (/[1-9pPkbBuc]/.test(character)) {
     if (character === "b" || character === "B") return "";
     return undefined;
   }

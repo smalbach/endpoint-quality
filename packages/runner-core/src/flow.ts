@@ -97,14 +97,17 @@ export function detailOperationFor(
   collection: ResolvedOperation,
   operations: ResolvedOperation[],
 ): ResolvedOperation | undefined {
-  const placeholders = (collection.path.match(/\{/g) ?? []).length;
+  const placeholders = placeholderCount(collection.path);
   return operations.find(
     (candidate) =>
       candidate.method === "GET" &&
       candidate.path.startsWith(`${collection.path}/{`) &&
-      (candidate.path.match(/\{/g) ?? []).length === placeholders + 1,
+      placeholderCount(candidate.path) === placeholders + 1,
   );
 }
+
+/** How many `{` a path template opens. Counted by splitting, so a path with none is simply 0. */
+const placeholderCount = (path: string): number => path.split("{").length - 1;
 
 /** The last placeholder of a path is the resource's own identifier: in
  * `/v1/stores/{store_id}/assortment/{assortment_id}` that is `assortment_id`. */

@@ -324,7 +324,8 @@ export function parseChallenge(header: string, scheme: string): Record<string, s
     if (!candidate.toLowerCase().startsWith(scheme.toLowerCase())) continue;
     const rest = candidate.slice(scheme.length).trim();
     for (const [, key, quoted, bare] of rest.matchAll(/([A-Za-z0-9_-]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^,\s]*))/g)) {
-      found[key.toLowerCase()] = (quoted ?? bare ?? "").replace(/\\(.)/g, "$1");
+      // Una de las dos alternativas casa siempre: sin comillas, `bare` es el valor (quizá vacío).
+      found[key.toLowerCase()] = (quoted ?? bare).replace(/\\(.)/g, "$1");
     }
     break;
   }
@@ -466,7 +467,7 @@ function oauth1Signature(method: string, base: string, key: string, consumerSecr
 export function oauth1BaseString(method: string, url: URL, params: [string, string][]): string {
   const normalized = params
     .map(([key, item]) => [percent(key), percent(item)] as const)
-    .sort((left, right) => (left[0] === right[0] ? left[1].localeCompare(right[1]) : left[0].localeCompare(right[0])))
+    .sort(byBytes)
     .map(([key, item]) => `${key}=${item}`)
     .join("&");
   return [method.toUpperCase(), percent(`${url.origin}${url.pathname}`), percent(normalized)].join("&");
@@ -478,6 +479,18 @@ export function oauth1BaseString(method: string, url: URL, params: [string, stri
  * `!`, `'`, `(`, `)` y `*` quedan sin codificar en `encodeURIComponent` y el RFC 5849 exige que se
  * codifiquen. Son cinco caracteres y son la diferencia entre firmar y no.
  */
+/**
+ * El orden de OAuth 1 (RFC 5849 §3.4.1.3.2) y de AWS: por clave y luego por valor, **byte a byte**.
+ *
+ * No `localeCompare`: ese pone `a` antes que `B` y `a_b` antes que `aZ`, y el servidor, que ordena
+ * por bytes, calcula otra cadena y contesta 401. Las dos van ya codificadas, así que son ASCII y
+ * comparar con `<` es comparar bytes.
+ */
+const byBytes = (left: readonly [string, string], right: readonly [string, string]): number =>
+  compareBytes(left[0], right[0]) || compareBytes(left[1], right[1]);
+
+const compareBytes = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0);
+
 export const percent = (text: string): string =>
   encodeURIComponent(text).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 
@@ -599,7 +612,7 @@ function hawk(auth: RequestAuth, request: AuthRequest): AuthResult {
   const body = bodyText(request.body);
   let payloadHash = "";
   if (body) {
-    const contentType = (headerOf(request.headers, "content-type").split(";")[0] ?? "").trim().toLowerCase();
+    const contentType = headerOf(request.headers, "content-type").split(";")[0].trim().toLowerCase();
     payloadHash = createHash(algorithm).update(`hawk.1.payload\n${contentType}\n${body}\n`, "utf8").digest("base64");
   }
 
@@ -674,7 +687,7 @@ function awsv4(auth: RequestAuth, request: AuthRequest): AuthResult {
 
   const query = [...url.searchParams.entries()]
     .map(([key, item]) => [percent(key), percent(item)] as const)
-    .sort((left, right) => (left[0] === right[0] ? left[1].localeCompare(right[1]) : left[0].localeCompare(right[0])))
+    .sort(byBytes)
     .map(([key, item]) => `${key}=${item}`)
     .join("&");
 
@@ -711,7 +724,7 @@ function awsv4(auth: RequestAuth, request: AuthRequest): AuthResult {
 
 /** La ruta canónica: cada segmento codificado, y la codificación aplicada dos veces salvo en S3. */
 const canonicalUri = (pathname: string): string =>
-  (pathname || "/")
+  pathname
     .split("/")
     .map((segment) => percent(decodeURIComponent(segment)))
     .join("/") || "/";
@@ -719,7 +732,7 @@ const canonicalUri = (pathname: string): string =>
 const serviceFromHost = (host: string): string => {
   const parts = host.split(".");
   const index = parts.indexOf("amazonaws");
-  return index > 0 ? (parts[0] ?? "") : "";
+  return index > 0 ? parts[0] : "";
 };
 
 const regionFromHost = (host: string): string => {
