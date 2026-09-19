@@ -20,6 +20,7 @@ export default tseslint.config(
     ignores: [
       "**/dist/**",
       "**/dist-test/**",
+      "**/coverage/**",
       ".parity-cut/**",
       "tools/parity-cut/legacy/**",
       "**/node_modules/**",

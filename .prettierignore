@@ -1,6 +1,7 @@
 # Build output and vendored artefacts. Nothing here is written by hand.
 **/dist
 **/dist-test
+**/coverage
 pnpm-lock.yaml
 .parity-cut
 

@@ -18,7 +18,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.esm.json && tsc -p tsconfig.cjs.json && node -e \"require('fs').writeFileSync('dist/cjs/package.json', JSON.stringify({ type: 'commonjs' }) + '\\n'); require('fs').writeFileSync('dist/esm/package.json', JSON.stringify({ type: 'module' }) + '\\n')\"",
     "typecheck": "tsc --noEmit -p tsconfig.esm.json",
-    "test": "node --experimental-strip-types --test test/*.test.ts"
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "test:coverage": "node --experimental-strip-types --test --experimental-test-coverage --test-coverage-include=\"src/**\" --test-coverage-lines=94 --test-coverage-branches=87 --test-coverage-functions=99 test/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^22.19.19",

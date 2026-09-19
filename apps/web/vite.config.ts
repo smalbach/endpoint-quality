@@ -30,5 +30,15 @@ export default defineConfig({
         new URL("./node_modules/graphql-language-service/esm/index.js", import.meta.url),
       ),
     },
+    // `pnpm test:coverage`. Los umbrales son un trinquete, no una meta: el suelo de lo medido hoy,
+    // para que la cobertura no baje sin que nadie lo note. Súbelos cuando suba lo medido.
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: ["src/**/*.test.{ts,tsx}", "src/main.tsx", "src/**/*.d.ts"],
+      reporter: ["text-summary", "html", "json-summary"],
+      reportsDirectory: "coverage",
+      thresholds: { lines: 46, statements: 46, branches: 81, functions: 64 },
+    },
   },
 });

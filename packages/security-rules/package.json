@@ -10,6 +10,7 @@
   },
   "scripts": {
     "test": "node --experimental-strip-types --test test/*.test.ts",
+    "test:coverage": "node --experimental-strip-types --test --experimental-test-coverage --test-coverage-include=\"src/**\" --test-coverage-lines=99 --test-coverage-branches=96 --test-coverage-functions=98 test/*.test.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json && node -e \"require('fs').writeFileSync('dist/package.json', JSON.stringify({type:'commonjs'}) + '\\n')\""
   },
