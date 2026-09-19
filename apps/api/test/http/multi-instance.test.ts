@@ -20,6 +20,7 @@ import { FireDueMonitorsCommand, type FireDueResult } from "@/modules/monitors/a
 import { ChannelSessionRegistry } from "@/modules/channels/infrastructure/session-registry";
 import { createTestApp, type TestContext } from "../support/test-app";
 import { StubTarget, STUB_SPEC_YAML } from "../support/stub-target";
+import { startSocketIo } from "../support/socketio-server";
 
 let a: TestContext;
 let b: TestContext;
@@ -230,6 +231,66 @@ describe("una sesión de canal cuyo socket tiene A, usada desde B", () => {
     assert.match(String(sent.body.type), /channel-session-not-here$/);
     await on(a).post(`${projectBase}/channels/sessions/${opened.body.id}/close`).set(as(owner));
     await target.stop();
+  });
+});
+
+describe("un canal Socket.IO cuyo socket tiene A, usado desde B", () => {
+  test("el evento, sus argumentos y el acuse cruzan el bus: no llega un mensaje sin nombre", async () => {
+    const { target, projectBase, environmentId } = await project(0);
+    const server = await startSocketIo();
+    try {
+      const channel = await on(a)
+        .post(`${projectBase}/channels`)
+        .set(as(owner))
+        .send({ protocol: "socketio", name: "sio-multi", url: server.url });
+      assert.equal(channel.status, 201, JSON.stringify(channel.body));
+      const opened = await on(a)
+        .post(`${projectBase}/channels/${channel.body.id}/sessions`)
+        .set(as(owner))
+        .send({ environmentId });
+      assert.equal(opened.status, 201, JSON.stringify(opened.body));
+      const sessionId = opened.body.id as string;
+      const session = `${projectBase}/channels/sessions/${sessionId}`;
+
+      // Por B, que no tiene el socket: sin el evento en la orden, A recibiría un «send» sin nombre y
+      // lo rechazaría con un 422 que B contestaría como suyo.
+      const sum = await on(b)
+        .post(`${session}/messages`)
+        .set(as(owner))
+        .send({ text: '{"a":2,"b":3}', event: "sumar", ack: true });
+      assert.equal(sum.status, 202, JSON.stringify(sum.body));
+      const echo = await on(b)
+        .post(`${session}/messages`)
+        .set(as(owner))
+        .send({ text: "", event: "eco", args: ["desde-b"] });
+      assert.equal(echo.status, 202, JSON.stringify(echo.body));
+
+      type Message = { direction: string; event?: string | null; ack?: boolean; body: string };
+      let messages: Message[] = [];
+      for (let attempt = 0; attempt < 80; attempt += 1) {
+        messages = (await on(b).get(session).set(as(owner))).body.messages as Message[];
+        const acked = messages.some((message) => message.ack && message.body.includes('"total":5'));
+        const echoed = messages.some((message) => message.direction === "in" && message.event === "eco");
+        if (acked && echoed) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      const sent = messages.filter((message) => message.direction === "out").map((message) => message.event);
+      assert.deepEqual(sent, ["sumar", "eco"], JSON.stringify(messages));
+      assert.ok(
+        messages.some((message) => message.ack && message.body.includes('"total":5')),
+        `el acuse no volvió: ${JSON.stringify(messages)}`,
+      );
+      assert.ok(
+        messages.some(
+          (message) => message.direction === "in" && message.event === "eco" && message.body.includes("desde-b"),
+        ),
+        `el eco no volvió: ${JSON.stringify(messages)}`,
+      );
+      await on(b).post(`${session}/close`).set(as(owner));
+    } finally {
+      await server.close();
+      await target.stop();
+    }
   });
 });
 
