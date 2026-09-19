@@ -26,7 +26,9 @@ export const injectionRule: SecurityRule = {
     const findings: Finding[] = [];
     for (const endpoint of context.endpoints) {
       const baseline = byTestType(results, "auth").find((result) => result.endpointId === endpoint.id)?.bodyBytes ?? 0;
-      for (const result of byTestType(results, "injection").filter((r) => r.endpointId === endpoint.id)) {
+      // The plan names these `injection-<kind>:<n>` — a dash, not the `prefix:` byTestType matches.
+      const injected = results.filter((r) => r.endpointId === endpoint.id && r.testType.startsWith("injection-"));
+      for (const result of injected) {
         const kind = result.testType.split(/[-:]/)[1] ?? "";
         if (result.status >= 500 && bodyIncludes(result, ...STACK_TRACE))
           findings.push(
