@@ -51,7 +51,7 @@ export class TypeOrmExampleRepository implements ExampleRepositoryPort {
 
   async remove(projectId: string, id: string): Promise<boolean> {
     const result = await this.examples.delete({ id, projectId });
-    return (result.affected ?? 0) > 0;
+    return Boolean(result.affected);
   }
 
   async countByEndpoint(projectId: string, endpointId: string): Promise<number> {

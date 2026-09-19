@@ -66,10 +66,8 @@ export class RequestPreviewer implements RequestPreviewerPort {
       samples: 1,
     });
 
-    // `flow: "request"` plans exactly one step, so there is one. Reading the last rather than the
-    // first keeps that from being a claim this file has to be right about.
-    const step = executed.steps.at(-1);
-    if (!step) throw new Error("La petición no llegó a planificarse");
+    // `scenarioFor` builds a `flow: "request"` scenario, and that flow plans exactly one step.
+    const [step] = executed.steps;
 
     return {
       ok: step.ok,
@@ -88,7 +86,7 @@ export class RequestPreviewer implements RequestPreviewerPort {
             body: step.actual.body,
             // Of the bytes that arrived, not of the parsed value: a body re-serialised from the
             // object is a different number, and the one worth showing is what crossed the wire.
-            sizeBytes: Buffer.byteLength(step.actual.raw ?? ""),
+            sizeBytes: Buffer.byteLength(step.actual.raw),
           }
         : null,
       assertions: step.assertions,

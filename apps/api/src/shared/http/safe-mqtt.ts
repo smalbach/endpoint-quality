@@ -282,7 +282,8 @@ export function pinnedBrokerStream(
   // Un upgrade que no es un 101 se dice con su número, como en un canal WebSocket.
   socket.once("unexpected-response", (request, response: IncomingMessage) => {
     request.destroy();
-    const rejected = { message: `el upgrade contestó ${response.statusCode ?? 0}`, code: "EQ_MQTT_UPGRADE" };
+    // Una respuesta que llegó por la red siempre trae su estado.
+    const rejected = { message: `el upgrade contestó ${response.statusCode!}`, code: "EQ_MQTT_UPGRADE" };
     // Destruir el stream con el socket a medio abrir llama a `terminate()`, y el error de ese aborto
     // («WebSocket was closed before…», sin código) es el que el stream acaba emitiendo, no el que se
     // le pasa. MQTT se traga un error sin código, y la sesión decía «el broker cerró la conexión» sin
@@ -362,9 +363,10 @@ export async function openSafeMqtt(
       reject(error);
     };
 
-    // Enganchadas aquí, con el cliente recién creado: nada puede llegar antes.
+    // Enganchadas aquí, con el cliente recién creado: nada puede llegar antes. Y nada llega después de
+    // fallar: `fail` corta el stream con `end(true)`, y lo que viniera detrás en el mismo trozo ya no se
+    // procesa (probado con un PUBLISH pegado a un CONNACK que rechaza).
     client.on("message", (topic, payload, packet) => {
-      if (state === "failed") return;
       const properties = deliveryProperties(packet.properties);
       listeners.onMessage({
         topic,
@@ -396,9 +398,11 @@ export async function openSafeMqtt(
       fail(new Error(disconnect?.reason ?? "el broker cerró la conexión antes de confirmarla"));
     });
 
+    // Un `CONNACK` que rechaza no emite `connect`, y el cliente ya no lee otro detrás (ver arriba): esto
+    // solo corre conectando.
     client.once("connect", (connack: IConnackPacket) => {
-      if (state !== "connecting") return;
-      const status = (v5 ? connack.reasonCode : connack.returnCode) ?? 0;
+      // `mqtt-packet` pone siempre el código de la versión que leyó: en 5.0 es un byte obligatorio.
+      const status = (v5 ? connack.reasonCode : connack.returnCode) as number;
       const handshake = {
         status,
         via: "CONNACK",
@@ -411,8 +415,9 @@ export async function openSafeMqtt(
         },
       };
       listeners.onOpen?.(handshake);
+      // Solo se llega aquí conectando: sin suscripciones, ahora mismo; con ellas, desde un `SUBACK` sin
+      // error, que no llega después de un corte (el corte vacía los callbacks con error).
       const done = () => {
-        if (state !== "connecting") return;
         state = "open";
         resolve({ client, handshake });
       };
@@ -436,9 +441,13 @@ export async function openSafeMqtt(
   });
 }
 
-/** Los códigos de un `SUBACK`, uno por tema y en el orden pedido; 0x80 o más es un no. */
+/**
+ * Los códigos de un `SUBACK` (o de un `UNSUBACK` de 5.0), uno por tema y en el orden pedido; 0x80 o
+ * más es un no. En el paquete son números: la forma `{ topic, qos }` es la del segundo argumento del
+ * callback, no la de `packet.granted`.
+ */
 function subackCodes(granted: unknown): number[] {
-  return ((granted ?? []) as (number | { qos: number })[]).map((code) => (typeof code === "number" ? code : code.qos));
+  return (granted ?? []) as number[];
 }
 
 function refusedCodes(granted: unknown): { code: number; index: number }[] {
@@ -467,7 +476,8 @@ export function subscribeMqtt(client: MqttClient, topic: string, qos: MqttQos, t
       const refused = refusedCodes(packet?.granted)[0];
       if (refused) return reject(new MqttRejectedError(refused.code, topic, refusalText(refused.code)));
       if (error) return reject(error);
-      resolve(codes[0] ?? qos);
+      // Sin error, un código por tema: `mqtt.js` da por error de protocolo un SUBACK que no lo trae.
+      resolve(codes[0]);
     });
   });
 }

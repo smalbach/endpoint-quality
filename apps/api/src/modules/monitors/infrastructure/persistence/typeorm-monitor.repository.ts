@@ -33,7 +33,7 @@ export class TypeOrmMonitorRepository implements MonitorRepositoryPort {
 
   async remove(projectId: string, id: string): Promise<boolean> {
     const result = await this.monitors.delete({ id, projectId });
-    return (result.affected ?? 0) > 0;
+    return Boolean(result.affected);
   }
 
   /**

@@ -128,6 +128,12 @@ export const AUTH_CACHE_MS = 1_000;
 /** Cuántas credenciales se recuerdan a la vez. */
 const MAX_CACHED_SESSIONS = 1_000;
 
+/**
+ * Para los `error` que llegan cuando ya no queda nada que contestar —un cliente que corta, un
+ * socket ya cerrado—: sin un oyente, un `error` de un socket tumba el proceso entero.
+ */
+const ignoreError = (): undefined => undefined;
+
 /** El nombre con el que el navegador pregunta por la credencial. */
 export const PROXY_REALM = "Captura de endpoint-quality";
 
@@ -177,7 +183,7 @@ export class CaptureProxy {
     this.inner = createServer({ requestTimeout: options.policy.timeoutMs * 2 });
     this.inner.on("request", (request, response) => this.onDecrypted(request, response));
     this.inner.on("upgrade", (_request, socket: Socket) => {
-      socket.on("error", () => undefined);
+      socket.on("error", ignoreError);
       socket.end("HTTP/1.1 501 Not Implemented\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
     });
     this.inner.on("clientError", (_error, socket: Socket) => socket.destroy());
@@ -208,7 +214,7 @@ export class CaptureProxy {
     server.on("connect", (request, socket, head) => void this.onConnect(request, socket as Socket, head));
     // Un WebSocket por el proxy en claro. No se graba ni se reenvía: se dice que no.
     server.on("upgrade", (_request, socket: Socket) => {
-      socket.on("error", () => undefined);
+      socket.on("error", ignoreError);
       socket.end("HTTP/1.1 501 Not Implemented\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
     });
     server.on("clientError", (_error, socket: Socket) => {
@@ -314,7 +320,7 @@ export class CaptureProxy {
 
     if (session.expiresAt.getTime() <= this.options.now().getTime()) {
       this.stop(session.id);
-      await this.options.store.expire(session).catch(() => undefined);
+      await this.options.store.expire(session).catch(ignoreError);
       return { status: 407, refused: "La sesión de captura terminó (expired)" };
     }
     return session;
@@ -355,7 +361,7 @@ export class CaptureProxy {
    * ---------------------------------------------------------------- */
 
   private async onRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    response.on("error", () => undefined);
+    response.on("error", ignoreError);
     const session = await this.authenticate(request);
     if ("refused" in session) {
       request.resume();
@@ -363,7 +369,8 @@ export class CaptureProxy {
     }
     this.track(session, request.socket);
 
-    const target = request.url ?? "";
+    // Una petición que llega a un servidor HTTP trae siempre `url` y `method`: el tipo es el del cliente.
+    const target = request.url!;
     // En forma de origen (`GET /x`) no es una petición de proxy: es alguien abriendo el puerto en
     // el navegador. Y `https://` en forma absoluta no se atiende: un cliente de verdad usa CONNECT.
     if (!/^http:\/\//i.test(target)) {
@@ -391,7 +398,7 @@ export class CaptureProxy {
   ): Promise<void> {
     const at = this.options.now();
     const started = Date.now();
-    const method = (request.method ?? "GET").toUpperCase();
+    const method = request.method!.toUpperCase();
     const recordedHeaders = recordableHeaders(request.rawHeaders);
     const cap = session.limits.maxBodyBytes;
 
@@ -492,7 +499,7 @@ export class CaptureProxy {
         then?.();
       }
     } finally {
-      agent.destroy().catch(() => undefined);
+      agent.destroy().catch(ignoreError);
     }
   }
 
@@ -501,7 +508,7 @@ export class CaptureProxy {
    * ---------------------------------------------------------------- */
 
   private async onConnect(request: IncomingMessage, client: Socket, head: Buffer): Promise<void> {
-    client.on("error", () => undefined);
+    client.on("error", ignoreError);
     const session = await this.authenticate(request);
     if ("refused" in session) {
       client.end(
@@ -514,7 +521,7 @@ export class CaptureProxy {
     this.track(session, client);
 
     const at = this.options.now();
-    const authority = request.url ?? "";
+    const authority = request.url!;
     let hostname: string;
     let port: number;
     try {
@@ -681,8 +688,11 @@ export class CaptureProxy {
 
   /** Una petición que llegó descifrada de un túnel: a su destino, con la sesión del túnel. */
   private onDecrypted(request: IncomingMessage, response: ServerResponse): void {
-    response.on("error", () => undefined);
+    response.on("error", ignoreError);
     const context = this.decrypted.get(request.socket);
+    // Inalcanzable: `inner` solo recibe los sockets que `intercept` registra antes en `decrypted`.
+    // Se deja por si algún día le llega otro: sin sesión, nada se reenvía.
+    /* node:coverage ignore next 4 */
     if (!context) {
       request.resume();
       return void response.destroy();
@@ -693,7 +703,7 @@ export class CaptureProxy {
       this.stop(context.session.id);
       return;
     }
-    const raw = request.url ?? "/";
+    const raw = request.url!;
     // Solo la ruta: una URL absoluta dentro del túnel no cambia a dónde va.
     let path = raw;
     if (!raw.startsWith("/")) {
@@ -738,10 +748,6 @@ function challenge(response: ServerResponse, refusal: Refusal): void {
 }
 
 function plain(response: ServerResponse, status: number, message: string, then?: () => void): void {
-  if (response.headersSent) {
-    response.destroy();
-    return then?.();
-  }
   response.writeHead(status, { "Content-Type": "text/plain; charset=utf-8", "X-Capture-Proxy": "refused" });
   response.end(message, then);
 }

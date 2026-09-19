@@ -239,7 +239,9 @@ export class ImportAnythingHandler implements ICommandHandler<ImportAnythingComm
         // El lector distingue los formatos por el sufijo que se le dé, así que el nombre tiene que
         // coincidir con la pieza: `.txt` para una página de `curl`, `.har` para un HAR.
         const suffix = piece.kind === "curl" ? ".txt" : piece.kind === "har" ? ".har" : ".json";
-        const filename = `${piece.name || "pegado"}${suffix}`;
+        // `detectImport` always names a piece —the file's name, the document's, or «lo pegado»—, so
+        // there is no blank name to fall back from.
+        const filename = `${piece.name}${suffix}`;
         try {
           const endpoints = await this.commandBus.execute<ImportEndpointFileCommand, ImportEndpointsResult>(
             new ImportEndpointFileCommand(organizationId, projectId, filename, piece.text, actorId),
@@ -360,9 +362,11 @@ export class ImportAnythingHandler implements ICommandHandler<ImportAnythingComm
       );
     }
 
-    const bytes = response.bytes ?? new Uint8Array(0);
-    // The last segment of the path as the name, which is what a browser would have called it.
-    const name = url.split("?")[0].split("/").filter(Boolean).pop() ?? url;
+    // Asked for with `responseAs: "bytes"`, which is exactly when the guard fills `bytes`.
+    const bytes = response.bytes!;
+    // The last segment of the path as the name, which is what a browser would have called it. The
+    // DTO only lets a URL through, and a URL always has a non-empty segment (its scheme, at worst).
+    const name = url.split("?")[0].split("/").filter(Boolean).pop()!;
     if (!looksZipped("", bytes)) return [{ name, text: new TextDecoder().decode(bytes) }];
     return this.unzip(name, bytes);
   }

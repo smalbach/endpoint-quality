@@ -1000,7 +1000,10 @@ export function freeRoleName(wanted: string, taken: Set<string>): string | null 
     const tail = `-${suffix}`;
     const candidate = `${wanted.slice(0, 20 - tail.length)}${tail}`;
     if (taken.has(candidate) || !CREDENTIAL_ROLE_NAME.test(candidate)) continue;
-    if ((RESERVED_CREDENTIAL_ROLES as readonly string[]).includes(candidate)) continue;
+    // No reserved name has a «-N» tail today, so this never skips; it keeps holding if one ever does.
+    /* node:coverage ignore next 2 */
+    if ((RESERVED_CREDENTIAL_ROLES as readonly string[]).includes(candidate))
+      continue;
     return candidate;
   }
   return null;

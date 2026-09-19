@@ -73,13 +73,8 @@ export class StartRunHandler implements ICommandHandler<StartRunCommand, { runId
     // The whole plan is validated at the door, ceilings included: a run that would ask for a million
     // virtual users is a 422 here, not a machine on fire ten seconds in.
     const parsed = safeParsePlanDefinition(plan.definition);
+    // (The schema also requires at least one scenario, so an empty plan is rejected right here.)
     if (!parsed.ok) throw new InvalidInputError("El plan no es válido", parsed.issues, "performance-plan-invalid");
-    if (!plan.definition.scenarios.length)
-      throw new InvalidInputError(
-        "El plan no tiene escenarios que ejecutar",
-        [{ field: "scenarios", detail: "Añade al menos un escenario" }],
-        "performance-plan-empty",
-      );
 
     const environment = await this.environments.findById(command.environmentId);
     if (!environment || environment.projectId !== command.projectId)

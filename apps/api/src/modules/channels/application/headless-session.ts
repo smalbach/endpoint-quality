@@ -126,7 +126,8 @@ export class HeadlessChannelRunner {
     deadline: number,
   ): Promise<void> {
     for (const [index, step] of script.entries()) {
-      if (!this.registry.current(sessionId)) return;
+      const live = this.registry.current(sessionId);
+      if (!live) return;
       try {
         if (step.action === "send") {
           if (step.delayMs) await sleep(Math.min(step.delayMs, Math.max(0, deadline - Date.now())));
@@ -134,9 +135,8 @@ export class HeadlessChannelRunner {
           await this.registry.send(sessionId, step.body, publishOf(step, channel), undefined, emitOf(step, channel));
         } else if (step.action === "wait") {
           const until = Math.min(Date.now() + step.timeoutMs, deadline);
-          const target = this.received(sessionId) + step.messages;
-          while (Date.now() < until && this.registry.current(sessionId) && this.received(sessionId) < target)
-            await sleep(POLL_MS);
+          const target = live.conversation.counters.received + step.messages;
+          while (Date.now() < until && this.below(sessionId, target)) await sleep(POLL_MS);
         } else {
           this.registry.end(sessionId);
         }
@@ -163,15 +163,16 @@ export class HeadlessChannelRunner {
    * Sin número esperado, deciden el cierre y los topes —la inactividad, casi siempre—.
    */
   private async settle(sessionId: string, until: number | undefined, deadline: number): Promise<void> {
-    while (this.registry.current(sessionId)) {
-      if (until !== undefined && this.received(sessionId) >= until) return;
-      if (Date.now() >= deadline) return;
+    while (until === undefined || this.below(sessionId, until)) {
+      if (!this.registry.current(sessionId) || Date.now() >= deadline) return;
       await sleep(POLL_MS);
     }
   }
 
-  private received(sessionId: string): number {
-    return this.registry.current(sessionId)?.conversation.counters.received ?? 0;
+  /** Si la sesión sigue viva y todavía no ha recibido `target` mensajes. */
+  private below(sessionId: string, target: number): boolean {
+    const live = this.registry.current(sessionId);
+    return live !== null && live.conversation.counters.received < target;
   }
 
   /**

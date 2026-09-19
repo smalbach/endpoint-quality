@@ -89,8 +89,12 @@ export class GetGrpcSchemaHandler implements IQueryHandler<GetGrpcSchemaQuery, G
     } catch (error) {
       // Un conjunto guardado que ya no se lee —se guardó con otra versión del analizador— se enseña
       // con el motivo, en vez de un 422 que deja la pantalla sin ficheros que reemplazar.
-      if (error instanceof ProtoSchemaError) return { files: listed(files), services: [], problem: error.message };
-      throw error;
+      // `schemaFromFiles` solo lanza `ProtoSchemaError`; otra cosa sería un fallo del programa (un 500).
+      /* node:coverage ignore next 3 */
+      if (!(error instanceof ProtoSchemaError)) {
+        throw error;
+      }
+      return { files: listed(files), services: [], problem: error.message };
     }
   }
 }
@@ -127,11 +131,12 @@ export class SaveChannelProtosHandler implements ICommandHandler<SaveChannelProt
       try {
         services = schemaFromFiles(files).services();
       } catch (error) {
-        if (error instanceof ProtoSchemaError)
-          throw new InvalidInputError("Los .proto no se pudieron leer", [
-            { field: error.field, detail: error.message },
-          ]);
-        throw error;
+        // `schemaFromFiles` solo lanza `ProtoSchemaError`; otra cosa sería un fallo del programa (un 500).
+        /* node:coverage ignore next 3 */
+        if (!(error instanceof ProtoSchemaError)) {
+          throw error;
+        }
+        throw new InvalidInputError("Los .proto no se pudieron leer", [{ field: error.field, detail: error.message }]);
       }
     }
     await this.protos.replace(channel.id, files);

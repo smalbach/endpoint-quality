@@ -37,12 +37,9 @@ export function assertReviewAction(value: string): ReviewAction {
   return value as ReviewAction;
 }
 
-const MAX_COMMENT = 10_000;
-
-function commentProblems(body: string, required: boolean) {
-  if (required && !body.trim()) return [{ field: "body", detail: "Escribe algo" }];
-  if (body.length > MAX_COMMENT) return [{ field: "body", detail: "Como mucho 10 000 caracteres" }];
-  return [];
+/** El tope de longitud (10 000) lo pone el DTO, que es la única puerta por la que llega un comentario. */
+function commentProblems(body: string) {
+  return body.trim() ? [] : [{ field: "body", detail: "Escribe algo" }];
 }
 
 /** Una transición que no se puede: 403 si es por quién la pide, 409 si es por el estado. */
@@ -201,7 +198,7 @@ export class CommentMergeRequestHandler implements ICommandHandler<CommentMergeR
   ) {}
 
   async execute(command: CommentMergeRequestCommand): Promise<void> {
-    const problems = commentProblems(command.body, true);
+    const problems = commentProblems(command.body);
     if (problems.length) throw new InvalidInputError("El comentario no es válido", problems);
     const request = await this.views.find(command.organizationId, command.projectId, command.requestId);
     await this.requests.addEvent(event(request, "comment", command.actorId, command.body, this.clock.now()));
@@ -235,8 +232,7 @@ export class ReviewMergeRequestHandler implements ICommandHandler<ReviewMergeReq
   ) {}
 
   async execute(command: ReviewMergeRequestCommand): Promise<void> {
-    const problems = commentProblems(command.body, false);
-    if (problems.length) throw new InvalidInputError("El comentario no es válido", problems);
+    // El comentario es opcional y su longitud la acota el DTO: aquí no queda nada que comprobar.
     const request = await this.views.find(command.organizationId, command.projectId, command.requestId);
     const verdict = allowed(request, command.action, command.actorId);
     const now = this.clock.now();

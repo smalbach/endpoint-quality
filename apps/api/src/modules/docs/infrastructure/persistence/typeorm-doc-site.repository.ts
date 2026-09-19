@@ -33,6 +33,6 @@ export class TypeOrmDocSiteRepository implements DocSiteRepositoryPort {
 
   async remove(projectId: string, id: string): Promise<boolean> {
     const result = await this.sites.delete({ id, projectId });
-    return (result.affected ?? 0) > 0;
+    return Boolean(result.affected);
   }
 }

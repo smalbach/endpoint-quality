@@ -93,21 +93,26 @@ export class TypeOrmEndpointRepository implements EndpointRepositoryPort {
       { projectId, id: In(ids), deletedAt: IsNull() },
       { status, updatedAt: at, updatedBy: actorId },
     );
+    // Postgres always reports affected rows for UPDATE/DELETE; the fallback only satisfies TypeORM's type.
+    /* node:coverage ignore next */
     return result.affected ?? 0;
   }
 
   async softDelete(projectId: string, ids: string[], at: Date): Promise<number> {
     if (!ids.length) return 0;
     const result = await this.endpoints.update({ projectId, id: In(ids), deletedAt: IsNull() }, { deletedAt: at });
+    // Postgres always reports affected rows for UPDATE/DELETE; the fallback only satisfies TypeORM's type.
+    /* node:coverage ignore next */
     return result.affected ?? 0;
   }
 
   async nextOrderIndex(projectId: string): Promise<number> {
-    const row = await this.endpoints
+    // An aggregate with no GROUP BY yields exactly one row, and COALESCE keeps `next` non-null.
+    const row = (await this.endpoints
       .createQueryBuilder("endpoint")
       .select(`COALESCE(MAX(endpoint."orderIndex"), -1) + 1`, "next")
       .where(`endpoint."projectId" = :projectId`, { projectId })
-      .getRawOne<{ next: number }>();
-    return Number(row?.next ?? 0);
+      .getRawOne<{ next: number }>())!;
+    return Number(row.next);
   }
 }

@@ -28,7 +28,13 @@ function scryptAsync(
   options: ScryptOptions,
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    scrypt(password, salt, keylen, options, (error, derived) => (error ? reject(error) : resolve(derived)));
+    scrypt(password, salt, keylen, options, (error, derived) => {
+      // Node validates the parameters synchronously (that throw rejects this promise); the job
+      // itself only reports an error on an internal failure nothing here can provoke.
+      /* node:coverage ignore next 2 */
+      if (error) return reject(error);
+      resolve(derived);
+    });
   });
 }
 
@@ -71,15 +77,6 @@ export class ScryptPasswordHasher implements PasswordHasherPort {
     });
     return derived.length === expectedBytes.length && timingSafeEqual(derived, expectedBytes);
   }
-}
-
-/**
- * A digest of a password nobody has, used to spend the same time on an unknown email as on a
- * known one. Computed once at startup rather than per request — the cost that matters is the
- * verification, not the hashing.
- */
-export async function decoyDigest(hasher: PasswordHasherPort): Promise<string> {
-  return hasher.hash(randomBytes(32).toString("hex"));
 }
 
 /**

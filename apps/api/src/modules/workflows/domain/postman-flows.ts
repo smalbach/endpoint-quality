@@ -213,13 +213,11 @@ export function freeId(name: string, taken: Set<string>): string {
     taken.add(base);
     return base;
   }
-  for (let suffix = 2; ; suffix += 1) {
-    const candidate = `${base}-${suffix}`;
-    if (!taken.has(candidate)) {
-      taken.add(candidate);
-      return candidate;
-    }
-  }
+  let suffix = 2;
+  while (taken.has(`${base}-${suffix}`)) suffix += 1;
+  const candidate = `${base}-${suffix}`;
+  taken.add(candidate);
+  return candidate;
 }
 
 // -----------------------------------------------------------------------------------------------

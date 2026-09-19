@@ -213,8 +213,11 @@ export class SecurityRunExecutor {
   /** For a jwt-attack probe, forge the token from the role's real one. */
   private withForgedToken(probe: Probe, roleAuth: Map<string, string>): Probe {
     if (!probe.testType.startsWith("jwt-attack:") || !probe.credential) return probe;
+    // The plan hands a jwt-attack probe only to a role with a credential, so its header is always in
+    // `roleAuth`; the fallback is there for the Map's type.
+    /* node:coverage ignore next */
     const real = (roleAuth.get(probe.credential) ?? "").replace(/^Bearer\s+/i, "");
-    const attack = probe.testType.split(":")[1] ?? "";
+    const attack = probe.testType.split(":")[1];
     const forged = real ? forgeAttackToken(attack, real) : null;
     return forged ? { ...probe, token: `Bearer ${forged}` } : probe;
   }

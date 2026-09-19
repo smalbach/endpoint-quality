@@ -122,7 +122,7 @@ export class MonitorAlerter {
       const variables = resolveVariables(environment.variables, (payload) => this.cipher.decrypt(payload));
       const secrets = Object.entries(environment.variables)
         .filter(([, variable]) => variable.sensitive)
-        .map(([name]) => variables[name] ?? "")
+        .map(([name]) => variables[name])
         .filter(Boolean);
 
       // Se redacta **cada dato por separado** y se compone después, en vez de redactar el mensaje

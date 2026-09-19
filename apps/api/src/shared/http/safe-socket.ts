@@ -27,7 +27,7 @@ import { connect as tlsConnect } from "node:tls";
 import type { ClientRequestArgs, IncomingMessage } from "node:http";
 import WebSocket from "ws";
 
-import { BlockedTargetError, resolveTarget, type SafeFetchPolicy } from "./safe-fetch";
+import { resolveTarget, type SafeFetchPolicy } from "./safe-fetch";
 
 /** Los esquemas de un socket. Pedidos a `resolveTarget` por nombre: la lista de siempre no cambia. */
 export const SOCKET_SCHEMES = ["ws:", "wss:"] as const;
@@ -138,7 +138,8 @@ export async function openSafeSocket(
     });
 
     // Enganchadas aquí, con el socket recién creado y todavía sin conectar: nada puede llegar antes.
-    socket.on("message", (data, binary) => listeners.onMessage(toBuffer(data), binary));
+    // Sin `binaryType` puesto, `ws` entrega siempre un `Buffer` (las tramas partidas, ya juntas).
+    socket.on("message", (data, binary) => listeners.onMessage(data as Buffer, binary));
     socket.on("close", (code, reason) => {
       if (settled) listeners.onClose(code, reason.toString());
     });
@@ -155,10 +156,11 @@ export async function openSafeSocket(
     };
 
     socket.once("upgrade", (response: IncomingMessage) => {
+      // `open` sigue a `upgrade` en el mismo tic, y nada puede haber fallado entre los dos. El estado
+      // de una respuesta que llegó por la red siempre está.
       socket.once("open", () => {
-        if (settled) return;
         settled = true;
-        const handshake = { status: response.statusCode ?? 101, headers: flatHeaders(response) };
+        const handshake = { status: response.statusCode!, headers: flatHeaders(response) };
         listeners.onOpen?.(handshake);
         resolve({ socket, handshake });
       });
@@ -167,17 +169,10 @@ export async function openSafeSocket(
     // sabe el número, y se aborta a mano.
     socket.once("unexpected-response", (request, response: IncomingMessage) => {
       request.destroy();
-      fail(new HandshakeRejectedError(response.statusCode ?? 0, rawUrl));
+      fail(new HandshakeRejectedError(response.statusCode!, rawUrl));
     });
-    socket.on("error", (error) => fail(error instanceof Error ? error : new Error(String(error))));
+    socket.on("error", fail);
   });
-}
-
-/** `ws` entrega un `Buffer`, un `ArrayBuffer` o una lista de trozos según la trama. Uno solo. */
-function toBuffer(data: WebSocket.RawData): Buffer {
-  if (Buffer.isBuffer(data)) return data;
-  if (Array.isArray(data)) return Buffer.concat(data);
-  return Buffer.from(data);
 }
 
 /** Una cabecera que llegó varias veces, en una sola: es como la enseña la pantalla. */
@@ -185,9 +180,7 @@ function flatHeaders(response: IncomingMessage): Record<string, string> {
   return Object.fromEntries(
     Object.entries(response.headers).map(([name, value]) => [
       name,
-      Array.isArray(value) ? value.join(", ") : (value ?? ""),
+      Array.isArray(value) ? value.join(", ") : String(value),
     ]),
   );
 }
-
-export { BlockedTargetError };

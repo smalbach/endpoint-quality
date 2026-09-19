@@ -15,7 +15,6 @@
  * decisión de quien escribió el fichero.
  */
 import {
-  AUTH_TYPES,
   NO_AUTH,
   isAuthType,
   type AuthType,
@@ -194,8 +193,6 @@ export const AUTH_LABELS: Record<AuthType, string> = {
   edgegrid: "Akamai EdgeGrid",
   ntlm: "NTLM",
 };
-
-export { AUTH_TYPES };
 
 /**
  * El flujo con los secretos escritos a mano vaciados en la autenticación de sus llamadas.

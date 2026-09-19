@@ -474,7 +474,8 @@ export function bundleProblems(
       importSpec(bundle.contract.raw)
         .problems.filter((problem) => problem.severity === "error")
         .forEach((problem) =>
-          problems.push({ field: problem.pointer ? `contract.${problem.pointer}` : "contract", detail: problem.message }),
+          // Every error the importer reports points somewhere (`#/openapi`, `#/paths/…`).
+          problems.push({ field: `contract.${problem.pointer}`, detail: problem.message }),
         );
     } catch (error) {
       // Text that is not YAML or JSON at all makes the parser throw rather than report.

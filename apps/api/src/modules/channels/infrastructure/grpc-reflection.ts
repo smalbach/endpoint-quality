@@ -56,8 +56,6 @@ type ReflectionResponse = {
   error_response?: { error_code: number; error_message: string };
 };
 
-const VERSIONS = ["grpc.reflection.v1", "grpc.reflection.v1alpha"] as const;
-
 function definitionFor(pkg: string): MethodDefinition<ReflectionRequest, ReflectionResponse> {
   const root = new protobuf.Root();
   protobuf.parse(REFLECTION_PROTO(pkg), root, { keepCase: true });
@@ -79,23 +77,34 @@ export class ReflectionError extends Error {
   }
 }
 
+/** La reflexión v1, y la v1alpha si el servidor no tiene la otra: hay muchos que solo hablan esa. */
 export async function reflectSchema(client: Client, metadata: Metadata, timeoutMs: number): Promise<GrpcSchema> {
-  for (const pkg of VERSIONS) {
-    try {
-      return await reflectWith(client, metadata, timeoutMs, pkg);
-    } catch (error) {
-      const code = (error as Partial<ServiceError>).code;
-      if (code === grpcStatus.UNIMPLEMENTED && pkg !== VERSIONS[VERSIONS.length - 1]) continue;
-      if (code === grpcStatus.UNIMPLEMENTED)
-        throw new ReflectionError("El servidor no tiene la reflexión activada: sube los .proto del servicio");
-      throw error instanceof ReflectionError ? error : new ReflectionError(`La reflexión falló: ${describe(error)}`);
-    }
+  try {
+    return await reflectWith(client, metadata, timeoutMs, "grpc.reflection.v1");
+  } catch (error) {
+    if (!unimplemented(error)) throw failed(error);
   }
-  throw new ReflectionError("El servidor no tiene la reflexión activada");
+  try {
+    return await reflectWith(client, metadata, timeoutMs, "grpc.reflection.v1alpha");
+  } catch (error) {
+    if (unimplemented(error))
+      throw new ReflectionError("El servidor no tiene la reflexión activada: sube los .proto del servicio");
+    throw failed(error);
+  }
 }
 
-const describe = (error: unknown): string =>
-  (error as Partial<ServiceError>).details || (error instanceof Error ? error.message : String(error));
+const unimplemented = (error: unknown): boolean => (error as Partial<ServiceError>).code === grpcStatus.UNIMPLEMENTED;
+
+/**
+ * Lo que falló, dicho como un fallo de la reflexión. Todo lo que llega aquí es un `Error`: el estado
+ * de grpc-js (con su `details`), un `ReflectionError` propio o lo que lanza protobufjs al leer.
+ */
+const failed = (error: unknown): ReflectionError =>
+  error instanceof ReflectionError
+    ? error
+    : new ReflectionError(
+        `La reflexión falló: ${(error as Partial<ServiceError>).details || (error as Error).message}`,
+      );
 
 /**
  * La conversación: la lista de servicios, el fichero de cada uno, y los `import` que falten.
@@ -118,7 +127,12 @@ async function reflectWith(client: Client, metadata: Metadata, timeoutMs: number
   });
   const ask = (request: ReflectionRequest) =>
     new Promise<ReflectionResponse>((resolve, reject) => {
-      if (failure) return reject(failure);
+      // Un error entre dos preguntas: grpc-js lo entrega en otra vuelta, cuando la siguiente ya espera
+      // y la rechaza. Se mira por si acaso: escribir en un stream caído colgaría la reflexión.
+      /* node:coverage ignore next 3 */
+      if (failure) {
+        return reject(failure);
+      }
       waiting.push({ resolve, reject });
       stream.write({ host: "", ...request });
     });

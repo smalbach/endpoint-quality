@@ -12,18 +12,6 @@ export function totalDurationS(profile: LoadProfile): number {
   return Math.max(1, Math.trunc(profile.durationS));
 }
 
-/** The largest number of virtual users the profile ever asks for — what the executor pre-allocates. */
-export function peakVus(profile: LoadProfile): number {
-  switch (profile.type) {
-    case "constant":
-      return Math.max(1, profile.vus);
-    case "ramp":
-      return Math.max(1, profile.startVus, profile.endVus);
-    case "spike":
-      return Math.max(1, profile.baseVus, profile.peakVus);
-  }
-}
-
 /**
  * The target number of active virtual users at `elapsedS` seconds into the run.
  *
@@ -64,7 +52,8 @@ export function pickScenario(scenarios: PerformanceScenario[], random: number): 
   const total = weights.reduce((sum, weight) => sum + weight, 0);
   if (total <= 0) return scenarios[0];
   let cursor = Math.min(Math.max(random, 0), 0.999999) * total;
-  for (let index = 0; index < scenarios.length; index += 1) {
+  // Every scenario but the last is tried; whatever is left over lands on the last one.
+  for (let index = 0; index < scenarios.length - 1; index += 1) {
     cursor -= weights[index];
     if (cursor < 0) return scenarios[index];
   }

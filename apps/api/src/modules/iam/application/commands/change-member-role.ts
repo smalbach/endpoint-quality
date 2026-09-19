@@ -44,9 +44,11 @@ export class ChangeMemberRoleHandler implements ICommandHandler<ChangeMemberRole
       throw new ForbiddenError("No puedes modificar a alguien con un rol superior al tuyo", "role-escalation");
 
     const all = await this.memberships.listForOrganization(command.organizationId);
-    if (wouldOrphanOrganization(all, command.targetUserId, command.role)) {
+    if (wouldOrphanOrganization(all, command.targetUserId, command.role))
+      // Unreachable while the two rules above hold: demoting an owner takes another owner, so there
+      // are two. Kept as the guard that still holds if either rule is ever relaxed.
+      /* node:coverage ignore next */
       throw new ConflictError("La organización quedaría sin propietario", "last-owner");
-    }
 
     await this.memberships.save({ ...target, role: command.role });
   }

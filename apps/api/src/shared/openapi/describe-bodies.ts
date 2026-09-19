@@ -242,7 +242,6 @@ export function schemaForClass(target: new () => unknown, seen: Set<unknown> = n
 
   for (const entry of metadata) {
     const name = entry.propertyName;
-    if (!name) continue;
     // What `@IsOptional()` leaves behind. It is the only thing that decides `required`, and it is
     // the one rule whose absence changes the meaning of every other one on the property.
     if (entry.type === "conditionalValidation") {

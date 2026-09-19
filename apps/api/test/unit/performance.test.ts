@@ -7,7 +7,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { activeVusAt, peakVus, pickScenario, totalDurationS } from "@/modules/performance/domain/load";
+import { activeVusAt, pickScenario, totalDurationS } from "@/modules/performance/domain/load";
 import {
   byEndpoint,
   evaluateThresholds,
@@ -36,7 +36,6 @@ describe("la forma de la carga", () => {
   });
 
   test("pico y duración salen del perfil, y clampan fuera de rango", () => {
-    assert.equal(peakVus({ type: "ramp", startVus: 2, endVus: 40, durationS: 30 }), 40);
     assert.equal(totalDurationS({ type: "constant", vus: 3, durationS: 0 }), 1);
     const ramp: LoadProfile = { type: "ramp", startVus: 10, endVus: 20, durationS: 10 };
     assert.equal(activeVusAt(ramp, -5), 10);

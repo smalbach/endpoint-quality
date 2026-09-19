@@ -52,6 +52,9 @@ before(async () => {
 after(async () => {
   receiver.closeAllConnections();
   await new Promise<void>((resolve) => receiver.close(() => resolve()));
+  // Y la propia aplicación: sin esto el proceso seguía vivo con sus sockets al acabar, y
+  // `--test-force-exit` lo remataba antes de que volcara su cobertura.
+  await context.close();
 });
 
 type RunCaseRow = { id: string; scenarioId: string; status: string; method: string; path: string; failure: string | null };

@@ -38,7 +38,7 @@ export class TypeOrmMockRepository implements MockRepositoryPort {
 
   async remove(projectId: string, id: string): Promise<boolean> {
     const result = await this.mocks.delete({ id, projectId });
-    return (result.affected ?? 0) > 0;
+    return Boolean(result.affected);
   }
 
   /** Un `insert` y no un `save`: la fila nace y no se vuelve a tocar nunca. */

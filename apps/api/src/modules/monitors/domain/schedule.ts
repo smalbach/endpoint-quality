@@ -120,16 +120,13 @@ function formatterFor(timeZone: string): Intl.DateTimeFormat {
 
 /** La hora de pared que marca un reloj de esa zona en ese instante. */
 export function wallTime(instant: Date, timeZone: string): Wall {
-  const parts = formatterFor(timeZone).formatToParts(instant);
-  const of = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? "0");
-  return {
-    year: of("year"),
-    month: of("month"),
-    day: of("day"),
-    hour: of("hour"),
-    minute: of("minute"),
-    second: of("second"),
-  };
+  // El formateador se construye con las seis partes, así que las seis están siempre.
+  const of = Object.fromEntries(
+    formatterFor(timeZone)
+      .formatToParts(instant)
+      .map((part) => [part.type, Number(part.value)]),
+  );
+  return { year: of.year, month: of.month, day: of.day, hour: of.hour, minute: of.minute, second: of.second };
 }
 
 /** La lectura de pared expresada como si fuera UTC. Es lo que permite medir el desfase de la zona. */

@@ -147,8 +147,9 @@ function readUnits(code: string): Unit[] | string {
     const open = at.index + at.length - 1;
     const close = matching(rest, open);
     if (close === -1) return "un pm.test sin cerrar";
+    // `splitTop` always returns at least one part, the empty string for `pm.test()`.
     const args = splitTop(rest.slice(open + 1, close), ",");
-    const name = args[0] === undefined ? null : literalOf(args[0]);
+    const name = literalOf(args[0]);
     if (typeof name !== "string") return "un pm.test sin nombre literal";
     const callback = args.slice(1).join(",").trim();
     const body = callbackBody(callback);
@@ -202,11 +203,9 @@ function depthAt(text: string, offset: number): number {
   return depth;
 }
 
-/** The bracket closing the one at `open`, or -1. */
+/** The bracket closing the one at `open`, or -1. Every caller points `open` at a `(` or a `{` it
+ * has just found, so the walk starts by entering that bracket. */
 function matching(text: string, open: number): number {
-  const pairs: Record<string, string> = { "(": ")", "[": "]", "{": "}" };
-  const closer = pairs[text[open]];
-  if (!closer) return -1;
   let depth = 0;
   let quote: string | null = null;
   for (let index = open; index < text.length; index += 1) {
@@ -308,8 +307,8 @@ const STATUS_NAMES: Record<string, number> = {
 };
 
 function readStatement(statement: string, label: string | null, bodyNames: Map<string, string>): Read {
+  // Never empty: `splitStatements` drops the blank ones, and a `;` it keeps sits inside brackets or quotes.
   const text = statement.trim().replace(/;+$/, "");
-  if (!text) return "ignored";
 
   // `const jsonData = pm.response.json()`. Not a claim about anything — it is the name every later
   // path hangs off, so it is registered and dropped.
@@ -387,7 +386,7 @@ function readCall(text: string): { callee: string; args: string[] } | null {
 
 /** `pm.environment.set("id", jsonData.id)` as the capture it is. */
 function readCapture(args: string[], bodyNames: Map<string, string>): Read {
-  const name = args[0] === undefined ? null : literalOf(args[0]);
+  const name = literalOf(args[0]);
   if (typeof name !== "string" || !/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(name)) return null;
   const source = args.slice(1).join(",").trim();
   if (!source) return null;
@@ -447,7 +446,6 @@ export function bodyPath(expression: string, bodyNames: Map<string, string>): st
       rest = rest.slice(indexed[0].length);
       continue;
     }
-    if (!rest.trim()) break;
     // Anything else — a call, an operator, `.length` arithmetic — is not a path.
     return null;
   }
@@ -458,14 +456,14 @@ export function bodyPath(expression: string, bodyNames: Map<string, string>): st
 function readResponseAssertion(tail: string, label: string | null): Read {
   const tokens = splitTop(tail, ".").map((token) => token.trim());
   const negate = tokens.includes("not");
-  const last = tokens[tokens.length - 1] ?? "";
+  const last = tokens[tokens.length - 1];
   const call = /^([A-Za-z]+)\s*\((.*)\)$/.exec(last);
   if (!call) return null;
   const args = splitTop(call[2], ",").map((argument) => argument.trim());
 
   if (call[1] === "status") {
     if (negate) return null;
-    const value = literalOf(args[0] ?? "");
+    const value = literalOf(args[0]);
     const code =
       typeof value === "number"
         ? value
@@ -476,7 +474,7 @@ function readResponseAssertion(tail: string, label: string | null): Read {
     return withLabel({ source: "status", operator: "equals", value: code }, label);
   }
   if (call[1] === "header") {
-    const name = literalOf(args[0] ?? "");
+    const name = literalOf(args[0]);
     if (typeof name !== "string" || !name.trim()) return null;
     if (args.length > 1) {
       const expected = literalOf(args[1]);

@@ -670,7 +670,8 @@ function formBody(
       mode: "urlencoded",
       urlencoded: rows.map(({ key, value, disabled }) => ({
         key,
-        value: value ?? "",
+        // Only a file row has no value, and a urlencoded body never takes one (skipped above).
+        value: value!,
         ...(disabled ? { disabled } : {}),
       })),
     },
@@ -696,12 +697,11 @@ function languageFor(contentType: string): string {
 export function checkLines(checks: ResponseCheck[]): string[] {
   return checks.flatMap((check) => {
     const title = JSON.stringify(check.label || describe(check));
-    const body = assertionOf(check);
-    return body ? [`pm.test(${title}, function () {`, `  ${body};`, "});"] : [];
+    return [`pm.test(${title}, function () {`, `  ${assertionOf(check)};`, "});"];
   });
 }
 
-function assertionOf(check: ResponseCheck): string | null {
+function assertionOf(check: ResponseCheck): string {
   const value = () => JSON.stringify(check.value ?? null);
   if (check.source === "status") {
     if (check.operator === "equals") return `pm.response.to.have.status(${Number(check.value) || 0})`;

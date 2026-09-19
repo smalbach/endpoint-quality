@@ -41,7 +41,8 @@ export class FireDueMonitorsHandler implements ICommandHandler<FireDueMonitorsCo
     const result: FireDueResult = { claimed: claimed.length, started: 0, skipped: 0, failed: 0 };
     for (const monitor of claimed) {
       const project = await this.projects.findById(monitor.projectId);
-      if (!project || project.deletedAt) {
+      // `findById` no devuelve un proyecto borrado.
+      if (!project) {
         // El proyecto se borró y la cascada aún no se ha llevado la fila, o el monitor quedó
         // huérfano: se apaga en vez de intentar una corrida contra nada.
         await this.monitors.save({ ...monitor, enabled: false, nextRunAt: null, updatedAt: now });

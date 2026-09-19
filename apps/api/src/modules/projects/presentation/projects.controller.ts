@@ -16,7 +16,7 @@ import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Use
 import { DeleteProjectCommand } from "../application/commands/delete-project";
 import { CommandBus, QueryBus } from "@nestjs/cqrs";
 
-import { InvalidInputError, UnauthenticatedError } from "@/shared/errors/domain-error";
+import { InvalidInputError } from "@/shared/errors/domain-error";
 import {
   CurrentUser,
   OrgRoleGuard,
@@ -527,4 +527,3 @@ export class ProjectsController {
   }
 }
 
-export { UnauthenticatedError };

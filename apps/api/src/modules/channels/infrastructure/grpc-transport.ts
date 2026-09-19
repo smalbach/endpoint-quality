@@ -136,8 +136,7 @@ export function toMetadata(values: Record<string, string>): Metadata {
 }
 
 /** La metadata que llegó, plana: los valores repetidos en uno solo, y lo binario en base64. */
-export function flatMetadata(metadata: Metadata | undefined): Record<string, string> {
-  if (!metadata) return {};
+export function flatMetadata(metadata: Metadata): Record<string, string> {
   return Object.fromEntries(
     Object.entries(metadata.toJSON()).map(([name, values]) => [
       name,
@@ -247,8 +246,9 @@ export class GrpcChannelTransport implements GrpcTransportPort {
         },
       };
 
+      // Una sola vez: la llaman el reloj —que se para al abrir o al fallar— y un `UNAVAILABLE` antes de
+      // conectar, que después de fallar ya no se atiende (`finished`).
       const fail = (error: Error) => {
-        if (settled) return;
         settled = true;
         finished = true;
         clearTimeout(timer);
@@ -265,13 +265,14 @@ export class GrpcChannelTransport implements GrpcTransportPort {
         connected = true;
         listeners.onOpen?.();
         if (call.request) listeners.onSent?.(call.request.text, wireOf(call.request.value as object));
-        if (settled) return;
+        // Sin mirar `settled`: fallar pone `finished`, y con él ya no se llega aquí.
         settled = true;
         clearTimeout(timer);
         resolve(channel);
       };
+      // Sin mirar `finished`: lo que llegara tras cerrar lo descarta el registro, que ya no tiene la
+      // sesión viva; y `ready` no abre una llamada terminada.
       const onData = (value: object) => {
-        if (finished) return;
         ready();
         // El JSON del mensaje ya decodificado es lo que se lee y lo que se comprueba; `bytes`, lo que
         // ocupó en el cable (ver `wireSizes`).
@@ -293,49 +294,45 @@ export class GrpcChannelTransport implements GrpcTransportPort {
         if (!error && value) onData(value);
       };
 
+      // Nada de esto lanza con un cliente recién creado —los errores de serialización llegan como
+      // estado—; si lanzara, el ejecutor de la promesa la rechaza y el reloj cierra el cliente.
       const { path, requestSerialize } = definition;
       let started: AnyCall;
-      try {
-        if (!clientStreaming && !serverStreaming)
-          started = client.makeUnaryRequest(
-            path,
-            requestSerialize,
-            responseDeserialize,
-            call.request?.value ?? {},
-            metadata,
-            options,
-            onValue,
-          );
-        else if (!clientStreaming)
-          started = client.makeServerStreamRequest(
-            path,
-            requestSerialize,
-            responseDeserialize,
-            call.request?.value ?? {},
-            metadata,
-            options,
-          );
-        else if (!serverStreaming)
-          started = client.makeClientStreamRequest(
-            path,
-            requestSerialize,
-            responseDeserialize,
-            metadata,
-            options,
-            onValue,
-          );
-        else started = client.makeBidiStreamRequest(path, requestSerialize, responseDeserialize, metadata, options);
-      } catch (error) {
-        fail(error instanceof Error ? error : new Error(String(error)));
-        return;
-      }
+      if (!clientStreaming && !serverStreaming)
+        started = client.makeUnaryRequest(
+          path,
+          requestSerialize,
+          responseDeserialize,
+          call.request?.value ?? {},
+          metadata,
+          options,
+          onValue,
+        );
+      else if (!clientStreaming)
+        started = client.makeServerStreamRequest(
+          path,
+          requestSerialize,
+          responseDeserialize,
+          call.request?.value ?? {},
+          metadata,
+          options,
+        );
+      else if (!serverStreaming)
+        started = client.makeClientStreamRequest(
+          path,
+          requestSerialize,
+          responseDeserialize,
+          metadata,
+          options,
+          onValue,
+        );
+      else started = client.makeBidiStreamRequest(path, requestSerialize, responseDeserialize, metadata, options);
       stream = started;
 
       // Las cuatro formas son `EventEmitter`; los tipos de grpc-js solo declaran en cada una lo suyo.
       const events = started as unknown as EventEmitter;
       if (serverStreaming) events.on("data", onData);
       started.on("metadata", (received: Metadata) => {
-        if (finished) return;
         ready();
         listeners.onOpen?.({ status: 200, headers: flatMetadata(received), via: "inicio de la llamada" });
       });
@@ -350,8 +347,8 @@ export class GrpcChannelTransport implements GrpcTransportPort {
       const watch = () => {
         if (settled || finished) return;
         const state = grpcChannel.getConnectivityState(true);
+        // `SHUTDOWN` solo llega cerrando el cliente, y cerrar pone antes `finished`.
         if (state === connectivityState.READY) return ready();
-        if (state === connectivityState.SHUTDOWN) return;
         grpcChannel.watchConnectivityState(state, Date.now() + target.connectTimeoutMs, (error) => {
           if (!error) watch();
         });

@@ -127,6 +127,8 @@ export class TypeOrmRunRepository implements RunRepositoryPort {
         { before },
       )
       .execute();
+    // Postgres always reports affected rows for UPDATE/DELETE; the fallback only satisfies TypeORM's type.
+    /* node:coverage ignore next */
     return result.affected ?? 0;
   }
 
@@ -139,6 +141,8 @@ export class TypeOrmRunRepository implements RunRepositoryPort {
       .from(RunEntity)
       .where(`"finishedAt" IS NOT NULL AND "finishedAt" < :before`, { before })
       .execute();
+    // Postgres always reports affected rows for UPDATE/DELETE; the fallback only satisfies TypeORM's type.
+    /* node:coverage ignore next */
     return result.affected ?? 0;
   }
 }
@@ -174,7 +178,7 @@ function toStep(row: RunStepEntity): RunStep {
     request: (row.request ?? null) as RunStep["request"],
     expected: (row.expected ?? null) as RunStep["expected"],
     actual: (row.actual ?? null) as RunStep["actual"],
-    assertions: (row.assertions ?? []) as RunStep["assertions"],
+    assertions: row.assertions as RunStep["assertions"],
     latency: (row.latency ?? null) as RunStep["latency"],
   };
 }

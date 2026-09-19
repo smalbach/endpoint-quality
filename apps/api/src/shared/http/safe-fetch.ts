@@ -132,7 +132,8 @@ export function isBlockedAddress(address: string): { blocked: boolean; why?: str
     const value = toLong(address);
     for (const { cidr, why } of BLOCKED_V4) {
       const [network, bits] = cidr.split("/");
-      const mask = bits === "0" ? 0 : (-1 << (32 - Number(bits))) >>> 0;
+      // Ningún rango de la lista es un /0, así que el desplazamiento siempre es menor que 32.
+      const mask = (-1 << (32 - Number(bits))) >>> 0;
       if ((value & mask) >>> 0 === (toLong(network) & mask) >>> 0) return { blocked: true, why };
     }
     return { blocked: false };
@@ -322,7 +323,8 @@ export async function safeFetch(
         });
       } catch (error) {
         if (controller.signal.aborted) throw new BlockedTargetError(current, `sin respuesta en ${policy.timeoutMs} ms`);
-        throw new BlockedTargetError(current, failureOf(error));
+        // `fetch` de undici solo rechaza con errores (`TypeError`, o el `AbortError` de arriba).
+        throw new BlockedTargetError(current, failureOf(error as Error));
       } finally {
         clearTimeout(timeout);
       }
@@ -379,8 +381,9 @@ export async function safeFetch(
       };
     } finally {
       // Cortado y no esperado: en una redirección el cuerpo no se lee, y esperar a que se vacíe
-      // sería esperar a un servidor que no tiene por qué terminar.
-      agent.destroy().catch(() => undefined);
+      // sería esperar a un servidor que no tiene por qué terminar. La promesa no se rechaza nunca:
+      // undici resuelve cada `destroy` con `null`, así que no hay error que atrapar.
+      void agent.destroy();
     }
   }
 
@@ -394,17 +397,20 @@ export async function safeFetch(
  * ella una sola dirección: se contestan las dos formas con la misma dirección, la comprobada.
  */
 export function pinnedAgent(address: string, family: number): Agent {
-  const lookup: LookupFunction = (_hostname, options, callback) => {
+  return new Agent({ connect: { lookup: pinnedLookup(address, family) } });
+}
+
+/** El `lookup` de ese agente, aparte para poder probar sus dos formas: con `all` y sin él. */
+export function pinnedLookup(address: string, family: number): LookupFunction {
+  return (_hostname, options, callback) => {
     if (options.all) callback(null, [{ address, family }]);
     else callback(null, address, family);
   };
-  return new Agent({ connect: { lookup } });
 }
 
 /** El motivo que da `fetch`: «fetch failed» no dice nada, y su `cause` —el certificado, el reset— sí. */
-function failureOf(error: unknown): string {
-  if (!(error instanceof Error)) return "la petición falló";
-  const cause = (error as Error & { cause?: unknown }).cause;
+function failureOf(error: Error): string {
+  const { cause } = error;
   return cause instanceof Error && cause.message ? `${error.message}: ${cause.message}` : error.message;
 }
 

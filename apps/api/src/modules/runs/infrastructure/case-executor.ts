@@ -138,7 +138,7 @@ export type ExecutedCase = { ok: boolean; steps: ExecutedStep[]; durationMs: num
 const IDEMPOTENT = new Set(["GET", "HEAD", "OPTIONS"]);
 
 /** Las credenciales que un caso presenta para que fallen. Ninguna sesión las rescata. */
-const WRONG_ON_PURPOSE = new Set<string>(["none", "insufficient"]);
+const WRONG_ON_PURPOSE = new Set<string | undefined>(["none", "insufficient"]);
 /** Header names whose value is a credential. Matched loosely on purpose: a target that calls its
  * key `X-Tenant-Token` must be masked too, and an allowlist of exact names would miss it. */
 const SECRET_HEADER = /authorization|api[-_]?key|token|secret|cookie/i;
@@ -513,7 +513,7 @@ export class CaseExecutor {
         // manda `none` o `insufficient` está comprobando qué hace el objetivo con una credencial
         // mala **a propósito**, y darle la cookie de la sesión convierte cada uno de esos en un 200
         // verde que no prueba nada. Es la misma regla que ya tenía la sesión del login.
-        ...(WRONG_ON_PURPOSE.has(step.auth ?? "") ? {} : { jar: input.target.cookies }),
+        ...(WRONG_ON_PURPOSE.has(step.auth) ? {} : { jar: input.target.cookies }),
         ...(payload ? { body: payload.text } : {}),
       });
       samples.push(response.durationMs);
@@ -584,7 +584,8 @@ export class CaseExecutor {
       assertions,
       actual,
       latency: { samples, budgetMs: budget?.ms ?? null, ...(timing ? { timing } : {}) },
-      durationMs: samples[0] ?? 0,
+      // The first sample is this request's own: a failed send returned above.
+      durationMs: response.durationMs,
       sent,
     };
   }

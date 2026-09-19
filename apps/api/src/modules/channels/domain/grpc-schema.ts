@@ -167,7 +167,14 @@ export function schemaFromFiles(files: ProtoFile[]): GrpcSchema {
     loaded.add(path);
     const known = wellKnown(path);
     if (known && !byPath.has(path)) {
-      root.addJSON(known.nested ?? {});
+      try {
+        root.addJSON(known.nested ?? {});
+      } catch (error) {
+        // Un fichero subido que define un tipo de `google.protobuf` que otro importa del paquete: el
+        // mismo nombre dos veces. Es un conjunto que no se lee —un 422 que lo dice—, no un 500.
+        // protobufjs solo lanza `Error`.
+        throw new ProtoSchemaError(`${path} choca con un tipo de los ficheros subidos: ${(error as Error).message}`);
+      }
       continue;
     }
     const file = byPath.get(path)!;
@@ -208,8 +215,9 @@ export function schemaFromDescriptors(files: Uint8Array[]): GrpcSchema {
       writer.finish(),
     );
   } catch (error) {
+    // protobufjs solo lanza `Error` al decodificar.
     throw new ProtoSchemaError(
-      `La reflexión devolvió descriptores que no se pudieron leer: ${error instanceof Error ? error.message : error}`,
+      `La reflexión devolvió descriptores que no se pudieron leer: ${(error as Error).message}`,
     );
   }
   return finish(root);

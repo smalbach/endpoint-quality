@@ -275,11 +275,12 @@ export async function resolveChannelTarget(
   const variables = { ...withEnvironmentNamespace(values), ...overlay?.variables };
   const interpolate = (value: string) => interpolateText(value, variables);
 
-  // Los valores de las variables sensibles: lo primero que se tapa en cada mensaje.
+  // Los valores de las variables sensibles: lo primero que se tapa en cada mensaje. `values` tiene
+  // una entrada por cada variable del entorno, así que el nombre siempre está.
   const secrets = environment
     ? Object.entries(environment.variables)
         .filter(([, variable]) => variable.sensitive)
-        .map(([name]) => values[name] ?? "")
+        .map(([name]) => values[name])
         .filter(Boolean)
     : [];
   for (const secret of overlay?.secrets ?? []) if (secret) secrets.push(secret);
@@ -403,11 +404,8 @@ export function redactMessage(text: string): string {
   const result = redactBody(text, "application/json");
   if (!result.masked.length) return text;
   if (text.includes("\n")) return result.body;
-  try {
-    return JSON.stringify(JSON.parse(result.body));
-  } catch {
-    return result.body;
-  }
+  // Con algo tapado, el cuerpo es el JSON que `redactBody` volvió a serializar: siempre se lee.
+  return JSON.stringify(JSON.parse(result.body));
 }
 
 /**

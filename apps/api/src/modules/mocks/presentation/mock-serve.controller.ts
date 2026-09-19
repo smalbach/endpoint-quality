@@ -49,15 +49,12 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
  * una cabecera de diagnóstico.
  */
 function headerSafe(text: string): string {
-  return [...text]
-    .map((character) => {
-      const code = character.codePointAt(0) ?? 0;
-      if (code >= 0x20 && code <= 0x7e) return character;
-      return [...new TextEncoder().encode(character)]
-        .map((byte) => `%${byte.toString(16).toUpperCase().padStart(2, "0")}`)
-        .join("");
-    })
-    .join("");
+  // Con `u`, un carácter fuera del plano básico es uno solo y no dos mitades sueltas.
+  return text.replace(/[^\x20-\x7e]/gu, (character) =>
+    [...new TextEncoder().encode(character)]
+      .map((byte) => `%${byte.toString(16).toUpperCase().padStart(2, "0")}`)
+      .join(""),
+  );
 }
 
 /** Un cuerpo en estas respuestas es ilegal, y algunos clientes lo leen como la respuesta siguiente. */

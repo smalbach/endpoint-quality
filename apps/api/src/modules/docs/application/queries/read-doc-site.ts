@@ -67,8 +67,9 @@ export class ReadDocSiteHandler implements IQueryHandler<ReadDocSiteQuery, DocPa
 
     // Por `projectId` directo y no por organización: la petición no trae sesión, así que no hay
     // organización que comprobar. Lo que ata la página a un proyecto es el `publicId` y nada más.
+    // `findById` no devuelve un proyecto borrado: borrado e inexistente son el mismo 404.
     const project = await this.projects.findById(site.projectId);
-    if (!project || project.deletedAt) throw new NotFoundError("Esa documentación no existe", "doc-site-not-found");
+    if (!project) throw new NotFoundError("Esa documentación no existe", "doc-site-not-found");
 
     const [endpoints, examples] = await Promise.all([
       this.endpoints.listAll(site.projectId),

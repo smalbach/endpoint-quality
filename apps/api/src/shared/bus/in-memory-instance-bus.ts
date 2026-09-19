@@ -67,11 +67,6 @@ export class InMemoryInstanceBus implements InstanceBusPort {
     this.handlers.set(topic, handler as (message: unknown) => Promise<unknown> | unknown);
   }
 
-  /** Sale del hub: lo que se le pida desde ahora es a una instancia que ya no existe. */
-  leave(): void {
-    this.hub.members.delete(this.instanceId);
-  }
-
   private deliver(topic: string, message: unknown): void {
     const set = this.subscribers.get(topic);
     if (!set) return;

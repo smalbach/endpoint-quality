@@ -50,12 +50,14 @@ export class ExportPostmanHandler implements IQueryHandler<ExportPostmanQuery, P
       );
     }
 
+    // Asked with no parts, which is all of them: the export always carries `project` and
+    // `environments` (an empty list when there are none).
     const bundle = await this.queryBus.execute<ExportProjectQuery, ProjectBundle>(
       new ExportProjectQuery(query.organizationId, query.projectId, [], query.workflowIds),
     );
     const exported = toPostmanExport(
       bundle,
-      { collectionId: randomUUID(), environmentIds: (bundle.environments ?? []).map(() => randomUUID()) },
+      { collectionId: randomUUID(), environmentIds: bundle.environments!.map(() => randomUUID()) },
       {
         contents: kind === "endpoints" ? "endpoints" : "flows",
         // Solo los ficheros que llevan variables las traducen, y por tanto solo ellos avisan de
@@ -64,7 +66,8 @@ export class ExportPostmanHandler implements IQueryHandler<ExportPostmanQuery, P
       },
     );
 
-    const name = bundle.project?.name || "proyecto";
+    // A blank name still ends up as «proyecto»: `slug` falls back to it.
+    const name = bundle.project!.name;
     if (kind === "environments") {
       return {
         kind,

@@ -129,7 +129,7 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
         "bundle-invalid",
       );
     }
-    const incoming = parts.has("flows") ? (bundle.flows?.channels.length ?? 0) : 0;
+    const incoming = parts.has("flows") ? bundle.flows!.channels.length : 0;
     if (incoming && (await this.channels.countByProject(project.id)) + incoming > MAX_CHANNELS_PER_PROJECT)
       throw new ConflictError(
         `Con los ${incoming} canales del fichero, el proyecto pasaría de ${MAX_CHANNELS_PER_PROJECT}; no se ha importado nada`,
@@ -220,7 +220,9 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
     let orderIndex = await this.endpoints.nextOrderIndex(project.id);
     const rows: Endpoint[] = [];
     const examples: EndpointExample[] = [];
-    for (const endpoint of bundle.endpoints ?? []) {
+    // `partsIn` names a part only when the file carries it, non-empty; the same goes for every
+    // `bundle.<part>!` below.
+    for (const endpoint of bundle.endpoints!) {
       const path = normalizePath(endpoint.path);
       const key = endpointKey(endpoint.method, path);
       if (taken.has(key)) {
@@ -250,7 +252,10 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
       // El bundle ya viene redactado —es lo que se exportó— pero se vuelve a redactar al entrar: un
       // bundle es un fichero que se edita a mano, y confiar en que llega limpio sería hacer del
       // importador la puerta por la que un token entra a la base de datos.
-      for (const [index, example] of (saved ?? []).entries()) {
+      // The schema defaults `examples` to an empty list, so the fallback never applies.
+      /* node:coverage ignore next */
+      const kept = saved ?? [];
+      for (const [index, example] of kept.entries()) {
         const clean = redactExample(example.request, example.response);
         examples.push(
           blankExample({
@@ -304,7 +309,10 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
     const changes = new Map<string, PermissionChange>();
     for (const role of bundle.roles ?? []) {
       const roleId = roleIds.get(role.name.toLowerCase());
-      if (!roleId) continue;
+      // Every role of the file is in the map by now: the loop above found it or created it.
+      /* node:coverage ignore next 2 */
+      if (!roleId)
+        continue;
       const missing: string[] = [];
       for (const permission of role.permissions) {
         const endpointId = endpointIds.get(endpointKey(permission.method, normalizePath(permission.path)));
@@ -362,8 +370,7 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
   }
 
   private async importFlows(bundle: ProjectBundle, ids: Ids, { project, actorId, now, result }: Context): Promise<void> {
-    const flows = bundle.flows;
-    if (!flows) return;
+    const flows = bundle.flows!;
     const stamp = { projectId: project.id, createdAt: now, updatedAt: now, updatedBy: actorId };
 
     const templateNames = new Set((await this.workflows.listTemplates(project.id)).map((row) => row.name));
@@ -372,7 +379,7 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
       templateNames.add(name);
       await this.workflows.saveTemplate({
         ...stamp,
-        id: ids.templates.get(template.id) ?? randomUUID(),
+        id: ids.templates.get(template.id)!,
         name,
         operationId: template.operationId,
         description: template.description,
@@ -406,7 +413,7 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
       const { definition } = remapDefinition(workflow.definition, ids.templates, ids.workflows, ids.channels);
       await this.workflows.saveWorkflow({
         ...stamp,
-        id: ids.workflows.get(workflow.id) ?? randomUUID(),
+        id: ids.workflows.get(workflow.id)!,
         name,
         description: workflow.description,
         status: workflow.status,
@@ -453,7 +460,7 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
    * now which ones will not find it is the difference between a warning and a red run tomorrow.
    */
   private async warnMissingOperations(bundle: ProjectBundle, { project, result }: Context): Promise<void> {
-    const templates = bundle.flows?.requestTemplates ?? [];
+    const templates = bundle.flows!.requestTemplates;
     if (!templates.length) return;
     const fresh = await this.projects.findById(project.id);
     if (!fresh?.activeSpecVersionId) {
@@ -476,7 +483,7 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
     const { project, now, result } = context;
     const names = new Set((await this.environments.listForProject(project.id)).map((row) => row.name));
     let firstId: string | null = null;
-    for (const environment of bundle.environments ?? []) {
+    for (const environment of bundle.environments!) {
       const name = uniqueName(environment.name, names);
       names.add(name);
       const secrets: string[] = [];
@@ -524,7 +531,7 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
 
   private async importPlans(bundle: ProjectBundle, { project, actorId, now, result }: Context): Promise<void> {
     const names = new Set((await this.plans.list(project.id)).map((row) => row.name));
-    for (const plan of bundle.performance ?? []) {
+    for (const plan of bundle.performance!) {
       const name = uniqueName(plan.name, names);
       names.add(name);
       await this.plans.save({

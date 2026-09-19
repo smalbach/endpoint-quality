@@ -121,9 +121,15 @@ export class RunOrchestrator {
    */
   private saveSteps(run: Run, rows: RunStep[]): Promise<void> {
     const context = this.live.get(run.id);
-    const secrets = context
-      ? [...(context.target.secrets ?? []), ...(context.target.session ? [context.target.session.value] : [])]
-      : [];
+    // Every row is written inside `execute`'s walk, which keeps the run's context in `live` throughout.
+    // Without it there would be nothing to mask with, so it refuses rather than store a secret.
+    /* node:coverage disable */
+    if (!context) throw new Error(`Corrida ${run.id}: una fila de paso fuera de su recorrido`);
+    /* node:coverage enable */
+    const secrets = [
+      ...(context.target.secrets ?? []),
+      ...(context.target.session ? [context.target.session.value] : []),
+    ];
     return this.runs.saveSteps(
       rows.map((row) => ({
         ...row,
@@ -553,7 +559,9 @@ export class RunOrchestrator {
             ...base,
             operationId: "",
             method: "GQL",
-            path: step.graphql?.operationName || step.graphql?.url || "",
+            // El bloque y su URL los exige el esquema del flujo (un nodo GraphQL sin ellos no se
+            // guarda), así que solo el nombre de la operación puede faltar.
+            path: step.graphql!.operationName || step.graphql!.url,
           } satisfies RunCase,
         };
       }
@@ -700,12 +708,7 @@ export class RunOrchestrator {
   }
 
   /** One step: its dependencies, its condition, its wait, its elements and its retries. */
-  private async runStep(
-    run: Run,
-    context: ExecutionContext,
-    item: PreparedItem,
-    state: WalkState,
-  ): Promise<void> {
+  private async runStep(run: Run, context: ExecutionContext, item: PreparedItem, state: WalkState): Promise<void> {
     const { passed, responses, permissive, budget, branches } = state;
     const startedAt = this.clock.now();
     if (!dependenciesHeld(item.step, passed, permissive)) {
@@ -771,7 +774,13 @@ export class RunOrchestrator {
         await delay(item.step.waitMs);
       }
       const at = this.clock.now();
-      const done: RunCase = { ...item.runCase, status: "passed", startedAt, finishedAt: at, durationMs: item.step.waitMs ?? 0 };
+      const done: RunCase = {
+        ...item.runCase,
+        status: "passed",
+        startedAt,
+        finishedAt: at,
+        durationMs: item.step.waitMs ?? 0,
+      };
       passed.set(item.step.id, true);
       await this.runs.saveCase(done);
       await this.announce(run, done);
@@ -796,9 +805,10 @@ export class RunOrchestrator {
     if ((item.step.kind ?? "request") === "validate") {
       const from = item.step.validate?.from;
       const source = from ? responses.get(from) : undefined;
-      const assertions = source && item.step.checks?.length
-        ? evaluateChecks(item.step.checks, { response: source.actual, durationMs: source.durationMs })
-        : [];
+      const assertions =
+        source && item.step.checks?.length
+          ? evaluateChecks(item.step.checks, { response: source.actual, durationMs: source.durationMs })
+          : [];
       let verdict = source ? holds(assertions) : false;
       const script = item.step.validate?.script?.trim();
       if (verdict && script && source) {
@@ -906,10 +916,18 @@ export class RunOrchestrator {
           pass: test.passed,
           detail: test.message ?? (test.passed ? "Pasó" : "Falló"),
         })),
-        ...(written.length ? [{ label: "Variables escritas", pass: true, detail: [...new Set(written)].join(", ") }] : []),
+        ...(written.length
+          ? [{ label: "Variables escritas", pass: true, detail: [...new Set(written)].join(", ") }]
+          : []),
         // A run has no response pane to draw it in: said, so the call does not look like it did nothing.
         ...(outcome.visualization
-          ? [{ label: "pm.visualizer", pass: true, detail: "La visualización solo se dibuja al enviar desde el editor" }]
+          ? [
+              {
+                label: "pm.visualizer",
+                pass: true,
+                detail: "La visualización solo se dibuja al enviar desde el editor",
+              },
+            ]
           : []),
         ...shown.logs.slice(0, 50).map((log) => ({ label: `console.${log.level}`, pass: true, detail: log.text })),
       ];
@@ -936,7 +954,13 @@ export class RunOrchestrator {
         const operation = state.items.get(config.from)?.operation;
         schema =
           context.target.spec && operation
-            ? responseSchema(context.target.spec, operation.path, operation.method, source.actual.status, source.actual.contentType)
+            ? responseSchema(
+                context.target.spec,
+                operation.path,
+                operation.method,
+                source.actual.status,
+                source.actual.contentType,
+              )
             : undefined;
         if (schema === undefined) {
           assertions.push({
@@ -963,7 +987,9 @@ export class RunOrchestrator {
             ? {
                 label: "Esquema",
                 pass: false,
-                detail: [...errors.slice(0, 20), ...(errors.length > 20 ? [`… y ${errors.length - 20} más`] : [])].join("\n"),
+                detail: [...errors.slice(0, 20), ...(errors.length > 20 ? [`… y ${errors.length - 20} más`] : [])].join(
+                  "\n",
+                ),
               }
             : { label: "Esquema", pass: true, detail: "La respuesta cumple el esquema" },
         );
@@ -1344,7 +1370,11 @@ export class RunOrchestrator {
         ok: false,
         failure: "config",
         assertions: [
-          { label: "Reintento", pass: false, detail: `«${config.target}» no va antes de «${config.from}»: no hay desde dónde repetir` },
+          {
+            label: "Reintento",
+            pass: false,
+            detail: `«${config.target}» no va antes de «${config.from}»: no hay desde dónde repetir`,
+          },
         ],
         sent,
         routes: true,
@@ -1365,7 +1395,14 @@ export class RunOrchestrator {
         // Numbered like a step's own retry — the failure that woke the node was attempt one — so a
         // follower reads «2 de 4».
         this.eventBus.publish(
-          new RunCaseRetryingEvent(run.projectId, run.id, item.runCase.id, walks + 1, config.attempts + 1, config.delayMs),
+          new RunCaseRetryingEvent(
+            run.projectId,
+            run.id,
+            item.runCase.id,
+            walks + 1,
+            config.attempts + 1,
+            config.delayMs,
+          ),
         );
         if (config.delayMs > 0) await delay(config.delayMs);
         // Forgotten before the walk, so no step of it reads the last walk's verdict or answer.
@@ -1496,7 +1533,8 @@ export class RunOrchestrator {
     const ok = executed.steps.every((step) => step.ok);
     await this.finishControl(run, item, state, startedAt, {
       ok,
-      failure: ok ? null : (failureFor(executed) ?? "check"),
+      // The last step, the only one a sent request has, got its failure just above.
+      failure: ok ? null : failureFor(executed),
       assertions: [],
       sent,
       steps: executed.steps,
@@ -1523,7 +1561,7 @@ export class RunOrchestrator {
     startedAt: Date,
     loop: StepLoop,
   ): Promise<void> {
-    const body = state.bodies.get(item.step.id) ?? [];
+    const body = bodyOf(state, item.step.id);
     const sent = { method: "LOOP", url: `recorre ${loop.from}.${loop.path}`, headers: {}, body: null };
     const source = state.responses.get(loop.from);
     const list = source ? listAt(source.actual.body, loop.path) : null;
@@ -1648,14 +1686,22 @@ export class RunOrchestrator {
     const hook = await this.hooks.open(run.id, item.runCase, item.step.id, config);
     const rowId = randomUUID();
     const writeRow = (step: ExecutedStep) =>
-      this.saveSteps(run, toRunSteps(item.runCase.id, [step]).map((row) => ({ ...row, id: rowId })));
+      this.saveSteps(
+        run,
+        toRunSteps(item.runCase.id, [step]).map((row) => ({ ...row, id: rowId })),
+      );
     const expiresAt = new Date(hook.expiresAt).toISOString();
     await writeRow(
       hookStep(item.runCase, hook, {
         ok: false,
         failure: null,
         assertions: [
-          { label: "Webhook", pass: false, severity: "warning", detail: `Esperando un ${hook.method} hasta ${expiresAt}` },
+          {
+            label: "Webhook",
+            pass: false,
+            severity: "warning",
+            detail: `Esperando un ${hook.method} hasta ${expiresAt}`,
+          },
         ],
       }),
     );
@@ -1683,11 +1729,22 @@ export class RunOrchestrator {
           failure: null,
           durationMs,
           assertions: [
-            { label: "Webhook", pass: false, severity: "warning", detail: "La corrida se canceló mientras esperaba la llamada" },
+            {
+              label: "Webhook",
+              pass: false,
+              severity: "warning",
+              detail: "La corrida se canceló mientras esperaba la llamada",
+            },
           ],
         }),
       );
-      const skipped: RunCase = { ...item.runCase, status: "skipped", startedAt, finishedAt: this.clock.now(), durationMs };
+      const skipped: RunCase = {
+        ...item.runCase,
+        status: "skipped",
+        startedAt,
+        finishedAt: this.clock.now(),
+        durationMs,
+      };
       state.passed.set(item.step.id, false);
       await this.runs.saveCase(skipped);
       await this.announce(run, skipped);
@@ -1700,7 +1757,14 @@ export class RunOrchestrator {
         { label: "Webhook", pass: false, detail: `Nadie llamó en ${Math.round(hook.timeoutMs / 1000)} s` },
       ];
       await writeRow(hookStep(item.runCase, hook, { ok: false, failure: "network", assertions, durationMs }));
-      await this.finishControl(run, item, state, startedAt, { ok: false, failure: "network", assertions, sent, steps: [], durationMs });
+      await this.finishControl(run, item, state, startedAt, {
+        ok: false,
+        failure: "network",
+        assertions,
+        sent,
+        steps: [],
+        durationMs,
+      });
       return;
     }
 
@@ -1731,7 +1795,7 @@ export class RunOrchestrator {
    * still get a verdict: a case left `queued` is not a result. */
   private async closeLoopBody(run: Run, item: PreparedItem, state: WalkState): Promise<void> {
     if (item.step.kind !== "loop") return;
-    for (const entry of state.bodies.get(item.step.id) ?? []) {
+    for (const entry of bodyOf(state, item.step.id)) {
       if (state.passed.has(entry.step.id)) continue;
       const at = this.clock.now();
       const skipped: RunCase = { ...entry.runCase, status: "skipped", startedAt: at, finishedAt: at, durationMs: 0 };
@@ -1767,7 +1831,7 @@ export class RunOrchestrator {
     startedAt: Date,
     config: StepSubflow,
   ): Promise<void> {
-    const children = item.children ?? [];
+    const children = childrenOf(item);
     const declared = config.inputs ?? [];
     // Templates and not values: an input may carry a secret the template pulled from the environment.
     const sent = {
@@ -1786,7 +1850,9 @@ export class RunOrchestrator {
       await this.finishControl(run, item, state, startedAt, {
         ok: false,
         failure: "config",
-        assertions: [{ label: "Entradas del sub-flujo", pass: false, detail: `Faltan variables: ${missing.join(", ")}` }],
+        assertions: [
+          { label: "Entradas del sub-flujo", pass: false, detail: `Faltan variables: ${missing.join(", ")}` },
+        ],
         sent,
       });
       return;
@@ -1797,10 +1863,20 @@ export class RunOrchestrator {
     await this.runs.saveCase(started);
     this.eventBus.publish(new RunCaseStartedEvent(run.projectId, run.id, started));
 
-    const variables = { ...context.target.variables, ...Object.fromEntries(inputs.map((entry) => [entry.variable, entry.value])) };
+    const variables = {
+      ...context.target.variables,
+      ...Object.fromEntries(inputs.map((entry) => [entry.variable, entry.value])),
+    };
     const target = { ...context.target, variables };
     const verdicts = new Map<string, boolean>();
-    const cancelled = await this.walkPrepared(run, { ...context, target }, children, state.budget, state.pause, verdicts);
+    const cancelled = await this.walkPrepared(
+      run,
+      { ...context, target },
+      children,
+      state.budget,
+      state.pause,
+      verdicts,
+    );
 
     const session = target.session !== context.target.session ? target.session : null;
     if (session) context.target.session = session;
@@ -1826,7 +1902,9 @@ export class RunOrchestrator {
             : `Pasaron sus ${children.length} ${children.length === 1 ? "paso" : "pasos"}`,
       },
       // Names only, for the same reason as `sent`.
-      ...(inputs.length ? [{ label: "Entradas", pass: true, detail: inputs.map((entry) => entry.variable).join(", ") }] : []),
+      ...(inputs.length
+        ? [{ label: "Entradas", pass: true, detail: inputs.map((entry) => entry.variable).join(", ") }]
+        : []),
       ...(outputs.length
         ? [
             {
@@ -1853,7 +1931,7 @@ export class RunOrchestrator {
    * inputs did not resolve — still leaves a verdict on every child case: `queued` is not a result. */
   private async closeSubflow(run: Run, item: PreparedItem, state: WalkState): Promise<void> {
     if (item.step.kind !== "subflow" || state.walkedSubflows.has(item.step.id)) return;
-    for (const entry of flattenPrepared(item.children ?? [])) {
+    for (const entry of flattenPrepared(childrenOf(item))) {
       const at = this.clock.now();
       const skipped: RunCase = { ...entry.runCase, status: "skipped", startedAt: at, finishedAt: at, durationMs: 0 };
       await this.runs.saveCase(skipped);
@@ -2008,6 +2086,21 @@ function loopBodies(prepared: PreparedItem[]): Map<string, PreparedItem[]> {
   );
 }
 
+/** A loop node's body. */
+function bodyOf(state: WalkState, loopId: string): PreparedItem[] {
+  // `loopBodies` gives every loop node of the walk an entry, and only loop nodes ask.
+  /* node:coverage ignore next */
+  return state.bodies.get(loopId) ?? [];
+}
+
+/** A subflow node's child steps. */
+function childrenOf(item: PreparedItem): PreparedItem[] {
+  // `prepareWorkflow` gives every subflow node its children (a subflow node without its block does
+  // not pass the flow schema), and only subflow nodes ask.
+  /* node:coverage ignore next */
+  return item.children ?? [];
+}
+
 /** What a walk carries between its steps. One object rather than five arguments, because with
  * several in flight they are one shared thing and passing them apart invites copying one. */
 type WalkState = {
@@ -2040,7 +2133,11 @@ type WalkState = {
  * only one of several routes to have arrived, and starts as soon as the first does — which is
  * also why it does not wait for the rest to disagree with it.
  */
-function readyToRun(step: WorkflowStep, passed: Map<string, boolean>, watchers: Map<string, string> = new Map()): boolean {
+function readyToRun(
+  step: WorkflowStep,
+  passed: Map<string, boolean>,
+  watchers: Map<string, string> = new Map(),
+): boolean {
   const dependencies = step.dependsOn ?? [];
   if (!dependencies.length) return true;
   // A watched step is not over until its retry node says so, except for that node itself.
@@ -2134,23 +2231,30 @@ function controlCaseFields(step: WorkflowStep): { operationId: string; method: s
     case "poll":
       return { operationId: "", method: "RETRY", path: `repite ${step.poll?.from ?? ""}` };
     case "retry":
-      return { operationId: "", method: "RETRY", path: `reintenta ${step.rerun?.from ?? ""} desde ${step.rerun?.target ?? ""}` };
+      return {
+        operationId: "",
+        method: "RETRY",
+        path: `reintenta ${step.rerun?.from ?? ""} desde ${step.rerun?.target ?? ""}`,
+      };
     case "loop":
       return { operationId: "", method: "LOOP", path: `recorre ${step.loop?.from ?? ""}.${step.loop?.path ?? ""}` };
     case "schema":
       return { operationId: "", method: "SCHEMA", path: `valida ${step.schema?.from ?? ""}` };
     case "notify":
       // The variable's name, never the URL it holds.
-      return { operationId: "", method: "NOTIFY", path: `${step.notify?.channel ?? ""} → ${step.notify?.urlVariable ?? ""}` };
-    case "subflow":
-      return { operationId: "", method: "FLOW", path: `ejecuta ${step.subflow?.workflowId ?? ""}` };
+      return {
+        operationId: "",
+        method: "NOTIFY",
+        path: `${step.notify?.channel ?? ""} → ${step.notify?.urlVariable ?? ""}`,
+      };
     case "mock":
       return { operationId: "", method: "MOCK", path: String(step.mock?.status ?? "") };
     case "channel":
       // The protocol and the name are only known once the channel is read; `channelStep` fills them in.
       return { operationId: "", method: "CHANNEL", path: step.channel?.channelId ?? "" };
     case "webhook":
-      return { operationId: "", method: "HOOK", path: `espera ${Math.round((step.webhook?.timeoutMs ?? 0) / 1000)} s` };
+      // El bloque con su espera lo exige el esquema: «un nodo webhook necesita cuánto esperar».
+      return { operationId: "", method: "HOOK", path: `espera ${Math.round(step.webhook!.timeoutMs / 1000)} s` };
     default:
       return null;
   }

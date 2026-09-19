@@ -37,7 +37,7 @@ export class TypeOrmCaptureRepository implements CaptureRepositoryPort {
 
   async removeSession(projectId: string, id: string): Promise<boolean> {
     const result = await this.sessions.delete({ id, projectId });
-    return (result.affected ?? 0) > 0;
+    return Boolean(result.affected);
   }
 
   async findSessionByTokenHash(tokenHash: string): Promise<CaptureSession | null> {
@@ -50,7 +50,7 @@ export class TypeOrmCaptureRepository implements CaptureRepositoryPort {
       { id, projectId, status: "active" },
       { status: "stopped", stopReason: reason, stoppedAt: at },
     );
-    return (result.affected ?? 0) > 0;
+    return Boolean(result.affected);
   }
 
   async expireDue(now: Date): Promise<number> {
@@ -58,6 +58,8 @@ export class TypeOrmCaptureRepository implements CaptureRepositoryPort {
       { status: "active", expiresAt: LessThanOrEqual(now) },
       { status: "stopped", stopReason: "expired", stoppedAt: now },
     );
+    // Postgres always reports affected rows for UPDATE/DELETE; the fallback only satisfies TypeORM's type.
+    /* node:coverage ignore next */
     return result.affected ?? 0;
   }
 

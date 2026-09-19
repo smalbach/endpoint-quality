@@ -44,8 +44,10 @@ export function summarize(samples: Sample[], durationS: number): PerformanceSumm
     failures,
     errorRate: requests ? failures / requests : 0,
     rps: round(requests / seconds, 2),
-    minMs: durations.length ? Math.min(...durations) : 0,
-    maxMs: durations.length ? Math.max(...durations) : 0,
+    // Folded, not spread: `Math.min(...durations)` passes every sample as an argument, and a run at
+    // its 200 000-sample ceiling overflows the call stack there.
+    minMs: durations.length ? durations.reduce((min, ms) => Math.min(min, ms), Infinity) : 0,
+    maxMs: durations.length ? durations.reduce((max, ms) => Math.max(max, ms), -Infinity) : 0,
     avgMs: round(durations.reduce((sum, ms) => sum + ms, 0) / (durations.length || 1), 1),
     p50Ms: percentile(durations, 50),
     p90Ms: percentile(durations, 90),
@@ -111,9 +113,10 @@ export function byEndpoint(samples: Sample[]): PerformanceEndpointStat[] {
       path: rest.join(" "),
       requests: bucket.length,
       failures,
-      errorRate: bucket.length ? failures / bucket.length : 0,
+      // A group exists only because a sample landed in it, so it is never empty.
+      errorRate: failures / bucket.length,
       p95Ms: percentile(durations, 95),
-      avgMs: round(durations.reduce((sum, ms) => sum + ms, 0) / (durations.length || 1), 1),
+      avgMs: round(durations.reduce((sum, ms) => sum + ms, 0) / durations.length, 1),
     };
   });
   return stats.sort((a, b) => b.p95Ms - a.p95Ms);

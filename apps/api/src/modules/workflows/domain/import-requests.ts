@@ -131,7 +131,7 @@ export function shellSplit(command: string): string[] {
       }
     }
     if (/\s/.test(char)) {
-      if (started || current) tokens.push(current);
+      if (started) tokens.push(current);
       current = "";
       started = false;
       continue;
@@ -139,7 +139,8 @@ export function shellSplit(command: string): string[] {
     current += char;
     started = true;
   }
-  if (started || current) tokens.push(current);
+  // Every character that lands in `current` also sets `started`, so `started` alone says «a token is open».
+  if (started) tokens.push(current);
   return tokens;
 }
 
@@ -1146,7 +1147,7 @@ function harHeaders(list: unknown): Record<string, string> {
  */
 function harAuth(headers: Record<string, string>): RequestAuth {
   const value = Object.entries(headers).find(([name]) => name.toLowerCase() === "authorization")?.[1] ?? "";
-  const scheme = value.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+  const scheme = value.trim().split(/\s+/)[0].toLowerCase();
   if (scheme === "bearer") return { type: "bearer", params: { token: "" } };
   if (scheme === "basic") return { type: "basic", params: { username: "", password: "" } };
   if (scheme === "digest") return { type: "digest", params: { username: "", password: "" } };
@@ -1222,11 +1223,8 @@ function harExample(
   };
 }
 
-/** Un base64 que puede venir roto: un HAR truncado es lo normal, y no es motivo para no importar. */
+/** Un base64 que puede venir roto: un HAR truncado es lo normal, y no es motivo para no importar.
+ * `Buffer.from` no lanza con un texto: descodifica lo que se puede leer y descarta el resto. */
 function decodeBase64(value: string): string {
-  try {
-    return Buffer.from(value, "base64").toString("utf8");
-  } catch {
-    return "";
-  }
+  return Buffer.from(value, "base64").toString("utf8");
 }

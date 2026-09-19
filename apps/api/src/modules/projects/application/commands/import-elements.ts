@@ -285,7 +285,8 @@ export class ImportElementsHandler implements ICommandHandler<ImportElementsComm
           : {}),
         ...(step.channel?.channelId
           ? {
-              channel: { ...step.channel, channelId: channelIds.get(step.channel.channelId) ?? step.channel.channelId },
+              // Always copied: a flow naming a channel that was not is left out above.
+              channel: { ...step.channel, channelId: channelIds.get(step.channel.channelId)! },
             }
           : {}),
         ...(step.subflow?.workflowId

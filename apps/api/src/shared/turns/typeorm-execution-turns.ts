@@ -35,7 +35,8 @@ export class TypeOrmExecutionTurnStore implements ExecutionTurnStorePort {
         `DELETE FROM execution_turns WHERE kind = $1 AND "heartbeatAt" < now() - make_interval(secs => $2::double precision / 1000)`,
         [kind, staleMs],
       );
-      const started: unknown[] = await manager.query(
+      // `manager.query` de un UPDATE … RETURNING en Postgres devuelve [filas, cuántas].
+      const [rows]: [unknown[], number] = await manager.query(
         `UPDATE execution_turns me SET "startedAt" = now(), "heartbeatAt" = now()
          WHERE me."runId" = $1 AND me.holder = $2 AND me.kind = $3 AND me."startedAt" IS NULL
            AND NOT EXISTS (
@@ -46,18 +47,16 @@ export class TypeOrmExecutionTurnStore implements ExecutionTurnStorePort {
          RETURNING me."runId"`,
         [runId, holder, kind],
       );
-      // `manager.query` de un UPDATE … RETURNING en Postgres devuelve [filas, cuántas].
-      const rows = Array.isArray(started[0]) ? (started[0] as unknown[]) : started;
       return rows.length > 0;
     });
   }
 
   async heartbeat(holder: string): Promise<string[]> {
-    const result: unknown[] = await this.dataSource.query(
+    // Como en `tryStart`: un UPDATE … RETURNING devuelve [filas, cuántas].
+    const [rows]: [{ runId: string }[], number] = await this.dataSource.query(
       `UPDATE execution_turns SET "heartbeatAt" = now() WHERE holder = $1 RETURNING "runId"`,
       [holder],
     );
-    const rows = (Array.isArray(result[0]) ? result[0] : result) as { runId: string }[];
     return rows.map((row) => row.runId);
   }
 

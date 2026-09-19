@@ -411,21 +411,19 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
   ): Promise<{ stored: string[]; rejected: { line: string; why: string }[] }> {
     if (!lines.length) return { stored: [], rejected: [] };
     const read = cookiesFrom(lines, url, now.getTime());
-    const gone = read.cookies.filter((cookie) => cookie.expiresAt !== null && cookie.expiresAt <= now.getTime());
+    // Cuenta la última palabra del servidor para cada cookie: puesta y borrada en la misma
+    // respuesta, queda borrada; borrada y vuelta a poner, queda puesta.
     const kept = withCookies(jar, read.cookies, now.getTime());
+    const keptKeys = new Set(kept.map(cookieKey));
+    const last = new Map(read.cookies.map((cookie) => [cookieKey(cookie), cookie]));
+    const gone = [...last.values()].filter((cookie) => !keptKeys.has(cookieKey(cookie)));
     // Una cookie con fecha pasada es un cierre de sesión: se borra de la tabla, no solo del tarro
     // en memoria, porque si no vuelve a cargarse en el envío siguiente.
     if (gone.length) await this.cookieJar.remove(actorId, projectId, gone);
-    const live = read.cookies.filter((cookie) => cookie.expiresAt === null || cookie.expiresAt > now.getTime());
-    if (live.length) {
-      // Se guardan con la fecha de creación que ya tenían, que es la que ordena la cabecera.
-      const byKey = new Map(kept.map((cookie) => [cookieKey(cookie), cookie]));
-      await this.cookieJar.save(
-        actorId,
-        projectId,
-        live.map((cookie) => byKey.get(cookieKey(cookie)) ?? cookie),
-      );
-    }
+    // Se guardan como quedan en el tarro, con la fecha de creación que ya tenían, que es la que
+    // ordena la cabecera.
+    const live = kept.filter((cookie) => last.has(cookieKey(cookie)));
+    if (live.length) await this.cookieJar.save(actorId, projectId, live);
     await this.cookieJar.purgeExpired(actorId, projectId, now);
     return {
       stored: [
@@ -529,7 +527,7 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
           return `Token del proyecto${expiredNote}`;
         }
         if (stored.settings.loginUrl) {
-          const token = await this.login(project, base, secrets.loginBody ?? "", interpolate);
+          const token = await this.login(stored.settings.loginUrl, project, base, secrets.loginBody ?? "", interpolate);
           headers.Authorization = `Bearer ${token}`;
           run.secrets.push(token);
           return `Login del proyecto${expiredNote}`;
@@ -577,16 +575,17 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
     interpolate: (value: string) => string,
     run: ScriptSession,
   ): Promise<string> {
+    const params = Object.entries(auth.params).map(([key, written]) => ({ key, written, value: interpolate(written) }));
     const resolved: RequestAuth = {
       type: auth.type,
-      params: Object.fromEntries(Object.entries(auth.params).map(([key, value]) => [key, interpolate(value)])),
+      params: Object.fromEntries(params.map(({ key, value }) => [key, value])),
     };
-    for (const [key, value] of Object.entries(resolved.params)) {
+    for (const { key, written, value } of params) {
       if (!SECRET_PARAMS.has(key) || !value) continue;
       run.secrets.push(value);
       // Escrito a mano en la petición, quien envía ya lo tiene: taparlo en la respuesta no protege
       // nada. Si vino de una `{{variable}}` sensible, esa variable ya está en la lista por su cuenta.
-      if (!/\{\{/.test(auth.params[key] ?? "")) run.visible.add(value);
+      if (!/\{\{/.test(written)) run.visible.add(value);
     }
 
     let note = "";
@@ -655,13 +654,14 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
 
   /** The project's login, performed now, and the token read out of its answer. */
   private async login(
+    writtenLoginUrl: string,
     project: Project,
     base: string,
     loginBody: string,
     interpolate: (value: string) => string,
   ): Promise<string> {
     const settings = project.auth.settings;
-    const loginUrl = interpolate(settings.loginUrl ?? "");
+    const loginUrl = interpolate(writtenLoginUrl);
     const url = /^https?:\/\//i.test(loginUrl) ? loginUrl : `${base.replace(/\/+$/, "")}${loginUrl}`;
     const method = settings.loginMethod ?? "POST";
     const fail = (detail: string) =>

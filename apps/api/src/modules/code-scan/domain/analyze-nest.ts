@@ -11,7 +11,7 @@
  * or an upload — and hands it here as `{ path, content }`. That split is what lets the parser be
  * tested against a string and lets the fetching be tested against a stub.
  */
-import { Node, Project, type Decorator, type SourceFile } from "ts-morph";
+import { Node, Project, type Decorator } from "ts-morph";
 
 /** One HTTP route the code declares, resolved to what a run would actually call. */
 export type ScannedEndpoint = {
@@ -85,14 +85,9 @@ export function analyzeNestSources(sources: SourceInput[], prefix = ""): ScanRes
   let controllers = 0;
 
   for (const source of sources) {
-    let file: SourceFile;
-    try {
-      file = project.createSourceFile(safeName(source.path), source.content, { overwrite: true });
-    } catch {
-      // A file ts-morph cannot even parse is skipped, not fatal: a scan of forty files should not
-      // die on one with a syntax error the repo already lives with.
-      continue;
-    }
+    // No `try` around this: the TypeScript parser is error-tolerant and never throws on a syntax
+    // error, so a file the repo already lives with broken is read for whatever decorators it has.
+    const file = project.createSourceFile(safeName(source.path), source.content, { overwrite: true });
     for (const cls of file.getClasses()) {
       const controllerDecorator = cls.getDecorator("Controller");
       if (!controllerDecorator) continue;

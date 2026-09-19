@@ -131,7 +131,8 @@ export function readSendInput(raw: string | undefined): { input: SendInput } | {
     if (text(value[field]).length > MAX_SCRIPT) problems.push({ field, detail: `Como mucho ${MAX_SCRIPT} caracteres` });
   }
 
-  if (problems.length) return { problems };
+  // A problem with the auth block is already in `problems`; the second test only narrows the type.
+  if (problems.length || !("auth" in authRead)) return { problems };
   return {
     input: {
       environmentId: text(value.environmentId) || null,
@@ -156,7 +157,7 @@ export function readSendInput(raw: string | undefined): { input: SendInput } | {
         })),
         variables: text(body.variables),
       },
-      auth: "auth" in authRead ? authRead.auth : { type: "inherit", params: {} },
+      auth: authRead.auth,
       preRequestScript: text(value.preRequestScript),
       postResponseScript: text(value.postResponseScript),
     },
@@ -209,11 +210,12 @@ export function graphqlOverGet(url: string, payload: string): string {
   return `${url}${url.includes("?") ? "&" : "?"}${search.toString()}`;
 }
 
-/** Placeholders a path still has after filling, so the person is told instead of the target. */
+/**
+ * Placeholders a path still has after filling, so the person is told instead of the target. A URL's
+ * pathname always percent-encodes the braces, so `%7B...%7D` is the only shape they can have there.
+ */
 export const unfilledPlaceholders = (url: string): string[] =>
-  [...new URL(url, "http://placeholder").pathname.matchAll(/%7B([^%]+)%7D|\{([^{}]+)\}/gi)].map(
-    (match) => match[1] ?? match[2],
-  );
+  [...new URL(url, "http://placeholder").pathname.matchAll(/%7B([^%]+)%7D/gi)].map((match) => match[1]);
 
 export type SerializedPayload = { contentType: string | null; payload: string | Uint8Array; preview: string };
 

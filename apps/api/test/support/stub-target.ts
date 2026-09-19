@@ -190,6 +190,10 @@ export class StubTarget {
       void this.handle(request, response);
     });
     await new Promise<void>((resolve) => this.server.listen(0, "127.0.0.1", resolve));
+    // Escuchar no cuenta para que el proceso siga vivo: un objetivo que una prueba se dejó sin parar
+    // mantenía el proceso en pie al acabar, y el corredor lo remata con `--test-force-exit` antes de
+    // que V8 vuelque su cobertura. El fichero pasaba, pero sus ramas se perdían a ratos.
+    this.server.unref();
   }
 
   async stop(): Promise<void> {

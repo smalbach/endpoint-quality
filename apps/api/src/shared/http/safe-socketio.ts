@@ -29,7 +29,7 @@ import { Fetch, NodeWebSocket } from "engine.io-client";
 // nombre que no son `Manager` ni `Socket` no existen en Node. Los transportes vienen de su motor.
 import { Manager, type Socket } from "socket.io-client";
 
-import { BlockedTargetError, resolveTarget, type SafeFetchPolicy } from "./safe-fetch";
+import { resolveTarget, type SafeFetchPolicy } from "./safe-fetch";
 import { pinnedConnection } from "./safe-socket";
 
 /** Los esquemas de un servidor Socket.IO: el `http(s)` que escribe todo el mundo y el `ws(s)` del upgrade. */
@@ -90,32 +90,30 @@ export function pinnedPolling(agent: HttpAgent, secure: boolean, maxResponseByte
   const send = secure ? httpsRequest : httpRequest;
   return class PinnedPolling extends Fetch {
     override doPoll(): void {
-      this.exchange(undefined, (error, data) => {
-        if (error) this.onError("polling read error", error);
-        else this.onData(data ?? "");
+      this.exchange(undefined, (result) => {
+        if (result instanceof Error) this.onError("polling read error", result);
+        else this.onData(result);
       });
     }
 
     override doWrite(data: string, callback: () => void): void {
-      this.exchange(data, (error) => {
-        if (error) this.onError("polling write error", error);
+      this.exchange(data, (result) => {
+        if (result instanceof Error) this.onError("polling write error", result);
         else callback();
       });
     }
 
-    private exchange(body: string | undefined, reply: (error: Error | null, data?: string) => void): void {
-      // Una sola respuesta por petición: cortar una respuesta grande también hace saltar `error`.
-      let replied = false;
-      const done = (error: Error | null, data?: string) => {
-        if (replied) return;
-        replied = true;
-        reply(error, data);
-      };
-      const headers: Record<string, string> = { ...(this.opts.extraHeaders ?? {}) };
+    /** Lo que contestó el servidor, o por qué no se pudo leer. */
+    private exchange(body: string | undefined, done: (result: Error | string) => void): void {
+      // Una sola respuesta por petición, sin guarda: un error de la petición solo llega antes de la
+      // respuesta, y cortar una respuesta grande la destruye sin más `data` ni `end` (medido: tras
+      // `request.destroy()` no llega ni un trozo más de lo que ya estaba en camino).
+      const headers: Record<string, string> = { ...this.opts.extraHeaders };
       if (body !== undefined) headers["content-type"] = "text/plain;charset=UTF-8";
       const request = send(this.uri(), { method: body === undefined ? "GET" : "POST", headers, agent });
       request.on("response", (response: IncomingMessage) => {
-        const status = response.statusCode ?? 0;
+        // Una respuesta que llegó por la red siempre trae su estado.
+        const status = response.statusCode!;
         if (status >= 300) {
           response.resume();
           done(
@@ -139,7 +137,7 @@ export function pinnedPolling(agent: HttpAgent, secure: boolean, maxResponseByte
           }
           chunks.push(chunk);
         });
-        response.on("end", () => done(null, Buffer.concat(chunks).toString("utf8")));
+        response.on("end", () => done(Buffer.concat(chunks).toString("utf8")));
       });
       request.on("error", (error) => done(error));
       request.end(body);
@@ -192,24 +190,26 @@ export async function openSafeSocketIo(
     multiplex: false,
     rememberUpgrade: false,
     upgrade: options.transports.length > 1,
-    timeout: options.connectTimeoutMs,
     closeOnBeforeunload: false,
     // `agent` está tipado para el navegador (una cadena); en Node es el agente de verdad.
     agent: agent as unknown as string,
     // `ws` lo recibe como su `maxPayload`: el tope de trama dentro de la biblioteca.
     ...({ maxPayload: options.maxPayload } as object),
   });
+  // El plazo del `Manager` solo cubre abrir Engine.IO; el de abajo cubre también el `CONNECT`, que es
+  // lo que un servidor colgado en un `io.use()` no contesta nunca.
+  manager.timeout(false);
 
   const socket = manager.socket(options.namespace, options.auth ? { auth: options.auth } : {});
   listen(socket);
 
   return new Promise((resolve, reject) => {
-    let settled = false;
+    // Cada salida quita las escuchas de las otras y el plazo: solo una llega a llamar a esto.
     const finish = (error: Error | null) => {
-      if (settled) return;
-      settled = true;
+      clearTimeout(timer);
       socket.off("connect", onConnect);
       socket.off("connect_error", onError);
+      socket.off("disconnect", onDisconnect);
       if (!error) {
         resolve({ socket, manager });
         return;
@@ -218,22 +218,27 @@ export async function openSafeSocketIo(
       manager.engine?.close();
       reject(error);
     };
+    const timer = setTimeout(
+      () => finish(new Error(`sin respuesta al CONNECT en ${options.connectTimeoutMs} ms`)),
+      options.connectTimeoutMs,
+    );
     const onConnect = () => finish(null);
     const onError = (error: Error & { type?: string; data?: unknown; description?: unknown }) => {
-      // Tres orígenes, y solo uno es el servidor diciendo que no: un error de transporte trae
-      // `type: "TransportError"` y la causa de red en `description`; el plazo del `Manager` es un
-      // «timeout» a secas; y el resto es el `CONNECT_ERROR` que mandó el servidor, con su `data`.
+      // Dos orígenes, y solo uno es el servidor diciendo que no: un error de transporte trae
+      // `type: "TransportError"` y la causa de red en `description` —un `Error` en el sondeo, un
+      // evento en el WebSocket—; el resto es el `CONNECT_ERROR` que mandó el servidor, con su `data`.
       if (error.type === "TransportError") {
         const cause = error.description instanceof Error ? error.description.message : "";
         finish(new Error(cause ? `${error.message}: ${cause}` : error.message));
-      } else if (error.message === "timeout") {
-        finish(new Error(`sin respuesta al CONNECT en ${options.connectTimeoutMs} ms`));
       } else finish(new SocketIoRejectedError(error.message, error.data));
     };
+    // Engine.IO abierto y cerrado antes del `CONNECT` —el servidor que corta en su `io.use()`— no es
+    // un `connect_error`: sin esto, la promesa no se resolvía nunca.
+    const onDisconnect = (reason: string) =>
+      finish(new Error(`el servidor cerró la conexión antes de aceptar el CONNECT: ${reason}`));
     socket.on("connect", onConnect);
     socket.on("connect_error", onError);
+    socket.on("disconnect", onDisconnect);
     socket.connect();
   });
 }
-
-export { BlockedTargetError };

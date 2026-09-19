@@ -95,7 +95,8 @@ export type ParsedFile = { format: ImportFileFormat; drafts: EndpointDraft[]; sk
  * not a collection read as markdown finds nothing and reports an empty import as a success.
  */
 export function detectFormat(filename: string, text: string): ImportFileFormat | null {
-  const extension = filename.toLowerCase().split(".").pop() ?? "";
+  const lower = filename.toLowerCase();
+  const extension = lower.slice(lower.lastIndexOf(".") + 1);
   if (extension === "yaml" || extension === "yml") return "openapi";
   if (extension === "md" || extension === "markdown" || extension === "txt") return "markdown";
 
@@ -280,7 +281,11 @@ function parseOpenApi(text: string): ParsedFile {
   } catch (error) {
     // Un `.yaml` que no es YAML —o que no tiene un objeto en la raíz— es un fichero que no se pudo
     // leer, no un fallo del servidor: se dice como salto, igual que un documento sin versión.
-    const reason = error instanceof Error ? error.message : "El documento no se pudo leer";
+    // `importSpec` solo lanza `Error` (el del YAML mal formado y el del documento sin objeto raíz);
+    // el otro brazo está para el tipo `unknown` del `catch`, y no hay entrada que lo alcance.
+    const reason =
+      /* node:coverage ignore next */
+      error instanceof Error ? error.message : "El documento no se pudo leer";
     return { format: "openapi", drafts: [], skipped: [{ method: "", path: "", name: "", reason }] };
   }
   const errors = parsed.problems.filter((problem) => problem.severity === "error");

@@ -96,6 +96,10 @@ export class RedisRateLimitStore implements RateLimitStorePort, OnModuleDestroy 
 
   async close(): Promise<void> {
     await this.client.quit().catch(() => undefined);
+    // `quit` sobre un cliente que no está conectado falla y deja programado el siguiente reintento:
+    // `disconnect` apaga esa cuenta atrás. Sin él, un proceso que se cierra con Redis caído se queda
+    // vivo reintentando una conexión que ya no le importa a nadie.
+    this.client.disconnect();
   }
 
   async onModuleDestroy(): Promise<void> {

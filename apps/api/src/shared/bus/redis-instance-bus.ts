@@ -134,6 +134,9 @@ export class RedisInstanceBus implements InstanceBusPort, OnModuleDestroy {
   async close(): Promise<void> {
     for (const id of [...this.pending.keys()]) this.settle(id)?.reject(new Error("El bus se está cerrando"));
     await Promise.all([this.subscriber.quit().catch(() => undefined), this.publisher.quit().catch(() => undefined)]);
+    // Igual que en los contadores: `quit` con Redis caído falla y el cliente sigue reintentando solo.
+    this.subscriber.disconnect();
+    this.publisher.disconnect();
   }
 
   async onModuleDestroy(): Promise<void> {

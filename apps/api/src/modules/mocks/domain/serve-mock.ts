@@ -137,7 +137,7 @@ export function routeTemplate(path: string): RouteTemplate {
   let source = "";
   let last = 0;
   for (const match of normalized.matchAll(PLACEHOLDER)) {
-    const at = match.index ?? 0;
+    const at = match.index;
     source += escapeRegExp(normalized.slice(last, at));
     if (match[0].startsWith("{{")) {
       // Una variable de entorno dentro de la ruta: aquí no se sabe su valor, así que encaja con

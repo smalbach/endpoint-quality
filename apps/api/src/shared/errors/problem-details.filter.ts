@@ -81,7 +81,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
       const status = STATUS_BY_KIND[exception.kind];
       return {
         type: `https://endpoint-quality.dev/problems/${exception.code ?? exception.kind}`,
-        title: TITLE_BY_STATUS[status] ?? "Error",
+        title: TITLE_BY_STATUS[status],
         status,
         detail: exception.message,
         instance,
@@ -143,6 +143,5 @@ function isHttpishError(exception: unknown): exception is Error & { status: numb
 
 /** `class-validator` prefixes its message with the property name; that prefix is the field. */
 function namedField(message: string): { field: string; detail: string } {
-  const [first] = message.split(" ");
-  return { field: first ?? "body", detail: message };
+  return { field: message.split(" ")[0], detail: message };
 }
