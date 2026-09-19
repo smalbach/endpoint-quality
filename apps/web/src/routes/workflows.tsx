@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import { Drawer, PromptDialog } from "@/components/overlay";
-import { RunProgress, useRunProgress } from "@/routes/runs";
+import { RunProgressView, useRunProgress } from "@/routes/runs";
 import { resolveActive, useActiveEnvironment } from "@/lib/active-environment";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -569,7 +569,7 @@ export function WorkflowsPage() {
         {tab === "run" ? (
           <div className="h-full overflow-y-auto p-4">
             {activeRunId ? (
-              <RunProgress base={base} runId={activeRunId} />
+              <RunProgressView live={runProgress} />
             ) : (
               <Empty title="Sin ejecuciones" hint="Ejecuta un flujo desde el lienzo para analizar aquí su resultado." />
             )}
