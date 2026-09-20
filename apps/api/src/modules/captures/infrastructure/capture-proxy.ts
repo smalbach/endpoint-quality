@@ -60,7 +60,7 @@ import { connect as netConnect, type Socket } from "node:net";
 import { TLSSocket, type SecureContext } from "node:tls";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 
-import { BlockedTargetError, pinnedAgent, resolveTarget, type SafeFetchPolicy } from "@/shared/http/safe-fetch";
+import { type BlockedTargetError, pinnedAgent, resolveTarget, type SafeFetchPolicy } from "@/shared/http/safe-fetch";
 import { hashOpaqueToken } from "@/shared/crypto/opaque-token";
 import { InMemoryRateLimitStore, type RateLimitStorePort } from "@/shared/rate-limit/rate-limit-store";
 import type { CaptureLimits, CaptureStopReason, RawExchange } from "../domain/model";
@@ -433,7 +433,9 @@ export class CaptureProxy {
     try {
       resolved = await resolveTarget(target, this.options.policy);
     } catch (error) {
-      const why = error instanceof BlockedTargetError ? error.message : "no se pudo resolver el destino";
+      // `resolveTarget` solo lanza `BlockedTargetError` —URL inválida, esquema, credenciales, nombre
+      // que no resuelve o destino privado—, y su mensaje ya dice cuál de esas fue.
+      const why = (error as BlockedTargetError).message;
       const open = await this.record(session, exchange({ error: why }));
       return plain(response, 403, why, open ? undefined : () => this.stop(session.id));
     }
@@ -565,7 +567,9 @@ export class CaptureProxy {
     try {
       ({ address } = await resolveTarget(`${url}/`, this.options.policy));
     } catch (error) {
-      const why = error instanceof BlockedTargetError ? error.message : "no se pudo resolver el destino";
+      // `resolveTarget` solo lanza `BlockedTargetError` —URL inválida, esquema, credenciales, nombre
+      // que no resuelve o destino privado—, y su mensaje ya dice cuál de esas fue.
+      const why = (error as BlockedTargetError).message;
       const open = await this.record(session, tunnel({ error: why }));
       return refuse(client, "403 Forbidden", open ? undefined : () => this.stop(session.id));
     }

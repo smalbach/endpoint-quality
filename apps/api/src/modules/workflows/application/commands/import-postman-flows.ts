@@ -281,9 +281,9 @@ export class ImportPostmanFlowsHandler implements ICommandHandler<
     if (!flowWrites.length) {
       throw new InvalidInputError(
         "No se pudo montar ningún flujo con la colección",
-        skipped.length
-          ? skipped.slice(0, 5).map((entry) => ({ field: "text", detail: `${entry.name}: ${entry.reason}` }))
-          : [{ field: "text", detail: "Ninguna carpeta trae peticiones legibles" }],
+        // Una carpeta que no deja ningún nodo se apunta arriba en `skipped`, así que si no se montó
+        // ningún flujo hay al menos un motivo que contar: no hace falta uno genérico.
+        skipped.slice(0, 5).map((entry) => ({ field: "text", detail: `${entry.name}: ${entry.reason}` })),
         "nothing-to-import",
       );
     }

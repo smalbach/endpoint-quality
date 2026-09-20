@@ -126,10 +126,7 @@ export class RunOrchestrator {
     /* node:coverage disable */
     if (!context) throw new Error(`Corrida ${run.id}: una fila de paso fuera de su recorrido`);
     /* node:coverage enable */
-    const secrets = [
-      ...(context.target.secrets ?? []),
-      ...(context.target.session ? [context.target.session.value] : []),
-    ];
+    const secrets = secretsOf(context);
     return this.runs.saveSteps(
       rows.map((row) => ({
         ...row,
@@ -905,10 +902,7 @@ export class RunOrchestrator {
         Object.assign(context.target.variables, outcome.environmentSet, outcome.variables);
         for (const name of outcome.environmentUnset) delete context.target.variables[name];
       }
-      const shown = redactOutcome(outcome, [
-        ...(context.target.secrets ?? []),
-        ...(context.target.session ? [context.target.session.value] : []),
-      ]);
+      const shown = redactOutcome(outcome, secretsOf(context));
       const assertions: Assertion[] = [
         ...(shown.error ? [{ label: "Script", pass: false, detail: shown.error }] : []),
         ...shown.tests.map((test) => ({
@@ -1098,7 +1092,7 @@ export class RunOrchestrator {
       }
       const { executed, actual } = mockStep(item.step, item.step.mock, item.runCase, context.target.variables, {
         seed: computedSeed(),
-        secrets: [...(context.target.secrets ?? []), ...(context.target.session ? [context.target.session.value] : [])],
+        secrets: secretsOf(context),
       });
       if (actual) responses.set(item.step.id, { actual, durationMs: executed.durationMs });
       await this.finishControl(run, item, state, startedAt, {
@@ -1126,7 +1120,7 @@ export class RunOrchestrator {
         actorId: run.triggeredBy,
         node: item.step.channel,
         variables: context.target.variables,
-        secrets: [...(context.target.secrets ?? []), ...(context.target.session ? [context.target.session.value] : [])],
+        secrets: secretsOf(context),
       });
       const result = channelStep(item.step, item.runCase, outcome, context.target.variables);
       if (result.actual) responses.set(item.step.id, { actual: result.actual, durationMs: result.executed.durationMs });
@@ -2086,6 +2080,16 @@ function loopBodies(prepared: PreparedItem[]): Map<string, PreparedItem[]> {
   );
 }
 
+/**
+ * Lo que hay que tapar en lo que se guarda: los secretos del entorno y, si se entró, la sesión.
+ *
+ * En un sitio y no en cuatro: los cuatro escriben (pasos, script, mock y canal), y uno que se
+ * quedara sin la sesión guardaría el testigo en claro.
+ */
+function secretsOf(context: ExecutionContext): string[] {
+  return [...(context.target.secrets ?? []), ...(context.target.session ? [context.target.session.value] : [])];
+}
+
 /** A loop node's body. */
 function bodyOf(state: WalkState, loopId: string): PreparedItem[] {
   // `loopBodies` gives every loop node of the walk an entry, and only loop nodes ask.
@@ -2251,7 +2255,8 @@ function controlCaseFields(step: WorkflowStep): { operationId: string; method: s
       return { operationId: "", method: "MOCK", path: String(step.mock?.status ?? "") };
     case "channel":
       // The protocol and the name are only known once the channel is read; `channelStep` fills them in.
-      return { operationId: "", method: "CHANNEL", path: step.channel?.channelId ?? "" };
+      // El bloque lo exige el esquema del flujo: «un nodo canal necesita el canal que ejecuta».
+      return { operationId: "", method: "CHANNEL", path: step.channel!.channelId };
     case "webhook":
       // El bloque con su espera lo exige el esquema: «un nodo webhook necesita cuánto esperar».
       return { operationId: "", method: "HOOK", path: `espera ${Math.round(step.webhook!.timeoutMs / 1000)} s` };
