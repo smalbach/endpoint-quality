@@ -541,8 +541,11 @@ export class RunOrchestrator {
           runCase: {
             ...base,
             operationId: "",
-            method: step.fetch?.method ?? "GET",
-            path: step.fetch?.url ?? "",
+            // El bloque y sus dos campos los exige el esquema del flujo (un nodo fetch sin método o
+            // sin URL no se guarda), igual que en el nodo GraphQL de aquí abajo: leerlos con un
+            // valor por defecto sería escribir la rama de un caso que no puede llegar.
+            method: step.fetch!.method,
+            path: step.fetch!.url,
           } satisfies RunCase,
         };
       }
