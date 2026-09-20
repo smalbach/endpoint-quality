@@ -14,8 +14,8 @@
     "typecheck": "tsc --noEmit",
     "migration:run": "typeorm-ts-node-esm migration:run -d src/shared/database/data-source.ts",
     "migration:revert": "typeorm-ts-node-esm migration:revert -d src/shared/database/data-source.ts",
-    "pretest": "tsc -p tsconfig.test.json && tsc-alias -p tsconfig.test.json",
-    "pretest:coverage": "tsc -p tsconfig.test.json && tsc-alias -p tsconfig.test.json"
+    "pretest": "rm -rf dist-test && tsc -p tsconfig.test.json && tsc-alias -p tsconfig.test.json",
+    "pretest:coverage": "rm -rf dist-test && tsc -p tsconfig.test.json && tsc-alias -p tsconfig.test.json"
   },
   "dependencies": {
     "@eq/contracts": "workspace:*",
