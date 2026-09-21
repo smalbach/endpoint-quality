@@ -296,6 +296,10 @@ export class EnvironmentEntity {
    * everyone, the 401/403 cases fail for a reason that has nothing to do with the endpoint. */
   @Column({ type: "boolean", default: false }) authEnforced: boolean;
   @Column({ type: "timestamptz" }) createdAt: Date;
+  /** Ver `ArchiveAndSoftDelete1700000042000`: fuera de la lista sin perderse, y borrado que se
+   * puede deshacer. */
+  @Column({ type: "timestamptz", nullable: true }) archivedAt: Date | null;
+  @Column({ type: "timestamptz", nullable: true }) deletedAt: Date | null;
 }
 
 /**
@@ -494,6 +498,8 @@ export class WorkflowEntity {
   @Column({ type: "timestamptz" }) createdAt: Date;
   @Column({ type: "timestamptz" }) updatedAt: Date;
   @Column("uuid") updatedBy: string;
+  /** Archivar un flujo es su `status`; esto es lo otro: borrarlo sin perderlo. */
+  @Column({ type: "timestamptz", nullable: true }) deletedAt: Date | null;
 }
 
 /**
@@ -515,6 +521,10 @@ export class WorkflowDatasetEntity {
   @Column({ type: "timestamptz" }) createdAt: Date;
   @Column({ type: "timestamptz" }) updatedAt: Date;
   @Column("uuid") updatedBy: string;
+  /** Ver `ArchiveAndSoftDelete1700000042000`: fuera de la lista sin perderse, y borrado que se
+   * puede deshacer. */
+  @Column({ type: "timestamptz", nullable: true }) archivedAt: Date | null;
+  @Column({ type: "timestamptz", nullable: true }) deletedAt: Date | null;
 }
 
 /**
@@ -536,6 +546,10 @@ export class WorkflowSuiteEntity {
   @Column({ type: "timestamptz" }) createdAt: Date;
   @Column({ type: "timestamptz" }) updatedAt: Date;
   @Column("uuid") updatedBy: string;
+  /** Ver `ArchiveAndSoftDelete1700000042000`: fuera de la lista sin perderse, y borrado que se
+   * puede deshacer. */
+  @Column({ type: "timestamptz", nullable: true }) archivedAt: Date | null;
+  @Column({ type: "timestamptz", nullable: true }) deletedAt: Date | null;
 }
 
 /**
@@ -654,6 +668,10 @@ export class MockServerEntity {
   @Column({ type: "timestamptz" }) createdAt: Date;
   @Column({ type: "timestamptz" }) updatedAt: Date;
   @Column("uuid") createdBy: string;
+  /** Ver `ArchiveAndSoftDelete1700000042000`: fuera de la lista sin perderse, y borrado que se
+   * puede deshacer. */
+  @Column({ type: "timestamptz", nullable: true }) archivedAt: Date | null;
+  @Column({ type: "timestamptz", nullable: true }) deletedAt: Date | null;
 }
 
 /**
@@ -703,6 +721,10 @@ export class DocSiteEntity {
   @Column({ type: "timestamptz" }) createdAt: Date;
   @Column({ type: "timestamptz" }) updatedAt: Date;
   @Column("uuid") createdBy: string;
+  /** Ver `ArchiveAndSoftDelete1700000042000`: fuera de la lista sin perderse, y borrado que se
+   * puede deshacer. */
+  @Column({ type: "timestamptz", nullable: true }) archivedAt: Date | null;
+  @Column({ type: "timestamptz", nullable: true }) deletedAt: Date | null;
 }
 
 /**
@@ -727,6 +749,10 @@ export class MonitorEntity {
   @Column({ type: "timestamptz" }) createdAt: Date;
   @Column({ type: "timestamptz" }) updatedAt: Date;
   @Column("uuid") createdBy: string;
+  /** Ver `ArchiveAndSoftDelete1700000042000`: fuera de la lista sin perderse, y borrado que se
+   * puede deshacer. */
+  @Column({ type: "timestamptz", nullable: true }) archivedAt: Date | null;
+  @Column({ type: "timestamptz", nullable: true }) deletedAt: Date | null;
 }
 
 /**
@@ -779,6 +805,8 @@ export class ChannelEndpointEntity {
   @Column({ type: "timestamptz" }) createdAt: Date;
   @Column({ type: "timestamptz" }) updatedAt: Date;
   @Column({ type: "uuid", nullable: true }) updatedBy: string | null;
+  /** Fuera de la lista sin perderse. Ver `ArchiveAndSoftDelete1700000042000`. */
+  @Column({ type: "timestamptz", nullable: true }) archivedAt: Date | null;
   @Column({ type: "timestamptz", nullable: true }) deletedAt: Date | null;
 }
 
@@ -909,6 +937,10 @@ export class RoleEntity {
   @Column({ type: "int", default: 0 }) position: number;
   @Column({ type: "timestamptz" }) createdAt: Date;
   @Column({ type: "timestamptz" }) updatedAt: Date;
+  /** Ver `ArchiveAndSoftDelete1700000042000`: fuera de la lista sin perderse, y borrado que se
+   * puede deshacer. */
+  @Column({ type: "timestamptz", nullable: true }) archivedAt: Date | null;
+  @Column({ type: "timestamptz", nullable: true }) deletedAt: Date | null;
 }
 
 /** One decided cell: a role over an endpoint. No row is «sin decidir». */
@@ -982,6 +1014,10 @@ export class PerformancePlanEntity {
   @Column({ type: "timestamptz" }) createdAt: Date;
   @Column({ type: "timestamptz" }) updatedAt: Date;
   @Column("uuid") updatedBy: string;
+  /** Ver `ArchiveAndSoftDelete1700000042000`: fuera de la lista sin perderse, y borrado que se
+   * puede deshacer. */
+  @Column({ type: "timestamptz", nullable: true }) archivedAt: Date | null;
+  @Column({ type: "timestamptz", nullable: true }) deletedAt: Date | null;
 }
 
 /**
@@ -1048,6 +1084,60 @@ export class CodeScanEntity {
   @Column("uuid") createdBy: string;
 }
 
+/**
+ * Una colección: el árbol entero en una columna.
+ *
+ * Una colección es un fichero —se lee entera para enseñarla y para correrla, se escribe entera al
+ * mover una petición de carpeta—, y nadie consulta peticiones entre colecciones. Filas por nodo
+ * comprarían una consulta que nadie hace al precio de reconstruir orden y jerarquía en cada lectura.
+ */
+@Entity({ name: "collections" })
+export class CollectionEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Index() @Column("uuid") projectId: string;
+  @Column({ type: "varchar", length: 300 }) name: string;
+  @Column({ type: "text", default: "" }) description: string;
+  @Column({
+    type: "jsonb",
+    default: () => `'{"auth":{"type":"inherit","params":{}},"variables":[],"preRequestScript":"","postResponseScript":"","items":[]}'::jsonb`,
+  })
+  document: unknown;
+  @Column({ type: "timestamptz" }) createdAt: Date;
+  @Column({ type: "timestamptz" }) updatedAt: Date;
+  @Column("uuid") updatedBy: string;
+}
+
+/**
+ * Una corrida de una colección, con sus resultados dentro.
+ *
+ * El nombre de la colección va copiado y no leído al enseñarla, por lo mismo que una corrida de
+ * carga copia su plan: una corrida es un hecho sobre un rato, y renombrar la colección después no
+ * reescribe lo que se corrió. `collectionId` no tiene clave foránea por eso mismo — borrar la
+ * colección no borra su historial.
+ */
+@Entity({ name: "collection_runs" })
+export class CollectionRunEntity {
+  @PrimaryColumn("uuid") id: string;
+  @Column("uuid") organizationId: string;
+  @Index() @Column("uuid") projectId: string;
+  @Index() @Column("uuid") collectionId: string;
+  @Column({ type: "varchar", length: 300, default: "" }) collectionName: string;
+  @Column({ type: "uuid", nullable: true }) environmentId: string | null;
+  @Column({ type: "varchar", length: 200, nullable: true }) environmentName: string | null;
+  @Column({ type: "varchar", length: 20 }) status: string;
+  @Column({ type: "integer", default: 1 }) iterations: number;
+  @Column({ type: "integer", default: 0 }) delayMs: number;
+  @Column({ type: "boolean", default: false }) stopOnFailure: boolean;
+  @Column({ type: "varchar", length: 80, nullable: true }) folderId: string | null;
+  @Column({ type: "varchar", length: 300, nullable: true }) folderName: string | null;
+  @Column({ type: "jsonb", default: () => "'{}'::jsonb" }) totals: unknown;
+  @Column({ type: "jsonb", default: () => "'[]'::jsonb" }) results: unknown[];
+  @Column({ type: "timestamptz" }) startedAt: Date;
+  @Column({ type: "timestamptz", nullable: true }) finishedAt: Date | null;
+  @Column({ type: "text", nullable: true }) error: string | null;
+  @Column("uuid") startedBy: string;
+}
+
 // The line breaks group these by module, which is information a formatter cannot know and
 // one-per-line would lose.
 // prettier-ignore
@@ -1069,4 +1159,5 @@ export const ENTITIES = [
   SecurityRunEntity,
   PerformancePlanEntity, PerformanceRunEntity,
   CodeConnectorEntity, CodeScanEntity,
+  CollectionEntity, CollectionRunEntity,
 ];

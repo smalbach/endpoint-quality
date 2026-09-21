@@ -6,6 +6,13 @@ import { VARIABLE_NAME } from "@eq/runner-core";
 
 import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
+import {
+  archiveIn,
+  deleteIn,
+  restoreIn,
+  type LifecycleNoun,
+  type LifecycleStore,
+} from "@/shared/lifecycle/lifecycle-store";
 import { SECRET_CIPHER, type SecretCipherPort } from "@/shared/crypto/secret-cipher";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
@@ -51,7 +58,28 @@ export class UpdateEnvironmentCommand implements ICommand {
     readonly input: EnvironmentInput,
   ) {}
 }
+/** Borrar un entorno: blando por defecto, definitivo con `purge` y solo sobre algo ya eliminado. */
 export class DeleteEnvironmentCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly environmentId: string,
+    readonly purge = false,
+  ) {}
+}
+
+/** Archivar un entorno: sale del selector y deja de poder ejecutarse, sin perder sus variables. */
+export class SetEnvironmentArchivedCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly environmentId: string,
+    readonly archived: boolean,
+  ) {}
+}
+
+/** Restaurar un entorno eliminado, con sus variables y sus credenciales. */
+export class RestoreEnvironmentCommand implements ICommand {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
@@ -69,7 +97,9 @@ export async function ownedEnvironment(
   environmentId: string,
 ): Promise<Environment> {
   await ownedProject(projects, organizationId, projectId);
-  const environment = await environments.findById(environmentId);
+  // `findAnyById` y no `findById`: esto también es el camino de archivar, restaurar y mirar la
+  // papelera, y un entorno eliminado que contestara 404 aquí no se podría recuperar nunca.
+  const environment = await environments.findAnyById(environmentId);
   if (!environment || environment.projectId !== projectId)
     throw new NotFoundError("El entorno no existe", "environment-not-found");
   return environment;
@@ -222,6 +252,8 @@ export class CreateEnvironmentHandler implements ICommandHandler<CreateEnvironme
       writesAllowed: command.input.writesAllowed ?? false,
       authEnforced: command.input.authEnforced ?? false,
       createdAt: this.clock.now(),
+      archivedAt: null,
+      deletedAt: null,
     };
     await this.environments.save(environment);
     // The first environment of a project is the active one. A project with environments and none
@@ -272,11 +304,44 @@ export class UpdateEnvironmentHandler implements ICommandHandler<UpdateEnvironme
   }
 }
 
+/** Cómo se llama esto en los errores del ciclo de vida. */
+const ENVIRONMENT: LifecycleNoun = { code: "environment", that: "El entorno", the: "el entorno" };
+
+/**
+ * El almacén de entornos con la forma que espera el servicio de ciclo de vida.
+ *
+ * Su puerto no lleva `projectId` en la búsqueda por id —un entorno se resuelve por id a secas
+ * desde los ejecutores—, así que aquí se comprueba a mano que la fila sea de ese proyecto: sin eso,
+ * archivar por id alcanzaría el entorno de otro inquilino.
+ */
+export const environmentStore = (environments: EnvironmentRepositoryPort): LifecycleStore<Environment> => ({
+  findById: async (projectId, id) => {
+    const row = await environments.findAnyById(id);
+    return row && row.projectId === projectId ? row : null;
+  },
+  save: (row) => environments.save(row),
+  remove: async (_projectId, id) => {
+    await environments.remove(id);
+    return true;
+  },
+});
+
+/**
+ * Borrar un entorno: **blando por defecto**.
+ *
+ * Lo que había dentro no es un nombre y una URL: son las variables que alguien fue afinando y las
+ * credenciales cifradas de cada rol. El borrado duro se las llevaba por cascada, y con ellas la
+ * única forma de volver a correr la matriz de autorización de ese entorno.
+ *
+ * Eliminarlo **sí** promueve otro como activo: la barra no puede quedarse apuntando a algo que ya
+ * no sale en el selector. Restaurarlo no vuelve a robarle el puesto al que quedó activo.
+ */
 @CommandHandler(DeleteEnvironmentCommand)
 export class DeleteEnvironmentHandler implements ICommandHandler<DeleteEnvironmentCommand, void> {
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(ENVIRONMENT_REPOSITORY) private readonly environments: EnvironmentRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
   ) {}
 
   async execute(command: DeleteEnvironmentCommand): Promise<void> {
@@ -287,17 +352,95 @@ export class DeleteEnvironmentHandler implements ICommandHandler<DeleteEnvironme
       command.projectId,
       command.environmentId,
     );
-    // The credentials go with it, by the cascade in the migration. Deleting an environment and
-    // leaving its stored secrets behind would be a set of credentials nothing can reach to
-    // revoke.
-    await this.environments.remove(environment.id);
-
-    // Deleting the active one promotes the oldest that remains. The analyzer left the project with
-    // none, and the bar kept saying «Sin entorno» next to three of them.
-    const project = await this.projects.findById(environment.projectId);
-    if (project && (project.activeEnvironmentId === environment.id || !project.activeEnvironmentId)) {
-      const [next] = await this.environments.listForProject(project.id);
-      await this.projects.save({ ...project, activeEnvironmentId: next?.id ?? null });
-    }
+    // En el definitivo las credenciales se van con él, por la cascada de la migración: un entorno
+    // borrado dejando atrás sus secretos sería un juego de credenciales que nada puede revocar.
+    await deleteIn(
+      environmentStore(this.environments),
+      command.projectId,
+      environment.id,
+      command.purge,
+      this.clock.now(),
+      ENVIRONMENT,
+    );
+    await promoteActive(this.projects, this.environments, environment);
   }
+}
+
+@CommandHandler(SetEnvironmentArchivedCommand)
+export class SetEnvironmentArchivedHandler implements ICommandHandler<SetEnvironmentArchivedCommand, void> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(ENVIRONMENT_REPOSITORY) private readonly environments: EnvironmentRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
+
+  async execute(command: SetEnvironmentArchivedCommand): Promise<void> {
+    const environment = await ownedEnvironment(
+      this.projects,
+      this.environments,
+      command.organizationId,
+      command.projectId,
+      command.environmentId,
+    );
+    await archiveIn(
+      environmentStore(this.environments),
+      command.projectId,
+      environment.id,
+      command.archived,
+      this.clock.now(),
+      ENVIRONMENT,
+    );
+    // Archivar el activo deja la barra apuntando a algo que ya no sale en el selector.
+    await promoteActive(this.projects, this.environments, environment);
+  }
+}
+
+@CommandHandler(RestoreEnvironmentCommand)
+export class RestoreEnvironmentHandler implements ICommandHandler<RestoreEnvironmentCommand, void> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(ENVIRONMENT_REPOSITORY) private readonly environments: EnvironmentRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
+
+  async execute(command: RestoreEnvironmentCommand): Promise<void> {
+    const environment = await ownedEnvironment(
+      this.projects,
+      this.environments,
+      command.organizationId,
+      command.projectId,
+      command.environmentId,
+    );
+    // El nombre pudo reutilizarse mientras estaba fuera: `findByName` solo mira los vivos.
+    if (environment.deletedAt && (await this.environments.findByName(command.projectId, environment.name)))
+      throw new ConflictError("Ya hay un entorno con ese nombre", "environment-name-taken");
+    await restoreIn(
+      environmentStore(this.environments),
+      command.projectId,
+      environment.id,
+      this.clock.now(),
+      ENVIRONMENT,
+    );
+  }
+}
+
+/**
+ * Deja el entorno activo apuntando a algo que de verdad se pueda usar.
+ *
+ * La pregunta no es «¿se ha borrado este?» sino «¿el activo sigue vivo?», que es la que importa:
+ * archivar el activo lo saca del selector igual que eliminarlo, y la barra no puede quedarse
+ * señalando algo que ya no aparece. El analizador dejaba el proyecto sin ninguno, y la barra seguía
+ * diciendo «Sin entorno» al lado de tres.
+ */
+export async function promoteActive(
+  projects: ProjectRepositoryPort,
+  environments: EnvironmentRepositoryPort,
+  environment: Environment,
+): Promise<void> {
+  const project = await projects.findById(environment.projectId);
+  if (!project) return;
+  const active = project.activeEnvironmentId ? await environments.findById(project.activeEnvironmentId) : null;
+  if (active) return;
+  const [next] = await environments.listForProject(project.id);
+  await projects.save({ ...project, activeEnvironmentId: next?.id ?? null });
 }

@@ -343,7 +343,9 @@ describe("la lista de flujos: suites", () => {
     fireEvent.change(screen.getByDisplayValue("Añadir flujo…"), { target: { value: "w2" } });
     await waitFor(() => expect(calls("PUT", "/suites/su1")[0]!.body).toEqual({ workflowIds: ["w1", "w2"] }));
 
+    // Eliminar pregunta antes, y el diálogo es donde se confirma.
     fireEvent.click(screen.getByRole("button", { name: "Eliminar" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Eliminar" }));
     await waitFor(() => expect(calls("DELETE", "/suites/su1")).toHaveLength(1));
 
     // Elegir otro entorno lo activa en el proyecto, y la suite corre en él.

@@ -207,6 +207,8 @@ const environment = (id: string, name: string, token: string) => ({
   writesAllowed: false,
   authEnforced: false,
   createdAt: new Date(0),
+  archivedAt: null,
+  deletedAt: null,
 });
 
 describe("fotos y linaje", () => {
@@ -266,6 +268,8 @@ const suite = (id: string, name: string, workflowIds: string[]) => ({
   createdAt: at,
   updatedAt: at,
   updatedBy: "u",
+  archivedAt: null,
+  deletedAt: null,
 });
 const workflow = (id: string, name: string) => ({
   id,
@@ -288,6 +292,8 @@ const role = (id: string, name: string, position = 0) => ({
   position,
   createdAt: at,
   updatedAt: at,
+  archivedAt: null,
+  deletedAt: null,
 });
 const endpoint = (id: string, path: string) =>
   ({

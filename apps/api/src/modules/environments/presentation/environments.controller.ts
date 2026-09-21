@@ -19,6 +19,8 @@ import {
   CreateEnvironmentCommand,
   DeleteEnvironmentCommand,
   UpdateEnvironmentCommand,
+  SetEnvironmentArchivedCommand,
+  RestoreEnvironmentCommand,
 } from "../application/commands/manage-environment";
 import { DeleteCredentialCommand, UpsertCredentialCommand } from "../application/commands/manage-credential";
 import { ActivateEnvironmentCommand } from "../application/commands/active-environment";
@@ -26,6 +28,8 @@ import { ImportPostmanEnvironmentCommand } from "../application/commands/import-
 import { ClearSessionTokenCommand, GetSessionTokenQuery } from "../application/commands/session-token";
 import { DeleteCookiesCommand, ListCookiesQuery, SetCookieCommand } from "../application/commands/cookies";
 import { ListEnvironmentsQuery } from "../application/queries/list-environments";
+import { parseLifecycleState } from "@/shared/lifecycle/lifecycle";
+import { SetArchivedDto } from "@/shared/lifecycle/lifecycle.dto";
 import { RevealVariablesQuery } from "../application/queries/reveal-variables";
 import {
   CreateEnvironmentDto,
@@ -48,8 +52,12 @@ export class EnvironmentsController {
 
   @Get("environments")
   @RequireRole("viewer")
-  async list(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string) {
-    return this.queryBus.execute(new ListEnvironmentsQuery(organizationId, projectId));
+  async list(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Query("state") state?: string,
+  ) {
+    return this.queryBus.execute(new ListEnvironmentsQuery(organizationId, projectId, parseLifecycleState(state)));
   }
 
   /** The clear text of the sensitive variables, and nothing else. `admin`, like credentials: it
@@ -187,6 +195,37 @@ export class EnvironmentsController {
     await this.commandBus.execute(new UpdateEnvironmentCommand(organizationId, projectId, environmentId, body));
   }
 
+  /**
+   * Fuera del selector, y deja de poder ejecutarse. `admin` como borrar: lo que guarda dentro son
+   * las credenciales del entorno, y sacarlas de circulación no es una edición cualquiera.
+   */
+  @Patch("environments/:environmentId/archived")
+  @RequireRole("admin")
+  @HttpCode(204)
+  async setArchived(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("environmentId") environmentId: string,
+    @Body() body: SetArchivedDto,
+  ): Promise<void> {
+    await this.commandBus.execute(
+      new SetEnvironmentArchivedCommand(organizationId, projectId, environmentId, body.archived),
+    );
+  }
+
+  /** Devuelve un entorno eliminado, con sus variables y sus credenciales. */
+  @Post("environments/:environmentId/restore")
+  @RequireRole("admin")
+  @HttpCode(204)
+  async restore(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("environmentId") environmentId: string,
+  ): Promise<void> {
+    await this.commandBus.execute(new RestoreEnvironmentCommand(organizationId, projectId, environmentId));
+  }
+
+  /** Borrado blando. `?purge=true` es el definitivo, y se lleva las credenciales por cascada. */
   @Delete("environments/:environmentId")
   @RequireRole("admin")
   @HttpCode(204)
@@ -194,8 +233,11 @@ export class EnvironmentsController {
     @Param("organizationId") organizationId: string,
     @Param("projectId") projectId: string,
     @Param("environmentId") environmentId: string,
+    @Query("purge") purge?: string,
   ): Promise<void> {
-    await this.commandBus.execute(new DeleteEnvironmentCommand(organizationId, projectId, environmentId));
+    await this.commandBus.execute(
+      new DeleteEnvironmentCommand(organizationId, projectId, environmentId, purge === "true"),
+    );
   }
 
   // Storing somebody's staging token is one of the two acts in this product that can affect a

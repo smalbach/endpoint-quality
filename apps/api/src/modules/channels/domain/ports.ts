@@ -1,5 +1,6 @@
 import type { ChannelMessage } from "@eq/runner-core";
 
+import type { LifecycleState } from "@/shared/lifecycle/lifecycle";
 import type { Channel } from "./model";
 import type { ChannelSession } from "./session";
 
@@ -15,10 +16,20 @@ export const CHANNEL_SESSION_REPOSITORY = Symbol("CHANNEL_SESSION_REPOSITORY");
  * es cómo un canal borrado vuelve a aparecer en una lista.
  */
 export interface ChannelRepositoryPort {
-  listByProject(projectId: string): Promise<Channel[]>;
+  /** Los de ese estado. Sin estado, los activos: ni archivados ni borrados. */
+  listByProject(projectId: string, state?: LifecycleState): Promise<Channel[]>;
+  /**
+   * El canal, **solo si está vivo**: por aquí entran abrir sesión, el nodo `channel` de un flujo y
+   * el plan de un monitor, y ninguno debe alcanzar algo que ya salió de la lista.
+   */
   findById(projectId: string, id: string): Promise<Channel | null>;
+  /** El canal **en cualquier estado**, para archivarlo, restaurarlo o verlo en la papelera. */
+  findAnyById(projectId: string, id: string): Promise<Channel | null>;
+  /** Cuántos vivos, que es contra lo que se compara el tope del proyecto. */
   countByProject(projectId: string): Promise<number>;
   save(channel: Channel): Promise<void>;
+  /** El borrado de verdad, con sus sesiones por cascada. Solo «eliminar para siempre». */
+  remove(projectId: string, id: string): Promise<boolean>;
 }
 
 /**

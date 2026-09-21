@@ -1,5 +1,6 @@
 import type { Monitor, MonitorExecution } from "@/modules/monitors/domain/model";
 import type { MonitorRepositoryPort } from "@/modules/monitors/domain/ports";
+import { inLifecycleState, type LifecycleState } from "@/shared/lifecycle/lifecycle";
 
 /**
  * El almacén de monitores en memoria.
@@ -13,9 +14,9 @@ export class InMemoryMonitorRepository implements MonitorRepositoryPort {
   readonly rows = new Map<string, Monitor>();
   readonly executions = new Map<string, MonitorExecution>();
 
-  async listByProject(projectId: string) {
+  async listByProject(projectId: string, state: LifecycleState = "active") {
     return [...this.rows.values()]
-      .filter((row) => row.projectId === projectId)
+      .filter((row) => row.projectId === projectId && inLifecycleState(row, state))
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   }
 
@@ -38,7 +39,13 @@ export class InMemoryMonitorRepository implements MonitorRepositoryPort {
 
   async claimDue(now: Date, limit: number, nextRunAt: (monitor: Monitor) => Date | null) {
     const due = [...this.rows.values()]
-      .filter((row) => row.enabled && row.nextRunAt !== null && row.nextRunAt.getTime() <= now.getTime())
+      .filter(
+        (row) =>
+          row.enabled &&
+          inLifecycleState(row, "active") &&
+          row.nextRunAt !== null &&
+          row.nextRunAt.getTime() <= now.getTime(),
+      )
       .sort((a, b) => (a.nextRunAt?.getTime() ?? 0) - (b.nextRunAt?.getTime() ?? 0))
       .slice(0, limit);
     // Devueltos con el turno ya adelantado, igual que el de Postgres: si aquí se devolviera el

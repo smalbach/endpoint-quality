@@ -1,15 +1,16 @@
 import type { MockCall } from "@/modules/mocks/domain/mock-call";
 import type { MockServer } from "@/modules/mocks/domain/model";
 import type { MockRepositoryPort } from "@/modules/mocks/domain/ports";
+import { inLifecycleState, type LifecycleState } from "@/shared/lifecycle/lifecycle";
 
 export class InMemoryMockRepository implements MockRepositoryPort {
   readonly rows = new Map<string, MockServer>();
   /** La bitácora. Las pruebas miran aquí dentro para comprobar **lo que no se guardó**. */
   readonly calls = new Map<string, MockCall>();
 
-  async listByProject(projectId: string) {
+  async listByProject(projectId: string, state: LifecycleState = "active") {
     return [...this.rows.values()]
-      .filter((row) => row.projectId === projectId)
+      .filter((row) => row.projectId === projectId && inLifecycleState(row, state))
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   }
 
@@ -19,7 +20,9 @@ export class InMemoryMockRepository implements MockRepositoryPort {
   }
 
   async findByPublicId(publicId: string) {
-    return [...this.rows.values()].find((row) => row.publicId === publicId) ?? null;
+    return (
+      [...this.rows.values()].find((row) => row.publicId === publicId && inLifecycleState(row, "active")) ?? null
+    );
   }
 
   async save(mock: MockServer) {

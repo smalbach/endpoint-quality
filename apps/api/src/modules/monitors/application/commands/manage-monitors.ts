@@ -13,6 +13,7 @@ import { stepChannelSchema, type StepChannel } from "@eq/runner-core";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
+import { archivedRow, deletedRow, lifecycleState, restoredRow } from "@/shared/lifecycle/lifecycle";
 import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { writableProject } from "@/modules/endpoints/application/commands/manage-endpoints";
@@ -152,11 +153,24 @@ export class UpdateMonitorHandler implements ICommandHandler<UpdateMonitorComman
   }
 }
 
+/**
+ * Borrar un monitor: **blando por defecto**, definitivo solo si se pide.
+ *
+ * Un monitor lleva dentro un horario que alguien afinó y un historial que dice desde cuándo algo
+ * va mal, y hasta aquí un clic de más se llevaba las dos cosas. Ahora sale de la lista, deja de
+ * lanzar corridas y se puede restaurar; su historial sigue colgando de la fila, así que volver no
+ * vuelve vacío.
+ *
+ * `purge` es el borrado de verdad, y **solo sobre algo ya eliminado**: pedirlo sobre un monitor
+ * vivo es un 409 y no un atajo. La confirmación de la pantalla no es el guardia —quien llama a la
+ * API no pasa por ella—, este orden sí.
+ */
 export class DeleteMonitorCommand implements ICommand {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
     readonly monitorId: string,
+    readonly purge = false,
   ) {}
 }
 
@@ -165,12 +179,119 @@ export class DeleteMonitorHandler implements ICommandHandler<DeleteMonitorComman
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(MONITOR_REPOSITORY) private readonly monitors: MonitorRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
   ) {}
 
   async execute(command: DeleteMonitorCommand): Promise<void> {
     const project = await writableProject(this.projects, command.organizationId, command.projectId);
-    const gone = await this.monitors.remove(project.id, command.monitorId);
-    if (!gone) throw new NotFoundError("Ese monitor no existe", "monitor-not-found");
+    const monitor = await this.monitors.findById(project.id, command.monitorId);
+    if (!monitor) throw new NotFoundError("Ese monitor no existe", "monitor-not-found");
+
+    if (command.purge) {
+      if (lifecycleState(monitor) !== "deleted")
+        throw new ConflictError("Elimina el monitor antes de borrarlo para siempre", "monitor-not-deleted");
+      const gone = await this.monitors.remove(project.id, monitor.id);
+      if (!gone) throw new NotFoundError("Ese monitor no existe", "monitor-not-found");
+      return;
+    }
+
+    if (monitor.deletedAt) return;
+    const now = this.clock.now();
+    // Sin turno: un monitor eliminado no puede quedar vencido esperando a que alguien lo restaure,
+    // porque al restaurarlo dispararía en el acto la corrida de la noche en que se borró.
+    await this.monitors.save({ ...deletedRow(monitor, now), nextRunAt: null, updatedAt: now });
+  }
+}
+
+/**
+ * Archivar: fuera de la lista y **deja de lanzar corridas**, sin perder nada.
+ *
+ * Lo segundo es lo que lo distingue de apagarlo a medias: un monitor archivado que siguiera
+ * avisando a las tres de la mañana estaría archivado solo en la pantalla.
+ *
+ * Desarchivar recalcula el turno desde ahora por el mismo motivo por el que encenderlo lo hace: no
+ * se deben las corridas de los días que estuvo fuera.
+ */
+export class SetMonitorArchivedCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly monitorId: string,
+    readonly archived: boolean,
+  ) {}
+}
+
+@CommandHandler(SetMonitorArchivedCommand)
+export class SetMonitorArchivedHandler implements ICommandHandler<SetMonitorArchivedCommand, MonitorView> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(MONITOR_REPOSITORY) private readonly monitors: MonitorRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
+
+  async execute(command: SetMonitorArchivedCommand): Promise<MonitorView> {
+    const project = await writableProject(this.projects, command.organizationId, command.projectId);
+    const monitor = await this.monitors.findById(project.id, command.monitorId);
+    if (!monitor) throw new NotFoundError("Ese monitor no existe", "monitor-not-found");
+    if (monitor.deletedAt)
+      throw new ConflictError("Restaura el monitor antes de archivarlo", "monitor-deleted");
+
+    const now = this.clock.now();
+    // Archivar deja el turno en nulo, que es lo que lo saca del reclamo; desarchivar lo recalcula
+    // desde ahora por el mismo camino que encenderlo, y por el mismo motivo.
+    const updated = command.archived
+      ? { ...archivedRow(monitor, now), nextRunAt: null, updatedAt: now }
+      : withChanges(archivedRow(monitor, null), {}, now);
+    await this.monitors.save(updated);
+    return viewMonitor(updated);
+  }
+}
+
+/**
+ * Restaurar lo eliminado. Vuelve **a donde estaba**: si se archivó antes de borrarlo, vuelve a los
+ * archivados, porque `archivedAt` nunca se tocó.
+ *
+ * El nombre puede haber sido reutilizado mientras estaba fuera —la comprobación de duplicados solo
+ * mira los vivos—, así que esto es un 409 y no un cambio de nombre a espaldas de nadie.
+ */
+export class RestoreMonitorCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly monitorId: string,
+  ) {}
+}
+
+@CommandHandler(RestoreMonitorCommand)
+export class RestoreMonitorHandler implements ICommandHandler<RestoreMonitorCommand, MonitorView> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(MONITOR_REPOSITORY) private readonly monitors: MonitorRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
+
+  async execute(command: RestoreMonitorCommand): Promise<MonitorView> {
+    const project = await writableProject(this.projects, command.organizationId, command.projectId);
+    const monitor = await this.monitors.findById(project.id, command.monitorId);
+    if (!monitor) throw new NotFoundError("Ese monitor no existe", "monitor-not-found");
+    if (!monitor.deletedAt) return viewMonitor(monitor);
+
+    const live = await this.monitors.listByProject(project.id);
+    if (live.some((row) => row.name === monitor.name))
+      throw new ConflictError(`Ya hay un monitor llamado «${monitor.name}»`, "monitor-duplicate-name");
+    if (live.length >= MAX_MONITORS_PER_PROJECT)
+      throw new ConflictError(
+        `Este proyecto ya tiene ${MAX_MONITORS_PER_PROJECT} monitores: borra alguno antes de restaurar este`,
+        "monitors-full",
+      );
+
+    const now = this.clock.now();
+    // El turno quedó en nulo al borrarlo, así que esto lo recalcula desde ahora: al volver no debe
+    // las corridas de los días que estuvo fuera. Lo que vuelve archivado sigue sin turno.
+    const back = withChanges(restoredRow(monitor), {}, now);
+    const updated = back.archivedAt ? { ...back, nextRunAt: null } : back;
+    await this.monitors.save(updated);
+    return viewMonitor(updated);
   }
 }
 

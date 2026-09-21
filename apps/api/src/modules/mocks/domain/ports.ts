@@ -1,3 +1,4 @@
+import type { LifecycleState } from "@/shared/lifecycle/lifecycle";
 import type { MockCall } from "./mock-call";
 import type { MockServer } from "./model";
 
@@ -9,10 +10,18 @@ export const MOCK_REPOSITORY = Symbol("MOCK_REPOSITORY");
  * `publicId` es aleatorio y no un número: **es la única cosa que hay entre la URL y los datos.**
  */
 export interface MockRepositoryPort {
-  listByProject(projectId: string): Promise<MockServer[]>;
+  /** Los de ese estado. Sin estado, los activos: la pantalla no se abre por la papelera. */
+  listByProject(projectId: string, state?: LifecycleState): Promise<MockServer[]>;
+  /** Por id **en cualquier estado**: restaurar algo borrado empieza por encontrarlo. */
   findById(projectId: string, id: string): Promise<MockServer | null>;
+  /**
+   * El que sirve esa URL, y **solo si está vivo**. Un mock archivado o eliminado cuyo `publicId`
+   * siguiera contestando estaría fuera de la lista y dentro del front de otro equipo, que es la
+   * peor mitad de las dos.
+   */
   findByPublicId(publicId: string): Promise<MockServer | null>;
   save(mock: MockServer): Promise<void>;
+  /** El borrado de verdad. Solo lo llama «eliminar para siempre». */
   remove(projectId: string, id: string): Promise<boolean>;
 
   /** Una llamada servida. Quien lo llama traga el fallo: el mock contesta aunque esto no escriba. */

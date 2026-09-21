@@ -1,12 +1,13 @@
 import type { DocSite } from "@/modules/docs/domain/model";
 import type { DocSiteRepositoryPort } from "@/modules/docs/domain/ports";
+import { inLifecycleState, type LifecycleState } from "@/shared/lifecycle/lifecycle";
 
 export class InMemoryDocSiteRepository implements DocSiteRepositoryPort {
   readonly rows = new Map<string, DocSite>();
 
-  async listByProject(projectId: string) {
+  async listByProject(projectId: string, state: LifecycleState = "active") {
     return [...this.rows.values()]
-      .filter((row) => row.projectId === projectId)
+      .filter((row) => row.projectId === projectId && inLifecycleState(row, state))
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   }
 
@@ -16,7 +17,9 @@ export class InMemoryDocSiteRepository implements DocSiteRepositoryPort {
   }
 
   async findByPublicId(publicId: string) {
-    return [...this.rows.values()].find((row) => row.publicId === publicId) ?? null;
+    return (
+      [...this.rows.values()].find((row) => row.publicId === publicId && inLifecycleState(row, "active")) ?? null
+    );
   }
 
   async save(site: DocSite) {

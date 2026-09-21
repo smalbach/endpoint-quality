@@ -273,7 +273,7 @@ describe("gestionar documentaciones", () => {
     const rotate = new RotateDocSiteKeyHandler(projects, sites, clock);
     await assert.rejects(rotate.execute(new RotateDocSiteKeyCommand(ORG, "p-1", "no")), code("doc-site-not-found"));
     await assert.rejects(
-      new DeleteDocSiteHandler(projects, sites).execute(new DeleteDocSiteCommand(ORG, "p-1", "no")),
+      new DeleteDocSiteHandler(projects, sites, clock).execute(new DeleteDocSiteCommand(ORG, "p-1", "no")),
       code("doc-site-not-found"),
     );
     const created = await make("privada", "private");

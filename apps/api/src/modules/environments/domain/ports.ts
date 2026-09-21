@@ -1,14 +1,28 @@
 import type { Cookie } from "@eq/runner-core";
+import type { LifecycleState } from "@/shared/lifecycle/lifecycle";
 import type { Credential, CredentialRole, Environment } from "./model";
 import type { SessionToken } from "./session-token";
 
 export const ENVIRONMENT_REPOSITORY = Symbol("ENVIRONMENT_REPOSITORY");
 
 export interface EnvironmentRepositoryPort {
+  /**
+   * El entorno, **solo si está vivo**.
+   *
+   * Por aquí entran todos los ejecutores —una corrida, un monitor, una prueba de carga, un envío
+   * suelto—, así que un entorno archivado o eliminado deja de poder ejecutarse en el mismo momento
+   * en que sale de la lista. Es lo contrario de lo que pasaba antes: la fila se borraba de verdad y
+   * el monitor que la nombraba fallaba cada noche sin decir por qué.
+   */
   findById(id: string): Promise<Environment | null>;
+  /** El entorno **en cualquier estado**, para archivarlo, restaurarlo o mirarlo en la papelera. */
+  findAnyById(id: string): Promise<Environment | null>;
+  /** Por nombre, **solo entre los vivos**: el nombre de un entorno eliminado queda libre. */
   findByName(projectId: string, name: string): Promise<Environment | null>;
-  listForProject(projectId: string): Promise<Environment[]>;
+  /** Los de ese estado. Sin estado, los activos. */
+  listForProject(projectId: string, state?: LifecycleState): Promise<Environment[]>;
   save(environment: Environment): Promise<void>;
+  /** El borrado de verdad, con sus credenciales por cascada. Solo «eliminar para siempre». */
   remove(id: string): Promise<void>;
 
   listCredentials(environmentId: string): Promise<Credential[]>;

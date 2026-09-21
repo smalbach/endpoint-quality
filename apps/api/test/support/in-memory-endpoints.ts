@@ -17,12 +17,24 @@ export class InMemoryEndpointRepository implements EndpointRepositoryPort {
 
   async list(projectId: string, filter: EndpointFilter) {
     const search = filter.search.toLowerCase();
-    const matching = this.live(projectId).filter(
+    const scope = filter.deleted ? this.trashed(projectId) : this.live(projectId);
+    const matching = scope.filter(
       (row) =>
         (filter.status === "all" || row.status === filter.status) &&
         (!search || row.path.toLowerCase().includes(search) || row.description.toLowerCase().includes(search)),
     );
     return { rows: matching.slice(filter.offset, filter.offset + filter.limit), total: matching.length };
+  }
+
+  /** Los eliminados, en el mismo orden que los vivos: es la misma lista, en otro estado. */
+  private trashed(projectId: string): Endpoint[] {
+    return [...this.rows.values()]
+      .filter((row) => row.projectId === projectId && row.deletedAt)
+      .sort((a, b) => a.orderIndex - b.orderIndex || a.path.localeCompare(b.path));
+  }
+
+  async countDeleted(projectId: string): Promise<number> {
+    return this.trashed(projectId).length;
   }
 
   async counts(projectId: string): Promise<Record<EndpointStatus, number>> {
@@ -57,6 +69,32 @@ export class InMemoryEndpointRepository implements EndpointRepositoryPort {
       updated += 1;
     }
     return updated;
+  }
+
+  async restore(projectId: string, ids: string[], at: Date) {
+    let restored = 0;
+    for (const id of ids) {
+      const row = this.rows.get(id);
+      if (!row || row.projectId !== projectId || !row.deletedAt) continue;
+      // El índice único parcial de la migración, respetado aquí: si mientras estaba fuera se creó
+      // otro con el mismo método y ruta, restaurarlo choca en Postgres y tiene que chocar aquí.
+      if (this.live(projectId).some((other) => other.method === row.method && other.path === row.path))
+        throw new Error("duplicate key value violates unique constraint UQ_endpoints_live_method_path");
+      this.rows.set(id, { ...row, deletedAt: null, updatedAt: at });
+      restored += 1;
+    }
+    return restored;
+  }
+
+  async purge(projectId: string, ids: string[]) {
+    let purged = 0;
+    for (const id of ids) {
+      const row = this.rows.get(id);
+      if (!row || row.projectId !== projectId || !row.deletedAt) continue;
+      this.rows.delete(id);
+      purged += 1;
+    }
+    return purged;
   }
 
   async softDelete(projectId: string, ids: string[], at: Date) {

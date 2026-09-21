@@ -32,6 +32,7 @@
 import { randomUUID } from "node:crypto";
 
 import { NOTIFY_CHANNELS, type NotifyChannel, type StepChannel } from "@eq/runner-core";
+import { viewLifecycle, type LifecycleView } from "@/shared/lifecycle/lifecycle";
 import { describeSchedule, nextOccurrence, scheduleProblems, type MonitorSchedule } from "./schedule";
 
 /** Local, como en el resto de dominios de este producto. */
@@ -184,6 +185,9 @@ export type Monitor = {
   createdAt: Date;
   updatedAt: Date;
   createdBy: string;
+  /** Archivado y borrado blando, como el resto de recursos del proyecto. Ver `shared/lifecycle`. */
+  archivedAt: Date | null;
+  deletedAt: Date | null;
 };
 
 export type MonitorInput = {
@@ -323,6 +327,8 @@ export function blankMonitor(fields: {
     createdAt: fields.now,
     updatedAt: fields.now,
     createdBy: fields.actorId,
+    archivedAt: null,
+    deletedAt: null,
   };
 }
 
@@ -355,7 +361,11 @@ export function withChanges(monitor: Monitor, input: MonitorInput, now: Date): M
 }
 
 /** Lo que sale por la API. `plan` y `schedule` van tal cual: no hay nada secreto en ellos. */
-export type MonitorView = Omit<Monitor, "projectId" | "createdAt" | "updatedAt" | "nextRunAt" | "lastRunAt"> & {
+export type MonitorView = Omit<
+  Monitor,
+  "projectId" | "createdAt" | "updatedAt" | "nextRunAt" | "lastRunAt" | "archivedAt" | "deletedAt"
+> &
+  LifecycleView & {
   createdAt: string;
   updatedAt: string;
   nextRunAt: string | null;
@@ -373,6 +383,7 @@ export function viewMonitor(monitor: Monitor): MonitorView {
   const { projectId: _projectId, ...rest } = monitor;
   return {
     ...rest,
+    ...viewLifecycle(monitor),
     scheduleLabel: describeSchedule(monitor.schedule),
     nextRunAt: monitor.nextRunAt?.toISOString() ?? null,
     lastRunAt: monitor.lastRunAt?.toISOString() ?? null,

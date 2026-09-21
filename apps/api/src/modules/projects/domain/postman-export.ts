@@ -44,14 +44,14 @@ const CREDENTIAL_FIELD =
 /** Un valor que es solo variables, y por tanto no contiene el secreto sino su nombre. */
 const ONLY_VARIABLES = /^(?:[A-Za-z][\w-]*\s+)?(?:\{\{\s*[A-Za-z_][A-Za-z0-9_.-]*\s*\}\}\s*)+$/;
 
-type KeyValue = { key: string; value: string; disabled?: boolean };
+export type KeyValue = { key: string; value: string; disabled?: boolean };
 /**
  * Una fila de `formdata`. Un fichero no lleva `value` sino `src`, la ruta en el disco de quien lo
  * eligió — y esa ruta no existe aquí, así que sale sin ella.
  */
-type FormDataRow = { key: string; value?: string; type: "text" | "file"; disabled?: boolean };
-type PostmanEvent = { listen: "prerequest" | "test"; script: { type: "text/javascript"; exec: string[] } };
-type PostmanRequest = {
+export type FormDataRow = { key: string; value?: string; type: "text" | "file"; disabled?: boolean };
+export type PostmanEvent = { listen: "prerequest" | "test"; script: { type: "text/javascript"; exec: string[] } };
+export type PostmanRequest = {
   method: string;
   header: KeyValue[];
   url: { raw: string; query?: KeyValue[] };
@@ -125,10 +125,12 @@ export type PostmanExportIds = { collectionId: string; environmentIds: string[] 
  * flujos. Da la vuelta sobre sí mismo — exportar, importar, exportar otra vez produce lo mismo.
  *
  * `endpoints` es el API entero, una petición por endpoint del contrato: lo que quiere quien pide
- * «pásame esto a Postman» sin haber escrito un flujo todavía. **No** da la vuelta igual, y no puede:
- * al volver a entrar, una colección es un flujo, porque eso es lo que una colección significa aquí.
- * Meter las dos cosas en el mismo fichero era exactamente ese fallo — cada ida y vuelta añadía un
- * flujo llamado «Endpoints» que nadie había escrito.
+ * «pásame esto a Postman» sin haber escrito un flujo todavía.
+ *
+ * Ninguno de los dos vuelve a entrar como salió, y ya no tiene por qué: desde que existen las
+ * colecciones, un fichero de Postman que entra aquí **es una colección** —su árbol tal cual, en
+ * `modules/collections`— y no un grafo de flujo. Lo que da la vuelta entera es la colección: sale
+ * por `collections/:id/export` y vuelve a entrar idéntica.
  */
 export type PostmanExportContents = "flows" | "endpoints";
 

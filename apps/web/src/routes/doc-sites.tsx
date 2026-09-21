@@ -19,10 +19,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { Badge, Button, Card, Empty, Field, inputClass } from "@/components/ui";
-import { ConfirmDialog, Modal } from "@/components/overlay";
+import { Modal } from "@/components/overlay";
+import { DeleteDialog, LifecycleRowActions, LifecycleTabs, stateQuery } from "@/components/lifecycle";
 import { useToast } from "@/components/toast";
 import { formatDate } from "@/lib/format";
-import type { DocSiteListView, DocSiteView, IssuedDocSiteView, ProjectSummary } from "@/lib/types";
+import type { DocSiteListView, DocSiteView, IssuedDocSiteView, LifecycleState, ProjectSummary } from "@/lib/types";
 
 const MAX_BASE_URL = 300;
 
@@ -46,12 +47,14 @@ export function DocSitesPage() {
 
   const [creating, setCreating] = useState(false);
   const [issued, setIssued] = useState<{ name: string; apiKey: string } | null>(null);
-  const [deleting, setDeleting] = useState<DocSiteView | null>(null);
+  const [deleting, setDeleting] = useState<{ site: DocSiteView; purge: boolean } | null>(null);
+  /** Qué lista se está mirando: las publicadas, las archivadas o la papelera. */
+  const [state, setState] = useState<LifecycleState>("active");
 
   const list = useQuery({
-    queryKey: ["doc-sites", projectId],
+    queryKey: ["doc-sites", projectId, state],
     enabled: Boolean(organization && projectId),
-    queryFn: () => api<DocSiteListView>(base),
+    queryFn: () => api<DocSiteListView>(`${base}${stateQuery(state)}`),
   });
 
   const project = useQuery({
@@ -91,12 +94,33 @@ export function DocSitesPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const remove = useMutation({
-    mutationFn: (site: DocSiteView) => api<void>(`${base}/${site.id}`, { method: "DELETE" }),
-    onSuccess: async (_result, site) => {
+  const archive = useMutation({
+    mutationFn: ({ site, archived }: { site: DocSiteView; archived: boolean }) =>
+      api<DocSiteView>(`${base}/${site.id}/archived`, { method: "PATCH", body: { archived } }),
+    onSuccess: async (_result, { site, archived }) => {
       setDeleting(null);
       await refresh();
-      toast.success(`«${site.name}» eliminada`);
+      toast.success(archived ? `«${site.name}» archivada` : `«${site.name}» desarchivada`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const restore = useMutation({
+    mutationFn: (site: DocSiteView) => api<DocSiteView>(`${base}/${site.id}/restore`, { method: "POST" }),
+    onSuccess: async (_result, site) => {
+      await refresh();
+      toast.success(`«${site.name}» restaurada`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const remove = useMutation({
+    mutationFn: ({ site, purge }: { site: DocSiteView; purge: boolean }) =>
+      api<void>(`${base}/${site.id}${purge ? "?purge=true" : ""}`, { method: "DELETE" }),
+    onSuccess: async (_result, { site, purge }) => {
+      setDeleting(null);
+      await refresh();
+      toast.success(purge ? `«${site.name}» eliminada para siempre` : `«${site.name}» eliminada`);
     },
     onError: (error: Error) => {
       setDeleting(null);
@@ -120,6 +144,8 @@ export function DocSitesPage() {
         </div>
         {canEdit && <Button onClick={() => setCreating(true)}>Publicar</Button>}
       </div>
+
+      <LifecycleTabs state={state} onState={setState} gender="f" />
 
       {coverage && (
         <Card className="p-4">
@@ -159,6 +185,14 @@ export function DocSitesPage() {
                   <Badge className="border-slate-200 bg-slate-50 text-slate-600">con ejemplos</Badge>
                 )}
                 {!site.enabled && <Badge className="border-slate-200 bg-slate-100 text-slate-500">despublicada</Badge>}
+                {site.archivedAt && (
+                  <Badge className="border-amber-200 bg-amber-50 text-amber-700">archivada</Badge>
+                )}
+                {site.deletedAt && (
+                  <Badge className="border-rose-200 bg-rose-50 text-rose-700">
+                    eliminada {formatDate(site.deletedAt)}
+                  </Badge>
+                )}
                 <span className="ml-auto text-[11px] text-slate-400">creada {formatDate(site.createdAt)}</span>
               </div>
 
@@ -198,25 +232,37 @@ export function DocSitesPage() {
               )}
 
               {canEdit && (
-                <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-3">
-                  <Button variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => toggle.mutate(site)}>
-                    {site.enabled ? "Despublicar" : "Publicar"}
-                  </Button>
-                  <Button variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => toggleExamples.mutate(site)}>
-                    {site.includeExamples ? "Quitar los ejemplos" : "Incluir los ejemplos"}
-                  </Button>
-                  {site.visibility === "private" && (
-                    <Button variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => rotate.mutate(site)}>
-                      Nueva clave
-                    </Button>
+                <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                  {/* Publicar y despublicar solo valen sobre una viva: lo archivado y lo eliminado
+                      ya no sirve la página, y ofrecer «Publicar» ahí sería mentir. */}
+                  {state === "active" && (
+                    <>
+                      <Button variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => toggle.mutate(site)}>
+                        {site.enabled ? "Despublicar" : "Publicar"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="h-7 px-2 text-[11px]"
+                        onClick={() => toggleExamples.mutate(site)}
+                      >
+                        {site.includeExamples ? "Quitar los ejemplos" : "Incluir los ejemplos"}
+                      </Button>
+                      {site.visibility === "private" && (
+                        <Button variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => rotate.mutate(site)}>
+                          Nueva clave
+                        </Button>
+                      )}
+                    </>
                   )}
-                  <Button
-                    variant="ghost"
-                    className="ml-auto h-7 px-2 text-[11px] text-rose-600"
-                    onClick={() => setDeleting(site)}
-                  >
-                    Eliminar
-                  </Button>
+                  <LifecycleRowActions
+                    className="ml-auto"
+                    state={state}
+                    pending={archive.isPending || restore.isPending || remove.isPending}
+                    onArchive={(archived) => archive.mutate({ site, archived })}
+                    onRestore={() => restore.mutate(site)}
+                    onDelete={() => setDeleting({ site, purge: false })}
+                    onPurge={() => setDeleting({ site, purge: true })}
+                  />
                 </div>
               )}
             </Card>
@@ -251,12 +297,18 @@ export function DocSitesPage() {
       {issued && <IssuedKeyModal name={issued.name} apiKey={issued.apiKey} onClose={() => setIssued(null)} />}
 
       {deleting && (
-        <ConfirmDialog
+        <DeleteDialog
           title="Eliminar la documentación"
-          message={`La URL de «${deleting.name}» deja de contestar en el mismo momento, para todo el que la tenga. Lo que ya se leyó sigue leído: una dirección que circula no se puede retirar de donde esté pegada.`}
-          confirmLabel="Eliminar"
-          pending={remove.isPending}
-          onConfirm={() => remove.mutate(deleting)}
+          purge={deleting.purge}
+          name={deleting.purge ? deleting.site.name : undefined}
+          message={
+            deleting.purge
+              ? `Se va «${deleting.site.name}» con su introducción escrita a mano y su clave. Su URL no se podrá recuperar.`
+              : `La URL de «${deleting.site.name}» deja de contestar en el mismo momento, para todo el que la tenga. Lo que ya se leyó sigue leído: una dirección que circula no se puede retirar de donde esté pegada.`
+          }
+          pending={remove.isPending || archive.isPending}
+          onArchive={deleting.purge ? undefined : () => archive.mutate({ site: deleting.site, archived: true })}
+          onConfirm={() => remove.mutate({ site: deleting.site, purge: deleting.purge })}
           onClose={() => setDeleting(null)}
         />
       )}

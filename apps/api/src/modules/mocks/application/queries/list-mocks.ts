@@ -9,6 +9,7 @@ import {
   type EndpointRepositoryPort,
   type ExampleRepositoryPort,
 } from "@/modules/endpoints/domain/ports";
+import type { LifecycleState } from "@/shared/lifecycle/lifecycle";
 import { viewMock, type MockServerView } from "../../domain/model";
 import { MOCK_REPOSITORY, type MockRepositoryPort } from "../../domain/ports";
 
@@ -30,6 +31,8 @@ export class ListMocksQuery implements IQuery {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
+    /** Qué lista se pide: los que sirven, los archivados o los eliminados. */
+    readonly state: LifecycleState = "active",
   ) {}
 }
 
@@ -45,7 +48,7 @@ export class ListMocksHandler implements IQueryHandler<ListMocksQuery, MockListV
   async execute(query: ListMocksQuery): Promise<MockListView> {
     const project = await ownedProject(this.projects, query.organizationId, query.projectId);
     const [mocks, endpoints, examples] = await Promise.all([
-      this.mocks.listByProject(project.id),
+      this.mocks.listByProject(project.id, query.state),
       this.endpoints.listAll(project.id),
       this.examples.listByProject(project.id),
     ]);

@@ -55,6 +55,8 @@ function environment(over: Partial<Environment> = {}): Environment {
     authEnforced: false,
     createdAt: new Date("2026-01-01T00:00:00Z"),
     ...over,
+    archivedAt: null,
+    deletedAt: null,
   };
 }
 

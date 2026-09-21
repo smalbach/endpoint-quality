@@ -166,7 +166,7 @@ describe("texto pegado", () => {
     const all = results(body);
     assert.deepEqual(
       all.map((entry) => entry.target),
-      ["endpoints", "flows"],
+      ["endpoints", "collections"],
     );
     for (const entry of all) {
       assert.equal(entry.summary, null, JSON.stringify(entry));

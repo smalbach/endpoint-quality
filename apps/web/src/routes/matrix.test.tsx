@@ -40,6 +40,8 @@ const environment = (patch: Partial<Environment>): Environment => ({
   authEnforced: true,
   active: false,
   credentials: [],
+  archivedAt: null,
+  deletedAt: null,
   ...patch,
 });
 

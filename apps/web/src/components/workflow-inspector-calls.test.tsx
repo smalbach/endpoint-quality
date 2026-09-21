@@ -236,6 +236,7 @@ describe("el sub-flujo", () => {
     status: "draft",
     steps: [],
     updatedAt: "2026-01-01T00:00:00Z",
+    deletedAt: null,
     ...patch,
   });
   const FLOWS = [

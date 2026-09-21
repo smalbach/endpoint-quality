@@ -50,6 +50,15 @@ const PerformanceComparePage = lazy(() =>
   import("@/routes/performance").then((module) => ({ default: module.PerformanceComparePage })),
 );
 const CodeScanPage = lazy(() => import("@/routes/code-scan").then((module) => ({ default: module.CodeScanPage })));
+// El editor de una colección trae el árbol, el editor de peticiones y el informe de las corridas:
+// fuera del bundle inicial, como el editor de flujos.
+const CollectionsPage = lazy(() =>
+  import("@/routes/collections").then((module) => ({ default: module.CollectionsPage })),
+);
+const CollectionPage = lazy(() => import("@/routes/collections").then((module) => ({ default: module.CollectionPage })));
+const CollectionRunPage = lazy(() =>
+  import("@/routes/collections").then((module) => ({ default: module.CollectionRunPage })),
+);
 
 /**
  * Whether a failed query is worth asking again.
@@ -124,6 +133,30 @@ export function AppRoutes() {
             element={
               <Suspense fallback={<p className="text-sm text-slate-500">Cargando editor…</p>}>
                 <WorkflowsPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="collections"
+            element={
+              <Suspense fallback={<p className="text-sm text-slate-500">Cargando…</p>}>
+                <CollectionsPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="collections/runs/:runId"
+            element={
+              <Suspense fallback={<p className="text-sm text-slate-500">Cargando…</p>}>
+                <CollectionRunPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="collections/:collectionId"
+            element={
+              <Suspense fallback={<p className="text-sm text-slate-500">Cargando…</p>}>
+                <CollectionPage />
               </Suspense>
             }
           />

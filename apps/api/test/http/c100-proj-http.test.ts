@@ -184,6 +184,8 @@ describe("bifurcar con datos colgando", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
       updatedBy: owner.userId,
+      archivedAt: null,
+      deletedAt: null,
     });
 
     const forked = await ok(api().post(`${parent.base}/fork`).set(as(owner.token)).send({ name: unique("bif") }));

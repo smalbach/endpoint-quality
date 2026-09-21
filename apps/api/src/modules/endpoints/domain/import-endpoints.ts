@@ -239,7 +239,7 @@ function draftFromRequest(request: ParsedRequest): EndpointDraft | string {
 }
 
 /** Una operación de la fuente como el modo `graphql` del editor: la operación y sus variables aparte. */
-function graphqlBodyFrom(operation: GraphqlOperation): EndpointBody {
+export function graphqlBodyFrom(operation: GraphqlOperation): EndpointBody {
   return {
     ...EMPTY_BODY,
     mode: "graphql",
@@ -249,7 +249,7 @@ function graphqlBodyFrom(operation: GraphqlOperation): EndpointBody {
   };
 }
 
-function bodyFrom(body: RequestBody, formRows?: FormRow[]): EndpointBody {
+export function bodyFrom(body: RequestBody, formRows?: FormRow[]): EndpointBody {
   // Un formulario con ficheros llega con sus filas en orden y con su tipo: un fichero vuelve a ser
   // un campo de fichero —sin bytes, con el botón de elegirlo—, no un campo de texto vacío.
   if (body.type === "form-data" && formRows?.length) return { ...EMPTY_BODY, mode: "form-data", fields: formRows };

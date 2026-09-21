@@ -24,6 +24,7 @@
 import { randomUUID } from "node:crypto";
 
 import { generateOpaqueToken, hashOpaqueToken, tokenPreview } from "@/shared/crypto/opaque-token";
+import { viewLifecycle, type LifecycleView } from "@/shared/lifecycle/lifecycle";
 
 /** Local, como en `examples.ts` y en `model.ts` de endpoints. */
 type Problem = { field: string; detail: string };
@@ -77,6 +78,9 @@ export type MockServer = {
   createdAt: Date;
   updatedAt: Date;
   createdBy: string;
+  /** Archivado y borrado blando, como el resto de recursos del proyecto. Ver `shared/lifecycle`. */
+  archivedAt: Date | null;
+  deletedAt: Date | null;
 };
 
 export type MockInput = {
@@ -166,6 +170,8 @@ export function blankMock(fields: {
       createdAt: fields.now,
       updatedAt: fields.now,
       createdBy: fields.actorId,
+      archivedAt: null,
+      deletedAt: null,
     },
   };
 }
@@ -180,12 +186,21 @@ export function rotatedKey(mock: MockServer, now: Date): { mock: MockServer; api
 }
 
 /** Lo que sale por la API. Sin el hash: no hace falta para nada y es lo único secreto que hay. */
-export type MockServerView = Omit<MockServer, "projectId" | "apiKeyHash" | "createdAt" | "updatedAt"> & {
-  createdAt: string;
-  updatedAt: string;
-};
+export type MockServerView = Omit<
+  MockServer,
+  "projectId" | "apiKeyHash" | "createdAt" | "updatedAt" | "archivedAt" | "deletedAt"
+> &
+  LifecycleView & {
+    createdAt: string;
+    updatedAt: string;
+  };
 
 export function viewMock(mock: MockServer): MockServerView {
   const { projectId: _projectId, apiKeyHash: _apiKeyHash, ...rest } = mock;
-  return { ...rest, createdAt: mock.createdAt.toISOString(), updatedAt: mock.updatedAt.toISOString() };
+  return {
+    ...rest,
+    ...viewLifecycle(mock),
+    createdAt: mock.createdAt.toISOString(),
+    updatedAt: mock.updatedAt.toISOString(),
+  };
 }

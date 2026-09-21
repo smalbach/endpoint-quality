@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button, inputClass } from "@/components/ui";
 import { PromptDialog } from "@/components/overlay";
+import { DeleteDialog } from "@/components/lifecycle";
 import { cn } from "@/lib/format";
 import { WORKFLOW_STATUS_META } from "@/lib/workflow-draft";
 import type { SuiteView, WorkflowView } from "@/lib/types";
@@ -24,6 +25,7 @@ export function SuitesPanel({
   onCreate,
   onChange,
   onDelete,
+  onArchive,
   onRun,
 }: {
   suites: SuiteView[];
@@ -33,10 +35,14 @@ export function SuitesPanel({
   onCreate: (name: string) => void;
   onChange: (suite: SuiteView) => void;
   onDelete: (suiteId: string) => void;
+  /** Archivar: fuera de la lista, y deja de contar como referencia de los flujos que nombra. */
+  onArchive: (suiteId: string) => void;
   onRun: (suiteId: string) => void;
 }) {
   const [openId, setOpenId] = useState("");
   const [naming, setNaming] = useState(false);
+  /** A qué suite se le está preguntando si se borra. */
+  const [deleting, setDeleting] = useState<SuiteView | null>(null);
   // The row being dragged, and the one it is hovering over — kept per suite so a drag in one does
   // not draw a drop line in another.
   const [drag, setDrag] = useState<{ suiteId: string; from: number; over: number } | null>(null);
@@ -197,7 +203,7 @@ export function SuitesPanel({
                       Ejecutar
                     </Button>
                     {canEdit && (
-                      <Button variant="danger" className="h-8 px-2 text-xs" onClick={() => onDelete(suite.id)}>
+                      <Button variant="danger" className="h-8 px-2 text-xs" onClick={() => setDeleting(suite)}>
                         Eliminar
                       </Button>
                     )}
@@ -207,6 +213,23 @@ export function SuitesPanel({
             </div>
           ))}
         </div>
+      )}
+
+      {deleting && (
+        <DeleteDialog
+          title="Eliminar la suite"
+          message={`«${deleting.name}» sale de la lista. Los flujos que nombra no se tocan: la suite es el orden, no el trabajo.`}
+          restoreHint="Se puede restaurar desde el filtro «Eliminados» de la lista de flujos."
+          onArchive={() => {
+            onArchive(deleting.id);
+            setDeleting(null);
+          }}
+          onConfirm={() => {
+            onDelete(deleting.id);
+            setDeleting(null);
+          }}
+          onClose={() => setDeleting(null)}
+        />
       )}
     </div>
   );

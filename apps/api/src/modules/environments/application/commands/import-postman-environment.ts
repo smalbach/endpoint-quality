@@ -130,6 +130,9 @@ export class ImportPostmanEnvironmentHandler implements ICommandHandler<
       writesAllowed: previous?.writesAllowed ?? false,
       authEnforced: previous?.authEnforced ?? false,
       createdAt: previous?.createdAt ?? this.clock.now(),
+      // Reimportar sobre uno archivado no lo desarchiva: el estado es de aquí, no del fichero.
+      archivedAt: previous?.archivedAt ?? null,
+      deletedAt: previous?.deletedAt ?? null,
     };
     await this.environments.save(environment);
     if (!project.activeEnvironmentId) {

@@ -57,6 +57,14 @@ export function projectSections(projectId: string | undefined) {
       tooltip: "Corridas de seguridad con las 17 reglas, y las corridas de la matriz del contrato.",
     },
     {
+      to: `${base}/collections`,
+      label: "Colecciones",
+      help: "collections",
+      end: false,
+      also: [] as string[],
+      tooltip: "Las colecciones de Postman: su árbol, sus tests y el runner que las corre en orden.",
+    },
+    {
       to: `${base}/workflows`,
       label: "Flow Testing",
       help: "flow-testing",
@@ -121,6 +129,8 @@ const SECTION_ICONS: Record<string, string> = {
     "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75",
   "Test Runs": "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
   "Flow Testing": "M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6M18 9a9 9 0 0 1-9 9",
+  // Una carpeta: lo que una colección es por dentro.
+  Colecciones: "M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2z",
   Performance: "M3 3v18h18M7 15l4-6 4 3 5-8",
   Escáner: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35",
   // Un servidor: lo que un mock imita.

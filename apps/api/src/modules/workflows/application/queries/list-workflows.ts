@@ -5,12 +5,21 @@ import type { DatasetViewOf, RequestTemplateViewOf, SuiteViewOf, WorkflowViewOf,
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
 import type { DatasetRow, RequestTemplateRow, SuiteRow, WorkflowRow } from "../../domain/model";
+import type { LifecycleState } from "@/shared/lifecycle/lifecycle";
 import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "../../domain/ports";
 
+/**
+ * Las cuatro listas de la pantalla de flujos, en el estado que se pida.
+ *
+ * `state` vale para los flujos, los conjuntos y las suites a la vez, que es justo lo que quiere la
+ * papelera: «lo que borré aquí». Las peticiones guardadas van siempre —no tienen ciclo de vida
+ * propio, y el editor no puede dibujar un nodo sin la petición que su paso nombra.
+ */
 export class ListWorkflowsQuery implements IQuery {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
+    readonly state: LifecycleState = "active",
   ) {}
 }
 
@@ -36,6 +45,7 @@ export const workflowView = (row: WorkflowRow): WorkflowViewOf<Date> => ({
   status: row.status,
   steps: row.definition.steps,
   updatedAt: row.updatedAt,
+  deletedAt: row.deletedAt,
 });
 
 /** A dataset without its rows: the list is drawn from this, and five hundred rows of nine columns
@@ -47,6 +57,8 @@ export const datasetView = (row: DatasetRow): DatasetViewOf<Date> => ({
   columns: [...new Set(row.rows.flatMap((entry) => Object.keys(entry)))].sort(),
   rowCount: row.rows.length,
   updatedAt: row.updatedAt,
+  archivedAt: row.archivedAt,
+  deletedAt: row.deletedAt,
 });
 
 export const suiteView = (row: SuiteRow): SuiteViewOf<Date> => ({
@@ -55,6 +67,8 @@ export const suiteView = (row: SuiteRow): SuiteViewOf<Date> => ({
   description: row.description,
   workflowIds: row.workflowIds,
   updatedAt: row.updatedAt,
+  archivedAt: row.archivedAt,
+  deletedAt: row.deletedAt,
 });
 
 /**
@@ -73,9 +87,9 @@ export class ListWorkflowsHandler implements IQueryHandler<ListWorkflowsQuery, W
     await ownedProject(this.projects, query.organizationId, query.projectId);
     const [requestTemplates, workflows, datasets, suites] = await Promise.all([
       this.workflows.listTemplates(query.projectId),
-      this.workflows.listWorkflows(query.projectId),
-      this.workflows.listDatasets(query.projectId),
-      this.workflows.listSuites(query.projectId),
+      this.workflows.listWorkflows(query.projectId, query.state),
+      this.workflows.listDatasets(query.projectId, query.state),
+      this.workflows.listSuites(query.projectId, query.state),
     ]);
     return {
       requestTemplates: requestTemplates.map(templateView),

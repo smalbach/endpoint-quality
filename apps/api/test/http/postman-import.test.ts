@@ -1,19 +1,15 @@
 /**
- * Una colección de Postman, importada como endpoints y como flujos, contra la API de verdad.
+ * Una colección de Postman, importada contra la API de verdad.
  *
- * Las dos mitades de lo mismo. Una colección es lo que la gente tiene de verdad, y trae dos cosas
- * que este producto quiere por separado: **las URL**, que son endpoints del proyecto, y **los
- * tests**, que son el orden y las afirmaciones de un escenario y por tanto un flujo.
+ * Una colección trae dos cosas y va a las dos: **las URL**, que son endpoints del proyecto, y **la
+ * colección misma**, que se guarda con su árbol —carpetas, orden, scripts— en `collections` y se
+ * edita y se corre como en Postman. Lo que hace es `test/http/collections.test.ts`; aquí se fija
+ * que la puerta de import la manda ahí.
  *
- * Lo que estas pruebas fijan, más allá de que funcione:
- *
- * - Importar dos veces la misma colección **actualiza** los mismos flujos, no crea copias. Es el
- *   caso ordinario —cambió un test, la carpeta ganó un paso— y «Pedidos (copia 2)» dejaría a
- *   alguien averiguando cuál de tres es el vivo.
- * - Una petición que el contrato declara entra como nodo de petición guardada; una que no, como
- *   nodo «fetch» con su llamada escrita. Nunca se inventa una operación.
- * - Un test que se sabe leer sale como comprobaciones del nodo; uno que no, como nodo script con el
- *   código tal cual. Nada se traduce a medias.
+ * Lo que ya no hace, y es el cambio: partir el árbol en flujos. Un grafo por carpeta con las
+ * aristas deducidas del orden dejaba de ser la colección de nadie —no volvía a salir a Postman, no
+ * se editaba como allí— y la puerta de `workflows/import/postman` se fue con él. El puente que
+ * sigue escribiendo flujos es el de la captura de tráfico, que no tiene fichero de nadie detrás.
  */
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -160,100 +156,6 @@ describe("las URL de una colección, como endpoints del proyecto", () => {
     assert.equal(again.body.imported.length, 0);
     assert.equal(again.body.skipped.length, 3);
     assert.ok(again.body.skipped.every((entry: { reason: string }) => /ya tiene este endpoint/.test(entry.reason)));
-  });
-});
-
-describe("los tests de una colección, como flujos del proyecto", () => {
-  test("una carpeta es un flujo, con sus aristas, sus comprobaciones y sus capturas", async () => {
-    const base = await project(true);
-    const response = await api().post(`${base}/workflows/import/postman`).set(as(owner)).send({ text: COLLECTION });
-    assert.equal(response.status, 201, JSON.stringify(response.body));
-    assert.equal(response.body.collection, "Tienda");
-    assert.equal(response.body.flows.length, 1);
-    const [flow] = response.body.flows;
-    assert.equal(flow.name, "Things");
-    assert.equal(flow.action, "created");
-    // Dos peticiones del contrato, una llamada suelta y un nodo script para el test que no se
-    // pudo leer (el `for`).
-    assert.equal(flow.requests, 2);
-    assert.equal(flow.calls, 1);
-    assert.equal(flow.scripts, 1);
-
-    const saved = await api().get(`${base}/workflows`).set(as(owner));
-    assert.equal(saved.status, 200);
-    const steps: Record<string, unknown>[] = saved.body.workflows.find(
-      (row: { id: string }) => row.id === flow.id,
-    ).steps;
-
-    // El orden de la carpeta son las aristas: una cadena, nunca un abanico.
-    assert.deepEqual(
-      steps.map((step) => [step.id, step.dependsOn]),
-      [
-        ["crear-thing", undefined],
-        ["leer-thing", ["crear-thing"]],
-        ["leer-thing-test", ["leer-thing"]],
-        ["avisar-al-webhook", ["leer-thing-test"]],
-      ],
-    );
-    // El `pm.environment.set` del primer test es una captura, y el estado que afirmaba es lo que
-    // la petición guardada espera: no se queda además como comprobación.
-    assert.deepEqual(steps[0].captures, [{ variable: "thingId", from: "body", path: "data.id" }]);
-    assert.equal(steps[0].checks, undefined);
-    // El test con un `for` no se traduce: se guarda tal cual y lo ejecuta el sandbox.
-    assert.equal(steps[2].kind, "script");
-    assert.match(String((steps[2].script as { code: string }).code), /for \(const key of Object.keys\(j\)\)/);
-    // La llamada que el contrato no declara se escribe en el nodo, y su credencial a mano se cae.
-    assert.equal(steps[3].kind, "fetch");
-    assert.equal((steps[3].fetch as { url: string }).url, "https://hooks.ejemplo.com/aviso");
-    assert.equal((steps[3].fetch as { useSession?: boolean }).useSession, true);
-    assert.equal((steps[3].fetch as { headers?: Record<string, string> }).headers?.Authorization, undefined);
-    assert.ok(response.body.notes.some((note: string) => /credencial/.test(note)));
-
-    // Las peticiones guardadas que los nodos nombran existen, con el nombre completo de la carpeta.
-    const names = saved.body.requestTemplates.map((template: { name: string }) => template.name).sort();
-    assert.deepEqual(names, ["Things / Crear thing", "Things / Leer thing"]);
-    assert.equal(response.body.templates.created, 2);
-  });
-
-  test("importar otra vez actualiza el mismo flujo en vez de crear una copia", async () => {
-    const base = await project(true);
-    const first = await api().post(`${base}/workflows/import/postman`).set(as(owner)).send({ text: COLLECTION });
-    assert.equal(first.status, 201, JSON.stringify(first.body));
-
-    const again = await api().post(`${base}/workflows/import/postman`).set(as(owner)).send({ text: COLLECTION });
-    assert.equal(again.status, 201, JSON.stringify(again.body));
-    assert.equal(again.body.flows[0].action, "updated");
-    assert.equal(again.body.flows[0].id, first.body.flows[0].id);
-    assert.equal(again.body.templates.created, 0);
-    assert.equal(again.body.templates.updated, 2);
-
-    const saved = await api().get(`${base}/workflows`).set(as(owner));
-    assert.equal(saved.body.workflows.length, 1);
-    assert.equal(saved.body.requestTemplates.length, 2);
-  });
-
-  test("sin contrato entra todo como nodos fetch, y se dice por qué", async () => {
-    const base = await project(false);
-    const response = await api().post(`${base}/workflows/import/postman`).set(as(owner)).send({ text: COLLECTION });
-    assert.equal(response.status, 201, JSON.stringify(response.body));
-    assert.equal(response.body.flows[0].requests, 0);
-    assert.equal(response.body.flows[0].calls, 3);
-    assert.ok(response.body.notes.some((note: string) => /contrato activo/.test(note)));
-  });
-
-  test("lo que no es una colección se dice como un 422, no como un flujo vacío", async () => {
-    const base = await project(true);
-    const response = await api().post(`${base}/workflows/import/postman`).set(as(owner)).send({ text: "no soy json" });
-    assert.equal(response.status, 422, JSON.stringify(response.body));
-    assert.match(String(response.body.type), /postman-invalid$/);
-  });
-
-  test("otra organización no importa nada en este proyecto", async () => {
-    const base = await project(true);
-    const stranger = await signUp(`postman-ajeno-${Date.now()}@ejemplo.com`);
-    const response = await api().post(`${base}/workflows/import/postman`).set(as(stranger)).send({ text: COLLECTION });
-    // 403 en el guard de la organización: no pertenece a ella, así que la ruta no llega al proyecto.
-    assert.equal(response.status, 403, JSON.stringify(response.body));
   });
 });
 
@@ -429,11 +331,12 @@ describe("una sola puerta para todo", () => {
     assert.match(byTarget("environment")[0].summary, /host\.docker\.internal/);
     assert.equal(byTarget("endpoints").length, 1);
 
-    // La prueba del orden: el contrato ya estaba cuando se leyó la colección, así que dos de las
-    // tres peticiones son nodos de petición guardada y no llamadas sueltas.
-    const flows = await api().get(`${base}/workflows`).set(as(owner));
-    assert.equal(flows.body.requestTemplates.length, 2);
-    assert.match(byTarget("flows")[0].summary, /Things \(nuevo, 4 nodos\)/);
+    // Y la colección entra como la colección que es: su carpeta y sus tres peticiones.
+    assert.match(byTarget("collections")[0].summary, /nueva · 3 peticiones · 1 carpetas/);
+    const collections = await api().get(`${base}/collections`).set(as(owner));
+    assert.equal(collections.body.length, 1);
+    assert.equal(collections.body[0].name, "Tienda");
+    assert.equal(collections.body[0].requests, 3);
   });
 
   test("un volcado de Postman entra entero: sus colecciones y sus entornos", async () => {
@@ -454,9 +357,9 @@ describe("una sola puerta para todo", () => {
       ["postman-collection", "postman-environment"],
     );
     assert.deepEqual([...new Set(item.results.map((entry: { target: string }) => entry.target))].sort(), [
+      "collections",
       "endpoints",
       "environment",
-      "flows",
     ]);
   });
 
@@ -505,6 +408,10 @@ describe("un proyecto exportado de aquí, por la misma puerta", () => {
       .post(`${source}/import`)
       .set(as(owner))
       .send({ sources: [{ name: "tienda.postman_collection.json", text: COLLECTION }] });
+    // Un flujo escrito aquí, que es de donde salen ahora: la colección importada ya no se parte en
+    // grafos, y lo que este fichero tiene que llevarse consigo son los flujos del proyecto.
+    const flow = await api().post(`${source}/workflows`).set(as(owner)).send({ name: "Alta de thing" });
+    assert.equal(flow.status, 201, JSON.stringify(flow.body));
     const exported = await api().get(`${source}/export`).set(as(owner));
     assert.equal(exported.status, 200, JSON.stringify(exported.body));
 
@@ -542,37 +449,42 @@ describe("y de vuelta a Postman, que es lo que faltaba", () => {
    * Este producto leía una colección y no escribía ninguna, así que era una puerta de un solo
    * sentido: traías tu trabajo de Postman y no podías llevártelo, ni pasarlo por `newman`, ni
    * dárselo a alguien que no use esto.
+   *
+   * Lo que cambia con las colecciones es **por dónde vuelve a entrar**: una colección de Postman
+   * es una colección aquí, no un grafo de flujo. Un flujo sigue pudiendo salir como carpeta de un
+   * fichero —es lo que un flujo puede decir en ese formato— y al volver es la colección que el
+   * fichero describe.
    */
-  test("un proyecto sale como colección y vuelve a entrar con sus flujos", async () => {
+  test("un proyecto sale como colección y esa colección vuelve a entrar", async () => {
     const source = await project(true);
-    const first = await api()
-      .post(`${source}/import`)
+    const flow = await api()
+      .post(`${source}/workflows`)
       .set(as(owner))
-      .send({ sources: [{ name: "tienda.postman_collection.json", text: COLLECTION }] });
-    assert.equal(first.status, 201, JSON.stringify(first.body));
-    const before = await api().get(`${source}/workflows`).set(as(owner));
-    // Nombre, cuántos nodos y de qué clase: comparar solo los nombres deja pasar un fichero que
-    // da la vuelta y vuelve con las carpetas vacías.
-    const shape = (body: { workflows: { name: string; steps: { kind?: string }[] }[] }) =>
-      body.workflows
-        .map(
-          (flow) =>
-            `${flow.name}: ${flow.steps.length} nodos (${flow.steps
-              .map((step) => step.kind ?? "request")
-              .sort()
-              .join(", ")})`,
-        )
-        .sort();
-    const departed = shape(before.body);
-    assert.ok(departed.length > 0, "el proyecto de partida tiene que tener flujos");
+      .send({
+        name: "Alta de thing",
+        definition: {
+          steps: [
+            { id: "crear", kind: "fetch", fetch: { method: "POST", url: "/things", expectedStatus: 201 } },
+            { id: "leer", kind: "fetch", dependsOn: ["crear"], fetch: { method: "GET", url: "/things/1" } },
+          ],
+        },
+      });
+    assert.equal(flow.status, 201, JSON.stringify(flow.body));
 
     const exported = await api().get(`${source}/export/postman?kind=collection`).set(as(owner));
     assert.equal(exported.status, 200, JSON.stringify(exported.body));
     assert.match(exported.body.filename, /\.postman_collection\.json$/);
     assert.match(exported.body.file.info.schema, /v2\.1\.0/);
+    // Una carpeta por flujo, con sus peticiones en orden: es lo que un flujo puede decir en el
+    // formato de Postman.
+    assert.deepEqual(
+      exported.body.file.item.map((folder: { name: string; item: unknown[] }) => [folder.name, folder.item.length]),
+      [["Alta de thing", 2]],
+    );
 
     // Y el fichero entra por la misma puerta que cualquier colección, sin trato especial: se
-    // reconoce como una colección de Postman, no como algo de este producto.
+    // reconoce como una colección de Postman y se guarda como la colección que es. Antes volvía a
+    // entrar como flujos, que es justo lo que hacía de este formato una puerta que no cerraba.
     const target = await project(true);
     const back = await api()
       .post(`${target}/import`)
@@ -581,8 +493,23 @@ describe("y de vuelta a Postman, que es lo que faltaba", () => {
     assert.equal(back.status, 201, JSON.stringify(back.body));
     assert.equal(back.body.items[0].kind, "postman-collection");
 
-    const after = await api().get(`${target}/workflows`).set(as(owner));
-    assert.deepEqual(shape(after.body), departed, "los mismos flujos, con los mismos nodos");
+    const collections = await api().get(`${target}/collections`).set(as(owner));
+    assert.equal(collections.body.length, 1);
+    assert.equal(collections.body[0].requests, 2);
+    assert.equal(collections.body[0].folders, 1);
+    const detail = await api().get(`${target}/collections/${collections.body[0].id}`).set(as(owner));
+    assert.equal(detail.body.items[0].name, "Alta de thing");
+    assert.deepEqual(
+      detail.body.items[0].items.map((item: { name: string; request: { method: string } }) => [
+        item.name,
+        item.request.method,
+      ]),
+      // El nombre es el que el exportador le pone a una llamada suelta: el método y la ruta.
+      [
+        ["POST /things", "POST"],
+        ["GET /things/1", "GET"],
+      ],
+    );
   });
 
   test("ningún secreto sale en el fichero", async () => {
@@ -759,7 +686,7 @@ describe("una URL con credencial, y un zip por URL", () => {
     const targets = response.body.items.flatMap((item: { results: { target: string }[] }) =>
       item.results.map((entry) => entry.target),
     );
-    assert.deepEqual([...new Set(targets)].sort(), ["endpoints", "environment", "flows"]);
+    assert.deepEqual([...new Set(targets)].sort(), ["collections", "endpoints", "environment"]);
   });
 
   test("un zip que no trae nada legible se dice con algo que hacer", async () => {

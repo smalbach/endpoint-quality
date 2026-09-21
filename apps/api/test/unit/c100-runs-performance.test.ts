@@ -74,6 +74,8 @@ describe("los planes de carga", () => {
       createdAt: T0,
       updatedAt: T0,
       updatedBy: "u",
+      archivedAt: null,
+      deletedAt: null,
     });
     const handler = new StartRunHandler(
       projects(),

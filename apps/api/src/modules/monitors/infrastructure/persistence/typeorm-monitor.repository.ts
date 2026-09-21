@@ -3,6 +3,7 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { DataSource, Repository } from "typeorm";
 
 import { MonitorEntity, MonitorExecutionEntity } from "@/shared/database/entities";
+import { lifecycleSql, type LifecycleState } from "@/shared/lifecycle/lifecycle";
 import type { Monitor, MonitorExecution } from "../../domain/model";
 import type { MonitorRepositoryPort } from "../../domain/ports";
 
@@ -17,8 +18,13 @@ export class TypeOrmMonitorRepository implements MonitorRepositoryPort {
     private readonly dataSource: DataSource,
   ) {}
 
-  async listByProject(projectId: string): Promise<Monitor[]> {
-    const rows = await this.monitors.find({ where: { projectId }, order: { createdAt: "ASC" } });
+  async listByProject(projectId: string, state: LifecycleState = "active"): Promise<Monitor[]> {
+    const rows = await this.monitors
+      .createQueryBuilder("monitor")
+      .where("monitor.projectId = :projectId", { projectId })
+      .andWhere(lifecycleSql("monitor", state))
+      .orderBy('monitor."createdAt"', "ASC")
+      .getMany();
     return rows.map(toMonitor);
   }
 
@@ -54,6 +60,9 @@ export class TypeOrmMonitorRepository implements MonitorRepositoryPort {
         // procesa igual: la corrida saldría dos veces, una detrás de otra.
         .setOnLocked("skip_locked")
         .where("monitor.enabled = true")
+        // Un monitor archivado o borrado no vigila nada: sacarlo de la lista y que siguiera
+        // lanzando corridas a las tres de la mañana sería sacarlo solo de la vista.
+        .andWhere(lifecycleSql("monitor", "active"))
         .andWhere('monitor."nextRunAt" IS NOT NULL')
         .andWhere('monitor."nextRunAt" <= :now', { now })
         .orderBy('monitor."nextRunAt"', "ASC")

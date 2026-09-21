@@ -38,6 +38,8 @@ describe("TypeOrmRoleRepository", { skip: dbSkip }, () => {
     position: 0,
     createdAt: at("2026-01-01T00:00:00Z"),
     updatedAt: at("2026-01-01T00:00:00Z"),
+    archivedAt: null,
+    deletedAt: null,
     ...overrides,
   });
 

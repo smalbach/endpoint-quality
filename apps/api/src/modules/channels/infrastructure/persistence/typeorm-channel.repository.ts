@@ -15,6 +15,7 @@ import type { Channel } from "../../domain/model";
 import { DEFAULT_MQTT, type MqttSettings } from "../../domain/mqtt";
 import { DEFAULT_SOCKETIO, type SocketIoSettings } from "../../domain/socketio";
 import type { ChannelRepositoryPort, ChannelSessionRepositoryPort } from "../../domain/ports";
+import { lifecycleSql, type LifecycleState } from "@/shared/lifecycle/lifecycle";
 import type { ChannelSession, SessionStatus } from "../../domain/session";
 
 // `mqtt` y `grpc` con su `null` explícito: una fila de antes de la columna no la trae, y `undefined` no es un canal.
@@ -31,25 +32,45 @@ const toChannel = (row: ChannelEndpointEntity): Channel => ({
 export class TypeOrmChannelRepository implements ChannelRepositoryPort {
   constructor(@InjectRepository(ChannelEndpointEntity) private readonly channels: Repository<ChannelEndpointEntity>) {}
 
-  async listByProject(projectId: string): Promise<Channel[]> {
-    const rows = await this.channels.find({
-      where: { projectId, deletedAt: IsNull() },
-      order: { orderIndex: "ASC", createdAt: "ASC" },
-    });
+  async listByProject(projectId: string, state: LifecycleState = "active"): Promise<Channel[]> {
+    const rows = await this.channels
+      .createQueryBuilder("channel")
+      .where("channel.projectId = :projectId", { projectId })
+      .andWhere(lifecycleSql("channel", state))
+      .orderBy('channel."orderIndex"', "ASC")
+      .addOrderBy('channel."createdAt"', "ASC")
+      .getMany();
     return rows.map(toChannel);
   }
 
   async findById(projectId: string, id: string): Promise<Channel | null> {
-    const row = await this.channels.findOne({ where: { id, projectId, deletedAt: IsNull() } });
+    const row = await this.channels
+      .createQueryBuilder("channel")
+      .where("channel.id = :id", { id })
+      .andWhere("channel.projectId = :projectId", { projectId })
+      .andWhere(lifecycleSql("channel", "active"))
+      .getOne();
+    return row ? toChannel(row) : null;
+  }
+
+  async findAnyById(projectId: string, id: string): Promise<Channel | null> {
+    const row = await this.channels.findOne({ where: { id, projectId } });
     return row ? toChannel(row) : null;
   }
 
   countByProject(projectId: string): Promise<number> {
-    return this.channels.count({ where: { projectId, deletedAt: IsNull() } });
+    return this.channels.count({ where: { projectId, archivedAt: IsNull(), deletedAt: IsNull() } });
   }
 
   async save(channel: Channel): Promise<void> {
     await this.channels.save(this.channels.create(channel as unknown as ChannelEndpointEntity));
+  }
+
+  async remove(projectId: string, id: string): Promise<boolean> {
+    // Las sesiones y sus mensajes se van por la cascada de la migración: una conversación de un
+    // canal que ya no existe no se puede ni abrir ni leer.
+    const result = await this.channels.delete({ id, projectId });
+    return Boolean(result.affected);
   }
 }
 

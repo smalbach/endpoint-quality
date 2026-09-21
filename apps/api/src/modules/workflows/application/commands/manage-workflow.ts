@@ -36,7 +36,23 @@ export class UpdateWorkflowCommand implements ICommand {
     readonly actorId: string,
   ) {}
 }
+/**
+ * Borrar un flujo: **blando por defecto**, definitivo con `purge`.
+ *
+ * Archivar un flujo no está aquí: es su `status`, y se cambia con `UpdateWorkflowCommand`. Una
+ * segunda puerta que hiciera lo mismo dejaría dos formas de archivar y ninguna de las dos completa.
+ */
 export class DeleteWorkflowCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly workflowId: string,
+    readonly purge = false,
+  ) {}
+}
+
+/** Restaurar un flujo eliminado, con sus conjuntos de datos. */
+export class RestoreWorkflowCommand implements ICommand {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
@@ -208,6 +224,7 @@ export class CreateWorkflowHandler implements ICommandHandler<CreateWorkflowComm
       createdAt: now,
       updatedAt: now,
       updatedBy: command.actorId,
+      deletedAt: null,
     });
     return { workflowId };
   }
@@ -264,8 +281,20 @@ export class DeleteWorkflowHandler implements ICommandHandler<DeleteWorkflowComm
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
   ) {}
 
+  /**
+   * Borrar un flujo **sin perder el grafo**.
+   *
+   * Lo que se iba con un clic era un documento con sus nodos, sus aristas, sus capturas y sus
+   * comprobaciones, más las tablas de datos que se gastan en él. Ahora sale de la lista y vuelve
+   * entero desde el filtro de eliminados.
+   *
+   * Las referencias siguen siendo un 409, **también en el borrado blando**: una suite que nombra
+   * este flujo o otro que lo ejecuta como sub-flujo se romperían igual si el flujo desaparece de
+   * las listas, y cambiar lo que ejecuta una suite en nombre de quien borra no es deshacer nada.
+   */
   async execute(command: DeleteWorkflowCommand): Promise<void> {
     const workflow = await ownedWorkflow(
       this.projects,
@@ -274,20 +303,77 @@ export class DeleteWorkflowHandler implements ICommandHandler<DeleteWorkflowComm
       command.projectId,
       command.workflowId,
     );
-    // The same answer this product gives for a template a flow uses: a reference is a decision
-    // somebody made, and removing it on their behalf changes what a suite runs without saying so.
-    if (await this.workflows.isWorkflowReferenced(command.projectId, workflow.id))
-      throw new ConflictError("Alguna suite usa este flujo", "workflow-in-use");
-    // A flow another one runs as a subflow is a reference too — deleting it would turn that flow's
-    // next run into an error naming an id nobody recognises.
-    const parents = (await this.workflows.listWorkflows(command.projectId)).filter((other) =>
-      subflowSteps(other.definition).some(({ step }) => step.subflow.workflowId === workflow.id),
+    if (!workflow.deletedAt) {
+      // The same answer this product gives for a template a flow uses: a reference is a decision
+      // somebody made, and removing it on their behalf changes what a suite runs without saying so.
+      if (await this.workflows.isWorkflowReferenced(command.projectId, workflow.id))
+        throw new ConflictError("Alguna suite usa este flujo", "workflow-in-use");
+      // A flow another one runs as a subflow is a reference too — deleting it would turn that flow's
+      // next run into an error naming an id nobody recognises.
+      const parents = (await this.workflows.listWorkflows(command.projectId)).filter((other) =>
+        subflowSteps(other.definition).some(({ step }) => step.subflow.workflowId === workflow.id),
+      );
+      if (parents.length)
+        throw new ConflictError(`«${parents[0].name}» usa este flujo como sub-flujo`, "workflow-in-use");
+    }
+
+    if (command.purge) {
+      if (!workflow.deletedAt)
+        throw new ConflictError("Elimina el flujo antes de borrarlo para siempre", "workflow-not-deleted");
+      // Sus conjuntos de datos se van con él, por la cascada de la migración: una tabla de valores
+      // para un flujo que ya no existe son filas que nada podrá gastar.
+      await this.workflows.deleteWorkflow(command.projectId, workflow.id);
+      return;
+    }
+    if (workflow.deletedAt) return;
+
+    const now = this.clock.now();
+    await this.workflows.saveWorkflow({ ...workflow, deletedAt: now, updatedAt: now });
+    // Lo que en Postgres hace la cascada al borrar de verdad, aquí lo hace el borrado blando: los
+    // conjuntos del flujo se van con él. Una tabla de valores sin los pasos que la gastan no es
+    // nada, y dejarla viva la haría aparecer en la papelera de un flujo que ya no está.
+    for (const dataset of await this.workflows.listDatasets(command.projectId))
+      if (dataset.workflowId === workflow.id)
+        await this.workflows.saveDataset({ ...dataset, deletedAt: now, updatedAt: now });
+  }
+}
+
+/**
+ * Restaurar un flujo eliminado, con **todos** sus conjuntos de datos.
+ *
+ * Todos y no «los que se fueron con él»: distinguirlos pedía comparar la fecha de borrado, y dos
+ * borrados del mismo segundo son indistinguibles —el reloj de una prueba está parado, y en
+ * producción dos operaciones seguidas caen en el mismo milisegundo más a menudo de lo que parece—.
+ * Así que la regla es la que se puede explicar en una frase: el flujo vuelve con sus datos. Si
+ * alguien había borrado uno a propósito, vuelve a borrarlo; es un clic, y es visible.
+ */
+@CommandHandler(RestoreWorkflowCommand)
+export class RestoreWorkflowHandler implements ICommandHandler<RestoreWorkflowCommand, void> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
+
+  async execute(command: RestoreWorkflowCommand): Promise<void> {
+    const workflow = await ownedWorkflow(
+      this.projects,
+      this.workflows,
+      command.organizationId,
+      command.projectId,
+      command.workflowId,
     );
-    if (parents.length)
-      throw new ConflictError(`«${parents[0].name}» usa este flujo como sub-flujo`, "workflow-in-use");
-    // Its datasets go with it, by the cascade in the migration: a table of values for a flow that
-    // no longer exists is rows nothing can ever spend.
-    await this.workflows.deleteWorkflow(command.projectId, workflow.id);
+    if (!workflow.deletedAt) return;
+    // El nombre pudo reutilizarse mientras estaba fuera: el índice único es parcial desde
+    // `ArchiveAndSoftDelete1700000042000`, así que esto es un 409 y no un error de Postgres.
+    if (await this.workflows.findWorkflowByName(command.projectId, workflow.name))
+      throw new ConflictError("Ya hay un flujo con ese nombre", "workflow-name-taken");
+
+    const now = this.clock.now();
+    await this.workflows.saveWorkflow({ ...workflow, deletedAt: null, updatedAt: now });
+    for (const dataset of await this.workflows.listDatasets(command.projectId, "deleted"))
+      if (dataset.workflowId === workflow.id)
+        await this.workflows.saveDataset({ ...dataset, deletedAt: null, updatedAt: now });
   }
 }
 
@@ -330,6 +416,7 @@ export class DuplicateWorkflowHandler implements ICommandHandler<DuplicateWorkfl
       createdAt: now,
       updatedAt: now,
       updatedBy: command.actorId,
+      deletedAt: null,
     });
     const datasets = (await this.workflows.listDatasets(command.projectId)).filter(
       (dataset) => dataset.workflowId === source.id,
@@ -344,6 +431,8 @@ export class DuplicateWorkflowHandler implements ICommandHandler<DuplicateWorkfl
         createdAt: now,
         updatedAt: now,
         updatedBy: command.actorId,
+        archivedAt: null,
+        deletedAt: null,
       });
     }
     return { workflowId };

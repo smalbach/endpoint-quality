@@ -4,6 +4,13 @@ import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqr
 
 import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
+import {
+  archiveIn,
+  deleteIn,
+  restoreIn,
+  type LifecycleNoun,
+  type LifecycleStore,
+} from "@/shared/lifecycle/lifecycle-store";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
 import type { SuiteRow } from "../../domain/model";
@@ -28,7 +35,28 @@ export class UpdateSuiteCommand implements ICommand {
     readonly actorId: string,
   ) {}
 }
+/** Borrar una suite: blanda por defecto, definitiva con `purge` y solo sobre algo eliminado. */
 export class DeleteSuiteCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly suiteId: string,
+    readonly purge = false,
+  ) {}
+}
+
+/** Archivar una suite: sale de la lista y deja de contar como referencia de sus flujos. */
+export class SetSuiteArchivedCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly suiteId: string,
+    readonly archived: boolean,
+  ) {}
+}
+
+/** Restaurar una suite eliminada, con su lista de flujos en el mismo orden. */
+export class RestoreSuiteCommand implements ICommand {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
@@ -84,6 +112,8 @@ export class CreateSuiteHandler implements ICommandHandler<CreateSuiteCommand, {
       createdAt: now,
       updatedAt: now,
       updatedBy: command.actorId,
+      archivedAt: null,
+      deletedAt: null,
     };
     await this.workflows.saveSuite(suite);
     return { suiteId: suite.id };
@@ -121,18 +151,100 @@ export class UpdateSuiteHandler implements ICommandHandler<UpdateSuiteCommand, v
   }
 }
 
+/** Cómo se llama esto en los errores del ciclo de vida. */
+const SUITE: LifecycleNoun = { code: "suite", that: "La suite", the: "la suite" };
+
+/** El almacén de suites con la forma del servicio de ciclo de vida. */
+const suiteStore = (workflows: WorkflowRepositoryPort): LifecycleStore<SuiteRow> => ({
+  findById: (projectId, id) => workflows.findSuite(projectId, id),
+  save: (row) => workflows.saveSuite(row),
+  remove: async (projectId, id) => {
+    await workflows.deleteSuite(projectId, id);
+    return true;
+  },
+});
+
+const touch = (row: SuiteRow, now: Date): SuiteRow => ({ ...row, updatedAt: now });
+
+/**
+ * Borrar una suite **sin perder el orden**.
+ *
+ * Una suite no guarda trabajo propio —los flujos son el trabajo—, pero sí guarda una decisión: qué
+ * nueve flujos corren, y en qué orden. Eso es lo que no se podía recuperar, y lo que vuelve ahora.
+ *
+ * Borrarla sigue sin borrar nada más. Y deja de contar como referencia: el flujo que nombraba se
+ * puede borrar en cuanto la suite está en la papelera.
+ */
 @CommandHandler(DeleteSuiteCommand)
 export class DeleteSuiteHandler implements ICommandHandler<DeleteSuiteCommand, void> {
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
   ) {}
 
   async execute(command: DeleteSuiteCommand): Promise<void> {
     await ownedProject(this.projects, command.organizationId, command.projectId);
+    await deleteIn(
+      suiteStore(this.workflows),
+      command.projectId,
+      command.suiteId,
+      command.purge,
+      this.clock.now(),
+      SUITE,
+      { patch: touch },
+    );
+  }
+}
+
+@CommandHandler(SetSuiteArchivedCommand)
+export class SetSuiteArchivedHandler implements ICommandHandler<SetSuiteArchivedCommand, void> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
+
+  async execute(command: SetSuiteArchivedCommand): Promise<void> {
+    await ownedProject(this.projects, command.organizationId, command.projectId);
+    await archiveIn(
+      suiteStore(this.workflows),
+      command.projectId,
+      command.suiteId,
+      command.archived,
+      this.clock.now(),
+      SUITE,
+      { patch: touch },
+    );
+  }
+}
+
+/**
+ * Restaurar una suite eliminada.
+ *
+ * Su lista de flujos vuelve tal cual, **aunque alguno de ellos ya no esté**: se dice cuáles faltan
+ * en vez de recortar la lista por su cuenta, porque una suite a la que le quitan dos pasos en
+ * silencio corre otra cosa que la que se guardó.
+ */
+@CommandHandler(RestoreSuiteCommand)
+export class RestoreSuiteHandler implements ICommandHandler<RestoreSuiteCommand, void> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
+
+  async execute(command: RestoreSuiteCommand): Promise<void> {
+    await ownedProject(this.projects, command.organizationId, command.projectId);
     const suite = await this.workflows.findSuite(command.projectId, command.suiteId);
     if (!suite) throw new NotFoundError("La suite no existe", "suite-not-found");
-    // Deleting the suite deletes nothing else. It is a list of flows, and the flows are the work.
-    await this.workflows.deleteSuite(command.projectId, command.suiteId);
+    if (suite.deletedAt) {
+      if (await this.workflows.findSuiteByName(command.projectId, suite.name))
+        throw new ConflictError("Ya hay una suite con ese nombre", "suite-name-taken");
+      await validIds(this.workflows, command.projectId, suite.workflowIds);
+    }
+    await restoreIn(suiteStore(this.workflows), command.projectId, command.suiteId, this.clock.now(), SUITE, {
+      patch: touch,
+    });
   }
 }

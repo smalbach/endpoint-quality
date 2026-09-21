@@ -11,7 +11,13 @@ import { EnvironmentsModule } from "@/modules/environments/environments.module";
 import { ProjectConfigModule } from "@/modules/config/config.module";
 import { ROLE_REPOSITORY } from "./domain/ports";
 import { TypeOrmRoleRepository } from "./infrastructure/persistence/typeorm-role.repository";
-import { CreateRoleHandler, DeleteRoleHandler, UpdateRoleHandler } from "./application/commands/manage-roles";
+import {
+  CreateRoleHandler,
+  DeleteRoleHandler,
+  RestoreRoleHandler,
+  SetRoleArchivedHandler,
+  UpdateRoleHandler,
+} from "./application/commands/manage-roles";
 import {
   ReplaceRoleRulesHandler,
   SetEndpointRoleAccessHandler,
@@ -29,6 +35,8 @@ export const ROLE_COMMAND_HANDLERS = [
   CreateRoleHandler,
   UpdateRoleHandler,
   DeleteRoleHandler,
+  SetRoleArchivedHandler,
+  RestoreRoleHandler,
   SetRolePermissionsHandler,
   SetEndpointRoleAccessHandler,
   ReplaceRoleRulesHandler,

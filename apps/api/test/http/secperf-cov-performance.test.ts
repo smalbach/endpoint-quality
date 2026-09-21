@@ -207,14 +207,48 @@ describe("los planes de carga", () => {
     assert.notEqual(plan.updatedBy, owner.userId);
   });
 
-  test("borrar un plan lo quita, pero sus corridas se quedan", async () => {
+  test("borrar un plan lo saca de la lista y se puede restaurar; sus corridas se quedan igual", async () => {
     const planId = await createPlan("Efímero", { definition: definition() });
     const kept = await seedRun({ planId, planName: "Efímero" });
     const removed = await api().delete(`${base()}/plans/${planId}`).set(as(owner));
     assert.equal(removed.status, 204);
-    assert.equal((await api().get(`${base()}/plans/${planId}`).set(as(owner))).status, 404);
-    assert.equal((await api().delete(`${base()}/plans/${planId}`).set(as(owner))).status, 404);
 
+    // Fuera de la lista de planes, dentro de la papelera, y legible: es lo que dice si merece la
+    // pena restaurarlo.
+    const live = await api().get(`${base()}/plans`).set(as(owner));
+    assert.ok(!live.body.some((plan: { id: string }) => plan.id === planId));
+    const trash = await api().get(`${base()}/plans?state=deleted`).set(as(owner));
+    assert.deepEqual(
+      trash.body.map((plan: { id: string }) => plan.id),
+      [planId],
+    );
+    assert.equal((await api().get(`${base()}/plans/${planId}`).set(as(owner))).status, 200);
+    // Borrarlo dos veces es la misma operación ya hecha, no un error.
+    assert.equal((await api().delete(`${base()}/plans/${planId}`).set(as(owner))).status, 204);
+
+    // El nombre quedó libre mientras estaba fuera: si se reutiliza, restaurar es un 409.
+    const otherId = await createPlan("Efímero", { definition: definition() });
+    assert.equal((await api().post(`${base()}/plans/${planId}/restore`).set(as(owner))).status, 409);
+    assert.equal((await api().delete(`${base()}/plans/${otherId}`).set(as(owner))).status, 204);
+    assert.equal((await api().post(`${base()}/plans/${planId}/restore`).set(as(owner))).status, 204);
+
+    // Archivar lo saca de la lista de trabajo sin borrarlo.
+    const filed = await api().patch(`${base()}/plans/${planId}/archived`).set(as(owner)).send({ archived: true });
+    assert.equal(filed.status, 204);
+    const archived = await api().get(`${base()}/plans?state=archived`).set(as(owner));
+    assert.deepEqual(
+      archived.body.map((plan: { id: string }) => plan.id),
+      [planId],
+    );
+    await api().patch(`${base()}/plans/${planId}/archived`).set(as(owner)).send({ archived: false });
+
+    // El definitivo pide que antes esté eliminado.
+    assert.equal((await api().delete(`${base()}/plans/${planId}?purge=true`).set(as(owner))).status, 409);
+    await api().delete(`${base()}/plans/${planId}`).set(as(owner));
+    assert.equal((await api().delete(`${base()}/plans/${planId}?purge=true`).set(as(owner))).status, 204);
+    assert.equal((await api().get(`${base()}/plans/${planId}`).set(as(owner))).status, 404);
+
+    // Y la corrida sigue ahí, con el plan que midió dentro.
     const runs = await api().get(`${base()}/runs?planId=${planId}`).set(as(owner));
     assert.equal(runs.status, 200);
     assert.deepEqual(

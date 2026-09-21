@@ -103,7 +103,7 @@ describe("gestionar mocks", () => {
       code("mock-not-found"),
     );
     await assert.rejects(
-      new DeleteMockHandler(projects, mocks).execute(new DeleteMockCommand(ORG, "p-1", "no")),
+      new DeleteMockHandler(projects, mocks, clock).execute(new DeleteMockCommand(ORG, "p-1", "no")),
       code("mock-not-found"),
     );
   });

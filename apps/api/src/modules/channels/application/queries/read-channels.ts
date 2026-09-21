@@ -10,6 +10,7 @@ import { Inject } from "@nestjs/common";
 import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
 
 import { NotFoundError } from "@/shared/errors/domain-error";
+import type { LifecycleState } from "@/shared/lifecycle/lifecycle";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
 import {
@@ -28,6 +29,8 @@ export class ListChannelsQuery implements IQuery {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
+    /** Qué lista se pide: los que se usan, los archivados o los eliminados. */
+    readonly state: LifecycleState = "active",
   ) {}
 }
 
@@ -40,7 +43,7 @@ export class ListChannelsHandler implements IQueryHandler<ListChannelsQuery, { c
 
   async execute(query: ListChannelsQuery): Promise<{ channels: ChannelView[] }> {
     const project = await ownedProject(this.projects, query.organizationId, query.projectId);
-    return { channels: (await this.channels.listByProject(project.id)).map(viewChannel) };
+    return { channels: (await this.channels.listByProject(project.id, query.state)).map(viewChannel) };
   }
 }
 

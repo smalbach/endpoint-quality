@@ -41,8 +41,15 @@ export type ImportKind = (typeof IMPORT_KINDS)[number];
 /** A kind that is one readable thing, rather than a container or a refusal. */
 export type PieceKind = Exclude<ImportKind, "postman-dump" | "unknown">;
 
-/** Where each piece lands. The dialog shows it, the server obeys it: one table, so neither lies. */
-export const IMPORT_TARGETS = ["contract", "endpoints", "flows", "environment", "project"] as const;
+/**
+ * Where each piece lands. The dialog shows it, the server obeys it: one table, so neither lies.
+ *
+ * `collections` es donde va una colección de Postman: su árbol tal cual, editable y ejecutable como
+ * allí. Antes iba a `flows` —un grafo por carpeta, las aristas deducidas del orden— y eso convertía
+ * el fichero de alguien en algo que ya no se podía devolver a Postman ni correr de arriba abajo.
+ * `flows` sigue en la lista porque la captura de tráfico escribe ahí.
+ */
+export const IMPORT_TARGETS = ["contract", "endpoints", "collections", "flows", "environment", "project"] as const;
 export type ImportTarget = (typeof IMPORT_TARGETS)[number];
 
 /**
@@ -58,7 +65,7 @@ export function targetsOf(kind: PieceKind): ImportTarget[] {
     case "postman-environment":
       return ["environment"];
     case "postman-collection":
-      return ["endpoints", "flows"];
+      return ["endpoints", "collections"];
     case "eq-bundle":
       return ["project"];
     case "insomnia":

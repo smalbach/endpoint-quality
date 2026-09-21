@@ -47,7 +47,17 @@ export type ImportPostmanFlowsOutcome = PostmanFlowsImportResult;
 export type ImportedFlow = PostmanFlowsImportResult["flows"][number];
 
 /**
- * A collection, as flows.
+ * Las peticiones de una captura, como el flujo que describen.
+ *
+ * **Ya no es la puerta de «importar una colección».** Una colección de Postman entra como la
+ * colección que es —`modules/collections`, su árbol tal cual, editable y ejecutable como allí—, y
+ * esta ruta de aquí dejó de existir junto con su DTO: era la que partía el árbol de alguien en
+ * grafos y producía algo que ya no se podía devolver a Postman.
+ *
+ * Lo que queda es el puente que usa la captura de tráfico: las peticiones grabadas se escriben
+ * como una colección sintética y esta función las convierte en un flujo, que es lo que allí se
+ * pidió —«haz un flujo con lo que acabo de grabar»— y no tiene fichero de nadie detrás. Por eso
+ * sigue viva y por eso no la llama ningún controlador.
  *
  * **Nothing is written until the whole file has been read.** A collection of nine folders where the
  * seventh has a request nobody can parse must not leave six flows behind and an error; the graphs
@@ -263,6 +273,9 @@ export class ImportPostmanFlowsHandler implements ICommandHandler<
         createdAt: previous?.createdAt ?? now,
         updatedAt: now,
         updatedBy: command.actorId,
+        // Reimportar no resucita un flujo eliminado: `findWorkflowByName` solo mira los vivos, así
+        // que `previous` nunca es uno de la papelera y esto siempre nace o sigue vivo.
+        deletedAt: null,
       };
       flowWrites.push({
         row,

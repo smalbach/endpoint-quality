@@ -62,6 +62,7 @@ describe("TypeOrmWorkflowRepository", { skip: dbSkip }, () => {
     definition: { steps: [] } as never,
     ...stamp,
     updatedBy: randomUUID(),
+    deletedAt: null,
     ...overrides,
   });
   const dataset = (projectId: string, workflowId: string, overrides: Partial<DatasetRow> = {}): DatasetRow => ({
@@ -72,6 +73,8 @@ describe("TypeOrmWorkflowRepository", { skip: dbSkip }, () => {
     rows: [{ sku: "A" }, { sku: "B" }],
     ...stamp,
     updatedBy: randomUUID(),
+    archivedAt: null,
+    deletedAt: null,
     ...overrides,
   });
   const suite = (projectId: string, overrides: Partial<SuiteRow> = {}): SuiteRow => ({
@@ -82,6 +85,8 @@ describe("TypeOrmWorkflowRepository", { skip: dbSkip }, () => {
     workflowIds: [],
     ...stamp,
     updatedBy: randomUUID(),
+    archivedAt: null,
+    deletedAt: null,
     ...overrides,
   });
 

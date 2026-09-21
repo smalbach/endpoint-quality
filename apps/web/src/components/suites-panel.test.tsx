@@ -27,6 +27,7 @@ function draw(patch: Partial<Parameters<typeof SuitesPanel>[0]> = {}) {
     onCreate: vi.fn(),
     onChange: vi.fn(),
     onDelete: vi.fn(),
+    onArchive: vi.fn(),
     onRun: vi.fn(),
   };
   const props = { ...mocks, ...patch } as typeof mocks;
@@ -114,13 +115,25 @@ describe("SuitesPanel", () => {
   });
 
   test("ejecuta y elimina; no se ejecuta mientras corre ni vacía", () => {
-    const { onRun, onDelete } = draw({
+    const { onRun, onDelete, onArchive } = draw({
       suites: [suite, { id: "s2", name: "Vacía", workflowIds: [] } as unknown as SuiteView],
     });
     open();
     fireEvent.click(screen.getByRole("button", { name: "Ejecutar" }));
     expect(onRun).toHaveBeenCalledWith("s1");
+    // Eliminar pregunta antes, con archivar como la otra salida.
     fireEvent.click(screen.getByRole("button", { name: "Eliminar" }));
+    expect(screen.getByText(/«Antes de publicar» sale de la lista/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Archivar" }));
+    expect(onArchive).toHaveBeenCalledWith("s1");
+
+    // Cancelar cierra sin borrar.
+    fireEvent.click(screen.getByRole("button", { name: "Eliminar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(onDelete).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Eliminar" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Eliminar" })[1]);
     expect(onDelete).toHaveBeenCalledWith("s1");
 
     fireEvent.click(screen.getByText("Vacía"));

@@ -10,6 +10,13 @@ import { Inject } from "@nestjs/common";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
+import {
+  archiveIn,
+  deleteIn,
+  restoreIn,
+  type LifecycleNoun,
+  type LifecycleStore,
+} from "@/shared/lifecycle/lifecycle-store";
 import { ENV, type Env } from "@/shared/config/env";
 import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
@@ -19,6 +26,7 @@ import {
   blankChannel,
   channelProblems,
   withChanges,
+  type Channel,
   type ChannelCeilings,
   type ChannelInput,
 } from "../../domain/model";
@@ -120,7 +128,30 @@ export class UpdateChannelHandler implements ICommandHandler<UpdateChannelComman
   }
 }
 
+/** Borrar un canal: blando por defecto, definitivo con `purge` y solo sobre algo ya eliminado. */
 export class DeleteChannelCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly channelId: string,
+    readonly actorId: string,
+    readonly purge = false,
+  ) {}
+}
+
+/** Archivar un canal: sale de la lista y deja de poder abrirse, sin perder sus tramas guardadas. */
+export class SetChannelArchivedCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly channelId: string,
+    readonly actorId: string,
+    readonly archived: boolean,
+  ) {}
+}
+
+/** Restaurar un canal eliminado, con sus tramas y sus sesiones. */
+export class RestoreChannelCommand implements ICommand {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
@@ -129,9 +160,25 @@ export class DeleteChannelCommand implements ICommand {
   ) {}
 }
 
+/** Cómo se llama esto en los errores del ciclo de vida. */
+const CHANNEL: LifecycleNoun = { code: "channel", that: "El canal", the: "el canal" };
+
+/** El almacén de canales con la forma del servicio de ciclo de vida. */
+const channelStore = (channels: ChannelRepositoryPort): LifecycleStore<Channel> => ({
+  findById: (projectId, id) => channels.findAnyById(projectId, id),
+  save: (row) => channels.save(row),
+  remove: (projectId, id) => channels.remove(projectId, id),
+});
+
+const touchedBy = (actorId: string) => (row: Channel, now: Date) => ({ ...row, updatedAt: now, updatedBy: actorId });
+
 /**
  * Borrar es en blando, como un endpoint: las sesiones de un canal borrado siguen siendo lo que pasó
  * aquel día, y la clave ajena en cascada se las llevaría si la fila desapareciera.
+ *
+ * Lo que faltaba no era el borrado blando —ya estaba— sino la vuelta: hasta aquí la fila se marcaba
+ * y no había ninguna pantalla desde la que deshacerlo. `?purge=true` es el definitivo, y ese sí se
+ * lleva las conversaciones.
  */
 @CommandHandler(DeleteChannelCommand)
 export class DeleteChannelHandler implements ICommandHandler<DeleteChannelCommand, void> {
@@ -143,9 +190,66 @@ export class DeleteChannelHandler implements ICommandHandler<DeleteChannelComman
 
   async execute(command: DeleteChannelCommand): Promise<void> {
     const project = await writableProject(this.projects, command.organizationId, command.projectId);
-    const channel = await this.channels.findById(project.id, command.channelId);
+    await deleteIn(
+      channelStore(this.channels),
+      project.id,
+      command.channelId,
+      command.purge,
+      this.clock.now(),
+      CHANNEL,
+      { patch: touchedBy(command.actorId) },
+    );
+  }
+}
+
+@CommandHandler(SetChannelArchivedCommand)
+export class SetChannelArchivedHandler implements ICommandHandler<SetChannelArchivedCommand, void> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(CHANNEL_REPOSITORY) private readonly channels: ChannelRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
+
+  async execute(command: SetChannelArchivedCommand): Promise<void> {
+    const project = await writableProject(this.projects, command.organizationId, command.projectId);
+    await archiveIn(
+      channelStore(this.channels),
+      project.id,
+      command.channelId,
+      command.archived,
+      this.clock.now(),
+      CHANNEL,
+      { patch: touchedBy(command.actorId) },
+    );
+  }
+}
+
+/**
+ * Restaurar un canal eliminado.
+ *
+ * Comprueba el tope del proyecto, que se cuenta sobre los vivos: si mientras estaba fuera se
+ * crearon canales hasta llenarlo, devolverlo lo pasaría, y un tope que se puede saltar por la
+ * puerta de atrás no es un tope.
+ */
+@CommandHandler(RestoreChannelCommand)
+export class RestoreChannelHandler implements ICommandHandler<RestoreChannelCommand, void> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(CHANNEL_REPOSITORY) private readonly channels: ChannelRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
+
+  async execute(command: RestoreChannelCommand): Promise<void> {
+    const project = await writableProject(this.projects, command.organizationId, command.projectId);
+    const channel = await this.channels.findAnyById(project.id, command.channelId);
     if (!channel) throw new NotFoundError("El canal no existe", "channel-not-found");
-    const now = this.clock.now();
-    await this.channels.save({ ...channel, deletedAt: now, updatedAt: now, updatedBy: command.actorId });
+    if (channel.deletedAt && (await this.channels.countByProject(project.id)) >= MAX_CHANNELS_PER_PROJECT)
+      throw new ConflictError(
+        `Este proyecto ya tiene ${MAX_CHANNELS_PER_PROJECT} canales: borra alguno antes de restaurar este`,
+        "channels-full",
+      );
+    await restoreIn(channelStore(this.channels), project.id, command.channelId, this.clock.now(), CHANNEL, {
+      patch: touchedBy(command.actorId),
+    });
   }
 }

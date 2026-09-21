@@ -117,6 +117,8 @@ export type SentRequestView = {
    * decirlo el resultado es un 401 en la petición siguiente que nadie puede explicar.
    */
   cookies: { sent: string[]; stored: string[]; rejected: { line: string; why: string }[] };
+  /** Lo que `pm.variables` / `pm.collectionVariables` dejó escrito, para encadenar la siguiente. */
+  variables: Record<string, string>;
 };
 
 const IDEMPOTENT = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -179,6 +181,10 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
     const run = new ScriptSession(this.sandbox, this.environments, this.cipher, environment, [
       ...Object.values(projectSecrets).filter((value): value is string => typeof value === "string"),
     ]);
+    // Lo que trae quien envía. Vacío desde el editor; en una corrida de colección son las variables
+    // que las peticiones anteriores dejaron escritas, y es lo que hace que la cadena de una
+    // colección —crear, leer lo creado, borrarlo— funcione igual que en Postman.
+    run.requestVariables = { ...input.variables };
     const environmentView = environment ? { id: environment.id, name: environment.name } : null;
     const scripts: SentRequestView["scripts"] = { pre: null, post: null };
     let captured: SessionTokenSource | null = null;
@@ -188,7 +194,7 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
       const outcome = await run.execute({
         phase: "pre",
         code: input.preRequestScript,
-        variables: {},
+        variables: run.requestVariables,
         request: {
           method: input.method,
           url: input.path,
@@ -215,13 +221,22 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
           cookies: { sent: [], stored: [], rejected: [] },
           scripts,
           sessionToken: captured,
+          variables: run.requestVariables,
         };
       }
       if (outcome.raw.headers)
         headerRows = Object.entries(outcome.raw.headers).map(([name, value]) => ({ name, value, enabled: true }));
     }
 
-    const variables = withEnvironmentNamespace({ ...run.values, ...run.requestVariables });
+    // `{{baseUrl}}`, cuando nadie lo ha definido, es la URL base que se va a usar. Es la variable
+    // con la que está escrita casi cualquier colección de Postman, y sin esto una colección
+    // importada tal cual fallaba en su primera petición por una variable que el producto ya sabe.
+    // Va la primera: una variable del entorno con ese nombre sigue mandando sobre ella.
+    const variables = withEnvironmentNamespace({
+      baseUrl: environment?.baseUrl || project.baseUrl,
+      ...run.values,
+      ...run.requestVariables,
+    });
     const seed: ComputedSeed = {
       uuid: randomUUID(),
       now: new Date(),
@@ -338,6 +353,7 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
         environment: environmentView,
         scripts,
         sessionToken: captured,
+        variables: run.requestVariables,
         // Nada llegó, así que nada se guardó; lo que se presentó sí se dice.
         cookies: { sent: cookiesSent.map((cookie) => `${cookie.name}=${cookie.domain}${cookie.path}`), stored: [], rejected: [] },
       };
@@ -384,6 +400,8 @@ export class SendEndpointRequestHandler implements ICommandHandler<SendEndpointR
       environment: environmentView,
       scripts,
       sessionToken: captured,
+      // Lo que los dos scripts dejaron escrito, para quien encadene esta petición con la siguiente.
+      variables: run.requestVariables,
       cookies: {
         sent: cookiesSent.map((cookie) => `${cookie.name}=${cookie.domain}${cookie.path}`),
         stored: cookies.stored,

@@ -117,6 +117,8 @@ function makeEnvironment(fields: Partial<Environment> = {}): Environment {
     writesAllowed: true,
     authEnforced: true,
     createdAt: NOW,
+    archivedAt: null,
+    deletedAt: null,
     ...fields,
   };
 }

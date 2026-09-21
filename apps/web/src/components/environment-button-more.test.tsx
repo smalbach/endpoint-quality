@@ -42,6 +42,8 @@ const environment = (id: string, name: string, active: boolean, variables: Envir
     authEnforced: false,
     active,
     credentials: [],
+    archivedAt: null,
+    deletedAt: null,
   }) as Environment;
 
 function mount({

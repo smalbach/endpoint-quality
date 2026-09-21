@@ -55,6 +55,8 @@ const monitor = (patch: Partial<ListedMonitor> = {}): ListedMonitor => ({
   createdBy: "u1",
   scheduleLabel: "cada hora",
   recent: [],
+  archivedAt: null,
+  deletedAt: null,
   ...patch,
 });
 

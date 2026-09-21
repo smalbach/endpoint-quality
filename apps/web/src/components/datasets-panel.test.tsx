@@ -25,6 +25,7 @@ function draw(patch: Partial<Parameters<typeof DatasetsPanel>[0]> = {}) {
     onSave: vi.fn(),
     onDelete: vi.fn(),
     loadRows: vi.fn(async (_id: string) => [{ nombre: "Ana", email: "ana@x.com" }]),
+    onArchive: vi.fn(),
     ...patch,
   };
   render(<DatasetsPanel {...props} />);
@@ -50,7 +51,7 @@ describe("DatasetsPanel", () => {
   });
 
   test("se elige con qué recorrer, y cada conjunto dice sus filas y columnas", () => {
-    const { onSelect, onDelete } = draw({ selectedId: "d1" });
+    const { onSelect, onDelete, onArchive } = draw({ selectedId: "d1" });
     const select = screen.getByLabelText("Recorrer con") as HTMLSelectElement;
     expect(select.value).toBe("d1");
     expect([...select.options].map((option) => option.text)).toEqual([
@@ -61,7 +62,21 @@ describe("DatasetsPanel", () => {
     fireEvent.change(select, { target: { value: "" } });
     expect(onSelect).toHaveBeenCalledWith("");
     expect(screen.getByText("nombre, email")).toBeTruthy();
+    // Borrar pregunta antes, y el diálogo ofrece archivar: «quería quitarlo de la lista» es lo que
+    // quiere casi siempre quien pulsa la ×.
     fireEvent.click(screen.getByRole("button", { name: "Eliminar Productos" }));
+    expect(screen.getByText(/«Productos» sale de la lista/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Archivar" }));
+    expect(onArchive).toHaveBeenCalledWith("d2");
+    expect(onDelete).not.toHaveBeenCalled();
+
+    // Cancelar cierra sin tocar nada.
+    fireEvent.click(screen.getByRole("button", { name: "Eliminar Productos" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(onDelete).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Eliminar Productos" }));
+    fireEvent.click(screen.getByRole("button", { name: "Eliminar" }));
     expect(onDelete).toHaveBeenCalledWith("d2");
   });
 

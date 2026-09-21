@@ -146,6 +146,19 @@ import { InMemoryPerformanceRunQueue } from "@/modules/performance/infrastructur
 import { PerformanceExecutor } from "@/modules/performance/infrastructure/performance-executor";
 import { PerformanceProgressStream } from "@/modules/performance/infrastructure/performance-progress.stream";
 import { PERFORMANCE_COMMAND_HANDLERS, PERFORMANCE_QUERY_HANDLERS } from "@/modules/performance/performance.module";
+import {
+  COLLECTION_REPOSITORY,
+  COLLECTION_RUN_QUEUE,
+  COLLECTION_RUN_REPOSITORY,
+} from "@/modules/collections/domain/ports";
+import { CollectionsController } from "@/modules/collections/presentation/collections.controller";
+import { InMemoryCollectionRunQueue } from "@/modules/collections/infrastructure/in-memory-collection-queue";
+import { CollectionRunner } from "@/modules/collections/infrastructure/collection-runner";
+import { CollectionProgressStream } from "@/modules/collections/infrastructure/collection-progress.stream";
+import {
+  COLLECTION_COMMAND_HANDLERS,
+  COLLECTION_QUERY_HANDLERS,
+} from "@/modules/collections/collections.module";
 import { CODE_CONNECTOR_REPOSITORY, CODE_SCAN_REPOSITORY, GITHUB_SOURCE } from "@/modules/code-scan/domain/ports";
 import { CodeScanController } from "@/modules/code-scan/presentation/code-scan.controller";
 import { GithubSource } from "@/modules/code-scan/infrastructure/github-source";
@@ -192,6 +205,8 @@ import {
   InMemoryRunRepository,
   InMemorySpecRepository,
   InMemoryUserRepository,
+  InMemoryCollectionRepository,
+  InMemoryCollectionRunRepository,
 } from "./in-memory-repositories";
 
 /**
@@ -309,6 +324,8 @@ export type TestContext = {
     securityRuns: InMemorySecurityRunRepository;
     performancePlans: InMemoryPerformancePlanRepository;
     performanceRuns: InMemoryPerformanceRunRepository;
+    collections: InMemoryCollectionRepository;
+    collectionRuns: InMemoryCollectionRunRepository;
     codeConnectors: InMemoryCodeConnectorRepository;
     codeScans: InMemoryCodeScanRepository;
     config: InMemoryConfigRepository;
@@ -390,6 +407,8 @@ export async function createTestApp(
     securityRuns: new InMemorySecurityRunRepository(),
     performancePlans: new InMemoryPerformancePlanRepository(),
     performanceRuns: new InMemoryPerformanceRunRepository(),
+    collections: new InMemoryCollectionRepository(),
+    collectionRuns: new InMemoryCollectionRunRepository(),
     codeConnectors: new InMemoryCodeConnectorRepository(),
     codeScans: new InMemoryCodeScanRepository(),
     config: new InMemoryConfigRepository(),
@@ -456,6 +475,7 @@ export async function createTestApp(
       RolesController,
       SecurityRunsController,
       PerformanceController,
+      CollectionsController,
       CodeScanController,
       DashboardController,
     ],
@@ -508,6 +528,11 @@ export async function createTestApp(
       { provide: PERFORMANCE_RUN_QUEUE, useClass: InMemoryPerformanceRunQueue },
       PerformanceProgressStream,
       PerformanceExecutor,
+      { provide: COLLECTION_REPOSITORY, useValue: repositories.collections },
+      { provide: COLLECTION_RUN_REPOSITORY, useValue: repositories.collectionRuns },
+      { provide: COLLECTION_RUN_QUEUE, useClass: InMemoryCollectionRunQueue },
+      CollectionProgressStream,
+      CollectionRunner,
       { provide: CODE_CONNECTOR_REPOSITORY, useValue: repositories.codeConnectors },
       { provide: CODE_SCAN_REPOSITORY, useValue: repositories.codeScans },
       // The real GitHub adapter, but it goes through the same StubSafeFetch as everything else: a
@@ -582,6 +607,8 @@ export async function createTestApp(
       ...SECURITY_RUN_QUERY_HANDLERS,
       ...PERFORMANCE_COMMAND_HANDLERS,
       ...PERFORMANCE_QUERY_HANDLERS,
+      ...COLLECTION_COMMAND_HANDLERS,
+      ...COLLECTION_QUERY_HANDLERS,
       ...CODE_SCAN_COMMAND_HANDLERS,
       ...CODE_SCAN_QUERY_HANDLERS,
       ...DASHBOARD_QUERY_HANDLERS,
@@ -635,6 +662,7 @@ export async function createTestApp(
   moduleRef.get(RunOrchestrator).listen();
   moduleRef.get(SecurityRunExecutor).listen();
   moduleRef.get(PerformanceExecutor).listen();
+  moduleRef.get(CollectionRunner).listen();
 
   return {
     app,

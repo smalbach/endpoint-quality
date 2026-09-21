@@ -41,6 +41,8 @@ describe("TypeOrmEnvironmentRepository", { skip: dbSkip }, () => {
     authEnforced: false,
     createdAt: at(0),
     ...fields,
+    archivedAt: null,
+    deletedAt: null,
   });
 
   const credential = (environmentId: string, fields: Partial<Credential> = {}): Credential => ({

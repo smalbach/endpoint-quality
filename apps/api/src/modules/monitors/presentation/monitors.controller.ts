@@ -5,7 +5,7 @@
  * proyecto. Todo lo demás es `editor`, **incluido «Correr ahora»** — lanza una corrida real contra
  * un servicio real, y eso no es una lectura.
  */
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { CommandBus, QueryBus } from "@nestjs/cqrs";
 
 import {
@@ -17,9 +17,13 @@ import {
 import {
   CreateMonitorCommand,
   DeleteMonitorCommand,
+  RestoreMonitorCommand,
   RunMonitorNowCommand,
+  SetMonitorArchivedCommand,
   UpdateMonitorCommand,
 } from "../application/commands/manage-monitors";
+import { parseLifecycleState } from "@/shared/lifecycle/lifecycle";
+import { SetArchivedDto } from "@/shared/lifecycle/lifecycle.dto";
 import { ListMonitorsQuery, MonitorHistoryQuery } from "../application/queries/list-monitors";
 import { CreateMonitorDto, UpdateMonitorDto } from "./dto/monitors.dto";
 
@@ -35,8 +39,12 @@ export class MonitorsController {
 
   @Get()
   @RequireRole("viewer")
-  async list(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string) {
-    return this.queryBus.execute(new ListMonitorsQuery(organizationId, projectId));
+  async list(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Query("state") state?: string,
+  ) {
+    return this.queryBus.execute(new ListMonitorsQuery(organizationId, projectId, parseLifecycleState(state)));
   }
 
   @Get(":monitorId/executions")
@@ -90,6 +98,35 @@ export class MonitorsController {
     return this.commandBus.execute(new RunMonitorNowCommand(organizationId, projectId, monitorId));
   }
 
+  /** Fuera de la lista y sin lanzar corridas, sin perder el horario ni el historial. */
+  @Patch(":monitorId/archived")
+  @RequireRole("editor")
+  async setArchived(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("monitorId") monitorId: string,
+    @Body() body: SetArchivedDto,
+  ) {
+    return this.commandBus.execute(
+      new SetMonitorArchivedCommand(organizationId, projectId, monitorId, body.archived),
+    );
+  }
+
+  /** Lo que devuelve un eliminado a donde estaba: a la lista, o a los archivados si lo estaba. */
+  @Post(":monitorId/restore")
+  @RequireRole("editor")
+  async restore(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("monitorId") monitorId: string,
+  ) {
+    return this.commandBus.execute(new RestoreMonitorCommand(organizationId, projectId, monitorId));
+  }
+
+  /**
+   * Borrado blando. `?purge=true` es el definitivo, y solo vale sobre algo ya eliminado: quien
+   * llama a la API no pasa por el diálogo de la pantalla, así que el orden lo guarda el comando.
+   */
   @Delete(":monitorId")
   @RequireRole("editor")
   @HttpCode(204)
@@ -97,7 +134,8 @@ export class MonitorsController {
     @Param("organizationId") organizationId: string,
     @Param("projectId") projectId: string,
     @Param("monitorId") monitorId: string,
+    @Query("purge") purge?: string,
   ) {
-    await this.commandBus.execute(new DeleteMonitorCommand(organizationId, projectId, monitorId));
+    await this.commandBus.execute(new DeleteMonitorCommand(organizationId, projectId, monitorId, purge === "true"));
   }
 }

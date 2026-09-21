@@ -2,6 +2,7 @@ import { Inject } from "@nestjs/common";
 import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
 
 import { NotFoundError } from "@/shared/errors/domain-error";
+import type { LifecycleState } from "@/shared/lifecycle/lifecycle";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
 import { ENDPOINT_REPOSITORY, type EndpointRepositoryPort } from "@/modules/endpoints/domain/ports";
@@ -15,6 +16,8 @@ export class ListRolesQuery implements IQuery {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
+    /** Qué lista se pide: los roles en uso, los archivados o los eliminados. */
+    readonly state: LifecycleState = "active",
   ) {}
 }
 
@@ -28,7 +31,7 @@ export class ListRolesHandler implements IQueryHandler<ListRolesQuery, RoleView[
   async execute(query: ListRolesQuery): Promise<RoleView[]> {
     const project = await ownedProject(this.projects, query.organizationId, query.projectId);
     const [roles, permissions] = await Promise.all([
-      this.roles.list(project.id),
+      this.roles.list(project.id, query.state),
       this.roles.listPermissions(project.id),
     ]);
     return roles.map((role) => ({
@@ -126,9 +129,21 @@ export class ListRoleRulesHandler implements IQueryHandler<ListRoleRulesQuery> {
     @Inject(ROLE_REPOSITORY) private readonly roles: RoleRepositoryPort,
   ) {}
 
+  /**
+   * Solo las reglas **entre roles vivos**.
+   *
+   * Las filas de un rol archivado o eliminado se quedan en la tabla —es lo que hace que restaurarlo
+   * devuelva la matriz como estaba—, pero enseñarlas aquí sería una decisión sobre alguien que ya
+   * no sale en ninguna lista, y la pantalla no tendría dónde dibujarla.
+   */
   async execute(query: ListRoleRulesQuery): Promise<{ rules: Omit<RoleRule, "projectId">[] }> {
     const project = await ownedProject(this.projects, query.organizationId, query.projectId);
-    const rules = await this.roles.listRules(project.id);
-    return { rules: rules.map(({ projectId: _project, ...rule }) => rule) };
+    const [rules, live] = await Promise.all([this.roles.listRules(project.id), this.roles.list(project.id)]);
+    const alive = new Set(live.map((role) => role.id));
+    return {
+      rules: rules
+        .filter((rule) => alive.has(rule.sourceRoleId) && alive.has(rule.targetRoleId))
+        .map(({ projectId: _project, ...rule }) => rule),
+    };
   }
 }

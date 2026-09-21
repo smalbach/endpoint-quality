@@ -46,6 +46,7 @@ function endpoint(tenant: Tenant, fields: Record<string, unknown> = {}): Endpoin
 const filter = (fields: Partial<EndpointFilter> = {}): EndpointFilter => ({
   status: "all",
   search: "",
+  deleted: false,
   offset: 0,
   limit: 100,
   ...fields,

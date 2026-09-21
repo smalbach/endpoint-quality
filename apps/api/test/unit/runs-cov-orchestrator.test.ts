@@ -272,6 +272,7 @@ async function saveFlow(h: Harness, steps: WorkflowStep[], name = "Flujo", id = 
     createdAt: now,
     updatedAt: now,
     updatedBy: "tester",
+    deletedAt: null,
   });
   return id;
 }
@@ -444,6 +445,8 @@ describe("el recorrido de un flujo", () => {
       createdAt: now,
       updatedAt: now,
       updatedBy: "tester",
+      archivedAt: null,
+      deletedAt: null,
     });
     // The first check lets «a» go; the second, before «b», says cancelled.
     h.queue.cancelFrom = 2;

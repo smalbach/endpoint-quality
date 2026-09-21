@@ -69,6 +69,7 @@ const SENT: SentRequestView = {
     },
   },
   sessionToken: null,
+  variables: {},
   cookies: { sent: [], stored: [], rejected: [] },
 };
 

@@ -499,12 +499,43 @@ describe("la bitácora del mock", () => {
     assert.equal((await api().get(`${base()}/mocks/${mockId}/calls`).set(as(other))).status, 403);
   });
 
-  test("borrar el mock se lleva su bitácora, que sin él es tráfico ajeno sin dueño", async () => {
+  test("borrar el mock apaga su URL y lo deja restaurable; el definitivo se lleva su bitácora", async () => {
     const created = await createMock({ name: "efímero", visibility: "public" });
     await api().get(`/mock/${created.mock.publicId}/v1/bitacora/7`);
     assert.equal((await api().get(`${base()}/mocks/${created.mock.id}/calls`).set(as(owner))).body.calls.length, 1);
 
     assert.equal((await api().delete(`${base()}/mocks/${created.mock.id}`).set(as(owner))).status, 204);
+    // La URL deja de contestar en el acto: un mock fuera de la lista que siguiera sirviendo sería
+    // un mock que nadie mira apuntando al front de alguien.
+    assert.equal((await api().get(`/mock/${created.mock.publicId}/v1/bitacora/7`)).status, 404);
+    // Y su bitácora sigue: es lo que dice si merece la pena restaurarlo.
+    assert.equal(
+      [...context.repositories.mocks.calls.values()].some((call) => call.mockServerId === created.mock.id),
+      true,
+    );
+    const trash = await api().get(`${base()}/mocks?state=deleted`).set(as(owner));
+    assert.ok(trash.body.mocks.some((mock: { id: string }) => mock.id === created.mock.id));
+
+    // Restaurado con el mismo `publicId`: la URL que ya estaba pegada en un front vuelve a servir.
+    const back = await api().post(`${base()}/mocks/${created.mock.id}/restore`).set(as(owner));
+    assert.equal(back.status, 201);
+    assert.equal(back.body.publicId, created.mock.publicId);
+    assert.equal((await api().get(`/mock/${created.mock.publicId}/v1/bitacora/7`)).status, 200);
+
+    // Archivado también apaga la URL, sin perder la configuración.
+    const filed = await api()
+      .patch(`${base()}/mocks/${created.mock.id}/archived`)
+      .set(as(owner))
+      .send({ archived: true });
+    assert.equal(filed.status, 200);
+    assert.ok(filed.body.archivedAt);
+    assert.equal((await api().get(`/mock/${created.mock.publicId}/v1/bitacora/7`)).status, 404);
+    await api().patch(`${base()}/mocks/${created.mock.id}/archived`).set(as(owner)).send({ archived: false });
+
+    // El definitivo pide que antes esté eliminado, y entonces sí se lleva la bitácora.
+    assert.equal((await api().delete(`${base()}/mocks/${created.mock.id}?purge=true`).set(as(owner))).status, 409);
+    await api().delete(`${base()}/mocks/${created.mock.id}`).set(as(owner));
+    assert.equal((await api().delete(`${base()}/mocks/${created.mock.id}?purge=true`).set(as(owner))).status, 204);
     assert.equal(
       [...context.repositories.mocks.calls.values()].some((call) => call.mockServerId === created.mock.id),
       false,

@@ -5,7 +5,7 @@
  * API and pushes real traffic at it. Runs use the environment's stored variables and credentials;
  * no per-request secret ever travels in a body here.
  */
-import { Body, Controller, Delete, Get, HttpCode, Param, Post, Put, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, UseGuards } from "@nestjs/common";
 import { CommandBus, QueryBus } from "@nestjs/cqrs";
 import { concat, from, map, takeWhile, type Observable } from "rxjs";
 import { Sse } from "@nestjs/common";
@@ -16,7 +16,13 @@ import {
   RequireRole,
   type Principal,
 } from "@/modules/auth/infrastructure/guards/auth.guard";
-import { CreatePlanCommand, DeletePlanCommand, UpdatePlanCommand } from "../application/commands/manage-plan";
+import {
+  CreatePlanCommand,
+  DeletePlanCommand,
+  RestorePlanCommand,
+  SetPlanArchivedCommand,
+  UpdatePlanCommand,
+} from "../application/commands/manage-plan";
 import { CancelRunCommand, DeleteRunCommand, StartRunCommand } from "../application/commands/manage-run";
 import {
   CompareRunsQuery,
@@ -27,6 +33,8 @@ import {
 } from "../application/queries/read-performance";
 import { PerformanceProgressStream } from "../infrastructure/performance-progress.stream";
 import { CreatePlanDto, StartPerformanceRunDto, UpdatePlanDto } from "./dto/performance.dto";
+import { parseLifecycleState } from "@/shared/lifecycle/lifecycle";
+import { SetArchivedDto } from "@/shared/lifecycle/lifecycle.dto";
 
 const actorId = (principal: Principal): string => (principal.kind === "user" ? principal.userId : principal.tokenId);
 
@@ -43,8 +51,12 @@ export class PerformanceController {
 
   @Get("plans")
   @RequireRole("viewer")
-  async listPlans(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string) {
-    return this.queryBus.execute(new ListPlansQuery(organizationId, projectId));
+  async listPlans(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Query("state") state?: string,
+  ) {
+    return this.queryBus.execute(new ListPlansQuery(organizationId, projectId, parseLifecycleState(state)));
   }
 
   @Get("plans/:planId")
@@ -81,6 +93,32 @@ export class PerformanceController {
     await this.commandBus.execute(new UpdatePlanCommand(organizationId, projectId, planId, body, actorId(principal)));
   }
 
+  /** Fuera de la lista de planes. Sus corridas pasadas siguen donde estaban. */
+  @Patch("plans/:planId/archived")
+  @RequireRole("editor")
+  @HttpCode(204)
+  async setPlanArchived(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("planId") planId: string,
+    @Body() body: SetArchivedDto,
+  ): Promise<void> {
+    await this.commandBus.execute(new SetPlanArchivedCommand(organizationId, projectId, planId, body.archived));
+  }
+
+  /** Devuelve un plan eliminado a donde estaba. */
+  @Post("plans/:planId/restore")
+  @RequireRole("editor")
+  @HttpCode(204)
+  async restorePlan(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("planId") planId: string,
+  ): Promise<void> {
+    await this.commandBus.execute(new RestorePlanCommand(organizationId, projectId, planId));
+  }
+
+  /** Borrado blando. `?purge=true` es el definitivo, y solo sobre algo ya eliminado. */
   @Delete("plans/:planId")
   @RequireRole("editor")
   @HttpCode(204)
@@ -88,8 +126,9 @@ export class PerformanceController {
     @Param("organizationId") organizationId: string,
     @Param("projectId") projectId: string,
     @Param("planId") planId: string,
+    @Query("purge") purge?: string,
   ): Promise<void> {
-    await this.commandBus.execute(new DeletePlanCommand(organizationId, projectId, planId));
+    await this.commandBus.execute(new DeletePlanCommand(organizationId, projectId, planId, purge === "true"));
   }
 
   // ----- Runs -----

@@ -3,6 +3,7 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 
 import { EnvironmentCredentialEntity, EnvironmentEntity } from "@/shared/database/entities";
+import { lifecycleSql, type LifecycleState } from "@/shared/lifecycle/lifecycle";
 import type { Credential, CredentialKind, CredentialRole, Environment } from "../../domain/model";
 import type { EnvironmentRepositoryPort } from "../../domain/ports";
 
@@ -15,17 +16,34 @@ export class TypeOrmEnvironmentRepository implements EnvironmentRepositoryPort {
   ) {}
 
   async findById(id: string): Promise<Environment | null> {
+    const row = await this.environments
+      .createQueryBuilder("environment")
+      .where("environment.id = :id", { id })
+      .andWhere(lifecycleSql("environment", "active"))
+      .getOne();
+    return row ? { ...row } : null;
+  }
+  async findAnyById(id: string): Promise<Environment | null> {
     const row = await this.environments.findOne({ where: { id } });
     return row ? { ...row } : null;
   }
   async findByName(projectId: string, name: string): Promise<Environment | null> {
-    const row = await this.environments.findOne({ where: { projectId, name } });
+    const row = await this.environments
+      .createQueryBuilder("environment")
+      .where("environment.projectId = :projectId", { projectId })
+      .andWhere("environment.name = :name", { name })
+      .andWhere(lifecycleSql("environment", "active"))
+      .getOne();
     return row ? { ...row } : null;
   }
-  async listForProject(projectId: string): Promise<Environment[]> {
-    return (await this.environments.find({ where: { projectId }, order: { createdAt: "ASC" } })).map((row) => ({
-      ...row,
-    }));
+  async listForProject(projectId: string, state: LifecycleState = "active"): Promise<Environment[]> {
+    const rows = await this.environments
+      .createQueryBuilder("environment")
+      .where("environment.projectId = :projectId", { projectId })
+      .andWhere(lifecycleSql("environment", state))
+      .orderBy('environment."createdAt"', "ASC")
+      .getMany();
+    return rows.map((row) => ({ ...row }));
   }
   async save(environment: Environment): Promise<void> {
     await this.environments.save(environment);

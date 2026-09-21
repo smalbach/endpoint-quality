@@ -50,6 +50,8 @@ const environment = (patch: Partial<Environment> = {}): Environment => ({
       updatedAt: "2026-03-01T10:00:00.000Z",
     },
   ],
+  archivedAt: null,
+  deletedAt: null,
   ...patch,
 });
 
@@ -90,7 +92,9 @@ function draw(handlers: Handlers = {}) {
 
 const fieldByLabel = (label: string) =>
   screen.getByText(label, { selector: "span" }).closest("label")!.querySelector("input") as HTMLInputElement;
-const saveBar = () => screen.getByText("Eliminar entorno").parentElement as HTMLElement;
+/** La barra pegada abajo: se ancla en «Todo guardado», que es su propio texto. */
+const saveBar = () =>
+  screen.getByText(/Todo guardado|Cambios sin guardar|Hay variables con problemas/).parentElement as HTMLElement;
 const saveButton = () => within(saveBar()).getByRole("button", { name: "Guardar" }) as HTMLButtonElement;
 
 const apiError = (detail: string, fields: { field: string; detail: string }[] = []) =>
@@ -241,18 +245,28 @@ describe("EnvironmentsPage", () => {
     expect(await screen.findByText("La URL no resuelve")).toBeTruthy();
   });
 
-  test("borrar pide confirmación nombrando el entorno y solo entonces borra", async () => {
+  test("borrar pide confirmación nombrando el entorno, ofrece archivar, y solo entonces borra", async () => {
     draw();
     await screen.findByText("Entorno activo");
-    fireEvent.click(screen.getByText("Eliminar entorno"));
+    fireEvent.click(within(saveBar()).getByRole("button", { name: "Eliminar" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText(/«staging» se elimina con sus variables y sus credenciales/)).toBeTruthy();
+    expect(within(dialog).getByText(/«staging» sale del selector/)).toBeTruthy();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(call).not.toHaveBeenCalledWith(expect.anything(), { method: "DELETE" });
 
-    fireEvent.click(screen.getByText("Eliminar entorno"));
+    // Archivar es la otra salida del mismo diálogo: fuera del selector, sin borrar.
+    fireEvent.click(within(saveBar()).getByRole("button", { name: "Eliminar" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Archivar" }));
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/environments/e1/archived", {
+        method: "PATCH",
+        body: { archived: true },
+      }),
+    );
+
+    fireEvent.click(within(saveBar()).getByRole("button", { name: "Eliminar" }));
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Eliminar" }));
     await waitFor(() => expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/environments/e1", { method: "DELETE" }));
   });
@@ -260,7 +274,7 @@ describe("EnvironmentsPage", () => {
   test("si borrar falla se dice por qué", async () => {
     draw({ write: () => Promise.reject(new Error("tiene monitores")) });
     await screen.findByText("Entorno activo");
-    fireEvent.click(screen.getByText("Eliminar entorno"));
+    fireEvent.click(within(saveBar()).getByRole("button", { name: "Eliminar" }));
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Eliminar" }));
     expect(await screen.findByText("tiene monitores")).toBeTruthy();
   });
@@ -349,7 +363,7 @@ describe("EnvironmentsPage", () => {
     await screen.findByText("No activo");
     expect(screen.queryByRole("button", { name: "Activar" })).toBeNull();
     expect(screen.queryByText("Secreto")).toBeNull();
-    expect(screen.queryByText("Eliminar entorno")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Eliminar" })).toBeNull();
     expect(screen.queryByRole("button", { name: "+ Nuevo" })).toBeNull();
     expect(fieldByLabel("Nombre").disabled).toBe(true);
   });

@@ -16,7 +16,8 @@ import { useActiveEnvironment } from "@/lib/active-environment";
 import { mapsFrom, problemsWith, rowsFrom } from "@/lib/env-variables";
 import { cn } from "@/lib/format";
 import { Badge, Button, inputClass } from "@/components/ui";
-import { ConfirmDialog, Modal } from "@/components/overlay";
+import { Modal } from "@/components/overlay";
+import { DeleteDialog } from "@/components/lifecycle";
 import { useToast } from "@/components/toast";
 import { VariablesEditor } from "@/components/variables-editor";
 import type { Environment, ProjectSummary } from "@/lib/types";
@@ -53,6 +54,23 @@ export function EnvironmentManager({ projectId, onClose }: { projectId: string; 
       await invalidate();
       await queryClient.invalidateQueries({ queryKey: ["project", projectId] });
       toast.success(`Entorno «${environment.name}» eliminado`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  /**
+   * Archivar desde aquí, que es lo que de verdad se quiere casi siempre: sacarlo del selector sin
+   * perderlo. Restaurar y borrar del todo se hacen en Settings → Entornos, donde está la papelera:
+   * este panel se abre en mitad de una petición y no es sitio para una decisión definitiva.
+   */
+  const archive = useMutation({
+    mutationFn: (environment: Environment) =>
+      api<void>(`${base}/environments/${environment.id}/archived`, { method: "PATCH", body: { archived: true } }),
+    onSuccess: async (_, environment) => {
+      setDeleting(null);
+      await invalidate();
+      await queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+      toast.success(`Entorno «${environment.name}» archivado`);
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -175,12 +193,14 @@ export function EnvironmentManager({ projectId, onClose }: { projectId: string; 
       )}
 
       {deleting && (
-        <ConfirmDialog
+        <DeleteDialog
           title="Eliminar entorno"
-          message={`«${deleting.name}» se elimina con sus variables y sus credenciales. No se puede deshacer.${
+          message={`«${deleting.name}» sale del selector y deja de poder ejecutarse. Sus variables y sus credenciales se guardan.${
             deleting.active ? " Era el activo: pasará a serlo el más antiguo que quede." : ""
           }`}
-          pending={remove.isPending}
+          restoreHint="Se puede restaurar desde el filtro «Eliminados» de Settings → Entornos."
+          pending={remove.isPending || archive.isPending}
+          onArchive={() => archive.mutate(deleting)}
           onConfirm={() => remove.mutate(deleting)}
           onClose={() => setDeleting(null)}
         />

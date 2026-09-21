@@ -131,6 +131,8 @@ export type Channel = {
   createdAt: Date;
   updatedAt: Date;
   updatedBy: string | null;
+  /** Fuera de la lista sin perderse, como el resto de recursos. Ver `shared/lifecycle`. */
+  archivedAt: Date | null;
   deletedAt: Date | null;
 };
 
@@ -403,6 +405,7 @@ export function blankChannel(fields: {
     createdAt: fields.now,
     updatedAt: fields.now,
     updatedBy: fields.by,
+    archivedAt: null,
     deletedAt: null,
   };
 }

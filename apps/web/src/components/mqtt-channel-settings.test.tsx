@@ -280,6 +280,33 @@ describe("eliminar el canal", () => {
     expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/channels/c1", { method: "DELETE" });
   });
 
+  test("archivar es la otra salida del diálogo: fuera de la lista, con sus mensajes", async () => {
+    call.mockReset();
+    call.mockResolvedValue(undefined);
+    const onRemoved = mount();
+    fireEvent.click(screen.getByRole("button", { name: "Eliminar canal" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Archivar" }));
+    await waitFor(() => expect(onRemoved).toHaveBeenCalled());
+    expect(call).toHaveBeenCalledWith("/orgs/o/projects/p1/channels/c1/archived", {
+      method: "PATCH",
+      body: { archived: true },
+    });
+    expect(await screen.findByText("Canal archivado")).toBeTruthy();
+  });
+
+  test("un fallo al archivar se cuenta, venga como error o como texto", async () => {
+    call.mockReset();
+    call.mockRejectedValueOnce(new Error("Tiene sesiones abiertas")).mockRejectedValueOnce("prohibido");
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "Eliminar canal" }));
+    const archive = () => within(screen.getByRole("dialog")).getByRole("button", { name: "Archivar" });
+    fireEvent.click(archive());
+    expect(await screen.findByText("Tiene sesiones abiertas")).toBeTruthy();
+    await waitFor(() => expect((archive() as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(archive());
+    expect(await screen.findByText("prohibido")).toBeTruthy();
+  });
+
   test("un fallo al borrar se cuenta, venga como error o como texto", async () => {
     call.mockReset();
     call.mockRejectedValueOnce(new Error("Tiene sesiones abiertas")).mockRejectedValueOnce("prohibido");

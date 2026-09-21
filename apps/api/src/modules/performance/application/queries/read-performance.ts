@@ -12,6 +12,7 @@ import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projec
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
 import { compareRuns } from "../../domain/compare";
 import type { PerformancePlanRow, PerformanceRun } from "../../domain/model";
+import type { LifecycleState } from "@/shared/lifecycle/lifecycle";
 import {
   PERFORMANCE_PLAN_REPOSITORY,
   PERFORMANCE_RUN_REPOSITORY,
@@ -25,6 +26,8 @@ export const planView = (row: PerformancePlanRow): PerformancePlanViewOf<Date> =
   description: row.description,
   definition: row.definition,
   updatedAt: row.updatedAt,
+  archivedAt: row.archivedAt,
+  deletedAt: row.deletedAt,
 });
 
 export const runSummaryView = (run: PerformanceRun): PerformanceRunSummaryViewOf<Date> => ({
@@ -59,6 +62,8 @@ export class ListPlansQuery implements IQuery {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
+    /** Qué lista se pide: los planes que se usan, los archivados o los eliminados. */
+    readonly state: LifecycleState = "active",
   ) {}
 }
 export class GetPlanQuery implements IQuery {
@@ -101,7 +106,7 @@ export class ListPlansHandler implements IQueryHandler<ListPlansQuery, Performan
 
   async execute(query: ListPlansQuery): Promise<PerformancePlanViewOf<Date>[]> {
     await ownedProject(this.projects, query.organizationId, query.projectId);
-    return (await this.plans.list(query.projectId)).map(planView);
+    return (await this.plans.list(query.projectId, query.state)).map(planView);
   }
 }
 

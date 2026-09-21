@@ -55,6 +55,8 @@ const plan = (patch: Partial<PerformancePlanView> = {}): PerformancePlanView => 
   description: "Lectura del catálogo",
   definition: emptyPlanDefinition(),
   updatedAt: "2026-03-01T10:00:00.000Z",
+  archivedAt: null,
+  deletedAt: null,
   ...patch,
 });
 
@@ -333,7 +335,11 @@ describe("los planes de carga", () => {
     );
     draw("/p/p1/performance");
     await waitFor(() => expect((screen.getByLabelText("Nombre del plan") as HTMLInputElement).value).toBe("Catálogo"));
-    fireEvent.click(screen.getByRole("button", { name: "Eliminar plan" }));
+    // Borrar pregunta antes: el diálogo dice que las corridas se quedan y ofrece archivar.
+    fireEvent.click(screen.getAllByRole("button", { name: "Eliminar" })[1]);
+    expect(await screen.findByText(/sale de la lista de planes/)).toBeTruthy();
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Eliminar" }));
     await waitFor(() => expect((screen.getByLabelText("Nombre del plan") as HTMLInputElement).value).toBe("Checkout"));
     expect(mocks.api).toHaveBeenCalledWith(`${BASE}/performance/plans/pl1`, { method: "DELETE" });
   });

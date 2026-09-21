@@ -2919,6 +2919,8 @@ describe("conjuntos de datos y suites", () => {
         columns: ["nombre"],
         rowCount: 2,
         updatedAt: listed.body.datasets[0].updatedAt,
+        archivedAt: null,
+        deletedAt: null,
       },
     ]);
 

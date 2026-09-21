@@ -133,6 +133,18 @@ export class DeleteEndpointsCommand implements ICommand {
     readonly endpointIds: string[],
     /** A single delete answers 404 for an id that is not there; a bulk one reports how many went. */
     readonly single: boolean,
+    /** El definitivo, y solo sobre lo que ya está en la papelera. */
+    readonly purge = false,
+  ) {}
+}
+
+/** Devolver a la lista lo que está en la papelera. */
+export class RestoreEndpointsCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly endpointIds: string[],
+    readonly single: boolean,
   ) {}
 }
 
@@ -146,9 +158,54 @@ export class DeleteEndpointsHandler implements ICommandHandler<DeleteEndpointsCo
 
   async execute(command: DeleteEndpointsCommand): Promise<{ deleted: number }> {
     const project = await writableProject(this.projects, command.organizationId, command.projectId);
-    const deleted = await this.endpoints.softDelete(project.id, [...new Set(command.endpointIds)], this.clock.now());
+    const ids = [...new Set(command.endpointIds)];
+    const deleted = command.purge
+      ? await this.endpoints.purge(project.id, ids)
+      : await this.endpoints.softDelete(project.id, ids, this.clock.now());
     if (command.single && deleted === 0) throw new NotFoundError("El endpoint no existe", "endpoint-not-found");
     return { deleted };
+  }
+}
+
+/**
+ * Restaurar endpoints de la papelera.
+ *
+ * El índice único de método y ruta es parcial —solo cuenta lo vivo—, así que mientras uno estaba
+ * fuera alguien pudo crear otro `GET /users`. Eso es un 409: dos filas iguales en la lista no son
+ * una restauración, son un problema nuevo.
+ */
+@CommandHandler(RestoreEndpointsCommand)
+export class RestoreEndpointsHandler implements ICommandHandler<RestoreEndpointsCommand, { restored: number }> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(ENDPOINT_REPOSITORY) private readonly endpoints: EndpointRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
+
+  async execute(command: RestoreEndpointsCommand): Promise<{ restored: number }> {
+    const project = await writableProject(this.projects, command.organizationId, command.projectId);
+    const ids = [...new Set(command.endpointIds)];
+    const live = await this.endpoints.listAll(project.id);
+    const taken = new Set(live.map((row) => endpointKey(row.method, row.path)));
+    const trashed = (
+      await this.endpoints.list(project.id, {
+        status: "all",
+        search: "",
+        deleted: true,
+        offset: 0,
+        limit: ids.length || 1,
+      })
+    ).rows.filter((row) => ids.includes(row.id));
+    const clash = trashed.find((row) => taken.has(endpointKey(row.method, row.path)));
+    if (clash)
+      throw new ConflictError(
+        `Ya hay un endpoint ${clash.method} ${clash.path} en el proyecto`,
+        "endpoint-duplicate",
+      );
+
+    const restored = await this.endpoints.restore(project.id, ids, this.clock.now());
+    if (command.single && restored === 0) throw new NotFoundError("El endpoint no existe", "endpoint-not-found");
+    return { restored };
   }
 }
 

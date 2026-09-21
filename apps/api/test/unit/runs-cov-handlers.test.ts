@@ -68,6 +68,7 @@ async function saveFlow(workflows: InMemoryWorkflowRepository, id: string, steps
     createdAt: now,
     updatedAt: now,
     updatedBy: "tester",
+    deletedAt: null,
   });
 }
 
@@ -81,6 +82,8 @@ async function saveSuite(workflows: InMemoryWorkflowRepository, id: string, work
     createdAt: now,
     updatedAt: now,
     updatedBy: "tester",
+    archivedAt: null,
+    deletedAt: null,
   });
 }
 
@@ -196,6 +199,8 @@ describe("lanzar una corrida", () => {
       createdAt: now,
       updatedAt: now,
       updatedBy: "tester",
+      archivedAt: null,
+      deletedAt: null,
     });
     const error = (await rejection(start({ workflowId: "f1", datasetId: "d1" }))) as InvalidInputError;
     assert.equal(error.code, "run-too-large");

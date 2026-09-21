@@ -183,15 +183,17 @@ describe("EndpointsPage", () => {
     await waitFor(() =>
       expect(call).toHaveBeenLastCalledWith("/orgs/o/projects/p1/endpoints?status=active&page=3&limit=100"),
     );
+    // La papelera es otra lista, no otro `status`: se pide con `state=deleted` y sin filtro de
+    // estado, porque ahí lo que se quiere ver es todo lo borrado.
     click("ver borrados");
     await waitFor(() =>
-      expect(call).toHaveBeenLastCalledWith("/orgs/o/projects/p1/endpoints?status=deleted&page=1&limit=100"),
+      expect(call).toHaveBeenLastCalledWith("/orgs/o/projects/p1/endpoints?state=deleted&page=1&limit=100"),
     );
     click("página 3");
     click("buscar");
     await waitFor(() =>
       expect(call).toHaveBeenLastCalledWith(
-        "/orgs/o/projects/p1/endpoints?status=deleted&page=1&limit=100&search=pedidos%20%26%20co",
+        "/orgs/o/projects/p1/endpoints?state=deleted&page=1&limit=100&search=pedidos%20%26%20co",
       ),
     );
     const before = call.mock.calls.length;

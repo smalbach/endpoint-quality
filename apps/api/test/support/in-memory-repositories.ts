@@ -40,6 +40,8 @@ import type { SecurityRun } from "@/modules/security-runs/domain/model";
 import type { SecurityRunRepositoryPort } from "@/modules/security-runs/domain/ports";
 import type { PerformancePlanRow, PerformanceRun } from "@/modules/performance/domain/model";
 import type { PerformancePlanRepositoryPort, PerformanceRunRepositoryPort } from "@/modules/performance/domain/ports";
+import type { CollectionRepositoryPort, CollectionRunRepositoryPort } from "@/modules/collections/domain/ports";
+import type { CollectionRow, CollectionRun } from "@/modules/collections/domain/model";
 import type { CodeConnector, CodeScan } from "@/modules/code-scan/domain/model";
 import type { CodeConnectorRepositoryPort, CodeScanRepositoryPort } from "@/modules/code-scan/domain/ports";
 import type { ConfigRepositoryPort, ConfigRow } from "@/modules/config/domain/ports";
@@ -48,6 +50,7 @@ import type { DatasetRow, RequestTemplateRow, SuiteRow, WorkflowRow } from "@/mo
 import type { WorkflowRepositoryPort } from "@/modules/workflows/domain/ports";
 import type { CaseStatus, Run, RunCase, RunStatus, RunStep, RunTotals } from "@/modules/runs/domain/model";
 import type { RunRepositoryPort } from "@/modules/runs/domain/ports";
+import { inLifecycleState, type LifecycleState } from "@/shared/lifecycle/lifecycle";
 
 export class InMemoryUserRepository implements UserRepositoryPort {
   readonly rows = new Map<string, User>();
@@ -260,16 +263,24 @@ export class InMemoryEnvironmentRepository implements EnvironmentRepositoryPort 
   }
 
   async findById(id: string): Promise<Environment | null> {
+    const row = this.rows.get(id);
+    return row && inLifecycleState(row, "active") ? row : null;
+  }
+  async findAnyById(id: string): Promise<Environment | null> {
     return this.rows.get(id) ?? null;
   }
   async findByName(projectId: string, name: string): Promise<Environment | null> {
     return (
-      [...this.rows.values()].find((environment) => environment.projectId === projectId && environment.name === name) ??
-      null
+      [...this.rows.values()].find(
+        (environment) =>
+          environment.projectId === projectId && environment.name === name && inLifecycleState(environment, "active"),
+      ) ?? null
     );
   }
-  async listForProject(projectId: string): Promise<Environment[]> {
-    return [...this.rows.values()].filter((environment) => environment.projectId === projectId);
+  async listForProject(projectId: string, state: LifecycleState = "active"): Promise<Environment[]> {
+    return [...this.rows.values()].filter(
+      (environment) => environment.projectId === projectId && inLifecycleState(environment, state),
+    );
   }
   async save(environment: Environment): Promise<void> {
     this.rows.set(environment.id, { ...environment });
@@ -474,13 +485,17 @@ export class InMemoryWorkflowRepository implements WorkflowRepositoryPort {
     return [...this.workflows.values()].some(
       (workflow) =>
         workflow.projectId === projectId &&
+        !workflow.deletedAt &&
         workflow.definition.steps.some((step) => step.requestTemplateId === templateId),
     );
   }
 
-  async listWorkflows(projectId: string): Promise<WorkflowRow[]> {
+  /** Como el de Postgres: `active` es «no eliminado», y `archived` mira el `status` del flujo. */
+  async listWorkflows(projectId: string, state: LifecycleState = "active"): Promise<WorkflowRow[]> {
     return [...this.workflows.values()]
       .filter((row) => row.projectId === projectId)
+      .filter((row) => (state === "deleted" ? Boolean(row.deletedAt) : !row.deletedAt))
+      .filter((row) => state !== "archived" || row.status === "archived")
       .sort((a, b) => a.name.localeCompare(b.name));
   }
   async findWorkflow(projectId: string, workflowId: string): Promise<WorkflowRow | null> {
@@ -488,7 +503,11 @@ export class InMemoryWorkflowRepository implements WorkflowRepositoryPort {
     return row && row.projectId === projectId ? row : null;
   }
   async findWorkflowByName(projectId: string, name: string): Promise<WorkflowRow | null> {
-    return [...this.workflows.values()].find((row) => row.projectId === projectId && row.name === name) ?? null;
+    return (
+      [...this.workflows.values()].find(
+        (row) => row.projectId === projectId && row.name === name && !row.deletedAt,
+      ) ?? null
+    );
   }
   async saveWorkflow(row: WorkflowRow): Promise<void> {
     this.workflows.set(row.id, { ...row, definition: { steps: [...row.definition.steps] } });
@@ -504,13 +523,13 @@ export class InMemoryWorkflowRepository implements WorkflowRepositoryPort {
   }
   async isWorkflowReferenced(projectId: string, workflowId: string): Promise<boolean> {
     return [...this.suites.values()].some(
-      (suite) => suite.projectId === projectId && suite.workflowIds.includes(workflowId),
+      (suite) => suite.projectId === projectId && !suite.deletedAt && suite.workflowIds.includes(workflowId),
     );
   }
 
-  async listDatasets(projectId: string): Promise<DatasetRow[]> {
+  async listDatasets(projectId: string, state: LifecycleState = "active"): Promise<DatasetRow[]> {
     return [...this.datasets.values()]
-      .filter((row) => row.projectId === projectId)
+      .filter((row) => row.projectId === projectId && inLifecycleState(row, state))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
   async findDataset(projectId: string, datasetId: string): Promise<DatasetRow | null> {
@@ -518,7 +537,11 @@ export class InMemoryWorkflowRepository implements WorkflowRepositoryPort {
     return row && row.projectId === projectId ? row : null;
   }
   async findDatasetByName(workflowId: string, name: string): Promise<DatasetRow | null> {
-    return [...this.datasets.values()].find((row) => row.workflowId === workflowId && row.name === name) ?? null;
+    return (
+      [...this.datasets.values()].find(
+        (row) => row.workflowId === workflowId && row.name === name && !row.deletedAt,
+      ) ?? null
+    );
   }
   async saveDataset(row: DatasetRow): Promise<void> {
     this.datasets.set(row.id, { ...row, rows: row.rows.map((entry) => ({ ...entry })) });
@@ -528,9 +551,9 @@ export class InMemoryWorkflowRepository implements WorkflowRepositoryPort {
     if (row?.projectId === projectId) this.datasets.delete(datasetId);
   }
 
-  async listSuites(projectId: string): Promise<SuiteRow[]> {
+  async listSuites(projectId: string, state: LifecycleState = "active"): Promise<SuiteRow[]> {
     return [...this.suites.values()]
-      .filter((row) => row.projectId === projectId)
+      .filter((row) => row.projectId === projectId && inLifecycleState(row, state))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
   async findSuite(projectId: string, suiteId: string): Promise<SuiteRow | null> {
@@ -538,7 +561,10 @@ export class InMemoryWorkflowRepository implements WorkflowRepositoryPort {
     return row && row.projectId === projectId ? row : null;
   }
   async findSuiteByName(projectId: string, name: string): Promise<SuiteRow | null> {
-    return [...this.suites.values()].find((row) => row.projectId === projectId && row.name === name) ?? null;
+    return (
+      [...this.suites.values()].find((row) => row.projectId === projectId && row.name === name && !row.deletedAt) ??
+      null
+    );
   }
   async saveSuite(row: SuiteRow): Promise<void> {
     this.suites.set(row.id, { ...row, workflowIds: [...row.workflowIds] });
@@ -611,9 +637,9 @@ export class InMemoryRoleRepository implements RoleRepositoryPort {
   readonly permissions = new Map<string, RolePermission>();
   readonly rules = new Map<string, RoleRule>();
 
-  async list(projectId: string): Promise<Role[]> {
+  async list(projectId: string, state: LifecycleState = "active"): Promise<Role[]> {
     return [...this.roles.values()]
-      .filter((role) => role.projectId === projectId)
+      .filter((role) => role.projectId === projectId && inLifecycleState(role, state))
       .sort((a, b) => a.position - b.position || a.createdAt.getTime() - b.createdAt.getTime());
   }
   async findById(projectId: string, id: string): Promise<Role | null> {
@@ -621,9 +647,17 @@ export class InMemoryRoleRepository implements RoleRepositoryPort {
     return role && role.projectId === projectId ? { ...role } : null;
   }
   async save(role: Role): Promise<void> {
-    // The unique index of the migration, honoured: a fake that stored two «admin» would hide the 409.
+    // El índice único de la migración, respetado aquí también: un doble que guardara dos «admin»
+    // esconde el 409. Y **parcial**, como el índice de verdad desde
+    // `ArchiveAndSoftDelete1700000042000`: lo eliminado no reserva el nombre.
     for (const other of this.roles.values())
-      if (other.projectId === role.projectId && other.name === role.name && other.id !== role.id)
+      if (
+        other.projectId === role.projectId &&
+        other.name === role.name &&
+        other.id !== role.id &&
+        !other.deletedAt &&
+        !role.deletedAt
+      )
         throw new Error("duplicate key value violates unique constraint ux_project_roles_name");
     this.roles.set(role.id, { ...role });
   }
@@ -693,9 +727,9 @@ export class InMemorySecurityRunRepository implements SecurityRunRepositoryPort 
 
 export class InMemoryPerformancePlanRepository implements PerformancePlanRepositoryPort {
   readonly rows = new Map<string, PerformancePlanRow>();
-  async list(projectId: string): Promise<PerformancePlanRow[]> {
+  async list(projectId: string, state: LifecycleState = "active"): Promise<PerformancePlanRow[]> {
     return [...this.rows.values()]
-      .filter((plan) => plan.projectId === projectId)
+      .filter((plan) => plan.projectId === projectId && inLifecycleState(plan, state))
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((plan) => structuredClone(plan));
   }
@@ -707,7 +741,8 @@ export class InMemoryPerformancePlanRepository implements PerformancePlanReposit
     return (
       [...this.rows.values()]
         .map((plan) => structuredClone(plan))
-        .find((plan) => plan.projectId === projectId && plan.name === name) ?? null
+        .find((plan) => plan.projectId === projectId && plan.name === name && inLifecycleState(plan, "active")) ??
+      null
     );
   }
   async save(row: PerformancePlanRow): Promise<void> {
@@ -777,5 +812,67 @@ export class InMemoryCodeScanRepository implements CodeScanRepositoryPort {
   async delete(projectId: string, scanId: string): Promise<void> {
     const row = this.rows.get(scanId);
     if (row && row.projectId === projectId) this.rows.delete(scanId);
+  }
+}
+
+export class InMemoryCollectionRepository implements CollectionRepositoryPort {
+  readonly rows = new Map<string, CollectionRow>();
+  async list(projectId: string): Promise<CollectionRow[]> {
+    return [...this.rows.values()]
+      .filter((row) => row.projectId === projectId)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((row) => structuredClone(row));
+  }
+  async find(projectId: string, collectionId: string): Promise<CollectionRow | null> {
+    const row = this.rows.get(collectionId);
+    return row && row.projectId === projectId ? structuredClone(row) : null;
+  }
+  async findByName(projectId: string, name: string): Promise<CollectionRow | null> {
+    return (
+      [...this.rows.values()]
+        .map((row) => structuredClone(row))
+        .find((row) => row.projectId === projectId && row.name === name) ?? null
+    );
+  }
+  async save(row: CollectionRow): Promise<void> {
+    this.rows.set(row.id, structuredClone(row));
+  }
+  async delete(projectId: string, collectionId: string): Promise<void> {
+    const row = this.rows.get(collectionId);
+    if (row && row.projectId === projectId) this.rows.delete(collectionId);
+  }
+}
+
+export class InMemoryCollectionRunRepository implements CollectionRunRepositoryPort {
+  readonly rows = new Map<string, CollectionRun>();
+  async list(projectId: string, collectionId?: string): Promise<CollectionRun[]> {
+    return [...this.rows.values()]
+      .filter((run) => run.projectId === projectId && (collectionId ? run.collectionId === collectionId : true))
+      .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
+      .map((run) => structuredClone(run));
+  }
+  async find(projectId: string, runId: string): Promise<CollectionRun | null> {
+    const run = this.rows.get(runId);
+    return run && run.projectId === projectId ? structuredClone(run) : null;
+  }
+  async findById(runId: string): Promise<CollectionRun | null> {
+    const run = this.rows.get(runId);
+    return run ? structuredClone(run) : null;
+  }
+  async latestByCollection(projectId: string): Promise<Map<string, CollectionRun>> {
+    const latest = new Map<string, CollectionRun>();
+    for (const run of [...this.rows.values()]
+      .filter((row) => row.projectId === projectId)
+      .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())) {
+      if (!latest.has(run.collectionId)) latest.set(run.collectionId, structuredClone(run));
+    }
+    return latest;
+  }
+  async save(run: CollectionRun): Promise<void> {
+    this.rows.set(run.id, structuredClone(run));
+  }
+  async delete(projectId: string, runId: string): Promise<void> {
+    const run = this.rows.get(runId);
+    if (run && run.projectId === projectId) this.rows.delete(runId);
   }
 }

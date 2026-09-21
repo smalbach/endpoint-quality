@@ -5,7 +5,7 @@ import type {
   ImportAnythingResult,
   ImportedItemResult,
   PostmanEnvironmentImportResult,
-  PostmanFlowsImportResult,
+  PostmanCollectionImportResult,
   ProjectBundleImportResultView,
 } from "@eq/contracts";
 
@@ -17,7 +17,7 @@ import {
   ImportEndpointFileCommand,
   type ImportEndpointsResult,
 } from "@/modules/endpoints/application/commands/import-endpoints";
-import { ImportPostmanFlowsCommand } from "@/modules/workflows/application/commands/import-postman-flows";
+import { ImportPostmanCollectionCommand } from "@/modules/collections/application/commands/import-postman-collection";
 import { ImportPostmanEnvironmentCommand } from "@/modules/environments/application/commands/import-postman-environment";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "../../domain/ports";
 import { ImportProjectBundleCommand } from "./import-project-bundle";
@@ -272,26 +272,35 @@ export class ImportAnythingHandler implements ICommandHandler<ImportAnythingComm
         } catch (error) {
           results.push({ target: "endpoints", name: piece.name, summary: null, error: message(error) });
         }
-        // And the graphs, which only a Postman collection describes: the folders and the scripts.
+        // Y la colección entera: el árbol con sus carpetas, sus scripts y su orden, que es lo que
+        // solo un fichero de Postman describe. Antes esto entraba como flujos —un grafo por
+        // carpeta— y dejaba de ser la colección de nadie: ni volvía a salir a Postman, ni se
+        // editaba como allí, ni se corría de arriba abajo como allí.
         if (piece.kind === "postman-collection") {
           try {
-            const flows = await this.commandBus.execute<ImportPostmanFlowsCommand, PostmanFlowsImportResult>(
-              new ImportPostmanFlowsCommand(organizationId, projectId, { text: piece.text }, actorId),
-            );
+            const collection = await this.commandBus.execute<
+              ImportPostmanCollectionCommand,
+              PostmanCollectionImportResult
+            >(new ImportPostmanCollectionCommand(organizationId, projectId, { text: piece.text }, actorId));
             results.push({
-              target: "flows",
-              name: piece.name,
-              summary: flows.flows
-                .map(
-                  (flow) =>
-                    `${flow.name} (${flow.action === "created" ? "nuevo" : "actualizado"}, ${flow.steps} nodos)`,
-                )
+              target: "collections",
+              name: collection.name,
+              summary: [
+                collection.action === "created" ? "nueva" : "actualizada",
+                `${collection.requests} peticiones`,
+                collection.folders ? `${collection.folders} carpetas` : "",
+              ]
+                .filter(Boolean)
                 .join(" · "),
               error: null,
-              notes: flows.notes,
+              collectionId: collection.id,
+              notes: [
+                ...collection.notes,
+                ...collection.skipped.map((entry) => `${entry.name}: ${entry.reason}`),
+              ],
             });
           } catch (error) {
-            results.push({ target: "flows", name: piece.name, summary: null, error: message(error) });
+            results.push({ target: "collections", name: piece.name, summary: null, error: message(error) });
           }
         }
         return results;

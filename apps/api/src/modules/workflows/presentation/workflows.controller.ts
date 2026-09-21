@@ -7,7 +7,7 @@
  * environment whose `writesAllowed` an admin already decided — and composing cases is the
  * editor's daily work, the same as curating the matrix.
  */
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, UseGuards } from "@nestjs/common";
 import { CommandBus, QueryBus } from "@nestjs/cqrs";
 
 import {
@@ -16,18 +16,20 @@ import {
   RequireRole,
   type Principal,
 } from "@/modules/auth/infrastructure/guards/auth.guard";
+import { parseLifecycleState } from "@/shared/lifecycle/lifecycle";
+import { SetArchivedDto } from "@/shared/lifecycle/lifecycle.dto";
 import {
   CreateRequestTemplateCommand,
   DeleteRequestTemplateCommand,
   UpdateRequestTemplateCommand,
 } from "../application/commands/manage-request-template";
 import { ImportRequestTemplatesCommand } from "../application/commands/import-request-templates";
-import { ImportPostmanFlowsCommand } from "../application/commands/import-postman-flows";
 import {
   CreateWorkflowCommand,
   DeleteWorkflowCommand,
   DuplicateWorkflowCommand,
   UpdateWorkflowCommand,
+  RestoreWorkflowCommand,
 } from "../application/commands/manage-workflow";
 import { ListWorkflowsQuery } from "../application/queries/list-workflows";
 import { GetDatasetQuery } from "../application/queries/get-dataset";
@@ -35,13 +37,20 @@ import {
   CreateDatasetCommand,
   DeleteDatasetCommand,
   UpdateDatasetCommand,
+  SetDatasetArchivedCommand,
+  RestoreDatasetCommand,
 } from "../application/commands/manage-dataset";
-import { CreateSuiteCommand, DeleteSuiteCommand, UpdateSuiteCommand } from "../application/commands/manage-suite";
+import {
+  CreateSuiteCommand,
+  DeleteSuiteCommand,
+  RestoreSuiteCommand,
+  SetSuiteArchivedCommand,
+  UpdateSuiteCommand,
+} from "../application/commands/manage-suite";
 import {
   CreateDatasetDto,
   CreateRequestTemplateDto,
   ImportRequestTemplatesDto,
-  ImportPostmanFlowsDto,
   CreateSuiteDto,
   CreateWorkflowDto,
   UpdateDatasetDto,
@@ -63,8 +72,12 @@ export class WorkflowsController {
   /** Both lists in one answer: a node cannot be drawn without the request its step names. */
   @Get("workflows")
   @RequireRole("viewer")
-  async list(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string) {
-    return this.queryBus.execute(new ListWorkflowsQuery(organizationId, projectId));
+  async list(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Query("state") state?: string,
+  ) {
+    return this.queryBus.execute(new ListWorkflowsQuery(organizationId, projectId, parseLifecycleState(state)));
   }
 
   @Post("request-templates")
@@ -127,27 +140,6 @@ export class WorkflowsController {
     await this.commandBus.execute(new DeleteRequestTemplateCommand(organizationId, projectId, templateId));
   }
 
-  /**
-   * A Postman collection, as the flows its folders describe — created, or updated when a flow of
-   * that name is already here.
-   *
-   * `editor`, like every other write in this controller, and **nothing leaves the process**: the
-   * collection is read, its scripts are translated or kept, and no request in it is ever sent.
-   * Importing a collection is not rehearsing it.
-   */
-  @Post("workflows/import/postman")
-  @RequireRole("editor")
-  async importPostmanFlows(
-    @Param("organizationId") organizationId: string,
-    @Param("projectId") projectId: string,
-    @Body() body: ImportPostmanFlowsDto,
-    @CurrentUser() principal: Principal,
-  ) {
-    return this.commandBus.execute(
-      new ImportPostmanFlowsCommand(organizationId, projectId, body, actorId(principal)),
-    );
-  }
-
   @Post("workflows")
   @RequireRole("editor")
   async createWorkflow(
@@ -175,6 +167,11 @@ export class WorkflowsController {
     );
   }
 
+  /**
+   * Borrado blando. `?purge=true` es el definitivo, y solo sobre algo ya eliminado.
+   *
+   * Archivar un flujo no tiene ruta propia: es su `status`, y se cambia con `PATCH workflows/:id`.
+   */
   @Delete("workflows/:workflowId")
   @RequireRole("editor")
   @HttpCode(204)
@@ -182,8 +179,23 @@ export class WorkflowsController {
     @Param("organizationId") organizationId: string,
     @Param("projectId") projectId: string,
     @Param("workflowId") workflowId: string,
+    @Query("purge") purge?: string,
   ): Promise<void> {
-    await this.commandBus.execute(new DeleteWorkflowCommand(organizationId, projectId, workflowId));
+    await this.commandBus.execute(
+      new DeleteWorkflowCommand(organizationId, projectId, workflowId, purge === "true"),
+    );
+  }
+
+  /** Devuelve un flujo eliminado, con los conjuntos de datos que se fueron con él. */
+  @Post("workflows/:workflowId/restore")
+  @RequireRole("editor")
+  @HttpCode(204)
+  async restoreWorkflow(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("workflowId") workflowId: string,
+  ): Promise<void> {
+    await this.commandBus.execute(new RestoreWorkflowCommand(organizationId, projectId, workflowId));
   }
 
   /** A copy of the flow, its graph and its datasets, as a draft under a free «(copia)» name. */
@@ -245,6 +257,33 @@ export class WorkflowsController {
     );
   }
 
+  /** Fuera de la lista, con sus filas intactas. */
+  @Patch("datasets/:datasetId/archived")
+  @RequireRole("editor")
+  @HttpCode(204)
+  async setDatasetArchived(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("datasetId") datasetId: string,
+    @Body() body: SetArchivedDto,
+  ): Promise<void> {
+    await this.commandBus.execute(
+      new SetDatasetArchivedCommand(organizationId, projectId, datasetId, body.archived),
+    );
+  }
+
+  @Post("datasets/:datasetId/restore")
+  @RequireRole("editor")
+  @HttpCode(204)
+  async restoreDataset(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("datasetId") datasetId: string,
+  ): Promise<void> {
+    await this.commandBus.execute(new RestoreDatasetCommand(organizationId, projectId, datasetId));
+  }
+
+  /** Borrado blando. `?purge=true` es el definitivo, y solo sobre algo ya eliminado. */
   @Delete("datasets/:datasetId")
   @RequireRole("editor")
   @HttpCode(204)
@@ -252,8 +291,9 @@ export class WorkflowsController {
     @Param("organizationId") organizationId: string,
     @Param("projectId") projectId: string,
     @Param("datasetId") datasetId: string,
+    @Query("purge") purge?: string,
   ): Promise<void> {
-    await this.commandBus.execute(new DeleteDatasetCommand(organizationId, projectId, datasetId));
+    await this.commandBus.execute(new DeleteDatasetCommand(organizationId, projectId, datasetId, purge === "true"));
   }
 
   @Post("suites")
@@ -280,6 +320,31 @@ export class WorkflowsController {
     await this.commandBus.execute(new UpdateSuiteCommand(organizationId, projectId, suiteId, body, actorId(principal)));
   }
 
+  /** Fuera de la lista, y deja de contar como referencia de los flujos que nombra. */
+  @Patch("suites/:suiteId/archived")
+  @RequireRole("editor")
+  @HttpCode(204)
+  async setSuiteArchived(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("suiteId") suiteId: string,
+    @Body() body: SetArchivedDto,
+  ): Promise<void> {
+    await this.commandBus.execute(new SetSuiteArchivedCommand(organizationId, projectId, suiteId, body.archived));
+  }
+
+  @Post("suites/:suiteId/restore")
+  @RequireRole("editor")
+  @HttpCode(204)
+  async restoreSuite(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("suiteId") suiteId: string,
+  ): Promise<void> {
+    await this.commandBus.execute(new RestoreSuiteCommand(organizationId, projectId, suiteId));
+  }
+
+  /** Borrado blando. `?purge=true` es el definitivo, y solo sobre algo ya eliminado. */
   @Delete("suites/:suiteId")
   @RequireRole("editor")
   @HttpCode(204)
@@ -287,7 +352,8 @@ export class WorkflowsController {
     @Param("organizationId") organizationId: string,
     @Param("projectId") projectId: string,
     @Param("suiteId") suiteId: string,
+    @Query("purge") purge?: string,
   ): Promise<void> {
-    await this.commandBus.execute(new DeleteSuiteCommand(organizationId, projectId, suiteId));
+    await this.commandBus.execute(new DeleteSuiteCommand(organizationId, projectId, suiteId, purge === "true"));
   }
 }

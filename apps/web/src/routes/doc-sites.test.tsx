@@ -42,6 +42,8 @@ const site = (patch: Partial<DocSiteView> = {}): DocSiteView => ({
   createdAt: "2026-03-01T10:00:00.000Z",
   updatedAt: "2026-03-01T10:00:00.000Z",
   createdBy: "u1",
+  archivedAt: null,
+  deletedAt: null,
   ...patch,
 });
 

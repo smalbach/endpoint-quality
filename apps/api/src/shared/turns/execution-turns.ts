@@ -15,7 +15,7 @@
 export const EXECUTION_TURNS = Symbol("EXECUTION_TURNS");
 
 /** Cada tipo es una fila aparte: una corrida de seguridad no espera a una de rendimiento. */
-export type TurnKind = "security" | "performance";
+export type TurnKind = "security" | "performance" | "collection";
 
 export interface ExecutionTurnStorePort {
   /** `runId` espera turno, a nombre de `holder`, detrás de lo ya encolado. Si ya estaba, nada cambia. */

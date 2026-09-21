@@ -866,7 +866,7 @@ describe("el historial", () => {
     assert.equal(history.body.executions[0]!.outcome, "passed");
   });
 
-  test("borrar el monitor se lleva su historial", async () => {
+  test("borrar el monitor lo saca de la lista y le quita el turno, pero le deja el historial", async () => {
     const { projectBase, environmentId } = await projectAgainst();
     const monitor = await createMonitor(projectBase, {
       name: "para borrar",
@@ -878,7 +878,93 @@ describe("el historial", () => {
 
     const gone = await api().delete(`${projectBase}/monitors/${monitor.id}`).set(as(owner));
     assert.equal(gone.status, 204);
+
+    const live = await api().get(`${projectBase}/monitors`).set(as(owner));
+    assert.deepEqual(live.body.monitors, []);
+    const trash = await api().get(`${projectBase}/monitors?state=deleted`).set(as(owner));
+    assert.equal(trash.body.monitors.length, 1);
+    assert.ok(trash.body.monitors[0].deletedAt);
+    // Sin turno: restaurarlo no puede disparar en el acto la corrida de la noche en que se borró.
+    assert.equal(trash.body.monitors[0].nextRunAt, null);
+
+    // El historial es lo que dice si merece la pena restaurarlo, así que sigue ahí.
     const after = await api().get(`${projectBase}/monitors/${monitor.id}/executions`).set(as(owner));
-    assert.equal(after.status, 404);
+    assert.equal(after.status, 200);
+    assert.equal(after.body.executions.length, 1);
+  });
+
+  test("restaurar lo devuelve a la lista con turno; archivado vuelve a los archivados", async () => {
+    const { projectBase, environmentId } = await projectAgainst();
+    const monitor = await createMonitor(projectBase, {
+      name: "ida y vuelta",
+      schedule: { kind: "interval", minutes: 60 },
+      plan: { environmentId, operationIds: ["listThings"] },
+    });
+
+    await api().delete(`${projectBase}/monitors/${monitor.id}`).set(as(owner));
+    const back = await api().post(`${projectBase}/monitors/${monitor.id}/restore`).set(as(owner));
+    assert.equal(back.status, 201);
+    assert.equal(back.body.deletedAt, null);
+    assert.ok(back.body.nextRunAt);
+    const live = await api().get(`${projectBase}/monitors`).set(as(owner));
+    assert.equal(live.body.monitors.length, 1);
+
+    // Archivado antes de borrarlo: al volver vuelve a los archivados, que es donde estaba.
+    const filed = await api()
+      .patch(`${projectBase}/monitors/${monitor.id}/archived`)
+      .set(as(owner))
+      .send({ archived: true });
+    assert.equal(filed.status, 200);
+    assert.ok(filed.body.archivedAt);
+    // Archivado no vigila: sin turno no entra en el reclamo.
+    assert.equal(filed.body.nextRunAt, null);
+    await api().delete(`${projectBase}/monitors/${monitor.id}`).set(as(owner));
+    const again = await api().post(`${projectBase}/monitors/${monitor.id}/restore`).set(as(owner));
+    assert.equal(again.body.deletedAt, null);
+    assert.ok(again.body.archivedAt);
+    assert.equal(again.body.nextRunAt, null);
+
+    const archived = await api().get(`${projectBase}/monitors?state=archived`).set(as(owner));
+    assert.equal(archived.body.monitors.length, 1);
+    const activeNow = await api().get(`${projectBase}/monitors`).set(as(owner));
+    assert.deepEqual(activeNow.body.monitors, []);
+
+    // Desarchivar recalcula el turno desde ahora, igual que encender uno apagado.
+    const out = await api()
+      .patch(`${projectBase}/monitors/${monitor.id}/archived`)
+      .set(as(owner))
+      .send({ archived: false });
+    assert.equal(out.body.archivedAt, null);
+    assert.ok(out.body.nextRunAt);
+  });
+
+  test("un archivado no lanza corridas, y el definitivo pide que antes esté eliminado", async () => {
+    const { projectBase, environmentId } = await projectAgainst();
+    const monitor = await createMonitor(projectBase, {
+      name: "archivado quieto",
+      schedule: { kind: "interval", minutes: 60 },
+      plan: { environmentId, operationIds: ["listThings"] },
+    });
+    await api().patch(`${projectBase}/monitors/${monitor.id}/archived`).set(as(owner)).send({ archived: true });
+    advance(61);
+    await tick();
+    const history = await api().get(`${projectBase}/monitors/${monitor.id}/executions`).set(as(owner));
+    assert.deepEqual(history.body.executions, []);
+
+    const early = await api().delete(`${projectBase}/monitors/${monitor.id}?purge=true`).set(as(owner));
+    assert.equal(early.status, 409);
+    await api().delete(`${projectBase}/monitors/${monitor.id}`).set(as(owner));
+    const purged = await api().delete(`${projectBase}/monitors/${monitor.id}?purge=true`).set(as(owner));
+    assert.equal(purged.status, 204);
+    const nothing = await api().get(`${projectBase}/monitors?state=deleted`).set(as(owner));
+    assert.deepEqual(nothing.body.monitors, []);
+    const orphan = await api().get(`${projectBase}/monitors/${monitor.id}/executions`).set(as(owner));
+    assert.equal(orphan.status, 404);
+  });
+
+  test("un filtro que no existe es un 422", async () => {
+    const { projectBase } = await projectAgainst();
+    const bad = await api().get(`${projectBase}/monitors?state=papelera`).set(as(owner));
+    assert.equal(bad.status, 422);
   });
 });

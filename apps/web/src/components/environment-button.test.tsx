@@ -26,6 +26,8 @@ const environment = (id: string, name: string, active: boolean): Environment => 
   authEnforced: false,
   active,
   credentials: [],
+  archivedAt: null,
+  deletedAt: null,
 });
 
 function mount(token: SessionTokenView | null) {

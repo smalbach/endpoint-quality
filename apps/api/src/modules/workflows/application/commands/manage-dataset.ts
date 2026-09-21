@@ -5,6 +5,13 @@ import { safeParseDatasetRows } from "@eq/runner-core";
 
 import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
+import {
+  archiveIn,
+  deleteIn,
+  restoreIn,
+  type LifecycleNoun,
+  type LifecycleStore,
+} from "@/shared/lifecycle/lifecycle-store";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import type { DatasetRow } from "../../domain/model";
 import { WORKFLOW_REPOSITORY, type WorkflowRepositoryPort } from "../../domain/ports";
@@ -30,7 +37,28 @@ export class UpdateDatasetCommand implements ICommand {
     readonly actorId: string,
   ) {}
 }
+/** Borrar un conjunto: blando por defecto, definitivo con `purge` y solo sobre algo eliminado. */
 export class DeleteDatasetCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly datasetId: string,
+    readonly purge = false,
+  ) {}
+}
+
+/** Archivar un conjunto: deja de ofrecerse al lanzar una corrida, y sus filas se quedan. */
+export class SetDatasetArchivedCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly datasetId: string,
+    readonly archived: boolean,
+  ) {}
+}
+
+/** Restaurar un conjunto eliminado, con sus filas. */
+export class RestoreDatasetCommand implements ICommand {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
@@ -88,6 +116,8 @@ export class CreateDatasetHandler implements ICommandHandler<CreateDatasetComman
       createdAt: now,
       updatedAt: now,
       updatedBy: command.actorId,
+      archivedAt: null,
+      deletedAt: null,
     };
     await this.workflows.saveDataset(dataset);
     return { datasetId: dataset.id };
@@ -127,19 +157,115 @@ export class UpdateDatasetHandler implements ICommandHandler<UpdateDatasetComman
   }
 }
 
+/** Cómo se llama esto en los errores del ciclo de vida. */
+const DATASET: LifecycleNoun = {
+  code: "dataset",
+  that: "El conjunto de datos",
+  the: "el conjunto",
+};
+
+/** El almacén de conjuntos con la forma del servicio de ciclo de vida. */
+const datasetStore = (workflows: WorkflowRepositoryPort): LifecycleStore<DatasetRow> => ({
+  findById: (projectId, id) => workflows.findDataset(projectId, id),
+  save: (row) => workflows.saveDataset(row),
+  remove: async (projectId, id) => {
+    await workflows.deleteDataset(projectId, id);
+    return true;
+  },
+});
+
+const touch = (row: DatasetRow, now: Date): DatasetRow => ({ ...row, updatedAt: now });
+
+/**
+ * Borrar un conjunto de datos **sin perder las filas**.
+ *
+ * Lo que se borraba era un CSV pegado a mano, a veces de cientos de filas, y no había forma de
+ * recuperarlo salvo volver a pegarlo. Ahora sale de la lista y vuelve entero.
+ *
+ * Las corridas que lo recorrieron conservan su plan y sus resultados: el plan es una foto de lo que
+ * se pidió, y reescribir el pasado para que cuadre con el presente es lo único que una corrida no
+ * puede hacer.
+ */
 @CommandHandler(DeleteDatasetCommand)
 export class DeleteDatasetHandler implements ICommandHandler<DeleteDatasetCommand, void> {
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
   ) {}
 
   async execute(command: DeleteDatasetCommand): Promise<void> {
     const dataset = await this.workflows.findDataset(command.projectId, command.datasetId);
     if (!dataset) throw new NotFoundError("El conjunto de datos no existe", "dataset-not-found");
     await ownedWorkflow(this.projects, this.workflows, command.organizationId, command.projectId, dataset.workflowId);
-    // Runs that walked it keep their plan and their results. The plan is a snapshot of what was
-    // asked for, and rewriting history to match the present is the one thing a run must never do.
-    await this.workflows.deleteDataset(command.projectId, command.datasetId);
+    await deleteIn(
+      datasetStore(this.workflows),
+      command.projectId,
+      command.datasetId,
+      command.purge,
+      this.clock.now(),
+      DATASET,
+      { patch: touch },
+    );
+  }
+}
+
+@CommandHandler(SetDatasetArchivedCommand)
+export class SetDatasetArchivedHandler implements ICommandHandler<SetDatasetArchivedCommand, void> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
+
+  async execute(command: SetDatasetArchivedCommand): Promise<void> {
+    const dataset = await this.workflows.findDataset(command.projectId, command.datasetId);
+    if (!dataset) throw new NotFoundError("El conjunto de datos no existe", "dataset-not-found");
+    await ownedWorkflow(this.projects, this.workflows, command.organizationId, command.projectId, dataset.workflowId);
+    await archiveIn(
+      datasetStore(this.workflows),
+      command.projectId,
+      command.datasetId,
+      command.archived,
+      this.clock.now(),
+      DATASET,
+      { patch: touch },
+    );
+  }
+}
+
+@CommandHandler(RestoreDatasetCommand)
+export class RestoreDatasetHandler implements ICommandHandler<RestoreDatasetCommand, void> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(WORKFLOW_REPOSITORY) private readonly workflows: WorkflowRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
+
+  async execute(command: RestoreDatasetCommand): Promise<void> {
+    const dataset = await this.workflows.findDataset(command.projectId, command.datasetId);
+    if (!dataset) throw new NotFoundError("El conjunto de datos no existe", "dataset-not-found");
+    // El flujo al que pertenece **en cualquier estado**: si el flujo está eliminado, restaurar solo
+    // el conjunto lo dejaría colgando de algo que no sale en ninguna lista.
+    const workflow = await ownedWorkflow(
+      this.projects,
+      this.workflows,
+      command.organizationId,
+      command.projectId,
+      dataset.workflowId,
+    );
+    if (workflow.deletedAt)
+      throw new ConflictError("Restaura antes el flujo de este conjunto", "workflow-deleted");
+    // El nombre pudo reutilizarse dentro del mismo flujo mientras estaba fuera.
+    if (dataset.deletedAt && (await this.workflows.findDatasetByName(dataset.workflowId, dataset.name)))
+      throw new ConflictError("Ya hay un conjunto con ese nombre", "dataset-name-taken");
+    await restoreIn(
+      datasetStore(this.workflows),
+      command.projectId,
+      command.datasetId,
+      this.clock.now(),
+      DATASET,
+      { patch: touch },
+    );
   }
 }

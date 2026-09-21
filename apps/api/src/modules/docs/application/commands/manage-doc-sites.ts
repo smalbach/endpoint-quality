@@ -13,6 +13,7 @@ import { Inject } from "@nestjs/common";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
+import { archiveIn, deleteIn, restoreIn, type LifecycleNoun } from "@/shared/lifecycle/lifecycle-store";
 import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { writableProject } from "@/modules/endpoints/application/commands/manage-endpoints";
@@ -170,11 +171,24 @@ export class RotateDocSiteKeyHandler implements ICommandHandler<RotateDocSiteKey
   }
 }
 
+/** Cómo se llama esto en los errores del ciclo de vida. */
+const DOC_SITE: LifecycleNoun = { code: "doc-site", that: "Esa documentación", the: "la documentación" };
+
+const touch = <T extends { updatedAt: Date }>(row: T, now: Date): T => ({ ...row, updatedAt: now });
+
+/**
+ * Borrar una documentación: **blanda por defecto**, y su URL deja de publicar en el acto.
+ *
+ * Lo que se pierde al borrarla no es la página —se genera del proyecto—, es la URL: el enlace que
+ * ya circula por correo en otro equipo. Por eso restaurarla conserva el `publicId` y el enlace
+ * vuelve a funcionar, en vez de obligar a mandar otro.
+ */
 export class DeleteDocSiteCommand implements ICommand {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
     readonly siteId: string,
+    readonly purge = false,
   ) {}
 }
 
@@ -183,11 +197,87 @@ export class DeleteDocSiteHandler implements ICommandHandler<DeleteDocSiteComman
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(DOC_SITE_REPOSITORY) private readonly sites: DocSiteRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
   ) {}
 
   async execute(command: DeleteDocSiteCommand): Promise<void> {
     const project = await writableProject(this.projects, command.organizationId, command.projectId);
-    const gone = await this.sites.remove(project.id, command.siteId);
-    if (!gone) throw new NotFoundError("Esa documentación no existe", "doc-site-not-found");
+    await deleteIn(this.sites, project.id, command.siteId, command.purge, this.clock.now(), DOC_SITE, {
+      patch: touch,
+    });
+  }
+}
+
+/**
+ * Archivar: fuera de la lista y **la URL deja de publicar**, sin perder la introducción escrita a
+ * mano ni la clave de una página privada.
+ */
+export class SetDocSiteArchivedCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly siteId: string,
+    readonly archived: boolean,
+  ) {}
+}
+
+@CommandHandler(SetDocSiteArchivedCommand)
+export class SetDocSiteArchivedHandler implements ICommandHandler<SetDocSiteArchivedCommand, DocSiteView> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(DOC_SITE_REPOSITORY) private readonly sites: DocSiteRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
+
+  async execute(command: SetDocSiteArchivedCommand): Promise<DocSiteView> {
+    const project = await writableProject(this.projects, command.organizationId, command.projectId);
+    const site = await archiveIn(
+      this.sites,
+      project.id,
+      command.siteId,
+      command.archived,
+      this.clock.now(),
+      DOC_SITE,
+      { patch: touch },
+    );
+    return viewDocSite(site);
+  }
+}
+
+/** Restaurar una eliminada, con el mismo `publicId`: el enlace que ya circulaba vuelve a abrir. */
+export class RestoreDocSiteCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly siteId: string,
+  ) {}
+}
+
+@CommandHandler(RestoreDocSiteCommand)
+export class RestoreDocSiteHandler implements ICommandHandler<RestoreDocSiteCommand, DocSiteView> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(DOC_SITE_REPOSITORY) private readonly sites: DocSiteRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
+
+  async execute(command: RestoreDocSiteCommand): Promise<DocSiteView> {
+    const project = await writableProject(this.projects, command.organizationId, command.projectId);
+    const current = await this.sites.findById(project.id, command.siteId);
+    if (!current) throw new NotFoundError("Esa documentación no existe", "doc-site-not-found");
+    if (current.deletedAt) {
+      const live = await this.sites.listByProject(project.id);
+      if (live.some((row) => row.name === current.name))
+        throw new ConflictError(`Ya hay una documentación llamada «${current.name}»`, "doc-site-duplicate-name");
+      if (live.length >= MAX_DOC_SITES_PER_PROJECT)
+        throw new ConflictError(
+          `Este proyecto ya tiene ${MAX_DOC_SITES_PER_PROJECT} documentaciones publicadas: borra alguna antes de restaurar esta`,
+          "doc-sites-full",
+        );
+    }
+    const site = await restoreIn(this.sites, project.id, command.siteId, this.clock.now(), DOC_SITE, {
+      patch: touch,
+    });
+    return viewDocSite(site);
   }
 }

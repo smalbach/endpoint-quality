@@ -33,6 +33,8 @@ describe("TypeOrmMonitorRepository", { skip: dbSkip }, () => {
       createdAt: at(0),
       updatedAt: at(0),
       createdBy: tenant.userId,
+      archivedAt: null,
+      deletedAt: null,
       ...fields,
     }) as unknown as Monitor;
 

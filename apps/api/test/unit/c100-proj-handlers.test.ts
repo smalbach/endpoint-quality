@@ -265,6 +265,8 @@ describe("roles", () => {
     position,
     createdAt: NOW,
     updatedAt: NOW,
+    archivedAt: null,
+    deletedAt: null,
   });
 
   test("al crear, un rol sin nombre y una descripción de 501 caracteres son dos problemas", () => {

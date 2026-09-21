@@ -6,12 +6,15 @@ import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
 import { maskVariables, type CredentialRole, type Environment } from "../../domain/model";
+import type { LifecycleState } from "@/shared/lifecycle/lifecycle";
 import { ENVIRONMENT_REPOSITORY, type EnvironmentRepositoryPort } from "../../domain/ports";
 
 export class ListEnvironmentsQuery implements IQuery {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
+    /** Qué lista se pide: los que se usan, los archivados o los eliminados. */
+    readonly state: LifecycleState = "active",
   ) {}
 }
 
@@ -39,7 +42,7 @@ export class ListEnvironmentsHandler implements IQueryHandler<ListEnvironmentsQu
 
   async execute(query: ListEnvironmentsQuery): Promise<EnvironmentView[]> {
     const project = await ownedProject(this.projects, query.organizationId, query.projectId);
-    const environments = await this.environments.listForProject(project.id);
+    const environments = await this.environments.listForProject(project.id, query.state);
     return Promise.all(
       environments.map(async (environment) => ({
         ...environment,

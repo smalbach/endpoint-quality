@@ -64,6 +64,7 @@ const sent = (): SentRequestView =>
     environment: null,
     scripts: { pre: null, post: null },
     sessionToken: null,
+    variables: {},
     cookies: { sent: [], stored: [], rejected: [] },
   }) as SentRequestView;
 

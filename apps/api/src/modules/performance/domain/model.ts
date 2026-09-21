@@ -116,6 +116,9 @@ export type PerformancePlanRow = {
   createdAt: Date;
   updatedAt: Date;
   updatedBy: string;
+  /** Archivado y borrado blando, como el resto de recursos del proyecto. Ver `shared/lifecycle`. */
+  archivedAt: Date | null;
+  deletedAt: Date | null;
 };
 
 // -----------------------------------------------------------------------------------------------

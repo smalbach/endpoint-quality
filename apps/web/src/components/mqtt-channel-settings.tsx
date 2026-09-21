@@ -15,7 +15,7 @@ import { cn } from "@/lib/format";
 import type { ChannelView, MqttSettingsView, RequestAuthView } from "@/lib/types";
 import { AuthEditor } from "@/components/auth-editor";
 import { UserPropertiesEditor } from "@/components/mqtt-publish";
-import { ConfirmDialog } from "@/components/overlay";
+import { DeleteDialog } from "@/components/lifecycle";
 import { useToast } from "@/components/toast";
 import { Button, Field, inputClass } from "@/components/ui";
 
@@ -103,6 +103,17 @@ export function MqttChannelSettings({
     mutationFn: () => api(`${base}/channels/${channel.id}`, { method: "DELETE" }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["channels", projectId] });
+      onRemoved();
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : String(error)),
+  });
+
+  /** Archivar: fuera de la lista y sin poder abrirse, con sus mensajes guardados intactos. */
+  const archive = useMutation({
+    mutationFn: () => api(`${base}/channels/${channel.id}/archived`, { method: "PATCH", body: { archived: true } }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["channels", projectId] });
+      toast.success("Canal archivado");
       onRemoved();
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : String(error)),
@@ -426,10 +437,11 @@ export function MqttChannelSettings({
       {save.error && !problems.length && <p className="text-xs text-rose-600">{save.error.message}</p>}
 
       {removing && (
-        <ConfirmDialog
+        <DeleteDialog
           title="Eliminar el canal"
-          message="Sus sesiones se quedan como estaban: son lo que pasó."
-          pending={remove.isPending}
+          message="Sale de la lista y deja de poder abrirse. Sus mensajes guardados y sus sesiones se quedan como estaban: son lo que pasó."
+          pending={remove.isPending || archive.isPending}
+          onArchive={() => archive.mutate()}
           onConfirm={() => remove.mutate()}
           onClose={() => setRemoving(false)}
         />

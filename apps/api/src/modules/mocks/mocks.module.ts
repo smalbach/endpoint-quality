@@ -14,6 +14,8 @@ import {
   DeleteMockHandler,
   RotateMockKeyHandler,
   UpdateMockHandler,
+  SetMockArchivedHandler,
+  RestoreMockHandler,
 } from "./application/commands/manage-mocks";
 import { RecordMockCallHandler } from "./application/commands/record-mock-call";
 import { ListMockCallsHandler } from "./application/queries/list-mock-calls";
@@ -27,6 +29,8 @@ export const MOCK_COMMAND_HANDLERS = [
   UpdateMockHandler,
   RotateMockKeyHandler,
   DeleteMockHandler,
+  SetMockArchivedHandler,
+  RestoreMockHandler,
   RecordMockCallHandler,
 ];
 export const MOCK_QUERY_HANDLERS = [ListMocksHandler, ListMockCallsHandler, AnswerMockHandler];

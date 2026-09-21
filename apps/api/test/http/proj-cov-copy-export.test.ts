@@ -54,6 +54,7 @@ const workflow = (projectId: string, name: string, steps: unknown[]): WorkflowRo
   createdAt: at,
   updatedAt: at,
   updatedBy: "t",
+  deletedAt: null,
 });
 const example = {
   name: "ok",
@@ -206,6 +207,8 @@ describe("traer elementos de otro proyecto", () => {
       createdAt: at,
       updatedAt: at,
       updatedBy: "t",
+      archivedAt: null,
+      deletedAt: null,
     });
     await ok(api().post(`${target.base}/workflows`).set(auth()).send({ name: "A", definition: { steps: [] } }));
 

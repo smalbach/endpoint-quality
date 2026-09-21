@@ -26,14 +26,23 @@ import {
   CreateWorkflowHandler,
   DeleteWorkflowHandler,
   DuplicateWorkflowHandler,
+  RestoreWorkflowHandler,
   UpdateWorkflowHandler,
 } from "./application/commands/manage-workflow";
 import {
   CreateDatasetHandler,
   DeleteDatasetHandler,
+  RestoreDatasetHandler,
+  SetDatasetArchivedHandler,
   UpdateDatasetHandler,
 } from "./application/commands/manage-dataset";
-import { CreateSuiteHandler, DeleteSuiteHandler, UpdateSuiteHandler } from "./application/commands/manage-suite";
+import {
+  CreateSuiteHandler,
+  DeleteSuiteHandler,
+  RestoreSuiteHandler,
+  SetSuiteArchivedHandler,
+  UpdateSuiteHandler,
+} from "./application/commands/manage-suite";
 import { ListWorkflowsHandler } from "./application/queries/list-workflows";
 import { GetDatasetHandler } from "./application/queries/get-dataset";
 import { WorkflowsController } from "./presentation/workflows.controller";
@@ -47,13 +56,18 @@ export const WORKFLOW_COMMAND_HANDLERS = [
   CreateWorkflowHandler,
   UpdateWorkflowHandler,
   DeleteWorkflowHandler,
+  RestoreWorkflowHandler,
   DuplicateWorkflowHandler,
   CreateDatasetHandler,
   UpdateDatasetHandler,
   DeleteDatasetHandler,
+  SetDatasetArchivedHandler,
+  RestoreDatasetHandler,
   CreateSuiteHandler,
   UpdateSuiteHandler,
   DeleteSuiteHandler,
+  SetSuiteArchivedHandler,
+  RestoreSuiteHandler,
 ];
 export const WORKFLOW_QUERY_HANDLERS = [ListWorkflowsHandler, GetDatasetHandler];
 export const WORKFLOW_ADAPTERS = [{ provide: WORKFLOW_REPOSITORY, useClass: TypeOrmWorkflowRepository }];

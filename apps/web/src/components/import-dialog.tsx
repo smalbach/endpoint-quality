@@ -124,6 +124,7 @@ const KIND_LABEL: Record<ImportKind, string> = {
 const TARGET_LABEL: Record<string, string> = {
   contract: "el contrato",
   endpoints: "endpoints",
+  collections: "una colección",
   flows: "flujos",
   environment: "un entorno",
   project: "todo el proyecto",
@@ -608,6 +609,15 @@ function Item({ item, projectId, onClose }: { item: ImportedItemResult; projectI
           )}
           {entry.endpoints && entry.endpoints.length > 0 && (
             <Created endpoints={entry.endpoints} projectId={projectId} onClose={onClose} />
+          )}
+          {entry.collectionId && (
+            <Link
+              to={`/p/${projectId}/collections/${entry.collectionId}`}
+              className="mt-0.5 inline-block text-[11px] text-sky-700 underline"
+              onClick={onClose}
+            >
+              Abrir la colección
+            </Link>
           )}
         </div>
       ))}

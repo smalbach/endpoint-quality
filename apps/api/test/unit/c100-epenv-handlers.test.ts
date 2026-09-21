@@ -199,6 +199,8 @@ describe("entornos: valores por defecto", () => {
       writesAllowed: false,
       authEnforced: false,
       createdAt: NOW,
+      archivedAt: null,
+      deletedAt: null,
     };
     await environments.save(environment);
     const handler = new RevealVariablesHandler(projects, environments, cipher);

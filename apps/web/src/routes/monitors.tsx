@@ -24,7 +24,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { Badge, Button, Card, Empty, Field, inputClass } from "@/components/ui";
-import { ConfirmDialog, Modal } from "@/components/overlay";
+import { Modal } from "@/components/overlay";
+import { DeleteDialog, LifecycleRowActions, LifecycleTabs, stateQuery } from "@/components/lifecycle";
 import { useToast } from "@/components/toast";
 import { formatDate } from "@/lib/format";
 import { ChannelScriptEditor } from "@/components/channel-script-editor";
@@ -33,6 +34,7 @@ import type {
   ChannelListView,
   ChannelView,
   Environment,
+  LifecycleState,
   MonitorAlertView,
   MonitorExecutionView,
   MonitorListView,
@@ -89,14 +91,17 @@ export function MonitorsPage() {
 
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<MonitorView | null>(null);
-  const [deleting, setDeleting] = useState<MonitorView | null>(null);
+  const [deleting, setDeleting] = useState<{ monitor: MonitorView; purge: boolean } | null>(null);
+  /** Qué lista se está mirando: los que vigilan, los archivados o la papelera. */
+  const [state, setState] = useState<LifecycleState>("active");
 
   const list = useQuery({
-    queryKey: ["monitors", projectId],
+    queryKey: ["monitors", projectId, state],
     enabled,
-    queryFn: () => api<MonitorListView>(`${base}/monitors`),
+    queryFn: () => api<MonitorListView>(`${base}/monitors${stateQuery(state)}`),
     // Una vuelta en marcha cambia de estado sola: sin esto habría que recargar para verla acabar.
-    refetchInterval: 10_000,
+    // Solo en la lista viva: lo archivado y lo eliminado no lanza nada, así que no cambia solo.
+    refetchInterval: state === "active" ? 10_000 : false,
   });
   const environments = useQuery({
     queryKey: ["environments", projectId],
@@ -142,16 +147,38 @@ export function MonitorsPage() {
   });
 
   const remove = useMutation({
-    mutationFn: (monitor: MonitorView) => api<void>(`${base}/monitors/${monitor.id}`, { method: "DELETE" }),
-    onSuccess: async (_result, monitor) => {
+    mutationFn: ({ monitor, purge }: { monitor: MonitorView; purge: boolean }) =>
+      api<void>(`${base}/monitors/${monitor.id}${purge ? "?purge=true" : ""}`, { method: "DELETE" }),
+    onSuccess: async (_result, { monitor, purge }) => {
       setDeleting(null);
       await refresh();
-      toast.success(`«${monitor.name}» eliminado`);
+      toast.success(purge ? `«${monitor.name}» eliminado para siempre` : `«${monitor.name}» eliminado`);
     },
     onError: (error: Error) => {
       setDeleting(null);
       toast.error(error.message);
     },
+  });
+
+  const archive = useMutation({
+    mutationFn: ({ monitor, archived }: { monitor: MonitorView; archived: boolean }) =>
+      api<MonitorView>(`${base}/monitors/${monitor.id}/archived`, { method: "PATCH", body: { archived } }),
+    onSuccess: async (_result, { monitor, archived }) => {
+      setDeleting(null);
+      await refresh();
+      toast.success(archived ? `«${monitor.name}» archivado: deja de vigilar` : `«${monitor.name}» desarchivado`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const restore = useMutation({
+    mutationFn: (monitor: MonitorView) =>
+      api<MonitorView>(`${base}/monitors/${monitor.id}/restore`, { method: "POST" }),
+    onSuccess: async (_result, monitor) => {
+      await refresh();
+      toast.success(`«${monitor.name}» restaurado`);
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const monitors = list.data?.monitors ?? [];
@@ -169,6 +196,8 @@ export function MonitorsPage() {
         </div>
         {canEdit && !noEnvironments && <Button onClick={() => setCreating(true)}>Crear un monitor</Button>}
       </div>
+
+      <LifecycleTabs state={state} onState={setState} />
 
       {noEnvironments && (
         <Card className="p-4">
@@ -197,6 +226,14 @@ export function MonitorsPage() {
                   <Badge className={OUTCOME_TONE[monitor.lastOutcome]}>{OUTCOME_LABEL[monitor.lastOutcome]}</Badge>
                 )}
                 {!monitor.enabled && <Badge className="border-slate-200 bg-slate-100 text-slate-500">pausado</Badge>}
+                {monitor.archivedAt && (
+                  <Badge className="border-amber-200 bg-amber-50 text-amber-700">archivado</Badge>
+                )}
+                {monitor.deletedAt && (
+                  <Badge className="border-rose-200 bg-rose-50 text-rose-700">
+                    eliminado {formatDate(monitor.deletedAt)}
+                  </Badge>
+                )}
                 {monitor.consecutiveFailures > 0 && (
                   <Badge className="border-rose-200 bg-rose-50 text-rose-800">
                     {monitor.consecutiveFailures} fallo{monitor.consecutiveFailures === 1 ? "" : "s"} seguido
@@ -224,28 +261,36 @@ export function MonitorsPage() {
               {monitor.recent.length > 0 && <Executions executions={monitor.recent} />}
 
               {canEdit && (
-                <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-3">
-                  <Button variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => toggle.mutate(monitor)}>
-                    {monitor.enabled ? "Pausar" : "Activar"}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    className="h-7 px-2 text-[11px]"
-                    disabled={runNow.isPending}
-                    onClick={() => runNow.mutate(monitor)}
-                  >
-                    Correr ahora
-                  </Button>
-                  <Button variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => setEditing(monitor)}>
-                    Editar
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    className="ml-auto h-7 px-2 text-[11px] text-rose-600"
-                    onClick={() => setDeleting(monitor)}
-                  >
-                    Eliminar
-                  </Button>
+                <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                  {/* Pausar, correr y editar son de un monitor que vigila. Uno archivado no tiene
+                      turno y uno eliminado no está en la lista: ahí solo se vuelve o se borra. */}
+                  {state === "active" && (
+                    <>
+                      <Button variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => toggle.mutate(monitor)}>
+                        {monitor.enabled ? "Pausar" : "Activar"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="h-7 px-2 text-[11px]"
+                        disabled={runNow.isPending}
+                        onClick={() => runNow.mutate(monitor)}
+                      >
+                        Correr ahora
+                      </Button>
+                      <Button variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => setEditing(monitor)}>
+                        Editar
+                      </Button>
+                    </>
+                  )}
+                  <LifecycleRowActions
+                    className="ml-auto"
+                    state={state}
+                    pending={archive.isPending || restore.isPending || remove.isPending}
+                    onArchive={(archived) => archive.mutate({ monitor, archived })}
+                    onRestore={() => restore.mutate(monitor)}
+                    onDelete={() => setDeleting({ monitor, purge: false })}
+                    onPurge={() => setDeleting({ monitor, purge: true })}
+                  />
                 </div>
               )}
             </Card>
@@ -286,12 +331,20 @@ export function MonitorsPage() {
       )}
 
       {deleting && (
-        <ConfirmDialog
+        <DeleteDialog
           title="Eliminar el monitor"
-          message={`«${deleting.name}» deja de correr y su historial se va con él. Las corridas que ya lanzó se quedan donde están.`}
-          confirmLabel="Eliminar"
-          pending={remove.isPending}
-          onConfirm={() => remove.mutate(deleting)}
+          purge={deleting.purge}
+          name={deleting.purge ? deleting.monitor.name : undefined}
+          message={
+            deleting.purge
+              ? `Se va «${deleting.monitor.name}» con su horario y su historial. Las corridas que lanzó se quedan donde están.`
+              : `«${deleting.monitor.name}» deja de correr en el acto. Su horario y su historial se guardan: al restaurarlo vuelve con los dos.`
+          }
+          pending={remove.isPending || archive.isPending}
+          onArchive={
+            deleting.purge ? undefined : () => archive.mutate({ monitor: deleting.monitor, archived: true })
+          }
+          onConfirm={() => remove.mutate({ monitor: deleting.monitor, purge: deleting.purge })}
           onClose={() => setDeleting(null)}
         />
       )}

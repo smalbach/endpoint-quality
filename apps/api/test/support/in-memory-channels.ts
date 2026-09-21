@@ -2,20 +2,26 @@ import type { ChannelMessage } from "@eq/runner-core";
 
 import type { Channel } from "@/modules/channels/domain/model";
 import type { ChannelRepositoryPort, ChannelSessionRepositoryPort } from "@/modules/channels/domain/ports";
+import { inLifecycleState, type LifecycleState } from "@/shared/lifecycle/lifecycle";
 import type { ChannelSession } from "@/modules/channels/domain/session";
 
 export class InMemoryChannelRepository implements ChannelRepositoryPort {
   readonly rows = new Map<string, Channel>();
 
-  async listByProject(projectId: string): Promise<Channel[]> {
+  async listByProject(projectId: string, state: LifecycleState = "active"): Promise<Channel[]> {
     return [...this.rows.values()]
-      .filter((channel) => channel.projectId === projectId && !channel.deletedAt)
+      .filter((channel) => channel.projectId === projectId && inLifecycleState(channel, state))
       .sort((a, b) => a.orderIndex - b.orderIndex || a.createdAt.getTime() - b.createdAt.getTime());
   }
 
   async findById(projectId: string, id: string): Promise<Channel | null> {
     const channel = this.rows.get(id);
-    return channel && channel.projectId === projectId && !channel.deletedAt ? channel : null;
+    return channel && channel.projectId === projectId && inLifecycleState(channel, "active") ? channel : null;
+  }
+
+  async findAnyById(projectId: string, id: string): Promise<Channel | null> {
+    const channel = this.rows.get(id);
+    return channel && channel.projectId === projectId ? channel : null;
   }
 
   async countByProject(projectId: string): Promise<number> {
@@ -24,6 +30,13 @@ export class InMemoryChannelRepository implements ChannelRepositoryPort {
 
   async save(channel: Channel): Promise<void> {
     this.rows.set(channel.id, structuredClone(channel));
+  }
+
+  async remove(projectId: string, id: string): Promise<boolean> {
+    const channel = await this.findAnyById(projectId, id);
+    if (!channel) return false;
+    this.rows.delete(id);
+    return true;
   }
 }
 

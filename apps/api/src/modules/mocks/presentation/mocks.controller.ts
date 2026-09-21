@@ -4,7 +4,7 @@
  * `viewer` lista —saber qué URLs públicas tiene un proyecto es parte de mirarlo— y `editor` hace
  * todo lo demás. Crear un mock público es publicar datos del proyecto, así que no es una lectura.
  */
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { CommandBus, QueryBus } from "@nestjs/cqrs";
 
 import {
@@ -16,9 +16,13 @@ import {
 import {
   CreateMockCommand,
   DeleteMockCommand,
+  RestoreMockCommand,
   RotateMockKeyCommand,
+  SetMockArchivedCommand,
   UpdateMockCommand,
 } from "../application/commands/manage-mocks";
+import { parseLifecycleState } from "@/shared/lifecycle/lifecycle";
+import { SetArchivedDto } from "@/shared/lifecycle/lifecycle.dto";
 import { ListMockCallsQuery } from "../application/queries/list-mock-calls";
 import { ListMocksQuery } from "../application/queries/list-mocks";
 import { MOCK_PATH_PREFIX } from "../domain/model";
@@ -36,8 +40,14 @@ export class MocksController {
 
   @Get()
   @RequireRole("viewer")
-  async list(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string) {
-    const list = await this.queryBus.execute(new ListMocksQuery(organizationId, projectId));
+  async list(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Query("state") state?: string,
+  ) {
+    const list = await this.queryBus.execute(
+      new ListMocksQuery(organizationId, projectId, parseLifecycleState(state)),
+    );
     // El prefijo sale del servidor y no se compone en el navegador: la URL que hay que pegar en un
     // front la decide quien sirve el mock, y si algún día cambia el sitio, cambia en uno.
     return { ...list, prefix: `/${MOCK_PATH_PREFIX}` };
@@ -93,6 +103,30 @@ export class MocksController {
     return this.commandBus.execute(new RotateMockKeyCommand(organizationId, projectId, mockId));
   }
 
+  /** Fuera de la lista, y su URL deja de contestar. Sin perder la configuración ni la bitácora. */
+  @Patch(":mockId/archived")
+  @RequireRole("editor")
+  async setArchived(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("mockId") mockId: string,
+    @Body() body: SetArchivedDto,
+  ) {
+    return this.commandBus.execute(new SetMockArchivedCommand(organizationId, projectId, mockId, body.archived));
+  }
+
+  /** Devuelve un eliminado a donde estaba, con el mismo `publicId`. */
+  @Post(":mockId/restore")
+  @RequireRole("editor")
+  async restore(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("mockId") mockId: string,
+  ) {
+    return this.commandBus.execute(new RestoreMockCommand(organizationId, projectId, mockId));
+  }
+
+  /** Borrado blando. `?purge=true` es el definitivo, y solo sobre algo ya eliminado. */
   @Delete(":mockId")
   @RequireRole("editor")
   @HttpCode(204)
@@ -100,7 +134,8 @@ export class MocksController {
     @Param("organizationId") organizationId: string,
     @Param("projectId") projectId: string,
     @Param("mockId") mockId: string,
+    @Query("purge") purge?: string,
   ) {
-    await this.commandBus.execute(new DeleteMockCommand(organizationId, projectId, mockId));
+    await this.commandBus.execute(new DeleteMockCommand(organizationId, projectId, mockId, purge === "true"));
   }
 }

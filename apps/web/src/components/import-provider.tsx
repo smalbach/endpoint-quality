@@ -11,7 +11,7 @@
  * parte de la ventana. Las tres cosas son este fichero.
  *
  * El diálogo vive aquí arriba y no en cada pantalla, porque «importar» no pertenece a ninguna: lo
- * que se importa cae en el contrato, en los endpoints, en los flujos y en los entornos a la vez.
+ * que se importa cae en el contrato, en los endpoints, en las colecciones y en los entornos a la vez.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";

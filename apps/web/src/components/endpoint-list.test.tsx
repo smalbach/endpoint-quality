@@ -54,6 +54,7 @@ const PAGE: EndpointPage = {
   ],
   meta: { page: 1, limit: 100, total: 3, totalPages: 1 },
   counts: { active: 3, archived: 1, inactive: 0 },
+  deleted: 0,
   hasContract: true,
 };
 

@@ -5,6 +5,7 @@ import { Repository } from "typeorm";
 import { PerformancePlanEntity, PerformanceRunEntity } from "@/shared/database/entities";
 import type { PerformancePlanDefinition, PerformancePlanRow, PerformanceRun } from "../../domain/model";
 import type { PerformancePlanRepositoryPort, PerformanceRunRepositoryPort } from "../../domain/ports";
+import { lifecycleSql, type LifecycleState } from "@/shared/lifecycle/lifecycle";
 
 const toPlan = (row: PerformancePlanEntity): PerformancePlanRow => ({
   ...row,
@@ -15,15 +16,26 @@ const toPlan = (row: PerformancePlanEntity): PerformancePlanRow => ({
 export class TypeOrmPerformancePlanRepository implements PerformancePlanRepositoryPort {
   constructor(@InjectRepository(PerformancePlanEntity) private readonly plans: Repository<PerformancePlanEntity>) {}
 
-  async list(projectId: string): Promise<PerformancePlanRow[]> {
-    return (await this.plans.find({ where: { projectId }, order: { name: "ASC" } })).map(toPlan);
+  async list(projectId: string, state: LifecycleState = "active"): Promise<PerformancePlanRow[]> {
+    const rows = await this.plans
+      .createQueryBuilder("plan")
+      .where("plan.projectId = :projectId", { projectId })
+      .andWhere(lifecycleSql("plan", state))
+      .orderBy("plan.name", "ASC")
+      .getMany();
+    return rows.map(toPlan);
   }
   async find(projectId: string, planId: string): Promise<PerformancePlanRow | null> {
     const row = await this.plans.findOne({ where: { id: planId, projectId } });
     return row ? toPlan(row) : null;
   }
   async findByName(projectId: string, name: string): Promise<PerformancePlanRow | null> {
-    const row = await this.plans.findOne({ where: { projectId, name } });
+    const row = await this.plans
+      .createQueryBuilder("plan")
+      .where("plan.projectId = :projectId", { projectId })
+      .andWhere("plan.name = :name", { name })
+      .andWhere(lifecycleSql("plan", "active"))
+      .getOne();
     return row ? toPlan(row) : null;
   }
   async save(row: PerformancePlanRow): Promise<void> {

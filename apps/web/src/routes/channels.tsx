@@ -38,6 +38,7 @@ import type {
   ChannelSessionView,
   ChannelView,
   Environment,
+  LifecycleState,
   GrpcSettingsView,
   SocketIoSettingsView,
   RequestAuthView,
@@ -66,7 +67,8 @@ import {
   type SocketIoEmitDraft,
 } from "@/components/socketio-channel";
 import { EndpointsTabs } from "@/components/endpoints-tabs";
-import { ConfirmDialog, Modal } from "@/components/overlay";
+import { Modal } from "@/components/overlay";
+import { DeleteDialog, LifecycleRowActions, LifecycleTabs, stateQuery } from "@/components/lifecycle";
 import { RequestFieldsEditor } from "@/components/request-fields-editor";
 import { useToast } from "@/components/toast";
 import { AssertionRow, Button, Field, inputClass } from "@/components/ui";
@@ -80,15 +82,74 @@ export function ChannelsPage() {
   const { projectId } = useParams();
   const organization = useOrganization();
   const canEdit = useCan("editor");
+  const toast = useToast();
+  const queryClient = useQueryClient();
   const [params, setParams] = useSearchParams();
   const base = `/orgs/${organization?.id}/projects/${projectId}`;
   const selected = params.get("c");
   const [creating, setCreating] = useState(false);
+  /** Qué lista se está mirando: los que se usan, los archivados o la papelera. */
+  const [state, setState] = useState<LifecycleState>("active");
+  /** A qué canal de la papelera se le está preguntando si se borra del todo. */
+  const [purging, setPurging] = useState<ChannelView | null>(null);
+  /** Y a qué archivado se le está preguntando si se elimina. */
+  const [deleting, setDeleting] = useState<ChannelView | null>(null);
 
   const list = useQuery({
-    queryKey: ["channels", projectId],
+    // El estado va en la clave, y el resto de la aplicación —el nodo `channel` del lienzo, el plan
+    // de un monitor— sigue leyendo `["channels", projectId]` sin estado: solo los vivos.
+    queryKey: ["channels", projectId, state],
     enabled: Boolean(organization && projectId),
-    queryFn: () => api<ChannelListView>(`${base}/channels`),
+    queryFn: () => api<ChannelListView>(`${base}/channels${stateQuery(state)}`),
+  });
+
+  const restore = useMutation({
+    mutationFn: (channel: ChannelView) => api(`${base}/channels/${channel.id}/restore`, { method: "POST" }),
+    onSuccess: async (_result, channel) => {
+      await queryClient.invalidateQueries({ queryKey: ["channels", projectId] });
+      toast.success(`«${channel.name}» restaurado`);
+    },
+    onError: (error) => toast.error(message(error)),
+  });
+
+  /** Desarchivar desde la lista: es donde está la fila, y el panel de la derecha es de lo vivo. */
+  const unarchive = useMutation({
+    mutationFn: (channel: ChannelView) =>
+      api(`${base}/channels/${channel.id}/archived`, { method: "PATCH", body: { archived: false } }),
+    onSuccess: async (_result, channel) => {
+      await queryClient.invalidateQueries({ queryKey: ["channels", projectId] });
+      toast.success(`«${channel.name}» desarchivado`);
+    },
+    onError: (error) => toast.error(message(error)),
+  });
+
+  /** El borrado blando de un archivado: ya está fuera de la lista, así que no se ofrece archivar. */
+  const softDelete = useMutation({
+    mutationFn: (channel: ChannelView) => api(`${base}/channels/${channel.id}`, { method: "DELETE" }),
+    onSuccess: async (_result, channel) => {
+      setDeleting(null);
+      await queryClient.invalidateQueries({ queryKey: ["channels", projectId] });
+      if (selected === channel.id) select(null);
+      toast.success(`«${channel.name}» eliminado`);
+    },
+    onError: (error) => {
+      setDeleting(null);
+      toast.error(message(error));
+    },
+  });
+
+  const purge = useMutation({
+    mutationFn: (channel: ChannelView) => api(`${base}/channels/${channel.id}?purge=true`, { method: "DELETE" }),
+    onSuccess: async (_result, channel) => {
+      setPurging(null);
+      await queryClient.invalidateQueries({ queryKey: ["channels", projectId] });
+      if (selected === channel.id) select(null);
+      toast.success(`«${channel.name}» eliminado para siempre`);
+    },
+    onError: (error) => {
+      setPurging(null);
+      toast.error(message(error));
+    },
   });
 
   const select = (channelId: string | null) =>
@@ -116,11 +177,18 @@ export function ChannelsPage() {
               </Button>
             )}
           </div>
+          <LifecycleTabs className="mb-2" state={state} onState={setState} />
           {list.isLoading ? (
             <p className="text-xs text-slate-400">Cargando…</p>
           ) : channels.length === 0 ? (
             <div className="mt-6 text-center">
-              <p className="text-sm font-medium text-slate-700">Ningún canal todavía</p>
+              <p className="text-sm font-medium text-slate-700">
+                {state === "active"
+                  ? "Ningún canal todavía"
+                  : state === "archived"
+                    ? "Ningún canal archivado"
+                    : "Papelera vacía"}
+              </p>
               <p className="mt-1 text-xs text-slate-500">
                 Un canal es un WebSocket (<code>wss://</code>), un broker MQTT (<code>mqtts://</code>) o un servicio
                 gRPC (<code>grpcs://</code>): lo que se le manda y lo que se espera oír.
@@ -160,9 +228,45 @@ export function ChannelsPage() {
                       {channel.url}
                     </span>
                   </button>
+                  {/* En los archivados y en la papelera la fila lleva su propia salida: el panel de
+                      ajustes de la derecha es donde se archiva y se borra uno vivo, y desde aquí es
+                      desde donde se vuelve. */}
+                  {canEdit && state !== "active" && (
+                    <LifecycleRowActions
+                      className="px-2 pb-2"
+                      state={state}
+                      pending={
+                        restore.isPending || purge.isPending || unarchive.isPending || softDelete.isPending
+                      }
+                      onArchive={() => unarchive.mutate(channel)}
+                      onRestore={() => restore.mutate(channel)}
+                      onDelete={() => setDeleting(channel)}
+                      onPurge={() => setPurging(channel)}
+                    />
+                  )}
                 </li>
               ))}
             </ul>
+          )}
+          {deleting && (
+            <DeleteDialog
+              title="Eliminar el canal"
+              message={`«${deleting.name}» pasa a la papelera. Sus tramas guardadas y sus conversaciones se quedan.`}
+              pending={softDelete.isPending}
+              onConfirm={() => softDelete.mutate(deleting)}
+              onClose={() => setDeleting(null)}
+            />
+          )}
+          {purging && (
+            <DeleteDialog
+              title="Eliminar el canal"
+              purge
+              name={purging.name}
+              message={`Se va «${purging.name}» con sus tramas guardadas y sus conversaciones.`}
+              pending={purge.isPending}
+              onConfirm={() => purge.mutate(purging)}
+              onClose={() => setPurging(null)}
+            />
           )}
         </aside>
 
@@ -983,6 +1087,17 @@ function ChannelSettings({
     onError: (error) => toast.error(message(error)),
   });
 
+  /** Archivar: fuera de la lista y sin poder abrirse, con sus tramas guardadas intactas. */
+  const archive = useMutation({
+    mutationFn: () => api(`${base}/channels/${channel.id}/archived`, { method: "PATCH", body: { archived: true } }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["channels", projectId] });
+      toast.success("Canal archivado");
+      onRemoved();
+    },
+    onError: (error) => toast.error(message(error)),
+  });
+
   const problems = save.error instanceof ApiError ? save.error.fields : [];
   const problemOf = (field: string) =>
     problems
@@ -1227,10 +1342,11 @@ function ChannelSettings({
       {save.error && !problems.length && <p className="text-xs text-rose-600">{message(save.error)}</p>}
 
       {removing && (
-        <ConfirmDialog
+        <DeleteDialog
           title="Eliminar el canal"
-          message="Sus sesiones se quedan como estaban: son lo que pasó."
-          pending={remove.isPending}
+          message="Sale de la lista y deja de poder abrirse. Sus tramas guardadas y sus sesiones se quedan como estaban: son lo que pasó."
+          pending={remove.isPending || archive.isPending}
+          onArchive={() => archive.mutate()}
           onConfirm={() => remove.mutate()}
           onClose={() => setRemoving(false)}
         />

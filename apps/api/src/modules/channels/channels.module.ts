@@ -32,6 +32,8 @@ import { ChannelSessionRegistry } from "./infrastructure/session-registry";
 import {
   CreateChannelHandler,
   DeleteChannelHandler,
+  RestoreChannelHandler,
+  SetChannelArchivedHandler,
   UpdateChannelHandler,
 } from "./application/commands/manage-channels";
 import { CHANNEL_SESSION_COMMAND_HANDLERS, ChannelSessionOpener } from "./application/commands/manage-sessions";
@@ -49,6 +51,8 @@ export const CHANNEL_COMMAND_HANDLERS = [
   CreateChannelHandler,
   UpdateChannelHandler,
   DeleteChannelHandler,
+  SetChannelArchivedHandler,
+  RestoreChannelHandler,
   ...CHANNEL_SESSION_COMMAND_HANDLERS,
   ...GRPC_COMMAND_HANDLERS,
 ];

@@ -45,7 +45,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       },
       {
         title: "Organizar",
-        body: "Se agrupan por el primer segmento de la ruta, y por módulo y versión cuando empieza por v1, v2… Filtra por estado, busca por ruta o descripción y marca varios para archivarlos, desactivarlos, activarlos o eliminarlos a la vez.",
+        body: "Se agrupan por el primer segmento de la ruta, y por módulo y versión cuando empieza por v1, v2… Filtra por estado, busca por ruta o descripción y marca varios para archivarlos, desactivarlos, activarlos o eliminarlos a la vez. Lo eliminado no se pierde: el filtro «Eliminados» es la papelera del proyecto, y desde ahí se restaura o se borra del todo.",
         tip: "«fuera» junto a un endpoint significa que el contrato activo ya no lo declara.",
       },
       {
@@ -105,6 +105,34 @@ export const HELP_TOPICS: HelpTopic[] = [
         title: "Leer un caso",
         body: "Elige un caso para ver cada paso, sus aserciones con el motivo y la petición y respuesta completas.",
         tip: "Pasados los días de retención los cuerpos se retiran, pero el veredicto y sus aserciones se quedan.",
+      },
+    ],
+  },
+  {
+    id: "collections",
+    title: "Colecciones",
+    intro: "Las colecciones de Postman, tal cual: su árbol, sus scripts y el runner que las corre en orden.",
+    steps: [
+      {
+        title: "Importa la que ya tienes",
+        body: "Importar (Cmd+O) y suelta el .postman_collection.json. Entra con sus carpetas, sus peticiones, sus variables y sus tests, en su orden. Importar la misma otra vez la actualiza en vez de duplicarla.",
+      },
+      {
+        title: "Edítala como allí",
+        body: "El árbol a la izquierda; a la derecha, Params, Headers, Body, Auth y Scripts. Una carpeta y la colección tienen también los suyos, y una petición hereda la autenticación de su carpeta, de la colección y al final del proyecto.",
+      },
+      {
+        title: "Envía una petición",
+        body: "«Enviar» manda la que hay en pantalla —guardada o no— con los scripts de encima ya compuestos, y enseña el cuerpo, las cabeceras, los pm.test y la consola.",
+        tip: "Escribe {{ en cualquier campo para ver las variables del entorno activo.",
+      },
+      {
+        title: "Córrela entera",
+        body: "«Correr» lanza la colección o una carpeta: elige entorno, vueltas y espera entre peticiones. Lo que un pm.collectionVariables.set escribe viaja a las siguientes, que es lo que hace que «crear, leer lo creado, borrarlo» funcione.",
+      },
+      {
+        title: "Léela y llévatela",
+        body: "El informe enseña cada petición con su estado, su tiempo y sus tests, en vivo mientras corre. «Exportar» devuelve el fichero de Postman, listo para newman — sin los secretos escritos a mano.",
       },
     ],
   },
@@ -286,7 +314,11 @@ export const HELP_TOPICS: HelpTopic[] = [
     title: "Settings",
     intro: "El proyecto, su contrato, su configuración y sus entornos.",
     steps: [
-      { title: "General", body: "Nombre y descripción del proyecto, y archivarlo cuando deja de usarse." },
+      {
+        title: "General",
+        body: "Nombre y descripción del proyecto, y archivarlo cuando deja de usarse.",
+        tip: "Lo mismo vale dentro: mocks, monitores, documentaciones, planes de carga, entornos, canales, roles, flujos, conjuntos de datos y suites se pueden archivar —salen de la lista sin perderse— y lo que se elimina espera en el filtro «Eliminados» de su pantalla hasta que se restaura o se borra para siempre.",
+      },
       {
         title: "Contrato y configuración",
         body: "Importar o releer el contrato, traer piezas sueltas de otro proyecto y las secciones que rellenan lo que el documento no dice. Van en tres grupos: «Datos de la corrida» (con qué valores y qué cuerpos se ejecuta, y qué operaciones existen ya), «Cuándo un caso es rojo» (401/403, latencia y forma de la respuesta) y «Ajustes avanzados», que casi nadie toca. Cada sección se abre con qué es, cuándo tocarla, qué pasa si no se toca y cómo suele quedar.",

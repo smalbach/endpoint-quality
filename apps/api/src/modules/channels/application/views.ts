@@ -9,15 +9,31 @@ import type { ChannelMessage } from "@eq/runner-core";
 
 import type { Channel } from "../domain/model";
 import type { ChannelSession } from "../domain/session";
+import { viewLifecycle, type LifecycleView } from "@/shared/lifecycle/lifecycle";
 
-export type ChannelView = Omit<Channel, "projectId" | "createdAt" | "updatedAt" | "deletedAt" | "updatedBy"> & {
-  createdAt: string;
-  updatedAt: string;
-};
+export type ChannelView = Omit<
+  Channel,
+  "projectId" | "createdAt" | "updatedAt" | "archivedAt" | "deletedAt" | "updatedBy"
+> &
+  LifecycleView & {
+    createdAt: string;
+    updatedAt: string;
+  };
 
 export function viewChannel(channel: Channel): ChannelView {
-  const { projectId: _projectId, deletedAt: _deletedAt, updatedBy: _updatedBy, ...rest } = channel;
-  return { ...rest, createdAt: channel.createdAt.toISOString(), updatedAt: channel.updatedAt.toISOString() };
+  const {
+    projectId: _projectId,
+    archivedAt: _archivedAt,
+    deletedAt: _deletedAt,
+    updatedBy: _updatedBy,
+    ...rest
+  } = channel;
+  return {
+    ...rest,
+    ...viewLifecycle(channel),
+    createdAt: channel.createdAt.toISOString(),
+    updatedAt: channel.updatedAt.toISOString(),
+  };
 }
 
 export type ChannelSessionView = {

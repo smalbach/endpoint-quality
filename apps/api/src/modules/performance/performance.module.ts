@@ -16,7 +16,13 @@ import {
 import { InMemoryPerformanceRunQueue } from "./infrastructure/in-memory-performance-queue";
 import { PerformanceExecutor } from "./infrastructure/performance-executor";
 import { PerformanceProgressStream } from "./infrastructure/performance-progress.stream";
-import { CreatePlanHandler, DeletePlanHandler, UpdatePlanHandler } from "./application/commands/manage-plan";
+import {
+  CreatePlanHandler,
+  DeletePlanHandler,
+  RestorePlanHandler,
+  SetPlanArchivedHandler,
+  UpdatePlanHandler,
+} from "./application/commands/manage-plan";
 import { CancelRunHandler, DeleteRunHandler, StartRunHandler } from "./application/commands/manage-run";
 import {
   CompareRunsHandler,
@@ -31,6 +37,8 @@ export const PERFORMANCE_COMMAND_HANDLERS = [
   CreatePlanHandler,
   UpdatePlanHandler,
   DeletePlanHandler,
+  SetPlanArchivedHandler,
+  RestorePlanHandler,
   StartRunHandler,
   CancelRunHandler,
   DeleteRunHandler,

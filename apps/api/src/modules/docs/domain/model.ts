@@ -35,6 +35,7 @@
 import { randomUUID } from "node:crypto";
 
 import { generateOpaqueToken, hashOpaqueToken, tokenPreview } from "@/shared/crypto/opaque-token";
+import { viewLifecycle, type LifecycleView } from "@/shared/lifecycle/lifecycle";
 
 /** Local, como en `examples.ts` y en el `model.ts` de endpoints. */
 type Problem = { field: string; detail: string };
@@ -78,6 +79,9 @@ export type DocSite = {
   createdAt: Date;
   updatedAt: Date;
   createdBy: string;
+  /** Archivado y borrado blando, como el resto de recursos del proyecto. Ver `shared/lifecycle`. */
+  archivedAt: Date | null;
+  deletedAt: Date | null;
 };
 
 export type DocSiteInput = {
@@ -170,6 +174,8 @@ export function blankDocSite(fields: {
       createdAt: fields.now,
       updatedAt: fields.now,
       createdBy: fields.actorId,
+      archivedAt: null,
+      deletedAt: null,
     },
   };
 }
@@ -184,12 +190,21 @@ export function rotatedDocKey(site: DocSite, now: Date): { site: DocSite; apiKey
 }
 
 /** Lo que sale por la API de gestión. Sin el hash: es lo único secreto que hay en la fila. */
-export type DocSiteView = Omit<DocSite, "projectId" | "apiKeyHash" | "createdAt" | "updatedAt"> & {
-  createdAt: string;
-  updatedAt: string;
-};
+export type DocSiteView = Omit<
+  DocSite,
+  "projectId" | "apiKeyHash" | "createdAt" | "updatedAt" | "archivedAt" | "deletedAt"
+> &
+  LifecycleView & {
+    createdAt: string;
+    updatedAt: string;
+  };
 
 export function viewDocSite(site: DocSite): DocSiteView {
   const { projectId: _projectId, apiKeyHash: _apiKeyHash, ...rest } = site;
-  return { ...rest, createdAt: site.createdAt.toISOString(), updatedAt: site.updatedAt.toISOString() };
+  return {
+    ...rest,
+    ...viewLifecycle(site),
+    createdAt: site.createdAt.toISOString(),
+    updatedAt: site.updatedAt.toISOString(),
+  };
 }

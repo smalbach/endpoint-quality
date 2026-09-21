@@ -51,6 +51,16 @@ export type SendInput = {
   /** What is in the editor, saved or not: «Enviar» runs the scripts on screen. */
   preRequestScript: string;
   postResponseScript: string;
+  /**
+   * Los valores con los que entra la petición, y que `pm.variables` —y `pm.collectionVariables`,
+   * que es el mismo almacén— lee.
+   *
+   * Vacío cuando quien envía es el editor: una petición suelta empieza sin nada escrito. Lo llena
+   * el runner de una colección, que es lo que hace que el `chk_product_a` que guardó el `Setup` lo
+   * lea el filtro que viene después: sin esto cada petición de la corrida empezaría en blanco y la
+   * mitad de una colección de verdad no tendría con qué correr.
+   */
+  variables: Record<string, string>;
 };
 
 type Problem = { field: string; detail: string };
@@ -160,8 +170,17 @@ export function readSendInput(raw: string | undefined): { input: SendInput } | {
       auth: authRead.auth,
       preRequestScript: text(value.preRequestScript),
       postResponseScript: text(value.postResponseScript),
+      variables: readVariables(value.variables),
     },
   };
+}
+
+/** Las variables que entran, solo cadenas: lo que no lo sea no es un valor que pueda ir a una URL. */
+function readVariables(value: unknown): Record<string, string> {
+  const given = isRecord(value) ? value : {};
+  const variables: Record<string, string> = {};
+  for (const [name, item] of Object.entries(given)) if (typeof item === "string") variables[name] = item;
+  return variables;
 }
 
 /** The first file whose extension is refused, as a message; `null` when all of them are fine. */

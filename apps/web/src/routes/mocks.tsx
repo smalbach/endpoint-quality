@@ -24,10 +24,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { absoluteApiUrl, api } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { Badge, Button, Card, Empty, Field, inputClass } from "@/components/ui";
-import { ConfirmDialog, Modal } from "@/components/overlay";
+import { Modal } from "@/components/overlay";
+import { DeleteDialog, LifecycleRowActions, LifecycleTabs, stateQuery } from "@/components/lifecycle";
 import { useToast } from "@/components/toast";
 import { formatDate, httpStatusStyle, methodStyle } from "@/lib/format";
-import type { IssuedMockView, MockCallListView, MockListView, MockServerView } from "@/lib/types";
+import type { IssuedMockView, LifecycleState, MockCallListView, MockListView, MockServerView } from "@/lib/types";
 
 const MAX_DELAY_MS = 5_000;
 
@@ -56,16 +57,21 @@ export function MocksPage() {
 
   const [creating, setCreating] = useState(false);
   const [issued, setIssued] = useState<{ name: string; apiKey: string } | null>(null);
-  const [deleting, setDeleting] = useState<MockServerView | null>(null);
+  /** A qué mock se le está preguntando si se borra, y si es el borrado definitivo. */
+  const [deleting, setDeleting] = useState<{ mock: MockServerView; purge: boolean } | null>(null);
+  /** Qué lista se está mirando: los que sirven, los archivados o la papelera. */
+  const [state, setState] = useState<LifecycleState>("active");
   /** Qué panel de llamadas está abierto. Uno, porque la pregunta es siempre por un mock concreto. */
   const [showingCalls, setShowingCalls] = useState<string | null>(null);
 
   const list = useQuery({
-    queryKey: ["mocks", projectId],
+    queryKey: ["mocks", projectId, state],
     enabled: Boolean(organization && projectId),
-    queryFn: () => api<MockListView>(base),
+    queryFn: () => api<MockListView>(`${base}${stateQuery(state)}`),
   });
 
+  // Se invalidan las tres listas y no solo la abierta: archivar mueve la fila de una a otra, y una
+  // papelera en caché diciendo que está vacía es lo que hace dudar de si el borrado funcionó.
   const refresh = () => client.invalidateQueries({ queryKey: ["mocks", projectId] });
 
   const rotate = useMutation({
@@ -88,16 +94,37 @@ export function MocksPage() {
   });
 
   const remove = useMutation({
-    mutationFn: (mock: MockServerView) => api<void>(`${base}/${mock.id}`, { method: "DELETE" }),
-    onSuccess: async (_result, mock) => {
+    mutationFn: ({ mock, purge }: { mock: MockServerView; purge: boolean }) =>
+      api<void>(`${base}/${mock.id}${purge ? "?purge=true" : ""}`, { method: "DELETE" }),
+    onSuccess: async (_result, { mock, purge }) => {
       setDeleting(null);
       await refresh();
-      toast.success(`«${mock.name}» eliminado`);
+      toast.success(purge ? `«${mock.name}» eliminado para siempre` : `«${mock.name}» eliminado`);
     },
     onError: (error: Error) => {
       setDeleting(null);
       toast.error(error.message);
     },
+  });
+
+  const archive = useMutation({
+    mutationFn: ({ mock, archived }: { mock: MockServerView; archived: boolean }) =>
+      api<MockServerView>(`${base}/${mock.id}/archived`, { method: "PATCH", body: { archived } }),
+    onSuccess: async (_result, { mock, archived }) => {
+      setDeleting(null);
+      await refresh();
+      toast.success(archived ? `«${mock.name}» archivado` : `«${mock.name}» desarchivado`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const restore = useMutation({
+    mutationFn: (mock: MockServerView) => api<MockServerView>(`${base}/${mock.id}/restore`, { method: "POST" }),
+    onSuccess: async (_result, mock) => {
+      await refresh();
+      toast.success(`«${mock.name}» restaurado`);
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const coverage = list.data?.coverage;
@@ -116,6 +143,8 @@ export function MocksPage() {
         </div>
         {canEdit && <Button onClick={() => setCreating(true)}>Crear un mock</Button>}
       </div>
+
+      <LifecycleTabs state={state} onState={setState} />
 
       {coverage && (
         <Card className="p-4">
@@ -152,6 +181,14 @@ export function MocksPage() {
                   {mock.visibility === "public" ? "público" : "privado"}
                 </Badge>
                 {!mock.enabled && <Badge className="border-slate-200 bg-slate-100 text-slate-500">apagado</Badge>}
+                {mock.archivedAt && (
+                  <Badge className="border-amber-200 bg-amber-50 text-amber-700">archivado</Badge>
+                )}
+                {mock.deletedAt && (
+                  <Badge className="border-rose-200 bg-rose-50 text-rose-700">
+                    eliminado {formatDate(mock.deletedAt)}
+                  </Badge>
+                )}
                 <span className="ml-auto text-[11px] text-slate-400">
                   {delayLabel(mock.delay)} · creado {formatDate(mock.createdAt)}
                 </span>
@@ -194,22 +231,30 @@ export function MocksPage() {
               </div>
 
               {canEdit && (
-                <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-3">
-                  <Button variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => toggle.mutate(mock)}>
-                    {mock.enabled ? "Apagar" : "Encender"}
-                  </Button>
-                  {mock.visibility === "private" && (
-                    <Button variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => rotate.mutate(mock)}>
-                      Nueva clave
-                    </Button>
+                <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                  {/* Apagar y encender solo tienen sentido sobre uno vivo: lo archivado y lo
+                      eliminado ya no contestan, y ofrecer «Encender» ahí sería mentir. */}
+                  {state === "active" && (
+                    <>
+                      <Button variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => toggle.mutate(mock)}>
+                        {mock.enabled ? "Apagar" : "Encender"}
+                      </Button>
+                      {mock.visibility === "private" && (
+                        <Button variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => rotate.mutate(mock)}>
+                          Nueva clave
+                        </Button>
+                      )}
+                    </>
                   )}
-                  <Button
-                    variant="ghost"
-                    className="ml-auto h-7 px-2 text-[11px] text-rose-600"
-                    onClick={() => setDeleting(mock)}
-                  >
-                    Eliminar
-                  </Button>
+                  <LifecycleRowActions
+                    className="ml-auto"
+                    state={state}
+                    pending={archive.isPending || restore.isPending || remove.isPending}
+                    onArchive={(archived) => archive.mutate({ mock, archived })}
+                    onRestore={() => restore.mutate(mock)}
+                    onDelete={() => setDeleting({ mock, purge: false })}
+                    onPurge={() => setDeleting({ mock, purge: true })}
+                  />
                 </div>
               )}
             </Card>
@@ -250,12 +295,18 @@ export function MocksPage() {
       {issued && <IssuedKeyModal name={issued.name} apiKey={issued.apiKey} onClose={() => setIssued(null)} />}
 
       {deleting && (
-        <ConfirmDialog
+        <DeleteDialog
           title="Eliminar el mock"
-          message={`La URL de «${deleting.name}» deja de contestar en el mismo momento, para todo el que la tenga puesta. Los ejemplos no se tocan.`}
-          confirmLabel="Eliminar"
-          pending={remove.isPending}
-          onConfirm={() => remove.mutate(deleting)}
+          purge={deleting.purge}
+          name={deleting.purge ? deleting.mock.name : undefined}
+          message={
+            deleting.purge
+              ? `Se va «${deleting.mock.name}» con su bitácora de llamadas. Los ejemplos del proyecto no se tocan.`
+              : `La URL de «${deleting.mock.name}» deja de contestar en el mismo momento, para todo el que la tenga puesta. Los ejemplos no se tocan.`
+          }
+          pending={remove.isPending || archive.isPending}
+          onArchive={deleting.purge ? undefined : () => archive.mutate({ mock: deleting.mock, archived: true })}
+          onConfirm={() => remove.mutate({ mock: deleting.mock, purge: deleting.purge })}
           onClose={() => setDeleting(null)}
         />
       )}

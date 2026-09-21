@@ -201,7 +201,8 @@ describe("a dónde va cada cosa", () => {
       if (kind === "postman-dump" || kind === "unknown") continue;
       assert.ok(targetsOf(kind as PieceKind).length > 0, `${kind} no va a ninguna parte`);
     }
-    assert.deepEqual(targetsOf("postman-collection"), ["endpoints", "flows"]);
+    // Una colección va a la colección que es, no a flujos: su árbol se guarda tal cual.
+    assert.deepEqual(targetsOf("postman-collection"), ["endpoints", "collections"]);
     assert.deepEqual(targetsOf("openapi"), ["contract"]);
   });
 });

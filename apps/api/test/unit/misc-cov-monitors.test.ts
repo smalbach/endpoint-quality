@@ -278,7 +278,7 @@ describe("gestionar monitores", () => {
       update.execute(new UpdateMonitorCommand(ORG, "p-1", id, input as never));
     await assert.rejects(change("no", { name: "x" }), code("monitor-not-found"));
     await assert.rejects(
-      new DeleteMonitorHandler(projects, monitors).execute(new DeleteMonitorCommand(ORG, "p-1", "no")),
+      new DeleteMonitorHandler(projects, monitors, clock).execute(new DeleteMonitorCommand(ORG, "p-1", "no")),
       code("monitor-not-found"),
     );
     const firer = { fire: mock.fn() };

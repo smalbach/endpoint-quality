@@ -298,6 +298,8 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
         position: position++,
         createdAt: now,
         updatedAt: now,
+        archivedAt: null,
+        deletedAt: null,
       });
       roleIds.set(role.name.toLowerCase(), id);
       result.roles += 1;
@@ -418,6 +420,7 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
         description: workflow.description,
         status: workflow.status,
         definition: withoutLiteralSecrets(definition as unknown as WorkflowDocument),
+        deletedAt: null,
       });
       result.workflows += 1;
     }
@@ -436,6 +439,8 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
         workflowId,
         name,
         rows: dataset.rows as Record<string, string>[],
+        archivedAt: null,
+        deletedAt: null,
       });
       result.datasets += 1;
     }
@@ -450,6 +455,8 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
         name,
         description: suite.description,
         workflowIds: suite.workflowIds.map((id) => ids.workflows.get(id)).filter((id): id is string => Boolean(id)),
+        archivedAt: null,
+        deletedAt: null,
       });
       result.suites += 1;
     }
@@ -518,6 +525,8 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
         writesAllowed: false,
         authEnforced: false,
         createdAt: now,
+        archivedAt: null,
+        deletedAt: null,
       });
       firstId ??= id;
       result.environments += 1;
@@ -543,6 +552,8 @@ export class ImportProjectBundleHandler implements ICommandHandler<ImportProject
         createdAt: now,
         updatedAt: now,
         updatedBy: actorId,
+        archivedAt: null,
+        deletedAt: null,
       });
       result.performancePlans += 1;
     }

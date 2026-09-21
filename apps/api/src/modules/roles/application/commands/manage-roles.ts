@@ -4,6 +4,13 @@ import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqr
 
 import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
+import {
+  archiveIn,
+  deleteIn,
+  restoreIn,
+  type LifecycleNoun,
+  type LifecycleStore,
+} from "@/shared/lifecycle/lifecycle-store";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { writableProject } from "@/modules/endpoints/application/commands/manage-endpoints";
 import { ENDPOINT_REPOSITORY, type EndpointRepositoryPort } from "@/modules/endpoints/domain/ports";
@@ -30,7 +37,30 @@ export class UpdateRoleCommand implements ICommand {
     readonly actorId: string,
   ) {}
 }
+/** Borrar un rol: blando por defecto, definitivo con `purge` y solo sobre algo ya eliminado. */
 export class DeleteRoleCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly roleId: string,
+    readonly actorId: string,
+    readonly purge = false,
+  ) {}
+}
+
+/** Archivar un rol: sale de la matriz sin perder sus celdas decididas ni sus reglas. */
+export class SetRoleArchivedCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly roleId: string,
+    readonly actorId: string,
+    readonly archived: boolean,
+  ) {}
+}
+
+/** Restaurar un rol eliminado, con la matriz que tenía. */
+export class RestoreRoleCommand implements ICommand {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
@@ -38,6 +68,21 @@ export class DeleteRoleCommand implements ICommand {
     readonly actorId: string,
   ) {}
 }
+
+/** Cómo se llama esto en los errores del ciclo de vida. */
+const ROLE: LifecycleNoun = { code: "role", that: "El rol", the: "el rol" };
+
+/** El almacén de roles con la forma del servicio de ciclo de vida. */
+const roleStore = (roles: RoleRepositoryPort): LifecycleStore<Role> => ({
+  findById: (projectId, id) => roles.findById(projectId, id),
+  save: (row) => roles.save(row),
+  remove: async (projectId, id) => {
+    await roles.remove(projectId, id);
+    return true;
+  },
+});
+
+const touch = (row: Role, now: Date): Role => ({ ...row, updatedAt: now });
 
 export async function ownedRole(roles: RoleRepositoryPort, projectId: string, roleId: string): Promise<Role> {
   const role = await roles.findById(projectId, roleId);
@@ -107,6 +152,8 @@ export class CreateRoleHandler extends RoleCommandBase implements ICommandHandle
       position: existing.reduce((max, role) => Math.max(max, role.position + 1), 0),
       createdAt: now,
       updatedAt: now,
+      archivedAt: null,
+      deletedAt: null,
     };
     await this.roles.save(role);
     await this.sync(project.id, command.actorId);
@@ -178,14 +225,76 @@ export class DeleteRoleHandler extends RoleCommandBase implements ICommandHandle
     super(projects, roles, endpoints, config, environments, clock);
   }
 
+  /**
+   * Borrar un rol **sin perder la matriz que se decidió con él**.
+   *
+   * Lo que costaba un rol borrado no era la fila: eran las celdas —qué endpoint alcanza y cuál se
+   * le niega— y las reglas entre roles, que se iban por cascada. Eliminarlo ahora lo saca de la
+   * matriz y las deja donde estaban, así que restaurarlo devuelve la matriz y no un rol en blanco.
+   *
+   * **Las credenciales se quedan en el borrado blando**, y es una decisión, no un olvido: son
+   * secretos cifrados por entorno, y llevárselas haría que restaurar devolviera un rol que no puede
+   * autenticarse contra nada. El definitivo sí se las lleva: un secreto para un rol que no existe
+   * es un secreto que nada presentará y que ninguna pantalla lista para revocarlo.
+   */
   async execute(command: DeleteRoleCommand): Promise<void> {
     const project = await writableProject(this.projects, command.organizationId, command.projectId);
     const role = await ownedRole(this.roles, project.id, command.roleId);
-    await this.roles.remove(project.id, role.id);
-    // A credential for a role that no longer exists is a secret nothing will ever present, and
-    // nothing on screen would list it to be revoked.
-    for (const environment of await this.environments.listForProject(project.id))
-      await this.environments.removeCredential(environment.id, role.name);
+    await deleteIn(roleStore(this.roles), project.id, role.id, command.purge, this.clock.now(), ROLE, {
+      patch: touch,
+    });
+    if (command.purge)
+      for (const environment of await this.environments.listForProject(project.id))
+        await this.environments.removeCredential(environment.id, role.name);
+    await this.sync(project.id, command.actorId);
+  }
+}
+
+@CommandHandler(SetRoleArchivedCommand)
+export class SetRoleArchivedHandler extends RoleCommandBase implements ICommandHandler<SetRoleArchivedCommand, void> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) projects: ProjectRepositoryPort,
+    @Inject(ROLE_REPOSITORY) roles: RoleRepositoryPort,
+    @Inject(ENDPOINT_REPOSITORY) endpoints: EndpointRepositoryPort,
+    @Inject(CONFIG_REPOSITORY) config: ConfigRepositoryPort,
+    @Inject(ENVIRONMENT_REPOSITORY) environments: EnvironmentRepositoryPort,
+    @Inject(CLOCK) clock: ClockPort,
+  ) {
+    super(projects, roles, endpoints, config, environments, clock);
+  }
+
+  async execute(command: SetRoleArchivedCommand): Promise<void> {
+    const project = await writableProject(this.projects, command.organizationId, command.projectId);
+    const role = await ownedRole(this.roles, project.id, command.roleId);
+    await archiveIn(roleStore(this.roles), project.id, role.id, command.archived, this.clock.now(), ROLE, {
+      patch: touch,
+    });
+    // La sección `access` se recalcula: un rol archivado no puede seguir apareciendo en la matriz
+    // que el proyecto exporta y con la que se corren las pruebas de autorización.
+    await this.sync(project.id, command.actorId);
+  }
+}
+
+@CommandHandler(RestoreRoleCommand)
+export class RestoreRoleHandler extends RoleCommandBase implements ICommandHandler<RestoreRoleCommand, void> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) projects: ProjectRepositoryPort,
+    @Inject(ROLE_REPOSITORY) roles: RoleRepositoryPort,
+    @Inject(ENDPOINT_REPOSITORY) endpoints: EndpointRepositoryPort,
+    @Inject(CONFIG_REPOSITORY) config: ConfigRepositoryPort,
+    @Inject(ENVIRONMENT_REPOSITORY) environments: EnvironmentRepositoryPort,
+    @Inject(CLOCK) clock: ClockPort,
+  ) {
+    super(projects, roles, endpoints, config, environments, clock);
+  }
+
+  async execute(command: RestoreRoleCommand): Promise<void> {
+    const project = await writableProject(this.projects, command.organizationId, command.projectId);
+    const role = await ownedRole(this.roles, project.id, command.roleId);
+    // El nombre pudo reutilizarse mientras estaba fuera: el índice único es parcial desde
+    // `ArchiveAndSoftDelete1700000042000`, así que esto es un 409 y no un error de Postgres.
+    if (role.deletedAt) await assertFreeName(this.roles, project.id, role.name, role.id);
+    await restoreIn(roleStore(this.roles), project.id, role.id, this.clock.now(), ROLE, { patch: touch });
     await this.sync(project.id, command.actorId);
   }
 }

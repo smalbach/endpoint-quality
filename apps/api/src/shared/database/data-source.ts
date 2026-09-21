@@ -46,6 +46,8 @@ import { CaptureProxyHardening1700000037000 } from "./migrations/1700000037000-C
 import { FlowHooks1700000039000 } from "./migrations/1700000039000-FlowHooks";
 import { RunsWithoutContract1700000040000 } from "./migrations/1700000040000-RunsWithoutContract";
 import { ExecutionTurns1700000041000 } from "./migrations/1700000041000-ExecutionTurns";
+import { Collections1700000043000 } from "./migrations/1700000043000-Collections";
+import { ArchiveAndSoftDelete1700000042000 } from "./migrations/1700000042000-ArchiveAndSoftDelete";
 
 // Ordered. TypeORM runs them by the timestamp in the class name, and the second one adds a
 // foreign key into a table the first creates.
@@ -90,6 +92,8 @@ export const MIGRATIONS = [
   FlowHooks1700000039000,
   RunsWithoutContract1700000040000,
   ExecutionTurns1700000041000,
+  ArchiveAndSoftDelete1700000042000,
+  Collections1700000043000,
 ];
 
 export function buildDataSourceOptions(databaseUrl: string) {

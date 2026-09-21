@@ -12,7 +12,9 @@ import { TypeOrmDocSiteRepository } from "./infrastructure/persistence/typeorm-d
 import {
   CreateDocSiteHandler,
   DeleteDocSiteHandler,
+  RestoreDocSiteHandler,
   RotateDocSiteKeyHandler,
+  SetDocSiteArchivedHandler,
   UpdateDocSiteHandler,
 } from "./application/commands/manage-doc-sites";
 import { ListDocSitesHandler } from "./application/queries/list-doc-sites";
@@ -25,6 +27,8 @@ export const DOC_SITE_COMMAND_HANDLERS = [
   UpdateDocSiteHandler,
   RotateDocSiteKeyHandler,
   DeleteDocSiteHandler,
+  SetDocSiteArchivedHandler,
+  RestoreDocSiteHandler,
 ];
 export const DOC_SITE_QUERY_HANDLERS = [ListDocSitesHandler, ReadDocSiteHandler];
 export const DOC_SITE_ADAPTERS = [{ provide: DOC_SITE_REPOSITORY, useClass: TypeOrmDocSiteRepository }];

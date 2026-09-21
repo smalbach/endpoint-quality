@@ -49,7 +49,7 @@ describe("lo soltado se reconoce aquí mismo", () => {
     expect(screen.getByText("Tienda")).toBeTruthy();
     expect(screen.getByText("Colección de Postman")).toBeTruthy();
     expect(screen.getByText("2 peticiones · 1 carpeta")).toBeTruthy();
-    expect(screen.getByText("Va a endpoints, flujos.")).toBeTruthy();
+    expect(screen.getByText("Va a endpoints, una colección.")).toBeTruthy();
     expect(call).not.toHaveBeenCalled();
   });
 

@@ -80,6 +80,8 @@ const role = (id: string, name: string): Role => ({
   position: 0,
   createdAt: NOW,
   updatedAt: NOW,
+  archivedAt: null,
+  deletedAt: null,
 });
 
 const request: ExampleRequest = {
@@ -339,6 +341,8 @@ describe("credenciales de un entorno", () => {
       writesAllowed: false,
       authEnforced: false,
       createdAt: NOW,
+      archivedAt: null,
+      deletedAt: null,
     });
     const handler = new UpsertCredentialHandler(projects, environments, new AesGcmSecretCipher(Buffer.alloc(32, 3).toString("base64")), clock);
     const error = await rejectsWith(

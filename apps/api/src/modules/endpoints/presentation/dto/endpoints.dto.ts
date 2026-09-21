@@ -70,6 +70,8 @@ export class UpdateEndpointDto {
 
 export class ListEndpointsQueryDto {
   @IsOptional() @IsIn(LIST_STATUSES) status?: EndpointStatus | "all";
+  /** `deleted` pide la papelera. Ver `EndpointListFilter`: aquí no hay «archivado», es un `status`. */
+  @IsOptional() @IsIn(["active", "deleted"]) state?: "active" | "deleted";
   @IsOptional() @IsString() @MaxLength(200) search?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500) limit?: number;

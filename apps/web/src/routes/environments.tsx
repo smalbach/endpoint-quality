@@ -4,9 +4,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type ApiError } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { Badge, Button, Card, Empty, Field, inputClass } from "@/components/ui";
-import { ConfirmDialog } from "@/components/overlay";
+import { DeleteDialog, LifecycleRowActions, LifecycleTabs, stateQuery } from "@/components/lifecycle";
 import { cn, formatDate } from "@/lib/format";
-import type { ConfigView, Environment } from "@/lib/types";
+import type { ConfigView, Environment, LifecycleState } from "@/lib/types";
 import { VariablesEditor } from "@/components/variables-editor";
 import { credentialRoleOptions, declaredRoles, mapsFrom, problemsWith, rowsFrom } from "@/lib/env-variables";
 
@@ -26,11 +26,15 @@ export function EnvironmentsPage() {
   const base = `/orgs/${organization?.id}/projects/${projectId}`;
   const [selected, setSelected] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  /** Qué lista se está mirando: los que se usan, los archivados o la papelera. */
+  const [state, setState] = useState<LifecycleState>("active");
 
   const environments = useQuery({
-    queryKey: ["environments", projectId],
+    // La clave lleva el estado: la barra de entornos de arriba lee `["environments", projectId]`
+    // sin estado y tiene que seguir viendo solo los vivos.
+    queryKey: ["environments", projectId, state],
     enabled: Boolean(organization && projectId),
-    queryFn: () => api<Environment[]>(`${base}/environments`),
+    queryFn: () => api<Environment[]>(`${base}/environments${stateQuery(state)}`),
   });
 
   /**
@@ -59,7 +63,7 @@ export function EnvironmentsPage() {
   const current = list.find((environment) => environment.id === selected) ?? null;
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["environments", projectId] });
 
-  if (list.length === 0 && !creating) {
+  if (list.length === 0 && !creating && state === "active") {
     return (
       <Empty
         title="Sin entornos"
@@ -83,6 +87,7 @@ export function EnvironmentsPage() {
             </button>
           )}
         </div>
+        <LifecycleTabs state={state} onState={setState} />
         {creating && (
           <NewEnvironment
             base={base}
@@ -92,6 +97,11 @@ export function EnvironmentsPage() {
               void invalidate();
             }}
           />
+        )}
+        {list.length === 0 && (
+          <p className="px-1 text-[11px] text-slate-400">
+            {state === "archived" ? "Ninguno archivado." : "Papelera vacía."}
+          </p>
         )}
         <nav className="space-y-1">
           {list.map((environment) => (
@@ -144,7 +154,14 @@ export function EnvironmentsPage() {
       </div>
 
       {current && (
-        <EnvironmentDetail key={current.id} base={base} environment={current} roles={roles} onSaved={invalidate} />
+        <EnvironmentDetail
+          key={current.id}
+          base={base}
+          environment={current}
+          roles={roles}
+          state={state}
+          onSaved={invalidate}
+        />
       )}
     </div>
   );
@@ -162,6 +179,7 @@ function EnvironmentDetail({
   base,
   environment,
   roles,
+  state,
   onSaved,
 }: {
   base: string;
@@ -169,6 +187,8 @@ function EnvironmentDetail({
   /** The roles this project declared. Passed down rather than fetched here: it is the project's
    * answer, and this component is drawn once per environment. */
   roles: string[];
+  /** Desde qué lista se llegó: decide si aquí se archiva y borra, o se restaura y purga. */
+  state: LifecycleState;
   onSaved: () => void;
 }) {
   const canEdit = useCan("editor");
@@ -186,7 +206,8 @@ function EnvironmentDetail({
   );
   const [draft, setDraft] = useState(saved);
   const [error, setError] = useState<string | null>(null);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  /** Si se está preguntando por el borrado, y si es el definitivo. */
+  const [confirmingDelete, setConfirmingDelete] = useState<{ purge: boolean } | null>(null);
 
   // A refetch brings the server's version, which is the one that went through `normalizeVariables`
   // and `normalizeBaseUrl` — a trimmed key or a dropped trailing slash would otherwise look like a
@@ -218,7 +239,17 @@ function EnvironmentDetail({
   });
 
   const remove = useMutation({
-    mutationFn: () => api<void>(`${base}/environments/${environment.id}`, { method: "DELETE" }),
+    mutationFn: (purge: boolean) =>
+      api<void>(`${base}/environments/${environment.id}${purge ? "?purge=true" : ""}`, { method: "DELETE" }),
+    onSuccess: onSaved,
+  });
+  const archive = useMutation({
+    mutationFn: (archived: boolean) =>
+      api<void>(`${base}/environments/${environment.id}/archived`, { method: "PATCH", body: { archived } }),
+    onSuccess: onSaved,
+  });
+  const restore = useMutation({
+    mutationFn: () => api<void>(`${base}/environments/${environment.id}/restore`, { method: "POST" }),
     onSuccess: onSaved,
   });
   const activate = useMutation({
@@ -363,22 +394,29 @@ function EnvironmentDetail({
           <span className="text-xs text-slate-500">
             {problems.length > 0 ? "Hay variables con problemas" : dirty ? "Cambios sin guardar" : "Todo guardado"}
           </span>
-          <button
-            className="ml-auto text-xs text-rose-600 hover:text-rose-700"
-            onClick={() => setConfirmingDelete(true)}
-          >
-            Eliminar entorno
-          </button>
+          <LifecycleRowActions
+            className="ml-auto"
+            state={state}
+            pending={remove.isPending || archive.isPending || restore.isPending}
+            onArchive={(archived) => archive.mutate(archived)}
+            onRestore={() => restore.mutate()}
+            onDelete={() => setConfirmingDelete({ purge: false })}
+            onPurge={() => setConfirmingDelete({ purge: true })}
+          />
           {confirmingDelete && (
-            <ConfirmDialog
+            <DeleteDialog
               title="Eliminar entorno"
-              message={`«${environment.name}» se elimina con sus variables y sus credenciales. No se puede deshacer.`}
-              pending={remove.isPending}
-              onConfirm={() => {
-                setConfirmingDelete(false);
-                remove.mutate();
-              }}
-              onClose={() => setConfirmingDelete(false)}
+              purge={confirmingDelete.purge}
+              name={confirmingDelete.purge ? environment.name : undefined}
+              message={
+                confirmingDelete.purge
+                  ? `Se va «${environment.name}» con sus variables y sus credenciales cifradas. Eso sí que no se puede deshacer.`
+                  : `«${environment.name}» sale del selector y deja de poder ejecutarse. Sus variables y sus credenciales se guardan: al restaurarlo vuelve con ellas.`
+              }
+              pending={remove.isPending || archive.isPending}
+              onArchive={confirmingDelete.purge ? undefined : () => archive.mutate(true)}
+              onConfirm={() => remove.mutate(confirmingDelete.purge)}
+              onClose={() => setConfirmingDelete(null)}
             />
           )}
           {(error || remove.error) && (

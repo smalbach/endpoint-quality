@@ -204,10 +204,35 @@ describe("datos y suites", () => {
     assert.equal(problemType(badRows.body), "dataset-invalid");
 
     assert.equal((await api().delete(`${base}/datasets/${id}`).set(as(owner))).status, 204);
+    // Blando: fuera de la lista, dentro de la papelera, y con sus filas legibles.
+    const afterDelete = await api().get(`${base}/workflows`).set(as(owner));
+    assert.ok(!afterDelete.body.datasets.some((row: { id: string }) => row.id === id));
+    const trash = await api().get(`${base}/workflows?state=deleted`).set(as(owner));
+    assert.ok(trash.body.datasets.some((row: { id: string }) => row.id === id));
+    assert.equal((await api().get(`${base}/datasets/${id}`).set(as(owner))).status, 200);
+    // Borrarlo dos veces es la misma operación ya hecha.
+    assert.equal((await api().delete(`${base}/datasets/${id}`).set(as(owner))).status, 204);
+
+    assert.equal((await api().post(`${base}/datasets/${id}/restore`).set(as(owner))).status, 204);
+    const back = await api().get(`${base}/workflows`).set(as(owner));
+    assert.ok(back.body.datasets.some((row: { id: string }) => row.id === id));
+
+    // Archivar lo saca de la lista de trabajo sin borrarlo.
+    assert.equal(
+      (await api().patch(`${base}/datasets/${id}/archived`).set(as(owner)).send({ archived: true })).status,
+      204,
+    );
+    const archived = await api().get(`${base}/workflows?state=archived`).set(as(owner));
+    assert.ok(archived.body.datasets.some((row: { id: string }) => row.id === id));
+    await api().patch(`${base}/datasets/${id}/archived`).set(as(owner)).send({ archived: false });
+
+    // El definitivo pide que antes esté eliminado, y entonces sí desaparece.
+    assert.equal((await api().delete(`${base}/datasets/${id}?purge=true`).set(as(owner))).status, 409);
+    await api().delete(`${base}/datasets/${id}`).set(as(owner));
+    assert.equal((await api().delete(`${base}/datasets/${id}?purge=true`).set(as(owner))).status, 204);
     const gone = await api().get(`${base}/datasets/${id}`).set(as(owner));
     assert.equal(gone.status, 404);
     assert.equal(problemType(gone.body), "dataset-not-found");
-    assert.equal((await api().delete(`${base}/datasets/${id}`).set(as(owner))).status, 404);
     assert.equal((await api().put(`${base}/datasets/${id}`).set(as(owner)).send({ name: "x" })).status, 404);
   });
 
@@ -237,6 +262,16 @@ describe("datos y suites", () => {
     assert.equal(problemType(clash.body), "suite-name-taken");
 
     assert.equal((await api().delete(`${base}/suites/${suite.body.suiteId}`).set(as(owner))).status, 204);
+    // Blando: fuera de la lista y en la papelera, con su orden de flujos intacto.
+    const afterDelete = await api().get(`${base}/workflows?state=deleted`).set(as(owner));
+    const trashed = afterDelete.body.suites.find((row: { id: string }) => row.id === suite.body.suiteId);
+    assert.deepEqual(trashed.workflowIds, [two, one]);
+    assert.equal((await api().post(`${base}/suites/${suite.body.suiteId}/restore`).set(as(owner))).status, 204);
+
+    // Y el definitivo, solo después de eliminarla.
+    assert.equal((await api().delete(`${base}/suites/${suite.body.suiteId}?purge=true`).set(as(owner))).status, 409);
+    await api().delete(`${base}/suites/${suite.body.suiteId}`).set(as(owner));
+    assert.equal((await api().delete(`${base}/suites/${suite.body.suiteId}?purge=true`).set(as(owner))).status, 204);
     const missing = await api().delete(`${base}/suites/${suite.body.suiteId}`).set(as(owner));
     assert.equal(missing.status, 404);
     assert.equal(problemType(missing.body), "suite-not-found");

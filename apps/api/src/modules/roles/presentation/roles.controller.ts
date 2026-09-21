@@ -4,7 +4,7 @@
  * `viewer` reads, `editor` writes, and deleting a role is `admin`: it takes the credentials stored
  * for it in every environment with it, and storing or removing credentials is an admin's call.
  */
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, UseGuards } from "@nestjs/common";
 import { CommandBus, QueryBus } from "@nestjs/cqrs";
 
 import {
@@ -13,7 +13,13 @@ import {
   RequireRole,
   type Principal,
 } from "@/modules/auth/infrastructure/guards/auth.guard";
-import { CreateRoleCommand, DeleteRoleCommand, UpdateRoleCommand } from "../application/commands/manage-roles";
+import {
+  CreateRoleCommand,
+  DeleteRoleCommand,
+  RestoreRoleCommand,
+  SetRoleArchivedCommand,
+  UpdateRoleCommand,
+} from "../application/commands/manage-roles";
 import {
   ReplaceRoleRulesCommand,
   SetEndpointRoleAccessCommand,
@@ -25,6 +31,8 @@ import {
   ListRoleRulesQuery,
   ListRolesQuery,
 } from "../application/queries/list-roles";
+import { parseLifecycleState } from "@/shared/lifecycle/lifecycle";
+import { SetArchivedDto } from "@/shared/lifecycle/lifecycle.dto";
 import {
   CreateRoleDto,
   ReplaceRoleRulesDto,
@@ -45,8 +53,12 @@ export class RolesController {
 
   @Get("roles")
   @RequireRole("viewer")
-  async list(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string) {
-    return this.queryBus.execute(new ListRolesQuery(organizationId, projectId));
+  async list(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Query("state") state?: string,
+  ) {
+    return this.queryBus.execute(new ListRolesQuery(organizationId, projectId, parseLifecycleState(state)));
   }
 
   @Post("roles")
@@ -88,6 +100,39 @@ export class RolesController {
     return this.commandBus.execute(new UpdateRoleCommand(organizationId, projectId, roleId, body, actorId(principal)));
   }
 
+  /** Fuera de la matriz, sin perder sus celdas ni sus reglas. */
+  @Patch("roles/:roleId/archived")
+  @RequireRole("admin")
+  @HttpCode(204)
+  async setArchived(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("roleId") roleId: string,
+    @Body() body: SetArchivedDto,
+    @CurrentUser() principal: Principal,
+  ): Promise<void> {
+    await this.commandBus.execute(
+      new SetRoleArchivedCommand(organizationId, projectId, roleId, actorId(principal), body.archived),
+    );
+  }
+
+  /** Devuelve un rol eliminado con la matriz que tenía. */
+  @Post("roles/:roleId/restore")
+  @RequireRole("admin")
+  @HttpCode(204)
+  async restore(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("roleId") roleId: string,
+    @CurrentUser() principal: Principal,
+  ): Promise<void> {
+    await this.commandBus.execute(new RestoreRoleCommand(organizationId, projectId, roleId, actorId(principal)));
+  }
+
+  /**
+   * Borrado blando. `?purge=true` es el definitivo: ese sí se lleva las credenciales de ese rol en
+   * cada entorno, porque un secreto para un rol que no existe no lo puede revocar nadie.
+   */
   @Delete("roles/:roleId")
   @RequireRole("admin")
   @HttpCode(204)
@@ -96,8 +141,11 @@ export class RolesController {
     @Param("projectId") projectId: string,
     @Param("roleId") roleId: string,
     @CurrentUser() principal: Principal,
+    @Query("purge") purge?: string,
   ): Promise<void> {
-    await this.commandBus.execute(new DeleteRoleCommand(organizationId, projectId, roleId, actorId(principal)));
+    await this.commandBus.execute(
+      new DeleteRoleCommand(organizationId, projectId, roleId, actorId(principal), purge === "true"),
+    );
   }
 
   @Get("roles/:roleId/permissions")

@@ -64,6 +64,8 @@ const ENVIRONMENT: Environment = {
   authEnforced: false,
   active: true,
   credentials: [],
+  archivedAt: null,
+  deletedAt: null,
 };
 
 const SENT: SentRequestView = {
@@ -86,6 +88,7 @@ const SENT: SentRequestView = {
   environment: { id: "env1", name: "staging" } as SentRequestView["environment"],
   scripts: { pre: null, post: null },
   sessionToken: null,
+  variables: {},
   cookies: { sent: [], stored: [], rejected: [] },
 };
 

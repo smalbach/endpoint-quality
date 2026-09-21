@@ -11,6 +11,7 @@ import {
 } from "@/shared/database/entities";
 import type { DatasetRow, RequestTemplateRow, SuiteRow, WorkflowRow } from "../../domain/model";
 import type { WorkflowRepositoryPort } from "../../domain/ports";
+import { lifecycleSql, type LifecycleState } from "@/shared/lifecycle/lifecycle";
 
 /**
  * The one place where the `jsonb` columns become typed values.
@@ -65,25 +66,40 @@ export class TypeOrmWorkflowRepository implements WorkflowRepositoryPort {
    * request. If that ever stops being true the answer is an index, not a schema change.
    */
   async isTemplateReferenced(projectId: string, templateId: string): Promise<boolean> {
+    // Solo los flujos vivos cuentan: un flujo eliminado que nombrara la petición bloquearía para
+    // siempre su borrado, y lo que está en la papelera no ejecuta nada.
     const found: unknown[] = await this.workflows.query(
       `SELECT 1
          FROM "workflows" w, jsonb_array_elements(w."definition" -> 'steps') s
-        WHERE w."projectId" = $1 AND s ->> 'requestTemplateId' = $2
+        WHERE w."projectId" = $1 AND w."deletedAt" IS NULL AND s ->> 'requestTemplateId' = $2
         LIMIT 1`,
       [projectId, templateId],
     );
     return found.length > 0;
   }
 
-  async listWorkflows(projectId: string): Promise<WorkflowRow[]> {
-    return (await this.workflows.find({ where: { projectId }, order: { name: "ASC" } })).map(toWorkflow);
+  /** Ver el puerto: para un flujo, `active` es «no eliminado» y `archived` mira su `status`. */
+  async listWorkflows(projectId: string, state: LifecycleState = "active"): Promise<WorkflowRow[]> {
+    const query = this.workflows
+      .createQueryBuilder("workflow")
+      .where("workflow.projectId = :projectId", { projectId })
+      .orderBy("workflow.name", "ASC");
+    if (state === "deleted") query.andWhere(`workflow."deletedAt" IS NOT NULL`);
+    else query.andWhere(`workflow."deletedAt" IS NULL`);
+    if (state === "archived") query.andWhere("workflow.status = :archived", { archived: "archived" });
+    return (await query.getMany()).map(toWorkflow);
   }
   async findWorkflow(projectId: string, workflowId: string): Promise<WorkflowRow | null> {
     const row = await this.workflows.findOne({ where: { id: workflowId, projectId } });
     return row ? toWorkflow(row) : null;
   }
   async findWorkflowByName(projectId: string, name: string): Promise<WorkflowRow | null> {
-    const row = await this.workflows.findOne({ where: { projectId, name } });
+    const row = await this.workflows
+      .createQueryBuilder("workflow")
+      .where("workflow.projectId = :projectId", { projectId })
+      .andWhere("workflow.name = :name", { name })
+      .andWhere(`workflow."deletedAt" IS NULL`)
+      .getOne();
     return row ? toWorkflow(row) : null;
   }
   async saveWorkflow(row: WorkflowRow): Promise<void> {
@@ -100,19 +116,33 @@ export class TypeOrmWorkflowRepository implements WorkflowRepositoryPort {
       .createQueryBuilder("suite")
       .where("suite.projectId = :projectId", { projectId })
       .andWhere(`suite."workflowIds" ? :workflowId`, { workflowId })
+      // Una suite eliminada no ejecuta nada: si contara, bloquearía el borrado del flujo para
+      // siempre por una lista que ya nadie mira.
+      .andWhere(`suite."deletedAt" IS NULL`)
       .getCount();
     return found > 0;
   }
 
-  async listDatasets(projectId: string): Promise<DatasetRow[]> {
-    return (await this.datasets.find({ where: { projectId }, order: { name: "ASC" } })).map((row) => ({ ...row }));
+  async listDatasets(projectId: string, state: LifecycleState = "active"): Promise<DatasetRow[]> {
+    const rows = await this.datasets
+      .createQueryBuilder("dataset")
+      .where("dataset.projectId = :projectId", { projectId })
+      .andWhere(lifecycleSql("dataset", state))
+      .orderBy("dataset.name", "ASC")
+      .getMany();
+    return rows.map((row) => ({ ...row }));
   }
   async findDataset(projectId: string, datasetId: string): Promise<DatasetRow | null> {
     const row = await this.datasets.findOne({ where: { id: datasetId, projectId } });
     return row ? { ...row } : null;
   }
   async findDatasetByName(workflowId: string, name: string): Promise<DatasetRow | null> {
-    const row = await this.datasets.findOne({ where: { workflowId, name } });
+    const row = await this.datasets
+      .createQueryBuilder("dataset")
+      .where(`dataset."workflowId" = :workflowId`, { workflowId })
+      .andWhere("dataset.name = :name", { name })
+      .andWhere(`dataset."deletedAt" IS NULL`)
+      .getOne();
     return row ? { ...row } : null;
   }
   async saveDataset(row: DatasetRow): Promise<void> {
@@ -122,15 +152,26 @@ export class TypeOrmWorkflowRepository implements WorkflowRepositoryPort {
     await this.datasets.delete({ id: datasetId, projectId });
   }
 
-  async listSuites(projectId: string): Promise<SuiteRow[]> {
-    return (await this.suites.find({ where: { projectId }, order: { name: "ASC" } })).map((row) => ({ ...row }));
+  async listSuites(projectId: string, state: LifecycleState = "active"): Promise<SuiteRow[]> {
+    const rows = await this.suites
+      .createQueryBuilder("suite")
+      .where("suite.projectId = :projectId", { projectId })
+      .andWhere(lifecycleSql("suite", state))
+      .orderBy("suite.name", "ASC")
+      .getMany();
+    return rows.map((row) => ({ ...row }));
   }
   async findSuite(projectId: string, suiteId: string): Promise<SuiteRow | null> {
     const row = await this.suites.findOne({ where: { id: suiteId, projectId } });
     return row ? { ...row } : null;
   }
   async findSuiteByName(projectId: string, name: string): Promise<SuiteRow | null> {
-    const row = await this.suites.findOne({ where: { projectId, name } });
+    const row = await this.suites
+      .createQueryBuilder("suite")
+      .where("suite.projectId = :projectId", { projectId })
+      .andWhere("suite.name = :name", { name })
+      .andWhere(`suite."deletedAt" IS NULL`)
+      .getOne();
     return row ? { ...row } : null;
   }
   async saveSuite(row: SuiteRow): Promise<void> {

@@ -25,6 +25,7 @@ describe("las secciones de un proyecto", () => {
       ["Endpoints", `/p/${ID}`],
       ["Roles", `/p/${ID}/roles`],
       ["Test Runs", `/p/${ID}/security`],
+      ["Colecciones", `/p/${ID}/collections`],
       ["Flow Testing", `/p/${ID}/workflows`],
       ["Performance", `/p/${ID}/performance`],
       ["Escáner", `/p/${ID}/code-scan`],

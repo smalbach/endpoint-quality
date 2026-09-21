@@ -520,18 +520,46 @@ describe("credenciales del destino", () => {
     );
   });
 
-  test("borrar el entorno se lleva sus credenciales", async () => {
+  test("borrar el entorno lo saca del selector y lo deja restaurable; el definitivo se lleva sus credenciales", async () => {
     const created = await api()
       .post(`${base}/environments`)
       .set(as(owner))
       .send({ name: "efimero", baseUrl: "https://e.example.com" });
+    const environmentId = created.body.environmentId as string;
     await api()
-      .put(`${base}/environments/${created.body.environmentId}/credentials`)
+      .put(`${base}/environments/${environmentId}/credentials`)
       .set(as(owner))
       .send({ name: "t", role: "primary", kind: "bearer", secret: "s" });
-    assert.equal((await api().delete(`${base}/environments/${created.body.environmentId}`).set(as(owner))).status, 204);
-    // Credentials left behind would be a set of secrets nothing can reach to revoke.
-    assert.equal(await context.repositories.environments.findCredential(created.body.environmentId, "primary"), null);
+
+    assert.equal((await api().delete(`${base}/environments/${environmentId}`).set(as(owner))).status, 204);
+    // Blando: fuera de la lista, dentro de la papelera, y **con sus credenciales**. Llevárselas
+    // haría que restaurarlo devolviera un entorno que no puede autenticarse contra nada.
+    const live = await api().get(`${base}/environments`).set(as(owner));
+    assert.ok(!live.body.some((row: { id: string }) => row.id === environmentId));
+    const trash = await api().get(`${base}/environments?state=deleted`).set(as(owner));
+    assert.deepEqual(
+      trash.body.map((row: { id: string }) => row.id),
+      [environmentId],
+    );
+    assert.ok(await context.repositories.environments.findCredential(environmentId, "primary"));
+
+    // Y un entorno eliminado no se puede correr: los ejecutores solo ven los vivos.
+    assert.equal(await context.repositories.environments.findById(environmentId), null);
+
+    const back = await api().post(`${base}/environments/${environmentId}/restore`).set(as(owner));
+    assert.equal(back.status, 204);
+    assert.ok(await context.repositories.environments.findById(environmentId));
+
+    // El definitivo, y solo sobre algo ya eliminado: ahí sí se van los secretos, porque una
+    // credencial de un entorno que no existe no la puede revocar nadie.
+    const early = await api().delete(`${base}/environments/${environmentId}?purge=true`).set(as(owner));
+    assert.equal(early.status, 409);
+    await api().delete(`${base}/environments/${environmentId}`).set(as(owner));
+    assert.equal(
+      (await api().delete(`${base}/environments/${environmentId}?purge=true`).set(as(owner))).status,
+      204,
+    );
+    assert.equal(await context.repositories.environments.findCredential(environmentId, "primary"), null);
   });
 
   test("crear un entorno exige nombre y URL; modificarlo no exige nada", async () => {

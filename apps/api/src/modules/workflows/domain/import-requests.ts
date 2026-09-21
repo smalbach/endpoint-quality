@@ -380,7 +380,7 @@ function fromKeyValues(list: unknown): { enabled: Record<string, string>; disabl
 }
 
 /** Las filas de un `formdata` de Postman, si alguna es un fichero. */
-function postmanFormRows(value: unknown): { formRows?: FormRow[] } {
+export function postmanFormRows(value: unknown): { formRows?: FormRow[] } {
   const body = asRecord(value);
   return asString(body?.mode) === "formdata" ? formRowsOf(body?.formdata) : {};
 }
@@ -626,7 +626,7 @@ function postmanExamples(value: unknown): PostmanExample[] {
  * URL Postman fetches — and is deliberately not read: following it would mean this importer making
  * a request on behalf of a pasted file.
  */
-function eventScript(events: unknown, listen: string): string {
+export function eventScript(events: unknown, listen: string): string {
   for (const entry of asArray(events)) {
     const event = asRecord(entry);
     if (!event || asString(event.listen) !== listen || event.disabled === true) continue;
@@ -650,7 +650,7 @@ export function parsePostmanCollection(text: string): ImportedRequests {
 /** Postman stores a URL either as the string somebody typed or as the parsed object it made of
  * it. The string is the one to trust when both are there: the object is its reading of the string,
  * and a `{{base}}` survives the first and gets scattered across `host` by the second. */
-function postmanUrl(value: unknown): string {
+export function postmanUrl(value: unknown): string {
   if (typeof value === "string") return value;
   const url = asRecord(value);
   if (!url) return "";
@@ -660,7 +660,7 @@ function postmanUrl(value: unknown): string {
   return [host, path].filter(Boolean).join("/");
 }
 
-function postmanBody(value: unknown, headers: Record<string, string>): RequestBody {
+export function postmanBody(value: unknown, headers: Record<string, string>): RequestBody {
   const body = asRecord(value);
   if (!body) return { type: "none" };
   const mode = asString(body.mode);
@@ -811,7 +811,7 @@ function insomniaAuth(value: unknown): RequestAuth {
 }
 
 /** El bloque `graphql` de un cuerpo de Postman, o `null` si no lo es o no trae operación. */
-function postmanGraphql(value: unknown): GraphqlOperation | null {
+export function postmanGraphql(value: unknown): GraphqlOperation | null {
   const body = asRecord(value);
   if (!body || asString(body.mode) !== "graphql") return null;
   return graphqlOperation(asRecord(body.graphql));

@@ -155,6 +155,7 @@ const flow = (patch: Partial<WorkflowView> & { id: string; name: string }): Work
   status: "draft",
   steps: [],
   updatedAt: "2026-03-01T10:00:00.000Z",
+  deletedAt: null,
   ...patch,
 });
 
@@ -196,10 +197,27 @@ function freshServer(): Server {
         flow({ id: "w3", name: "Pagos", status: "ready", steps: [{ id: "p1", requestTemplateId: "t1" }] }),
       ],
       datasets: [
-        { id: "d1", workflowId: "w1", name: "clientes", columns: ["email"], rowCount: 2, updatedAt: "2026-03-01" },
+        {
+          id: "d1",
+          workflowId: "w1",
+          name: "clientes",
+          columns: ["email"],
+          rowCount: 2,
+          updatedAt: "2026-03-01",
+          archivedAt: null,
+          deletedAt: null,
+        },
       ],
       suites: [
-        { id: "su1", name: "Antes de publicar", description: null, workflowIds: ["w1"], updatedAt: "2026-03-01" },
+        {
+          id: "su1",
+          name: "Antes de publicar",
+          description: null,
+          workflowIds: ["w1"],
+          updatedAt: "2026-03-01",
+          archivedAt: null,
+          deletedAt: null,
+        },
       ],
     },
     environments: [environment("e1", "staging", true), environment("e2", "prod", false)],
@@ -722,7 +740,24 @@ describe("WorkflowsPage: biblioteca, datos e inspector", () => {
     fireEvent.click(play());
     await waitFor(() => expect(calls("POST", "/runs")[0]!.body).toEqual(expect.objectContaining({ datasetId: "d1" })));
 
+    // Archivar es la otra salida del diálogo: el conjunto deja de ofrecerse y se suelta igual.
     fireEvent.click(within(drawer).getByRole("button", { name: "Eliminar clientes" }));
+    fireEvent.click(
+      within((await screen.findAllByRole("dialog")).at(-1)!).getByRole("button", { name: "Archivar" }),
+    );
+    await waitFor(() =>
+      expect(calls("PATCH", "/datasets/d1/archived")[0]!.body).toEqual({ archived: true }),
+    );
+    await waitFor(() => expect((within(drawer).getByRole("combobox") as HTMLSelectElement).value).toBe(""));
+
+    // Vuelto a elegir, borrarlo también lo suelta: una corrida no puede recorrer lo que no está.
+    fireEvent.change(within(drawer).getByRole("combobox"), { target: { value: "d1" } });
+    await waitFor(() => expect((within(drawer).getByRole("combobox") as HTMLSelectElement).value).toBe("d1"));
+    fireEvent.click(within(drawer).getByRole("button", { name: "Eliminar clientes" }));
+    // El cajón de datos ya es un diálogo, así que el de la confirmación es el último que se abre.
+    fireEvent.click(
+      within((await screen.findAllByRole("dialog")).at(-1)!).getByRole("button", { name: "Eliminar" }),
+    );
     await waitFor(() => expect(calls("DELETE", "/datasets/d1")).toHaveLength(1));
     await waitFor(() => expect((within(drawer).getByRole("combobox") as HTMLSelectElement).value).toBe(""));
   });
@@ -759,9 +794,33 @@ describe("WorkflowsPage: biblioteca, datos e inspector", () => {
     expect(await screen.findByRole("dialog", { name: "Configurar ejecución" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Listo" }));
 
+    // Cancelar el diálogo deja el flujo abierto donde estaba.
+    fireEvent.click(within(inspector).getByRole("button", { name: "inspector: borrar" }));
+    fireEvent.click(
+      within((await screen.findAllByRole("dialog")).at(-1)!).getByRole("button", { name: "Cancelar" }),
+    );
+    expect(within(inspector).getByText("inspector: s1")).toBeTruthy();
+
     // Borrarlo lleva a la lista: el flujo ya no está para mostrarlo.
     fireEvent.click(within(inspector).getByRole("button", { name: "inspector: borrar" }));
+    fireEvent.click(
+      within((await screen.findAllByRole("dialog")).at(-1)!).getByRole("button", { name: "Eliminar" }),
+    );
     await waitFor(() => expect(calls("DELETE", "/workflows/w1")).toHaveLength(1));
+    expect(await screen.findByText("lista de flujos de p")).toBeTruthy();
+  });
+
+  test("archivar el flujo desde el diálogo escribe su estado y vuelve a la lista", async () => {
+    await ready();
+    fireEvent.click(button("lienzo: abrir s1"));
+    const inspector = await screen.findByTestId("inspector");
+    // Para un flujo, archivar **es** su `status`: la salida del diálogo escribe ese campo y no
+    // llama a ninguna ruta de archivado.
+    fireEvent.click(within(inspector).getByRole("button", { name: "inspector: borrar" }));
+    fireEvent.click(
+      within((await screen.findAllByRole("dialog")).at(-1)!).getByRole("button", { name: "Archivar" }),
+    );
+    await waitFor(() => expect(calls("PUT", "/workflows/w1")[0]!.body).toEqual({ status: "archived" }));
     expect(await screen.findByText("lista de flujos de p")).toBeTruthy();
   });
 });

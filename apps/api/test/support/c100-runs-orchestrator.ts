@@ -261,6 +261,7 @@ export async function saveFlow(h: Harness, steps: WorkflowStep[], name = "Flujo"
     createdAt: now,
     updatedAt: now,
     updatedBy: "tester",
+    deletedAt: null,
   });
   return id;
 }

@@ -36,6 +36,7 @@ import {
   DeleteEndpointsCommand,
   SetEndpointStatusCommand,
   UpdateEndpointCommand,
+  RestoreEndpointsCommand,
 } from "../application/commands/manage-endpoints";
 import { ImportEndpointCurlCommand, ImportEndpointFileCommand } from "../application/commands/import-endpoints";
 import { SendEndpointRequestCommand } from "../application/commands/send-endpoint-request";
@@ -201,6 +202,30 @@ export class EndpointsController {
     );
   }
 
+  /** Devuelve a la lista uno de la papelera. 409 si su método y ruta están ocupados otra vez. */
+  @Post(":endpointId/restore")
+  @RequireRole("editor")
+  @HttpCode(204)
+  async restore(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("endpointId") endpointId: string,
+  ): Promise<void> {
+    await this.commandBus.execute(new RestoreEndpointsCommand(organizationId, projectId, [endpointId], true));
+  }
+
+  /** Varios de la papelera a la vez, como el borrado en lote. Contesta cuántos volvieron. */
+  @Post("bulk-restore")
+  @RequireRole("editor")
+  async bulkRestore(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Body() body: BulkDeleteEndpointsDto,
+  ) {
+    return this.commandBus.execute(new RestoreEndpointsCommand(organizationId, projectId, body.ids, false));
+  }
+
+  /** Borrado blando. `?purge=true` es el definitivo, y solo sobre algo ya eliminado. */
   @Delete(":endpointId")
   @RequireRole("editor")
   @HttpCode(204)
@@ -208,8 +233,11 @@ export class EndpointsController {
     @Param("organizationId") organizationId: string,
     @Param("projectId") projectId: string,
     @Param("endpointId") endpointId: string,
+    @Query("purge") purge?: string,
   ): Promise<void> {
-    await this.commandBus.execute(new DeleteEndpointsCommand(organizationId, projectId, [endpointId], true));
+    await this.commandBus.execute(
+      new DeleteEndpointsCommand(organizationId, projectId, [endpointId], true, purge === "true"),
+    );
   }
 
   /**

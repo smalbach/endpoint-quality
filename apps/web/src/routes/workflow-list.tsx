@@ -15,6 +15,7 @@ import { useCan, useOrganization } from "@/lib/auth";
 import { resolveActive, useActiveEnvironment } from "@/lib/active-environment";
 import { useImport } from "@/components/import-provider";
 import { PromptDialog } from "@/components/overlay";
+import { DeleteDialog } from "@/components/lifecycle";
 import { Button, Card, Empty, inputClass } from "@/components/ui";
 import { SuitesPanel } from "@/components/suites-panel";
 import { bundleFileName, downloadJson } from "@/lib/project-bundle";
@@ -25,7 +26,14 @@ import type { Environment, SuiteView, WorkflowStatusView, WorkflowView, Workflow
 
 const message = (error: unknown) => (error as Error | null)?.message ?? null;
 
-type StatusFilter = "all" | "ready" | "draft" | "archived";
+/**
+ * El filtro de la lista.
+ *
+ * `deleted` no es un estado del flujo —archivar sí lo es, y vive en su `status`— sino otra lista:
+ * la papelera, que el servidor contesta aparte. Está aquí al lado porque quien busca un flujo que
+ * falta no sabe si lo archivó o lo borró, y son dos clics en el mismo sitio.
+ */
+type StatusFilter = "all" | "ready" | "draft" | "archived" | "deleted";
 
 export function WorkflowListPage({ projectId }: { projectId: string }) {
   const organization = useOrganization();
@@ -40,15 +48,19 @@ export function WorkflowListPage({ projectId }: { projectId: string }) {
   const [status, setStatus] = useState<StatusFilter>("all");
   const [naming, setNaming] = useState(false);
   const [renaming, setRenaming] = useState<WorkflowView | null>(null);
+  /** A qué flujo de la papelera se le está preguntando si se borra del todo. */
+  const [purging, setPurging] = useState<WorkflowView | null>(null);
   const [environmentId, setEnvironmentId] = useState("");
   const [activeEnvironment, setActiveEnvironment] = useActiveEnvironment(projectId);
   const preselected = useRef(false);
 
   const enabled = Boolean(organization && projectId);
+  const trash = status === "deleted";
   const workflows = useQuery({
-    queryKey: ["workflows", projectId],
+    // El lienzo y el resto de la aplicación leen `["workflows", projectId]` sin sufijo: lo vivo.
+    queryKey: ["workflows", projectId, trash ? "deleted" : "live"],
     enabled,
-    queryFn: () => api<WorkflowsView>(`${base}/workflows`),
+    queryFn: () => api<WorkflowsView>(`${base}/workflows${trash ? "?state=deleted" : ""}`),
   });
   const environments = useQuery({
     queryKey: ["environments", projectId],
@@ -63,6 +75,8 @@ export function WorkflowListPage({ projectId }: { projectId: string }) {
     if (active) setEnvironmentId(active.id);
   }, [environments.data, activeEnvironment]);
 
+  // Sin el sufijo de estado: invalida la lista viva y la papelera a la vez, que es lo que hace que
+  // restaurar algo se vea en las dos sin recargar.
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["workflows", projectId] });
 
   const createWorkflow = useMutation({
@@ -92,6 +106,19 @@ export function WorkflowListPage({ projectId }: { projectId: string }) {
     onSuccess: invalidate,
   });
 
+  const restoreWorkflow = useMutation({
+    mutationFn: (workflowId: string) => api<void>(`${base}/workflows/${workflowId}/restore`, { method: "POST" }),
+    onSuccess: invalidate,
+  });
+  const purgeWorkflow = useMutation({
+    mutationFn: (workflowId: string) =>
+      api<void>(`${base}/workflows/${workflowId}?purge=true`, { method: "DELETE" }),
+    onSuccess: async () => {
+      setPurging(null);
+      await invalidate();
+    },
+  });
+
   const createSuite = useMutation({
     mutationFn: (name: string) => api<{ suiteId: string }>(`${base}/suites`, { method: "POST", body: { name } }),
     onSuccess: invalidate,
@@ -105,6 +132,27 @@ export function WorkflowListPage({ projectId }: { projectId: string }) {
     mutationFn: (suiteId: string) => api<void>(`${base}/suites/${suiteId}`, { method: "DELETE" }),
     onSuccess: invalidate,
   });
+  const archiveSuite = useMutation({
+    mutationFn: (suiteId: string) =>
+      api<void>(`${base}/suites/${suiteId}/archived`, { method: "PATCH", body: { archived: true } }),
+    onSuccess: invalidate,
+  });
+  const restoreSuite = useMutation({
+    mutationFn: (suiteId: string) => api<void>(`${base}/suites/${suiteId}/restore`, { method: "POST" }),
+    onSuccess: invalidate,
+  });
+  const purgeSuite = useMutation({
+    mutationFn: (suiteId: string) => api<void>(`${base}/suites/${suiteId}?purge=true`, { method: "DELETE" }),
+    onSuccess: invalidate,
+  });
+  const restoreDataset = useMutation({
+    mutationFn: (datasetId: string) => api<void>(`${base}/datasets/${datasetId}/restore`, { method: "POST" }),
+    onSuccess: invalidate,
+  });
+  const purgeDataset = useMutation({
+    mutationFn: (datasetId: string) => api<void>(`${base}/datasets/${datasetId}?purge=true`, { method: "DELETE" }),
+    onSuccess: invalidate,
+  });
   // A suite walks several flows, so its run is read where every run is: the run's own page.
   const runSuite = useMutation({
     mutationFn: (suiteId: string) =>
@@ -114,6 +162,8 @@ export function WorkflowListPage({ projectId }: { projectId: string }) {
 
   const allFlows = useMemo(() => workflows.data?.workflows ?? [], [workflows.data]);
   const suites = useMemo(() => workflows.data?.suites ?? [], [workflows.data]);
+  /** Las tablas de datos del proyecto. En la papelera son las borradas: la lista es la del filtro. */
+  const datasets = useMemo(() => workflows.data?.datasets ?? [], [workflows.data]);
   const connections = useMemo(() => flowConnections(allFlows, suites), [allFlows, suites]);
   // `connections` only names flows and suites it was built from, so both lookups always find one.
   const nameOf = (id: string) => allFlows.find((flow) => flow.id === id)!.name;
@@ -121,7 +171,9 @@ export function WorkflowListPage({ projectId }: { projectId: string }) {
 
   const needle = query.trim().toLowerCase();
   const visible = allFlows.filter((flow) => {
-    if (status === "all" ? flow.status === "archived" : flow.status !== status) return false;
+    // En la papelera el estado no filtra: lo que se quiere ver es todo lo borrado, y un borrador
+    // eliminado no tiene por qué esconderse detrás del filtro de «listos».
+    if (!trash && (status === "all" ? flow.status === "archived" : flow.status !== status)) return false;
     return (
       !needle || flow.name.toLowerCase().includes(needle) || (flow.description ?? "").toLowerCase().includes(needle)
     );
@@ -176,6 +228,7 @@ export function WorkflowListPage({ projectId }: { projectId: string }) {
                   ["ready", "Listos"],
                   ["draft", "Borradores"],
                   ["archived", "Archivados"],
+                  ["deleted", "Eliminados"],
                 ] as const
               ).map(([value, label]) => (
                 <button
@@ -186,7 +239,8 @@ export function WorkflowListPage({ projectId }: { projectId: string }) {
                     status === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700",
                   )}
                 >
-                  {label} <span className="text-slate-400">{count(value)}</span>
+                  {label}
+                  {value !== "deleted" && <span className="text-slate-400"> {count(value)}</span>}
                 </button>
               ))}
             </div>
@@ -194,7 +248,11 @@ export function WorkflowListPage({ projectId }: { projectId: string }) {
 
           {error && <p className="text-xs text-rose-700">{error}</p>}
 
-          {allFlows.length === 0 ? (
+          {trash && allFlows.length === 0 ? (
+            <p className="py-8 text-center text-xs text-slate-400">
+              Papelera vacía. Un flujo eliminado vuelve aquí con su grafo y sus conjuntos de datos.
+            </p>
+          ) : allFlows.length === 0 ? (
             <Empty
               title="Crea tu primer flujo"
               hint="Un flujo encadena peticiones, esperas, validaciones y sub-flujos en un lienzo."
@@ -220,9 +278,44 @@ export function WorkflowListPage({ projectId }: { projectId: string }) {
                   onDuplicate={() => duplicateWorkflow.mutate(flow.id)}
                   onExport={() => exportWorkflow.mutate({ id: flow.id, name: flow.name })}
                   onStatus={(next) => patchWorkflow.mutate({ id: flow.id, status: next })}
+                  deleted={trash}
+                  onRestore={() => restoreWorkflow.mutate(flow.id)}
+                  onPurge={() => setPurging(flow)}
                 />
               ))}
             </ul>
+          )}
+
+          {/* La papelera de esta pantalla es de las tres cosas que se editan aquí: el flujo, su
+              tabla de datos y la suite que los ordena. Verlas juntas es lo que hace que «lo borré
+              y no sé qué era» tenga un solo sitio donde mirar. */}
+          {trash && canEdit && (
+            <>
+              <TrashSection
+                title="Conjuntos de datos eliminados"
+                empty="Ninguno."
+                rows={datasets.map((dataset) => ({
+                  id: dataset.id,
+                  label: dataset.name,
+                  detail: `${dataset.rowCount} filas · ${dataset.columns.join(", ") || "sin columnas"}`,
+                }))}
+                busy={restoreDataset.isPending || purgeDataset.isPending}
+                onRestore={(id) => restoreDataset.mutate(id)}
+                onPurge={(id) => purgeDataset.mutate(id)}
+              />
+              <TrashSection
+                title="Suites eliminadas"
+                empty="Ninguna."
+                rows={suites.map((suite) => ({
+                  id: suite.id,
+                  label: suite.name,
+                  detail: `${suite.workflowIds.length} flujos, en su orden`,
+                }))}
+                busy={restoreSuite.isPending || purgeSuite.isPending}
+                onRestore={(id) => restoreSuite.mutate(id)}
+                onPurge={(id) => purgeSuite.mutate(id)}
+              />
+            </>
           )}
         </div>
 
@@ -255,6 +348,7 @@ export function WorkflowListPage({ projectId }: { projectId: string }) {
                 onCreate={(name) => createSuite.mutate(name)}
                 onChange={(suite) => saveSuite.mutate(suite)}
                 onDelete={(suiteId) => deleteSuite.mutate(suiteId)}
+                onArchive={(suiteId) => archiveSuite.mutate(suiteId)}
                 onRun={(suiteId) => runSuite.mutate(suiteId)}
               />
             </div>
@@ -275,6 +369,18 @@ export function WorkflowListPage({ projectId }: { projectId: string }) {
           }}
         />
       )}
+      {purging && (
+        <DeleteDialog
+          title="Eliminar el flujo"
+          purge
+          name={purging.name}
+          message={`Se va «${purging.name}» con su grafo y sus conjuntos de datos. Las corridas que lanzó se quedan donde están.`}
+          pending={purgeWorkflow.isPending}
+          onConfirm={() => purgeWorkflow.mutate(purging.id)}
+          onClose={() => setPurging(null)}
+        />
+      )}
+
       {renaming && (
         <PromptDialog
           title="Renombrar flujo"
@@ -290,6 +396,59 @@ export function WorkflowListPage({ projectId }: { projectId: string }) {
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Una lista de la papelera: qué había, y las dos salidas.
+ *
+ * La misma forma para los conjuntos y para las suites porque la pregunta es la misma —«¿esto
+ * vuelve o se va?»— y dos listas distintas para eso solo se diferenciarían en el sustantivo.
+ */
+function TrashSection({
+  title,
+  empty,
+  rows,
+  busy,
+  onRestore,
+  onPurge,
+}: {
+  title: string;
+  empty: string;
+  rows: { id: string; label: string; detail: string }[];
+  busy: boolean;
+  onRestore: (id: string) => void;
+  onPurge: (id: string) => void;
+}) {
+  return (
+    <Card className="p-3">
+      <p className="text-[10px] font-semibold tracking-wide text-slate-400 uppercase">{title}</p>
+      {rows.length === 0 ? (
+        <p className="mt-1 text-[11px] text-slate-400">{empty}</p>
+      ) : (
+        <ul className="mt-2 space-y-1">
+          {rows.map((row) => (
+            <li key={row.id} className="flex items-center gap-2 text-xs text-slate-700">
+              <span className="min-w-0 flex-1 truncate">
+                {row.label}
+                <span className="ml-1 text-[11px] text-slate-400">{row.detail}</span>
+              </span>
+              <Button variant="ghost" className="h-7 px-2 text-[11px]" disabled={busy} onClick={() => onRestore(row.id)}>
+                Restaurar
+              </Button>
+              <Button
+                variant="ghost"
+                className="h-7 px-2 text-[11px] text-rose-600"
+                disabled={busy}
+                onClick={() => onPurge(row.id)}
+              >
+                Eliminar para siempre
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }
 
@@ -326,6 +485,9 @@ function FlowRow({
   onDuplicate,
   onExport,
   onStatus,
+  deleted,
+  onRestore,
+  onPurge,
 }: {
   flow: WorkflowView;
   href: string;
@@ -340,6 +502,10 @@ function FlowRow({
   onDuplicate: () => void;
   onExport: () => void;
   onStatus: (status: WorkflowStatusView) => void;
+  /** Si la fila se está dibujando en la papelera: ahí solo se vuelve o se borra del todo. */
+  deleted?: boolean;
+  onRestore?: () => void;
+  onPurge?: () => void;
 }) {
   const meta = WORKFLOW_STATUS_META[flow.status];
   const [open, setOpen] = useState(true);
@@ -358,7 +524,22 @@ function FlowRow({
             </span>
           </Link>
           <div className="flex shrink-0 items-center gap-1">
-            {canEdit && (
+            {canEdit && deleted && (
+              <>
+                <Button variant="ghost" className="h-7 px-2 text-[11px]" disabled={busy} onClick={onRestore}>
+                  Restaurar
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="h-7 px-2 text-[11px] text-rose-600"
+                  disabled={busy}
+                  onClick={onPurge}
+                >
+                  Eliminar para siempre
+                </Button>
+              </>
+            )}
+            {canEdit && !deleted && (
               <>
                 <Button variant="ghost" className="h-7 px-2 text-[11px]" onClick={onRename}>
                   Renombrar
@@ -388,12 +569,16 @@ function FlowRow({
                 </select>
               </>
             )}
-            <Link
-              to={href}
-              className="ml-1 rounded-lg bg-slate-900 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-slate-700"
-            >
-              Abrir lienzo
-            </Link>
+            {/* En la papelera no se abre el lienzo: editar algo que no sale en ninguna lista es
+                trabajo que se pierde al siguiente borrado definitivo. */}
+            {!deleted && (
+              <Link
+                to={href}
+                className="ml-1 rounded-lg bg-slate-900 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-slate-700"
+              >
+                Abrir lienzo
+              </Link>
+            )}
           </div>
         </div>
 

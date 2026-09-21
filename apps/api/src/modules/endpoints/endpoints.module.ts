@@ -16,6 +16,7 @@ import { TypeOrmExampleRepository } from "./infrastructure/persistence/typeorm-e
 import {
   CreateEndpointHandler,
   DeleteEndpointsHandler,
+  RestoreEndpointsHandler,
   SetEndpointStatusHandler,
   UpdateEndpointHandler,
 } from "./application/commands/manage-endpoints";
@@ -35,6 +36,7 @@ export const ENDPOINT_COMMAND_HANDLERS = [
   CreateEndpointHandler,
   UpdateEndpointHandler,
   DeleteEndpointsHandler,
+  RestoreEndpointsHandler,
   SetEndpointStatusHandler,
   ImportEndpointFileHandler,
   ImportEndpointCurlHandler,

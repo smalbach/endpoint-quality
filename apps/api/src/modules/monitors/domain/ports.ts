@@ -1,3 +1,4 @@
+import type { LifecycleState } from "@/shared/lifecycle/lifecycle";
 import type { Monitor, MonitorExecution } from "./model";
 
 export const MONITOR_REPOSITORY = Symbol("MONITOR_REPOSITORY");
@@ -19,9 +20,15 @@ export const MONITOR_REPOSITORY = Symbol("MONITOR_REPOSITORY");
  * expresión de Postgres sin duplicar las reglas en un sitio donde no se pueden probar.
  */
 export interface MonitorRepositoryPort {
-  listByProject(projectId: string): Promise<Monitor[]>;
+  /**
+   * Los monitores de un proyecto en ese estado. Sin estado, los activos: la pantalla que se abre
+   * sin filtros enseña lo que está vigilando, no lo archivado ni lo borrado.
+   */
+  listByProject(projectId: string, state?: LifecycleState): Promise<Monitor[]>;
+  /** Por id **en cualquier estado**: restaurar algo borrado empieza por encontrarlo. */
   findById(projectId: string, id: string): Promise<Monitor | null>;
   save(monitor: Monitor): Promise<void>;
+  /** El borrado de verdad, el que no se deshace. Solo lo llama «eliminar para siempre». */
   remove(projectId: string, id: string): Promise<boolean>;
 
   /**

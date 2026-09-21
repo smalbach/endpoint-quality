@@ -45,6 +45,8 @@ const channel = (patch: Partial<ChannelView> = {}): ChannelView => ({
   orderIndex: 0,
   createdAt: "2026-03-01T10:00:00.000Z",
   updatedAt: "2026-03-01T10:00:00.000Z",
+  archivedAt: null,
+  deletedAt: null,
   ...patch,
 });
 

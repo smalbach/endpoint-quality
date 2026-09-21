@@ -269,9 +269,32 @@ describe("renombrar y borrar", () => {
 
     const removed = await api().delete(`${base()}/roles/${seller.id}`).set(as(owner));
     assert.equal(removed.status, 204);
-    assert.deepEqual(await credentials(), []);
+    // Blando: sale de la matriz y de las reglas, y **sus credenciales se quedan**. Llevárselas
+    // haría que restaurarlo devolviera un rol que no puede autenticarse contra nada.
+    assert.deepEqual(await credentials(), ["seller"]);
     assert.deepEqual((await accessSection()).roles, ["comprador"]);
     assert.deepEqual((await api().get(`${base()}/role-rules`).set(as(owner))).body.rules, []);
+    assert.deepEqual(
+      ((await api().get(`${base()}/roles`).set(as(owner))).body as { id: string }[]).map((role) => role.id),
+      [buyer.id],
+    );
+    const trash = await api().get(`${base()}/roles?state=deleted`).set(as(owner));
+    assert.deepEqual(
+      (trash.body as { id: string }[]).map((role) => role.id),
+      [seller.id],
+    );
+
+    // Restaurarlo devuelve la matriz que se decidió con él: sus celdas y sus reglas siguen ahí.
+    const back = await api().post(`${base()}/roles/${seller.id}/restore`).set(as(owner));
+    assert.equal(back.status, 204);
+    assert.deepEqual((await accessSection()).roles, ["seller", "comprador"]);
+    assert.ok((await api().get(`${base()}/role-rules`).set(as(owner))).body.rules.length > 0);
+
+    // El definitivo pide que antes esté eliminado, y ese sí se lleva las credenciales.
+    assert.equal((await api().delete(`${base()}/roles/${seller.id}?purge=true`).set(as(owner))).status, 409);
+    await api().delete(`${base()}/roles/${seller.id}`).set(as(owner));
+    assert.equal((await api().delete(`${base()}/roles/${seller.id}?purge=true`).set(as(owner))).status, 204);
+    assert.deepEqual(await credentials(), []);
     assert.equal((await api().get(`${base()}/roles/${seller.id}/permissions`).set(as(owner))).status, 404);
     assert.ok(buyer.id);
   });

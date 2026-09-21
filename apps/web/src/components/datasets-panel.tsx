@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, Field, inputClass } from "@/components/ui";
+import { DeleteDialog } from "@/components/lifecycle";
 import { PromptDialog } from "@/components/overlay";
 import type { DatasetView } from "@/lib/types";
 
@@ -26,6 +27,7 @@ export function DatasetsPanel({
   onCreate,
   onSave,
   onDelete,
+  onArchive,
   loadRows,
 }: {
   datasets: DatasetView[];
@@ -36,10 +38,14 @@ export function DatasetsPanel({
   onCreate: (name: string) => void;
   onSave: (datasetId: string, rows: Record<string, string>[]) => void;
   onDelete: (datasetId: string) => void;
+  /** Archivar: deja de ofrecerse al lanzar una corrida, y sus filas se quedan. */
+  onArchive: (datasetId: string) => void;
   loadRows: (datasetId: string) => Promise<Record<string, string>[]>;
 }) {
   const [editing, setEditing] = useState("");
   const [naming, setNaming] = useState(false);
+  /** A qué conjunto se le está preguntando si se borra. */
+  const [deleting, setDeleting] = useState<DatasetView | null>(null);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -127,7 +133,7 @@ export function DatasetsPanel({
                     </button>
                     <button
                       className="px-1 text-slate-400 hover:text-rose-600"
-                      onClick={() => onDelete(dataset.id)}
+                      onClick={() => setDeleting(dataset)}
                       aria-label={`Eliminar ${dataset.name}`}
                     >
                       ×
@@ -159,6 +165,23 @@ export function DatasetsPanel({
             Guardar filas
           </Button>
         </div>
+      )}
+
+      {deleting && (
+        <DeleteDialog
+          title="Eliminar el conjunto"
+          message={`«${deleting.name}» sale de la lista con sus ${deleting.rowCount} filas. Las corridas que lo recorrieron conservan su plan y sus resultados.`}
+          restoreHint="Se puede restaurar desde el filtro «Eliminados» de la lista de flujos."
+          onArchive={() => {
+            onArchive(deleting.id);
+            setDeleting(null);
+          }}
+          onConfirm={() => {
+            onDelete(deleting.id);
+            setDeleting(null);
+          }}
+          onClose={() => setDeleting(null)}
+        />
       )}
     </div>
   );

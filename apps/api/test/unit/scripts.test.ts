@@ -343,6 +343,8 @@ describe("lo que un script escribe en el entorno", () => {
     writesAllowed: false,
     authEnforced: false,
     createdAt: new Date(0),
+    archivedAt: null,
+    deletedAt: null,
   };
 
   test("solo el valor actual; un secreto sigue cifrado; lo nuevo se crea; unset vacía", () => {

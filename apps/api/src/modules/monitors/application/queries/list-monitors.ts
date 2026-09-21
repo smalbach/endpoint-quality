@@ -4,6 +4,7 @@ import { QueryHandler, type IQuery, type IQueryHandler } from "@nestjs/cqrs";
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { NotFoundError } from "@/shared/errors/domain-error";
+import type { LifecycleState } from "@/shared/lifecycle/lifecycle";
 import {
   MONITOR_HISTORY,
   viewExecution,
@@ -27,6 +28,8 @@ export class ListMonitorsQuery implements IQuery {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
+    /** Qué lista se pide: los que vigilan, los archivados o los eliminados. */
+    readonly state: LifecycleState = "active",
   ) {}
 }
 
@@ -41,7 +44,7 @@ export class ListMonitorsHandler implements IQueryHandler<ListMonitorsQuery, Mon
 
   async execute(query: ListMonitorsQuery): Promise<MonitorListView> {
     const project = await ownedProject(this.projects, query.organizationId, query.projectId);
-    const monitors = await this.monitors.listByProject(project.id);
+    const monitors = await this.monitors.listByProject(project.id, query.state);
     return {
       monitors: await Promise.all(
         monitors.map(async (monitor) => ({

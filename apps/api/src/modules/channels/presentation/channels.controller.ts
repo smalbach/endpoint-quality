@@ -8,7 +8,7 @@
  * sigue, se recarga y se cierra por su id, y quien vuelve a ella desde un enlace no tiene por qué
  * saber de qué canal era.
  */
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Sse, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Sse, UseGuards } from "@nestjs/common";
 import { CommandBus, QueryBus } from "@nestjs/cqrs";
 import { SkipThrottle } from "@nestjs/throttler";
 import { Observable } from "rxjs";
@@ -19,11 +19,15 @@ import {
   RequireRole,
   type Principal,
 } from "@/modules/auth/infrastructure/guards/auth.guard";
+import { parseLifecycleState } from "@/shared/lifecycle/lifecycle";
+import { SetArchivedDto } from "@/shared/lifecycle/lifecycle.dto";
 import { ConflictError } from "@/shared/errors/domain-error";
 import {
   CreateChannelCommand,
   DeleteChannelCommand,
   UpdateChannelCommand,
+  SetChannelArchivedCommand,
+  RestoreChannelCommand,
 } from "../application/commands/manage-channels";
 import {
   ChangeChannelSubscriptionCommand,
@@ -55,8 +59,12 @@ export class ChannelsController {
 
   @Get()
   @RequireRole("viewer")
-  list(@Param("organizationId") organizationId: string, @Param("projectId") projectId: string) {
-    return this.queryBus.execute(new ListChannelsQuery(organizationId, projectId));
+  list(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Query("state") state?: string,
+  ) {
+    return this.queryBus.execute(new ListChannelsQuery(organizationId, projectId, parseLifecycleState(state)));
   }
 
   @Post()
@@ -266,6 +274,38 @@ export class ChannelsController {
     );
   }
 
+  /** Fuera de la lista y sin poder abrirse, con sus tramas guardadas intactas. */
+  @Patch(":channelId/archived")
+  @RequireRole("editor")
+  @HttpCode(204)
+  async setArchived(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("channelId") channelId: string,
+    @Body() body: SetArchivedDto,
+    @CurrentUser() principal: Principal,
+  ): Promise<void> {
+    await this.commandBus.execute(
+      new SetChannelArchivedCommand(organizationId, projectId, channelId, actorId(principal), body.archived),
+    );
+  }
+
+  /** Devuelve un canal eliminado, con sus conversaciones. */
+  @Post(":channelId/restore")
+  @RequireRole("editor")
+  @HttpCode(204)
+  async restore(
+    @Param("organizationId") organizationId: string,
+    @Param("projectId") projectId: string,
+    @Param("channelId") channelId: string,
+    @CurrentUser() principal: Principal,
+  ): Promise<void> {
+    await this.commandBus.execute(
+      new RestoreChannelCommand(organizationId, projectId, channelId, actorId(principal)),
+    );
+  }
+
+  /** Borrado blando. `?purge=true` es el definitivo: ese sí se lleva las conversaciones. */
   @Delete(":channelId")
   @RequireRole("editor")
   @HttpCode(204)
@@ -274,8 +314,11 @@ export class ChannelsController {
     @Param("projectId") projectId: string,
     @Param("channelId") channelId: string,
     @CurrentUser() principal: Principal,
+    @Query("purge") purge?: string,
   ): Promise<void> {
-    await this.commandBus.execute(new DeleteChannelCommand(organizationId, projectId, channelId, actorId(principal)));
+    await this.commandBus.execute(
+      new DeleteChannelCommand(organizationId, projectId, channelId, actorId(principal), purge === "true"),
+    );
   }
 
   @Post(":channelId/sessions")

@@ -26,6 +26,8 @@ import {
   DeleteDatasetHandler,
   UpdateDatasetCommand,
   UpdateDatasetHandler,
+  RestoreDatasetCommand,
+  RestoreDatasetHandler,
 } from "@/modules/workflows/application/commands/manage-dataset";
 import {
   CreateSuiteCommand,
@@ -34,6 +36,8 @@ import {
   DeleteSuiteHandler,
   UpdateSuiteCommand,
   UpdateSuiteHandler,
+  RestoreSuiteCommand,
+  RestoreSuiteHandler,
 } from "@/modules/workflows/application/commands/manage-suite";
 import {
   CreateWorkflowCommand,
@@ -44,6 +48,8 @@ import {
   DuplicateWorkflowHandler,
   UpdateWorkflowCommand,
   UpdateWorkflowHandler,
+  RestoreWorkflowCommand,
+  RestoreWorkflowHandler,
 } from "@/modules/workflows/application/commands/manage-workflow";
 import {
   ImportRequestTemplatesCommand,
@@ -144,6 +150,7 @@ const workflowRow = (overrides: Partial<WorkflowRow> = {}): WorkflowRow => ({
   createdAt: T0,
   updatedAt: T0,
   updatedBy: "someone",
+  deletedAt: null,
   ...overrides,
 });
 
@@ -365,7 +372,7 @@ describe("datasets", () => {
     );
   });
 
-  test("delete and get: unknown is a 404, a dataset of another org's project is a 404, deleted is gone", async () => {
+  test("delete and get: unknown is a 404, uno de otra organización es un 404, y borrar lo saca de la lista", async () => {
     const { projects, workflows, clock } = world();
     await workflows.saveWorkflow(workflowRow());
     const { datasetId } = await new CreateDatasetHandler(projects, workflows, clock).execute(
@@ -377,11 +384,29 @@ describe("datasets", () => {
       name: "d",
       rows: [{ a: "1" }],
     });
-    const handler = new DeleteDatasetHandler(projects, workflows);
+    const handler = new DeleteDatasetHandler(projects, workflows, clock);
     await rejectsWith(handler.execute(new DeleteDatasetCommand(ORG, PROJECT, "nope")), "not-found", "dataset-not-found");
     await rejectsWith(handler.execute(new DeleteDatasetCommand("other", PROJECT, datasetId)), "not-found");
     await handler.execute(new DeleteDatasetCommand(ORG, PROJECT, datasetId));
-    await rejectsWith(get.execute(new GetDatasetQuery(ORG, PROJECT, datasetId)), "not-found", "dataset-not-found");
+    // Borrado blando: fuera de la lista activa, dentro de la papelera, y sus filas se siguen
+    // pudiendo leer —es lo que dice si merece la pena restaurarlo.
+    assert.deepEqual(await workflows.listDatasets(PROJECT), []);
+    assert.equal((await workflows.listDatasets(PROJECT, "deleted")).length, 1);
+    assert.deepEqual((await get.execute(new GetDatasetQuery(ORG, PROJECT, datasetId))).rows, [{ a: "1" }]);
+
+    // Restaurarlo lo devuelve a la lista; el definitivo se lo lleva de verdad.
+    await new RestoreDatasetHandler(projects, workflows, clock).execute(
+      new RestoreDatasetCommand(ORG, PROJECT, datasetId),
+    );
+    assert.equal((await workflows.listDatasets(PROJECT)).length, 1);
+    await rejectsWith(
+      handler.execute(new DeleteDatasetCommand(ORG, PROJECT, datasetId, true)),
+      "conflict",
+      "dataset-not-deleted",
+    );
+    await handler.execute(new DeleteDatasetCommand(ORG, PROJECT, datasetId));
+    await handler.execute(new DeleteDatasetCommand(ORG, PROJECT, datasetId, true));
+    assert.equal(await workflows.findDataset(PROJECT, datasetId), null);
   });
 });
 
@@ -452,11 +477,19 @@ describe("suites", () => {
     const { suiteId } = await new CreateSuiteHandler(projects, workflows, clock).execute(
       new CreateSuiteCommand(ORG, PROJECT, { name: "s", workflowIds: ["wf-1"] }, ACTOR),
     );
-    const handler = new DeleteSuiteHandler(projects, workflows);
+    const handler = new DeleteSuiteHandler(projects, workflows, clock);
     await rejectsWith(handler.execute(new DeleteSuiteCommand(ORG, PROJECT, "nope")), "not-found", "suite-not-found");
     await handler.execute(new DeleteSuiteCommand(ORG, PROJECT, suiteId));
-    assert.equal(await workflows.findSuite(PROJECT, suiteId), null);
+    // Fuera de la lista y en la papelera, con el flujo que nombraba intacto.
+    assert.deepEqual(await workflows.listSuites(PROJECT), []);
+    assert.equal((await workflows.listSuites(PROJECT, "deleted")).length, 1);
     assert.ok(await workflows.findWorkflow(PROJECT, "wf-1"));
+
+    await new RestoreSuiteHandler(projects, workflows, clock).execute(new RestoreSuiteCommand(ORG, PROJECT, suiteId));
+    assert.equal((await workflows.listSuites(PROJECT)).length, 1);
+    await handler.execute(new DeleteSuiteCommand(ORG, PROJECT, suiteId));
+    await handler.execute(new DeleteSuiteCommand(ORG, PROJECT, suiteId, true));
+    assert.equal(await workflows.findSuite(PROJECT, suiteId), null);
   });
 });
 
@@ -535,7 +568,7 @@ describe("workflows", () => {
         definition: { steps: [{ id: "sub", kind: "subflow", subflow: { workflowId: "wf-1" } }] } as WorkflowDocument,
       }),
     );
-    const handler = new DeleteWorkflowHandler(projects, workflows);
+    const handler = new DeleteWorkflowHandler(projects, workflows, clock);
     await assert.rejects(handler.execute(new DeleteWorkflowCommand(ORG, PROJECT, "wf-1")), (error: DomainError) => {
       assert.equal(error.code, "workflow-in-use");
       assert.equal(error.message, "«Padre» usa este flujo como sub-flujo");
@@ -551,6 +584,16 @@ describe("workflows", () => {
     );
     await workflows.deleteSuite(PROJECT, suiteId);
     await handler.execute(new DeleteWorkflowCommand(ORG, PROJECT, "wf-1"));
+    // Blando: sale de la lista y espera en la papelera.
+    assert.deepEqual(await workflows.listWorkflows(PROJECT), []);
+    assert.equal((await workflows.listWorkflows(PROJECT, "deleted")).length, 1);
+
+    await new RestoreWorkflowHandler(projects, workflows, clock).execute(
+      new RestoreWorkflowCommand(ORG, PROJECT, "wf-1"),
+    );
+    assert.equal((await workflows.listWorkflows(PROJECT)).length, 1);
+    await handler.execute(new DeleteWorkflowCommand(ORG, PROJECT, "wf-1"));
+    await handler.execute(new DeleteWorkflowCommand(ORG, PROJECT, "wf-1", true));
     assert.equal(await workflows.findWorkflow(PROJECT, "wf-1"), null);
   });
 

@@ -99,6 +99,14 @@ export type Environment = {
    */
   authEnforced: boolean;
   createdAt: Date;
+  /**
+   * Archivado y borrado blando. Ver `shared/lifecycle`.
+   *
+   * Un entorno archivado o eliminado **no se puede correr**: `findById` solo devuelve los vivos, y
+   * eso es lo que impide que un monitor guardado siga apuntando a un entorno que ya nadie mira.
+   */
+  archivedAt: Date | null;
+  deletedAt: Date | null;
 };
 
 /**

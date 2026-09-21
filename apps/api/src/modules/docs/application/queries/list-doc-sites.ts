@@ -11,6 +11,7 @@ import {
 } from "@/modules/endpoints/domain/ports";
 import { viewDocSite, type DocSiteView } from "../../domain/model";
 import { DOC_SITE_REPOSITORY, type DocSiteRepositoryPort } from "../../domain/ports";
+import type { LifecycleState } from "@/shared/lifecycle/lifecycle";
 
 /**
  * Las documentaciones del proyecto, y **qué calidad tendría la página**.
@@ -29,6 +30,8 @@ export class ListDocSitesQuery implements IQuery {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
+    /** Qué lista se pide: las publicadas, las archivadas o las eliminadas. */
+    readonly state: LifecycleState = "active",
   ) {}
 }
 
@@ -44,7 +47,7 @@ export class ListDocSitesHandler implements IQueryHandler<ListDocSitesQuery, Doc
   async execute(query: ListDocSitesQuery): Promise<DocSiteListView> {
     const project = await ownedProject(this.projects, query.organizationId, query.projectId);
     const [sites, endpoints, examples] = await Promise.all([
-      this.sites.listByProject(project.id),
+      this.sites.listByProject(project.id, query.state),
       this.endpoints.listAll(project.id),
       this.examples.listByProject(project.id),
     ]);

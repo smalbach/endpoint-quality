@@ -13,7 +13,7 @@ import { useMutation } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 import { Badge, Button, inputClass } from "@/components/ui";
-import { ConfirmDialog } from "@/components/overlay";
+import { DeleteDialog } from "@/components/lifecycle";
 import { useToast } from "@/components/toast";
 import { useImport } from "@/components/import-provider";
 import { cn, methodStyle } from "@/lib/format";
@@ -26,13 +26,21 @@ import {
 } from "@/lib/endpoint-tree";
 import type { EndpointPage, EndpointStatus, EndpointView } from "@/lib/types";
 
-export type StatusFilter = EndpointStatus | "all";
+/**
+ * Lo que el control segmentado ofrece.
+ *
+ * `deleted` no es un `status` del endpoint —esos son activo, archivado e inactivo— sino la otra
+ * lista: la papelera. Está aquí porque quien busca una ruta que falta no sabe si la archivó o la
+ * borró, y son dos clics en el mismo control.
+ */
+export type StatusFilter = EndpointStatus | "all" | "deleted";
 
 const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
   { value: "active", label: "Activos" },
   { value: "archived", label: "Archivados" },
   { value: "inactive", label: "Inactivos" },
   { value: "all", label: "Todos" },
+  { value: "deleted", label: "Eliminados" },
 ];
 
 const STATUS_BADGE: Record<EndpointStatus, { label: string; className: string }> = {
@@ -79,7 +87,7 @@ export function EndpointList({
   const [typed, setTyped] = useState(search);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [confirming, setConfirming] = useState<{ ids: string[]; label: string } | null>(null);
+  const [confirming, setConfirming] = useState<{ ids: string[]; label: string; purge: boolean } | null>(null);
 
   // 350 ms after the last keystroke, like the analyzer; the page goes back to 1 with it.
   const onSearchRef = useRef(onSearch);
@@ -113,11 +121,15 @@ export function EndpointList({
   });
 
   const remove = useMutation({
-    mutationFn: (ids: string[]) =>
+    mutationFn: ({ ids, purge }: { ids: string[]; purge: boolean }) =>
+      // El definitivo es de uno en uno por ahora, que es como se pide desde la papelera: el lote
+      // borra en blando, y «para siempre» se pulsa fila a fila a propósito.
       ids.length === 1
-        ? api<void>(`${base}/endpoints/${ids[0]}`, { method: "DELETE" }).then(() => ({ deleted: 1 }))
+        ? api<void>(`${base}/endpoints/${ids[0]}${purge ? "?purge=true" : ""}`, { method: "DELETE" }).then(() => ({
+            deleted: 1,
+          }))
         : api<{ deleted: number }>(`${base}/endpoints/bulk-delete`, { method: "POST", body: { ids } }),
-    onSuccess: async (result, ids) => {
+    onSuccess: async (result, { ids }) => {
       toast.success(`${result.deleted} ${result.deleted === 1 ? "endpoint eliminado" : "endpoints eliminados"}`);
       setConfirming(null);
       setSelected((current) => new Set([...current].filter((id) => !ids.includes(id))));
@@ -128,6 +140,19 @@ export function EndpointList({
       setConfirming(null);
       toast.error(error.message);
     },
+  });
+
+  const restore = useMutation({
+    mutationFn: (ids: string[]) =>
+      ids.length === 1
+        ? api<void>(`${base}/endpoints/${ids[0]}/restore`, { method: "POST" }).then(() => ({ restored: 1 }))
+        : api<{ restored: number }>(`${base}/endpoints/bulk-restore`, { method: "POST", body: { ids } }),
+    onSuccess: async (result) => {
+      toast.success(`${result.restored} ${result.restored === 1 ? "endpoint restaurado" : "endpoints restaurados"}`);
+      setSelected(new Set());
+      await onChanged();
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const archiveOne = useMutation({
@@ -145,6 +170,8 @@ export function EndpointList({
 
   const counts = page?.counts;
   const total = counts ? counts.active + counts.archived + counts.inactive : 0;
+  /** Cuántos hay en la papelera. Sin página cargada todavía, ninguno: nadie ha contado aún. */
+  const deletedCount = page?.deleted ?? 0;
 
   function renderFolder(folder: EndpointFolder<EndpointView>, depth: number) {
     const ids = endpointIdsOf(folder);
@@ -261,19 +288,53 @@ export function EndpointList({
         )}
         {canEdit && (
           <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
-            <IconButton
-              title={endpoint.status === "active" ? "Archivar" : "Activar"}
-              active={active}
-              onClick={() => archiveOne.mutate(endpoint)}
-              path={endpoint.status === "active" ? "M21 8v13H3V8M1 3h22v5H1zM10 12h4" : "M20 6L9 17l-5-5"}
-            />
-            <IconButton
-              title="Eliminar"
-              active={active}
-              danger
-              onClick={() => setConfirming({ ids: [endpoint.id], label: `${endpoint.method} ${endpoint.path}` })}
-              path="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"
-            />
+            {/* En la papelera la fila ofrece lo que se puede hacer ahí: volver, o irse del todo.
+                Archivar no: eso se decide sobre algo que está en la lista. */}
+            {status === "deleted" ? (
+              <>
+                <IconButton
+                  title="Restaurar"
+                  active={active}
+                  onClick={() => restore.mutate([endpoint.id])}
+                  path="M3 12a9 9 0 1 0 3-6.7M3 4v5h5"
+                />
+                <IconButton
+                  title="Eliminar para siempre"
+                  active={active}
+                  danger
+                  onClick={() =>
+                    setConfirming({
+                      ids: [endpoint.id],
+                      label: `${endpoint.method} ${endpoint.path}`,
+                      purge: true,
+                    })
+                  }
+                  path="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"
+                />
+              </>
+            ) : (
+              <>
+                <IconButton
+                  title={endpoint.status === "active" ? "Archivar" : "Activar"}
+                  active={active}
+                  onClick={() => archiveOne.mutate(endpoint)}
+                  path={endpoint.status === "active" ? "M21 8v13H3V8M1 3h22v5H1zM10 12h4" : "M20 6L9 17l-5-5"}
+                />
+                <IconButton
+                  title="Eliminar"
+                  active={active}
+                  danger
+                  onClick={() =>
+                    setConfirming({
+                      ids: [endpoint.id],
+                      label: `${endpoint.method} ${endpoint.path}`,
+                      purge: false,
+                    })
+                  }
+                  path="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"
+                />
+              </>
+            )}
           </span>
         )}
       </div>
@@ -307,7 +368,11 @@ export function EndpointList({
             )}
           >
             {filter.label}
-            {counts && <span className="ml-1 opacity-60">{filter.value === "all" ? total : counts[filter.value]}</span>}
+            {counts && (
+              <span className="ml-1 opacity-60">
+                {filter.value === "all" ? total : filter.value === "deleted" ? deletedCount : counts[filter.value]}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -322,6 +387,11 @@ export function EndpointList({
       {selected.size > 0 && canEdit && (
         <div className="mt-2 flex flex-wrap items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px]">
           <span className="font-medium text-slate-700">{selected.size} seleccionados</span>
+          {status === "deleted" && (
+            <SmallButton onClick={() => restore.mutate([...selected])} disabled={restore.isPending}>
+              Restaurar
+            </SmallButton>
+          )}
           {(status === "active" || status === "all") && (
             <>
               <SmallButton onClick={() => bulkStatus.mutate("archived")} disabled={bulkStatus.isPending}>
@@ -332,17 +402,19 @@ export function EndpointList({
               </SmallButton>
             </>
           )}
-          {status !== "active" && (
+          {status !== "active" && status !== "deleted" && (
             <SmallButton onClick={() => bulkStatus.mutate("active")} disabled={bulkStatus.isPending}>
               Activar
             </SmallButton>
           )}
-          <SmallButton
-            danger
-            onClick={() => setConfirming({ ids: [...selected], label: `${selected.size} endpoints` })}
-          >
-            Eliminar
-          </SmallButton>
+          {status !== "deleted" && (
+            <SmallButton
+              danger
+              onClick={() => setConfirming({ ids: [...selected], label: `${selected.size} endpoints`, purge: false })}
+            >
+              Eliminar
+            </SmallButton>
+          )}
           <button className="ml-auto text-slate-500 underline" onClick={() => setSelected(new Set())}>
             limpiar
           </button>
@@ -407,12 +479,18 @@ export function EndpointList({
       )}
 
       {confirming && (
-        <ConfirmDialog
+        <DeleteDialog
           title={confirming.ids.length === 1 ? "Eliminar endpoint" : "Eliminar endpoints"}
-          message={`${confirming.label} dejará de aparecer para todo el mundo. Sus corridas pasadas se conservan.`}
-          confirmLabel="Eliminar"
+          purge={confirming.purge}
+          message={
+            confirming.purge
+              ? `${confirming.label} se va con sus ejemplos guardados. Sus corridas pasadas se conservan.`
+              : `${confirming.label} dejará de aparecer para todo el mundo. Sus ejemplos y sus corridas pasadas se conservan.`
+          }
           pending={remove.isPending}
-          onConfirm={() => remove.mutate(confirming.ids)}
+          // Archivar un endpoint es su `status`, y vive en el icono de al lado: el diálogo no
+          // duplica esa puerta, solo dice dónde está lo que se borra.
+          onConfirm={() => remove.mutate({ ids: confirming.ids, purge: confirming.purge })}
           onClose={() => setConfirming(null)}
         />
       )}

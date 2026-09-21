@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Brackets, In, IsNull, Repository } from "typeorm";
+import { Brackets, In, IsNull, Not, Repository } from "typeorm";
 
 import { EndpointEntity } from "@/shared/database/entities";
 import type { Endpoint, EndpointStatus } from "../../domain/model";
@@ -17,7 +17,7 @@ export class TypeOrmEndpointRepository implements EndpointRepositoryPort {
     const query = this.endpoints
       .createQueryBuilder("endpoint")
       .where(`endpoint."projectId" = :projectId`, { projectId })
-      .andWhere(`endpoint."deletedAt" IS NULL`);
+      .andWhere(filter.deleted ? `endpoint."deletedAt" IS NOT NULL` : `endpoint."deletedAt" IS NULL`);
     if (filter.status !== "all") query.andWhere(`endpoint."status" = :status`, { status: filter.status });
     if (filter.search) {
       // Escaped, unlike the analyzer's: a `_` in a search is a character, not a wildcard.
@@ -52,6 +52,14 @@ export class TypeOrmEndpointRepository implements EndpointRepositoryPort {
     const counts: Record<EndpointStatus, number> = { active: 0, archived: 0, inactive: 0 };
     for (const row of rows) counts[row.status] = Number(row.count);
     return counts;
+  }
+
+  countDeleted(projectId: string): Promise<number> {
+    return this.endpoints
+      .createQueryBuilder("endpoint")
+      .where(`endpoint."projectId" = :projectId`, { projectId })
+      .andWhere(`endpoint."deletedAt" IS NOT NULL`)
+      .getCount();
   }
 
   async listAll(projectId: string): Promise<Endpoint[]> {
@@ -102,6 +110,25 @@ export class TypeOrmEndpointRepository implements EndpointRepositoryPort {
     if (!ids.length) return 0;
     const result = await this.endpoints.update({ projectId, id: In(ids), deletedAt: IsNull() }, { deletedAt: at });
     // Postgres always reports affected rows for UPDATE/DELETE; the fallback only satisfies TypeORM's type.
+    /* node:coverage ignore next */
+    return result.affected ?? 0;
+  }
+
+  async restore(projectId: string, ids: string[], at: Date): Promise<number> {
+    if (!ids.length) return 0;
+    const result = await this.endpoints.update(
+      { projectId, id: In(ids), deletedAt: Not(IsNull()) },
+      // `updatedAt` se mueve porque la fila cambia de estado, y la lista ordena y enseña esa fecha.
+      { deletedAt: null, updatedAt: at },
+    );
+    /* node:coverage ignore next */
+    return result.affected ?? 0;
+  }
+
+  async purge(projectId: string, ids: string[]): Promise<number> {
+    if (!ids.length) return 0;
+    // Sus ejemplos se van por la cascada de la migración: un ejemplo sin su endpoint no es nada.
+    const result = await this.endpoints.delete({ projectId, id: In(ids), deletedAt: Not(IsNull()) });
     /* node:coverage ignore next */
     return result.affected ?? 0;
   }

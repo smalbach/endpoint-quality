@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Drawer } from "@/components/overlay";
+import { DeleteDialog } from "@/components/lifecycle";
 import { RunProgressView, useRunProgress } from "@/routes/runs";
 import { resolveActive, useActiveEnvironment } from "@/lib/active-environment";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -125,6 +126,8 @@ function WorkflowEditor({ projectId, workflowId }: { projectId: string; workflow
   // browser: it changes the rhythm and where it stops, never what is tested (see lib/run-settings).
   const [runSettings, setRunSettingsState] = useState<RunSettings>(DEFAULT_RUN_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** Si se está preguntando por borrar el flujo abierto. */
+  const [deletingFlow, setDeletingFlow] = useState(false);
 
   const enabled = Boolean(organization && projectId);
   const workflows = useQuery({
@@ -222,6 +225,21 @@ function WorkflowEditor({ projectId, workflowId }: { projectId: string; workflow
   const deleteWorkflow = useMutation({
     mutationFn: (workflowId: string) => api<void>(`${base}/workflows/${workflowId}`, { method: "DELETE" }),
     onSuccess: async () => {
+      setDeletingFlow(false);
+      await invalidate();
+      void navigate(listPath);
+    },
+  });
+  /**
+   * Archivar un flujo es **su estado**, no una fecha aparte: es lo que se exporta, lo que se
+   * compara entre bifurcaciones y lo que el selector de sub-flujos ya lee. Por eso la salida del
+   * diálogo de borrado escribe `status` y no llama a ninguna ruta nueva.
+   */
+  const archiveWorkflow = useMutation({
+    mutationFn: (workflowId: string) =>
+      api<void>(`${base}/workflows/${workflowId}`, { method: "PUT", body: { status: "archived" } }),
+    onSuccess: async () => {
+      setDeletingFlow(false);
       await invalidate();
       void navigate(listPath);
     },
@@ -290,6 +308,15 @@ function WorkflowEditor({ projectId, workflowId }: { projectId: string; workflow
     mutationFn: ({ id, rows }: { id: string; rows: Record<string, string>[] }) =>
       api<void>(`${base}/datasets/${id}`, { method: "PUT", body: { rows } }),
     onSuccess: invalidate,
+  });
+  const archiveDataset = useMutation({
+    mutationFn: (id: string) =>
+      api<void>(`${base}/datasets/${id}/archived`, { method: "PATCH", body: { archived: true } }),
+    onSuccess: async (_result, id) => {
+      // Archivado deja de ofrecerse al lanzar: si era el elegido, la corrida no puede recorrerlo.
+      if (datasetId === id) setDatasetId("");
+      await invalidate();
+    },
   });
   const deleteDataset = useMutation({
     mutationFn: (id: string) => api<void>(`${base}/datasets/${id}`, { method: "DELETE" }),
@@ -730,6 +757,7 @@ function WorkflowEditor({ projectId, workflowId }: { projectId: string; workflow
                   onCreate={(name) => createDataset.mutate(name)}
                   onSave={(id, rows) => saveDataset.mutate({ id, rows })}
                   onDelete={(id) => deleteDataset.mutate(id)}
+                  onArchive={(id) => archiveDataset.mutate(id)}
                   loadRows={async (id) => (await api<DatasetRowsView>(`${base}/datasets/${id}`)).rows}
                 />
               </Drawer>
@@ -773,7 +801,7 @@ function WorkflowEditor({ projectId, workflowId }: { projectId: string; workflow
                   onRunSettings={() => setSettingsOpen(true)}
                   runSummary={runSummary}
                   onRun={() => run.mutate()}
-                  onDelete={() => deleteWorkflow.mutate(draft.id)}
+                  onDelete={() => setDeletingFlow(true)}
                   running={run.isPending || Boolean(runProblem)}
                 />
               </Drawer>
@@ -781,6 +809,18 @@ function WorkflowEditor({ projectId, workflowId }: { projectId: string; workflow
           </>
         )}
       </div>
+
+      {deletingFlow && draft && (
+        <DeleteDialog
+          title="Eliminar el flujo"
+          message={`«${draft.name}» sale de la lista con su grafo y sus conjuntos de datos. Las corridas que ya lanzó se quedan donde están.`}
+          pending={deleteWorkflow.isPending || archiveWorkflow.isPending}
+          restoreHint="Se puede restaurar desde el filtro «Eliminados» de la lista de flujos."
+          onArchive={() => archiveWorkflow.mutate(draft.id)}
+          onConfirm={() => deleteWorkflow.mutate(draft.id)}
+          onClose={() => setDeletingFlow(false)}
+        />
+      )}
 
       {settingsOpen && draft && (
         <RunSettingsDialog

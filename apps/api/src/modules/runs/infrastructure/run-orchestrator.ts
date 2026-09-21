@@ -2288,5 +2288,7 @@ function channelOnlyFlow(run: Run): WorkflowRow {
     createdAt: run.startedAt,
     updatedAt: run.startedAt,
     updatedBy: run.triggeredBy,
+    // No es una fila de la base de datos: este flujo existe solo durante la corrida.
+    deletedAt: null,
   };
 }

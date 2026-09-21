@@ -59,6 +59,8 @@ const monitor = (patch: Partial<MonitorView & { recent: MonitorExecutionView[] }
   createdBy: "u1",
   scheduleLabel: "cada hora",
   recent: [execution()],
+  archivedAt: null,
+  deletedAt: null,
   ...patch,
 });
 
@@ -70,7 +72,9 @@ function answers(
   call.mockReset();
   call.mockImplementation((path: string, options?: { method?: string }) => {
     if (options?.method === "POST") return Promise.resolve(monitor());
-    if (path.endsWith("/monitors")) return Promise.resolve({ monitors: [monitor()], ...list });
+    // Con estado o sin él: la papelera se pide con `?state=deleted` y contesta la misma lista, que
+    // es lo que hace falta para comprobar qué se pide y qué botones salen en cada filtro.
+    if (path.includes("/monitors")) return Promise.resolve({ monitors: [monitor()], ...list });
     if (path.endsWith("/environments")) return Promise.resolve(environments);
     if (path.endsWith("/channels"))
       return Promise.resolve({ channels: [{ id: "c1", name: "eco", protocol: "ws", messages: [] }] });
@@ -400,12 +404,31 @@ describe("la pantalla de monitores", () => {
     });
   });
 
-  test("eliminar avisa de que el historial se va y las corridas se quedan", async () => {
+  test("eliminar avisa de que el horario y el historial se guardan, y ofrece archivar", async () => {
     answers();
     draw();
     await waitFor(() => expect(screen.getByText("Eliminar")).toBeTruthy());
     fireEvent.click(screen.getByText("Eliminar"));
-    await waitFor(() => expect(screen.getByText(/su historial se va con él/)).toBeTruthy());
-    expect(screen.getByText(/se quedan donde están/)).toBeTruthy();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/deja de correr en el acto/)).toBeTruthy();
+    expect(within(dialog).getByText(/al restaurarlo vuelve con los dos/)).toBeTruthy();
+    expect(within(dialog).getByText(/Se puede restaurar desde el filtro/)).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Archivar" })).toBeTruthy();
+  });
+
+  test("el filtro pide la papelera al servidor, y desde ahí se restaura", async () => {
+    answers();
+    draw();
+    await waitFor(() => expect(screen.getByText("producción")).toBeTruthy());
+    fireEvent.click(screen.getByRole("tab", { name: /Eliminados/ }));
+    await waitFor(() =>
+      expect(call.mock.calls.some(([path]) => String(path).includes("/monitors?state=deleted"))).toBe(true),
+    );
+    // El doble de la API contesta la misma lista para cualquier estado, así que la fila sigue ahí
+    // y lo que se comprueba es que la papelera se pide y que «Restaurar» llama a su ruta.
+    fireEvent.click((await screen.findAllByRole("button", { name: "Restaurar" }))[0]);
+    await waitFor(() =>
+      expect(call.mock.calls.some(([path]) => String(path).endsWith("/monitors/m1/restore"))).toBe(true),
+    );
   });
 });

@@ -22,6 +22,8 @@ import { DeleteCookiesHandler, ListCookiesHandler, SetCookieHandler } from "./ap
 import {
   CreateEnvironmentHandler,
   DeleteEnvironmentHandler,
+  RestoreEnvironmentHandler,
+  SetEnvironmentArchivedHandler,
   UpdateEnvironmentHandler,
 } from "./application/commands/manage-environment";
 import { DeleteCredentialHandler, UpsertCredentialHandler } from "./application/commands/manage-credential";
@@ -34,6 +36,8 @@ export const ENVIRONMENT_COMMAND_HANDLERS = [
   CreateEnvironmentHandler,
   UpdateEnvironmentHandler,
   DeleteEnvironmentHandler,
+  SetEnvironmentArchivedHandler,
+  RestoreEnvironmentHandler,
   ImportPostmanEnvironmentHandler,
   UpsertCredentialHandler,
   DeleteCredentialHandler,

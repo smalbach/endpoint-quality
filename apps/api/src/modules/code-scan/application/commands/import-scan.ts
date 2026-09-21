@@ -119,6 +119,8 @@ export class ImportScanHandler implements ICommandHandler<ImportScanCommand, Imp
           position: position++,
           createdAt: now,
           updatedAt: now,
+          archivedAt: null,
+          deletedAt: null,
         });
         rolesCreated += 1;
       }

@@ -3,6 +3,7 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { In, Repository } from "typeorm";
 
 import { RoleEntity, RolePermissionEntity, RoleRuleEntity } from "@/shared/database/entities";
+import { lifecycleSql, type LifecycleState } from "@/shared/lifecycle/lifecycle";
 import type { DataScope, PermissionChange, Role, RolePermission, RoleRule } from "../../domain/model";
 import type { RoleRepositoryPort } from "../../domain/ports";
 
@@ -14,10 +15,15 @@ export class TypeOrmRoleRepository implements RoleRepositoryPort {
     @InjectRepository(RoleRuleEntity) private readonly rules: Repository<RoleRuleEntity>,
   ) {}
 
-  async list(projectId: string): Promise<Role[]> {
-    return (await this.roles.find({ where: { projectId }, order: { position: "ASC", createdAt: "ASC" } })).map(
-      (row) => ({ ...row }),
-    );
+  async list(projectId: string, state: LifecycleState = "active"): Promise<Role[]> {
+    const rows = await this.roles
+      .createQueryBuilder("role")
+      .where("role.projectId = :projectId", { projectId })
+      .andWhere(lifecycleSql("role", state))
+      .orderBy("role.position", "ASC")
+      .addOrderBy('role."createdAt"', "ASC")
+      .getMany();
+    return rows.map((row) => ({ ...row }));
   }
   async findById(projectId: string, id: string): Promise<Role | null> {
     const row = await this.roles.findOne({ where: { projectId, id } });
@@ -64,6 +70,13 @@ export class TypeOrmRoleRepository implements RoleRepositoryPort {
     });
   }
 
+  /**
+   * Todas las filas, **sin filtrar por el estado de los roles**.
+   *
+   * El almacén cuenta lo que hay: una regla que nombra a un rol archivado, eliminado o inexistente
+   * es lo que la sincronización de bifurcaciones tiene que poder ver para decir que se la salta.
+   * Quien dibuja la pantalla es el que se queda solo con las de roles vivos.
+   */
   async listRules(projectId: string): Promise<RoleRule[]> {
     return (await this.rules.find({ where: { projectId } })).map((row) => ({ ...row }));
   }

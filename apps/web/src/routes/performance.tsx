@@ -11,6 +11,7 @@ import { useCan, useOrganization } from "@/lib/auth";
 import { resolveActive, useActiveEnvironment } from "@/lib/active-environment";
 import { Badge, Button, Card, Empty, Field, inputClass } from "@/components/ui";
 import { PromptDialog } from "@/components/overlay";
+import { DeleteDialog, LifecycleRowActions, LifecycleTabs, stateQuery } from "@/components/lifecycle";
 import { cn, formatDate } from "@/lib/format";
 import { PerformancePlanEditor } from "@/components/performance-plan-editor";
 import {
@@ -25,6 +26,7 @@ import {
 } from "@/lib/performance";
 import type {
   Environment,
+  LifecycleState,
   PerformanceComparisonView,
   PerformancePlanDefinitionView,
   PerformancePlanView,
@@ -49,12 +51,16 @@ export function PerformancePage() {
   const [environmentId, setEnvironmentId] = useState("");
   const [activeEnvironment, setActiveEnvironment] = useActiveEnvironment(projectId);
   const [naming, setNaming] = useState(false);
+  /** Qué lista de planes se está mirando: los que se usan, los archivados o la papelera. */
+  const [state, setState] = useState<LifecycleState>("active");
+  /** El plan al que se le está preguntando si se borra, y si es el definitivo. */
+  const [deleting, setDeleting] = useState<{ plan: PerformancePlanView; purge: boolean } | null>(null);
   const preselected = useRef(false);
 
   const plans = useQuery({
-    queryKey: ["perf-plans", projectId],
+    queryKey: ["perf-plans", projectId, state],
     enabled,
-    queryFn: () => api<PerformancePlanView[]>(`${base}/performance/plans`),
+    queryFn: () => api<PerformancePlanView[]>(`${base}/performance/plans${stateQuery(state)}`),
   });
   const environments = useQuery({
     queryKey: ["environments", projectId],
@@ -76,13 +82,23 @@ export function PerformancePage() {
   }, [environments.data, activeEnvironment]);
 
   const saved = plans.data?.find((plan) => plan.id === selectedId);
+  /**
+   * La selección sigue a la lista que se está mirando.
+   *
+   * Antes solo elegía uno cuando no había ninguno elegido, que bastaba con una sola lista. Con el
+   * filtro de estado la elección puede quedarse apuntando a un plan que ya no sale —se archivó, o
+   * se cambió de pestaña— y el editor seguiría enseñándolo: un formulario de algo que no está en
+   * la lista de al lado.
+   */
   useEffect(() => {
-    const first = plans.data?.[0];
-    if (!selectedId && first) setSelectedId(first.id);
+    const list = plans.data;
+    if (!list) return;
+    if (!list.some((plan) => plan.id === selectedId)) setSelectedId(list[0]?.id ?? "");
   }, [plans.data, selectedId]);
   useEffect(() => {
     if (saved) setDraft(structuredClone(saved));
-  }, [saved?.id, saved?.updatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+    else if (!selectedId) setDraft(null);
+  }, [saved?.id, saved?.updatedAt, selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["perf-plans", projectId] });
 
@@ -106,7 +122,27 @@ export function PerformancePage() {
     onSuccess: invalidate,
   });
   const deletePlan = useMutation({
-    mutationFn: (planId: string) => api<void>(`${base}/performance/plans/${planId}`, { method: "DELETE" }),
+    mutationFn: ({ planId, purge }: { planId: string; purge: boolean }) =>
+      api<void>(`${base}/performance/plans/${planId}${purge ? "?purge=true" : ""}`, { method: "DELETE" }),
+    onSuccess: async () => {
+      setDeleting(null);
+      setSelectedId("");
+      setDraft(null);
+      await invalidate();
+    },
+  });
+  const archivePlan = useMutation({
+    mutationFn: ({ planId, archived }: { planId: string; archived: boolean }) =>
+      api<void>(`${base}/performance/plans/${planId}/archived`, { method: "PATCH", body: { archived } }),
+    onSuccess: async () => {
+      setDeleting(null);
+      setSelectedId("");
+      setDraft(null);
+      await invalidate();
+    },
+  });
+  const restorePlan = useMutation({
+    mutationFn: (planId: string) => api<void>(`${base}/performance/plans/${planId}/restore`, { method: "POST" }),
     onSuccess: async () => {
       setSelectedId("");
       setDraft(null);
@@ -167,6 +203,24 @@ export function PerformancePage() {
               </Button>
             )}
           </div>
+          {deleting && (
+            <DeleteDialog
+              title="Eliminar el plan"
+              purge={deleting.purge}
+              name={deleting.purge ? deleting.plan.name : undefined}
+              message={
+                deleting.purge
+                  ? `Se va «${deleting.plan.name}» con sus escenarios y sus umbrales. Sus corridas se quedan: cada una guarda el plan como era.`
+                  : `«${deleting.plan.name}» sale de la lista de planes. Sus corridas pasadas no se tocan: cada una guarda el plan como era.`
+              }
+              pending={deletePlan.isPending || archivePlan.isPending}
+              onArchive={
+                deleting.purge ? undefined : () => archivePlan.mutate({ planId: deleting.plan.id, archived: true })
+              }
+              onConfirm={() => deletePlan.mutate({ planId: deleting.plan.id, purge: deleting.purge })}
+              onClose={() => setDeleting(null)}
+            />
+          )}
           {naming && (
             <PromptDialog
               title="Nuevo plan"
@@ -180,8 +234,13 @@ export function PerformancePage() {
               }}
             />
           )}
+          <LifecycleTabs className="mt-2" state={state} onState={setState} />
           <div className="mt-2 space-y-1">
-            {plans.data?.length === 0 && <p className="text-[11px] text-slate-400">Ninguno todavía.</p>}
+            {plans.data?.length === 0 && (
+              <p className="text-[11px] text-slate-400">
+                {state === "active" ? "Ninguno todavía." : state === "archived" ? "Ninguno archivado." : "Papelera vacía."}
+              </p>
+            )}
             {plans.data?.map((plan) => (
               <button
                 key={plan.id}
@@ -229,9 +288,14 @@ export function PerformancePage() {
               <PerformancePlanEditor definition={draft.definition} canEdit={canEdit} onChange={setDefinition} />
               {canEdit && (
                 <div className="flex justify-end border-t border-slate-100 pt-3">
-                  <Button variant="danger" className="h-8 px-3 text-xs" onClick={() => deletePlan.mutate(draft.id)}>
-                    Eliminar plan
-                  </Button>
+                  <LifecycleRowActions
+                    state={state}
+                    pending={archivePlan.isPending || restorePlan.isPending || deletePlan.isPending}
+                    onArchive={(archived) => archivePlan.mutate({ planId: draft.id, archived })}
+                    onRestore={() => restorePlan.mutate(draft.id)}
+                    onDelete={() => setDeleting({ plan: draft, purge: false })}
+                    onPurge={() => setDeleting({ plan: draft, purge: true })}
+                  />
                 </div>
               )}
             </div>

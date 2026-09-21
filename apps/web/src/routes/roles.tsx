@@ -5,7 +5,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { useCan, useOrganization } from "@/lib/auth";
 import { Badge, Button, Card, inputClass } from "@/components/ui";
-import { ConfirmDialog, Modal } from "@/components/overlay";
+import { Modal } from "@/components/overlay";
+import { DeleteDialog, LifecycleRowActions, LifecycleTabs, stateQuery } from "@/components/lifecycle";
 import { useToast } from "@/components/toast";
 import { SectionEditor } from "@/routes/config";
 import { buildEndpointTree, endpointIdsOf, type EndpointFolder } from "@/lib/endpoint-tree";
@@ -32,6 +33,7 @@ import type {
   EndpointPage,
   EndpointView,
   Environment,
+  LifecycleState,
   RoleAccess,
   RolePermissionView,
   RoleRuleView,
@@ -56,10 +58,12 @@ export function RolesPage() {
   const base = `/orgs/${organization?.id}/projects/${projectId}`;
   const enabled = Boolean(organization && projectId);
 
+  /** Qué lista se está mirando: los roles en uso, los archivados o la papelera. */
+  const [state, setState] = useState<LifecycleState>("active");
   const roles = useQuery({
-    queryKey: ["roles", projectId],
+    queryKey: ["roles", projectId, state],
     enabled,
-    queryFn: () => api<RoleView[]>(`${base}/roles`),
+    queryFn: () => api<RoleView[]>(`${base}/roles${stateQuery(state)}`),
   });
   const list = useMemo(() => roles.data ?? [], [roles.data]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -69,7 +73,7 @@ export function RolesPage() {
   }, [list, selected]);
 
   const [editing, setEditing] = useState<RoleView | "new" | null>(null);
-  const [deleting, setDeleting] = useState<RoleView | null>(null);
+  const [deleting, setDeleting] = useState<{ role: RoleView; purge: boolean } | null>(null);
   const invalidate = () =>
     Promise.all([
       queryClient.invalidateQueries({ queryKey: ["roles", projectId] }),
@@ -79,11 +83,32 @@ export function RolesPage() {
     ]);
 
   const remove = useMutation({
-    mutationFn: (role: RoleView) => api<void>(`${base}/roles/${role.id}`, { method: "DELETE" }),
-    onSuccess: async (_, role) => {
+    mutationFn: ({ role, purge }: { role: RoleView; purge: boolean }) =>
+      api<void>(`${base}/roles/${role.id}${purge ? "?purge=true" : ""}`, { method: "DELETE" }),
+    onSuccess: async (_, { role, purge }) => {
       setDeleting(null);
       await invalidate();
-      toast.success(`Rol «${role.name}» eliminado`);
+      toast.success(purge ? `Rol «${role.name}» eliminado para siempre` : `Rol «${role.name}» eliminado`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const archive = useMutation({
+    mutationFn: ({ role, archived }: { role: RoleView; archived: boolean }) =>
+      api<void>(`${base}/roles/${role.id}/archived`, { method: "PATCH", body: { archived } }),
+    onSuccess: async (_, { role, archived }) => {
+      setDeleting(null);
+      await invalidate();
+      toast.success(archived ? `Rol «${role.name}» archivado` : `Rol «${role.name}» desarchivado`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const restore = useMutation({
+    mutationFn: (role: RoleView) => api<void>(`${base}/roles/${role.id}/restore`, { method: "POST" }),
+    onSuccess: async (_, role) => {
+      await invalidate();
+      toast.success(`Rol «${role.name}» restaurado, con la matriz que tenía`);
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -114,10 +139,15 @@ export function RolesPage() {
               </button>
             )}
           </div>
+          <LifecycleTabs state={state} onState={setState} />
           {roles.isLoading && <p className="px-1 text-xs text-slate-500">Cargando…</p>}
           {!roles.isLoading && list.length === 0 && (
             <p className="rounded-xl border border-dashed border-slate-200 px-3 py-6 text-center text-xs text-slate-500">
-              Sin roles. Añade los de tu API —vendedor, comprador, admin…— para decidir qué alcanza cada uno.
+              {state === "active"
+                ? "Sin roles. Añade los de tu API —vendedor, comprador, admin…— para decidir qué alcanza cada uno."
+                : state === "archived"
+                  ? "Ningún rol archivado. Archivar uno lo saca de la matriz sin perder sus celdas."
+                  : "Papelera vacía. Lo que se elimina aquí vuelve con sus permisos y sus reglas."}
             </p>
           )}
           {list.map((role) => (
@@ -166,15 +196,14 @@ export function RolesPage() {
                     </button>
                   )}
                   {canAdmin && (
-                    <button
-                      className="text-rose-600 hover:text-rose-700"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setDeleting(role);
-                      }}
-                    >
-                      Eliminar
-                    </button>
+                    <LifecycleRowActions
+                      state={state}
+                      pending={archive.isPending || restore.isPending || remove.isPending}
+                      onArchive={(archived) => archive.mutate({ role, archived })}
+                      onRestore={() => restore.mutate(role)}
+                      onDelete={() => setDeleting({ role, purge: false })}
+                      onPurge={() => setDeleting({ role, purge: true })}
+                    />
                   )}
                 </span>
               </div>
@@ -220,11 +249,18 @@ export function RolesPage() {
         />
       )}
       {deleting && (
-        <ConfirmDialog
+        <DeleteDialog
           title="Eliminar rol"
-          message={`«${deleting.name}» se elimina con sus permisos, sus reglas y la credencial que tenga en cada entorno. No se puede deshacer.`}
-          pending={remove.isPending}
-          onConfirm={() => remove.mutate(deleting)}
+          purge={deleting.purge}
+          name={deleting.purge ? deleting.role.name : undefined}
+          message={
+            deleting.purge
+              ? `Se va «${deleting.role.name}» con sus permisos, sus reglas y la credencial que tenga en cada entorno. Esas credenciales cifradas no se pueden recuperar.`
+              : `«${deleting.role.name}» sale de la matriz y de las reglas entre roles. Sus celdas decididas y su credencial en cada entorno se guardan: al restaurarlo vuelve la matriz que se decidió con él.`
+          }
+          pending={remove.isPending || archive.isPending}
+          onArchive={deleting.purge ? undefined : () => archive.mutate({ role: deleting.role, archived: true })}
+          onConfirm={() => remove.mutate({ role: deleting.role, purge: deleting.purge })}
           onClose={() => setDeleting(null)}
         />
       )}

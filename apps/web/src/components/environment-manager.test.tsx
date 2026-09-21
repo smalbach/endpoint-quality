@@ -7,7 +7,7 @@
  * que lo que no puede un lector (editar, crear, eliminar, ver secretos) ni se le ofrece.
  */
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
@@ -40,6 +40,8 @@ const environment = (id: string, name: string, active: boolean): Environment => 
   authEnforced: false,
   active,
   credentials: [],
+  archivedAt: null,
+  deletedAt: null,
 });
 
 let environments: Environment[];
@@ -171,10 +173,38 @@ describe("la lista de entornos", () => {
     mount();
     await screen.findByText("local");
     fireEvent.click(screen.getAllByRole("button", { name: "Eliminar" })[1]);
-    expect(screen.getByText(/«staging» se elimina/)).toBeDefined();
+    expect(screen.getByText(/«staging» sale del selector/)).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
-    expect(screen.queryByText(/«staging» se elimina/)).toBeNull();
+    expect(screen.queryByText(/«staging» sale del selector/)).toBeNull();
     expect(call.mock.calls.some(([, options]) => options?.method === "DELETE")).toBe(false);
+  });
+
+  test("archivar desde el panel rápido lo saca del selector y manda aquí a por la papelera", async () => {
+    mount();
+    await screen.findByText("local");
+    fireEvent.click(screen.getAllByRole("button", { name: "Eliminar" })[1]);
+    // El panel entero es un diálogo, así que el de la confirmación es el último que se abre.
+    const dialog = within(screen.getAllByRole("dialog").at(-1)!);
+    expect(dialog.getByText(/Se puede restaurar desde el filtro/)).toBeTruthy();
+    fireEvent.click(dialog.getByRole("button", { name: "Archivar" }));
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith("/orgs/o/projects/p/environments/b/archived", {
+        method: "PATCH",
+        body: { archived: true },
+      }),
+    );
+    expect(await screen.findByText("Entorno «staging» archivado")).toBeTruthy();
+  });
+
+  test("un fallo al archivar se dice", async () => {
+    mount();
+    onPatch = () => {
+      throw new Error("Tiene monitores");
+    };
+    await screen.findByText("local");
+    fireEvent.click(screen.getAllByRole("button", { name: "Eliminar" })[1]);
+    fireEvent.click(within(screen.getAllByRole("dialog").at(-1)!).getByRole("button", { name: "Archivar" }));
+    expect(await screen.findByText("Tiene monitores")).toBeTruthy();
   });
 
   test("Cancelar y Escape cierran el formulario sin crear nada", async () => {

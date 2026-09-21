@@ -1,3 +1,4 @@
+import type { LifecycleState } from "@/shared/lifecycle/lifecycle";
 import type { PerformancePlanRow, PerformanceRun } from "./model";
 
 export const PERFORMANCE_PLAN_REPOSITORY = Symbol("PERFORMANCE_PLAN_REPOSITORY");
@@ -9,10 +10,17 @@ export const PERFORMANCE_RUN_QUEUE = Symbol("PERFORMANCE_RUN_QUEUE");
  * the workflows repository follows, so «run plan X» cannot reach another tenant's plan by id alone.
  */
 export interface PerformancePlanRepositoryPort {
-  list(projectId: string): Promise<PerformancePlanRow[]>;
+  /** Los de ese estado. Sin estado, los activos. */
+  list(projectId: string, state?: LifecycleState): Promise<PerformancePlanRow[]>;
+  /** Por id **en cualquier estado**: restaurar uno borrado empieza por encontrarlo. */
   find(projectId: string, planId: string): Promise<PerformancePlanRow | null>;
+  /**
+   * Por nombre, **solo entre los vivos**: el nombre de un plan eliminado queda libre, igual que
+   * pasa con un endpoint borrado. Si no, la papelera bloquearía nombres que nadie usa.
+   */
   findByName(projectId: string, name: string): Promise<PerformancePlanRow | null>;
   save(row: PerformancePlanRow): Promise<void>;
+  /** El borrado de verdad. Solo lo llama «eliminar para siempre». */
   delete(projectId: string, planId: string): Promise<void>;
 }
 

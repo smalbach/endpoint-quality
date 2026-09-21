@@ -20,7 +20,9 @@ import { MonitorFirer } from "./application/commands/fire-monitor";
 import {
   CreateMonitorHandler,
   DeleteMonitorHandler,
+  RestoreMonitorHandler,
   RunMonitorNowHandler,
+  SetMonitorArchivedHandler,
   UpdateMonitorHandler,
 } from "./application/commands/manage-monitors";
 import { FireDueMonitorsHandler } from "./application/commands/fire-due-monitors";
@@ -32,6 +34,8 @@ export const MONITOR_COMMAND_HANDLERS = [
   CreateMonitorHandler,
   UpdateMonitorHandler,
   DeleteMonitorHandler,
+  SetMonitorArchivedHandler,
+  RestoreMonitorHandler,
   RunMonitorNowHandler,
   FireDueMonitorsHandler,
 ];

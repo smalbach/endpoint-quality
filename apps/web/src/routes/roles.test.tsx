@@ -50,6 +50,8 @@ const role = (patch: Partial<RoleView>): RoleView => ({
   updatedAt: "2026-03-01T10:00:00.000Z",
   allowed: 1,
   denied: 0,
+  archivedAt: null,
+  deletedAt: null,
   ...patch,
 });
 
@@ -67,6 +69,7 @@ const endpoints: EndpointPage = {
   ],
   meta: { page: 1, limit: 500, total: 3, totalPages: 1 },
   counts: { active: 1, inactive: 1, archived: 1 } as EndpointPage["counts"],
+  deleted: 0,
   hasContract: true,
 };
 
@@ -81,6 +84,8 @@ const envs: Environment[] = [
     writesAllowed: true,
     authEnforced: true,
     active: true,
+    archivedAt: null,
+    deletedAt: null,
     credentials: [
       {
         id: "c1",
@@ -300,7 +305,7 @@ describe("RolesPage", () => {
     await screen.findByText("Gestiona su catálogo");
     fireEvent.click(within(roleCard("comprador")).getByRole("button", { name: "Eliminar" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText(/«comprador» se elimina con sus permisos/)).toBeTruthy();
+    expect(within(dialog).getByText(/«comprador» sale de la matriz/)).toBeTruthy();
     expect(call).not.toHaveBeenCalledWith(expect.anything(), { method: "DELETE" });
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Eliminar" }));

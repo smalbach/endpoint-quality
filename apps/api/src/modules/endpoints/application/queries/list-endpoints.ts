@@ -12,7 +12,19 @@ import { ENDPOINT_REPOSITORY, type EndpointRepositoryPort } from "../../domain/p
 export const DEFAULT_PAGE_SIZE = 100;
 export const MAX_PAGE_SIZE = 500;
 
-export type EndpointListFilter = { status?: EndpointStatus | "all"; search?: string; page?: number; limit?: number };
+export type EndpointListFilter = {
+  status?: EndpointStatus | "all";
+  search?: string;
+  /**
+   * `deleted` enseña la papelera; cualquier otra cosa, los vivos.
+   *
+   * No hay `archived` aquí porque para un endpoint archivar **es** su `status`, y ese ya viaja en
+   * `status`: dos maneras de pedir lo mismo acabarían contradiciéndose.
+   */
+  state?: "active" | "deleted";
+  page?: number;
+  limit?: number;
+};
 
 export class ListEndpointsQuery implements IQuery {
   constructor(
@@ -35,6 +47,8 @@ export type EndpointPage = {
   meta: { page: number; limit: number; total: number; totalPages: number };
   /** Per status, whatever the filter: what the segmented control shows next to each option. */
   counts: Record<EndpointStatus, number>;
+  /** Cuántos hay en la papelera, para el mismo control. */
+  deleted: number;
   /** Whether the project has an active contract to compare the rows with. */
   hasContract: boolean;
 };
@@ -63,20 +77,26 @@ export class ListEndpointsHandler implements IQueryHandler<ListEndpointsQuery, E
     const project = await ownedProject(this.projects, query.organizationId, query.projectId);
     const page = Math.max(1, Math.floor(query.filter.page ?? 1));
     const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(query.filter.limit ?? DEFAULT_PAGE_SIZE)));
-    const [{ rows, total }, counts, keys] = await Promise.all([
+    const deleted = query.filter.state === "deleted";
+    const [{ rows, total }, counts, deletedCount, keys] = await Promise.all([
       this.endpoints.list(project.id, {
-        status: query.filter.status ?? "active",
+        // En la papelera el estado no filtra: lo que se quiere ver es todo lo borrado, y si el
+        // control se hubiera quedado en «Activos» la lista saldría vacía sin decir por qué.
+        status: deleted ? "all" : query.filter.status ?? "active",
         search: query.filter.search?.trim() ?? "",
+        deleted,
         offset: (page - 1) * limit,
         limit,
       }),
       this.endpoints.counts(project.id),
+      this.endpoints.countDeleted(project.id),
       contractKeysOf(this.specs, project),
     ]);
     return {
       data: rows.map((row) => viewEndpoint(row, keys)),
       meta: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
       counts,
+      deleted: deletedCount,
       hasContract: keys !== null,
     };
   }

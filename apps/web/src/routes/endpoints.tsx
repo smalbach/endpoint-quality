@@ -46,7 +46,11 @@ export function EndpointsPage() {
     placeholderData: keepPreviousData,
     queryFn: () =>
       api<EndpointPage>(
-        `${base}/endpoints?status=${status}&page=${page}&limit=100${search ? `&search=${encodeURIComponent(search)}` : ""}`,
+        // `deleted` es otra lista, no otro estado: la papelera la contesta el servidor aparte, y
+        // ahí el filtro de estado no se manda porque lo que se quiere ver es todo lo borrado.
+        `${base}/endpoints?${status === "deleted" ? "state=deleted" : `status=${status}`}&page=${page}&limit=100${
+          search ? `&search=${encodeURIComponent(search)}` : ""
+        }`,
       ),
   });
 

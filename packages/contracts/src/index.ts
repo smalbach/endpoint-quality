@@ -21,6 +21,20 @@
 // Identity and access
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * El ciclo de vida que comparten los recursos de un proyecto.
+ *
+ * Tres estados y dos fechas: archivado y eliminado son hechos distintos que conviven, así que la
+ * pantalla deriva el estado de las fechas en vez de recibir una columna que ya eligió por ella.
+ * El razonamiento entero está en `apps/api/src/shared/lifecycle/lifecycle.ts`.
+ */
+export type LifecycleState = "active" | "archived" | "deleted";
+
+/** Las dos fechas, para mezclar en la vista de cada recurso. */
+export type LifecycleOf<T> = { archivedAt: T | null; deletedAt: T | null };
+
+export type Lifecycle = LifecycleOf<string>;
+
 /** Ordered by capability, and compared as such: `viewer < editor < admin < owner`. */
 export type Role = "viewer" | "editor" | "admin" | "owner";
 
@@ -167,7 +181,7 @@ export type EnvironmentVariableView = { initial: string; current: string; sensit
  */
 export type MaskedValue = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
 
-export type EnvironmentSummaryOf<T> = {
+export type EnvironmentSummaryOf<T> = LifecycleOf<T> & {
   id: string;
   name: string;
   baseUrl: string;
@@ -560,9 +574,12 @@ export type WorkflowViewOf<T> = {
   id: string;
   name: string;
   description: string | null;
+  /** `draft`, `ready` o `archived`: para un flujo, archivar **es** su estado. */
   status: WorkflowStatusView;
   steps: WorkflowStepView[];
   updatedAt: T;
+  /** Cuándo se eliminó, si está en la papelera. Archivar no está aquí: es `status`. */
+  deletedAt: T | null;
 };
 
 /** Both lists together: a node cannot be drawn without the request its step names. */
@@ -573,7 +590,7 @@ export type WorkflowViewOf<T> = {
  * download nobody asked for, and the list is not where they are read — they arrive with the
  * dataset when somebody opens it.
  */
-export type DatasetViewOf<T> = {
+export type DatasetViewOf<T> = LifecycleOf<T> & {
   id: string;
   workflowId: string;
   name: string;
@@ -587,7 +604,7 @@ export type DatasetViewOf<T> = {
 export type DatasetRowsView = { id: string; name: string; rows: Record<string, string>[] };
 
 /** An ordered list of flows run as one, with one verdict in the history. */
-export type SuiteViewOf<T> = {
+export type SuiteViewOf<T> = LifecycleOf<T> & {
   id: string;
   name: string;
   description: string | null;
@@ -948,6 +965,8 @@ export type EndpointPageOf<T> = {
   data: EndpointViewOf<T>[];
   meta: { page: number; limit: number; total: number; totalPages: number };
   counts: Record<EndpointStatus, number>;
+  /** Cuántos hay en la papelera, para el mismo control segmentado. */
+  deleted: number;
   hasContract: boolean;
 };
 
@@ -993,7 +1012,7 @@ export type ImportedItemResult = {
   reason: string | null;
   /** What each destination did. Empty on a dry run, and empty for an unreadable item. */
   results: {
-    target: "contract" | "endpoints" | "flows" | "environment" | "project";
+    target: "contract" | "endpoints" | "collections" | "flows" | "environment" | "project";
     name: string;
     /** What it did, in one line, or null when it failed. */
     summary: string | null;
@@ -1008,6 +1027,8 @@ export type ImportedItemResult = {
      * screen already knows how to reach — a contract, an environment.
      */
     endpoints?: { id: string; method: string; path: string }[];
+    /** La colección que se acaba de crear o actualizar, para poder abrirla desde el resumen. */
+    collectionId?: string;
   }[];
 };
 
@@ -1192,6 +1213,14 @@ export type SentRequestView = {
   /** Set when this request captured a session token, and how. */
   sessionToken: "login" | "script" | null;
   /**
+   * Lo que los scripts dejaron escrito en `pm.variables` / `pm.collectionVariables`.
+   *
+   * Desde el editor no lo lee nadie: una petición suelta empieza y acaba en sí misma. Lo lee el
+   * runner de una colección, que se lo pasa a la siguiente petición — que es lo que hace que la
+   * cadena «crear, leer lo creado, borrarlo» de una colección de verdad funcione.
+   */
+  variables: Record<string, string>;
+  /**
    * Qué cookies se presentaron, qué se guardó de la respuesta, y qué no se guardó y por qué.
    *
    * Lo rechazado se enseña. Una cookie que el servidor puso para otro dominio no se guarda, y sin
@@ -1199,6 +1228,170 @@ export type SentRequestView = {
    */
   cookies: { sent: string[]; stored: string[]; rejected: { line: string; why: string }[] };
 };
+
+// ---------------------------------------------------------------------------------------------
+// Colecciones: lo que Postman llama colección, guardado como lo guarda Postman
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Una colección: un árbol de carpetas cuyas hojas son peticiones, con su autenticación, sus
+ * variables y sus scripts.
+ *
+ * **Es la forma del fichero, no una traducción de ella.** Una colección de Postman es un árbol
+ * ordenado que se corre de arriba abajo, y eso fue exactamente lo que este producto no tenía
+ * cuando importaba una: el árbol se partía en flujos —un grafo por carpeta— y lo que volvía a
+ * exportarse ya no era la colección de nadie. Guardar el árbol tal cual es lo que hace que
+ * importar, editar y volver a exportar sea la misma colección.
+ *
+ * Los campos de una petición son los mismos que los de un endpoint —`EndpointBodyView`,
+ * `EndpointHeaderView`, `RequestAuthView`— a propósito: el editor de peticiones que ya existe es
+ * el que las edita, y dos formas distintas para «una petición» serían dos editores libres de
+ * discrepar.
+ */
+export type CollectionVariableView = { key: string; value: string; enabled: boolean };
+
+/** Lo que una petición de una colección manda. La URL va cruda, con sus `{{variables}}`. */
+export type CollectionRequestView = {
+  method: EndpointMethod;
+  /** `{{baseUrl}}/v1/products`, `/v1/products` o una URL entera: lo que Postman guarda en `url.raw`. */
+  url: string;
+  pathParameters: EndpointPathParameterView[];
+  query: EndpointQueryParameterView[];
+  headers: EndpointHeaderView[];
+  body: EndpointBodyView;
+  auth: RequestAuthView;
+};
+
+export type CollectionItemKind = "folder" | "request";
+
+/**
+ * Un nodo del árbol. Una carpeta tiene `items` y no `request`; una petición, al revés.
+ *
+ * Los scripts viven en los dos: Postman corre el `prerequest` de cada carpeta que contiene la
+ * petición antes del de la petición, y los `test` después, y una carpeta sin sus scripts es una
+ * colección que asegura menos cosas de las que aseguraba.
+ */
+export type CollectionItemView = {
+  id: string;
+  kind: CollectionItemKind;
+  name: string;
+  description: string;
+  preRequestScript: string;
+  postResponseScript: string;
+  /**
+   * La de la carpeta, que es la que heredan las peticiones de dentro. Null en una petición: la
+   * suya vive en `request.auth`, que es donde la edita el editor de peticiones.
+   *
+   * `inherit` es «la de arriba» y es distinto de `none`, que es «esta carpeta no se autentica
+   * aunque la colección sí». Guardar las dos igual borraría una decisión.
+   */
+  auth: RequestAuthView | null;
+  /** Null en una carpeta. */
+  request: CollectionRequestView | null;
+  /** Vacío en una petición. */
+  items: CollectionItemView[];
+};
+
+export type CollectionViewOf<T> = {
+  id: string;
+  projectId: string;
+  name: string;
+  description: string;
+  /** La de la colección: lo que heredan las peticiones que dicen `inherit`. */
+  auth: RequestAuthView;
+  variables: CollectionVariableView[];
+  preRequestScript: string;
+  postResponseScript: string;
+  items: CollectionItemView[];
+  requests: number;
+  folders: number;
+  createdAt: T;
+  updatedAt: T;
+};
+
+/** La lista: lo que hay dentro, contado, y cómo acabó la última corrida. */
+export type CollectionSummaryOf<T> = {
+  id: string;
+  name: string;
+  description: string;
+  requests: number;
+  folders: number;
+  updatedAt: T;
+  lastRun: { id: string; status: CollectionRunStatus; startedAt: T; failed: number } | null;
+};
+
+export type CollectionRunStatus = "running" | "passed" | "failed" | "cancelled" | "error";
+
+/** Un `pm.test` y cómo acabó. */
+export type CollectionTestView = { name: string; passed: boolean; message: string | null };
+
+/** Una petición de una vuelta de la corrida, con lo que sus tests dijeron. */
+export type CollectionRunResultView = {
+  /** Desde 1. Una colección corrida tres veces trae las tres. */
+  iteration: number;
+  itemId: string;
+  name: string;
+  /** La carpeta que la contiene, con `/` entre niveles. Vacío en la raíz. */
+  folder: string;
+  method: string;
+  url: string;
+  /** Null cuando no hubo respuesta: el destino no contestó, o el script previo falló. */
+  status: number | null;
+  durationMs: number;
+  sizeBytes: number;
+  tests: CollectionTestView[];
+  /** Por qué no hubo respuesta, o por qué falló un script. */
+  error: string | null;
+  logs: { level: "log" | "info" | "warn" | "error"; text: string }[];
+};
+
+export type CollectionRunTotals = {
+  requests: number;
+  /** Peticiones con algún test rojo o sin respuesta. */
+  failed: number;
+  tests: number;
+  testsPassed: number;
+  testsFailed: number;
+};
+
+export type CollectionRunOf<T> = {
+  id: string;
+  collectionId: string;
+  collectionName: string;
+  environmentId: string | null;
+  environmentName: string | null;
+  status: CollectionRunStatus;
+  iterations: number;
+  delayMs: number;
+  stopOnFailure: boolean;
+  /** Qué se corrió: una carpeta, o la colección entera cuando es null. */
+  folderId: string | null;
+  folderName: string | null;
+  totals: CollectionRunTotals;
+  startedAt: T;
+  finishedAt: T | null;
+  error: string | null;
+};
+
+export type CollectionRunViewOf<T> = CollectionRunOf<T> & { results: CollectionRunResultView[] };
+
+/**
+ * Lo que contesta importar una colección de Postman.
+ *
+ * Cuenta lo que entró y dice con palabras lo que necesita a una persona: una petición sin URL, un
+ * cuerpo de un tipo que aquí no existe, una autenticación que el fichero no trae entera.
+ */
+export type PostmanCollectionImportResult = {
+  id: string;
+  name: string;
+  /** Si ya había una colección con ese nombre. Importar la misma dos veces la actualiza. */
+  action: "created" | "updated";
+  folders: number;
+  requests: number;
+  skipped: { name: string; method: string; url: string; reason: string }[];
+  notes: string[];
+};
+
 
 /**
  * Un ejemplo guardado de un endpoint, como sale de la API.
@@ -1255,7 +1448,7 @@ export type SavedExampleView = {
  * Sin `apiKeyHash`: no hace falta para nada en el navegador y es lo único secreto que hay. La clave
  * en claro solo aparece en la respuesta de crearlo o de rotarla, y no vuelve a salir nunca.
  */
-export type MockServerView = {
+export type MockServerView = Lifecycle & {
   id: string;
   name: string;
   /** El segmento opaco de la URL: `<prefix>/<publicId>/...`. */
@@ -1326,7 +1519,7 @@ export type MockCallListView = {
  * Sin `apiKeyHash`, como el mock y por lo mismo. La clave en claro solo aparece al crearlo o al
  * rotarla, y no vuelve a salir nunca.
  */
-export type DocSiteView = {
+export type DocSiteView = Lifecycle & {
   id: string;
   name: string;
   /** El segmento opaco de la URL pública: `/docs/<publicId>`. */
@@ -1512,7 +1705,7 @@ export type MonitorView = {
   createdBy: string;
   /** Cómo se lee el horario, escrito por el servidor. */
   scheduleLabel: string;
-};
+} & Lifecycle;
 
 export type MonitorListView = { monitors: (MonitorView & { recent: MonitorExecutionView[] })[] };
 
@@ -1602,7 +1795,7 @@ export type SocketIoSettingsView = {
   transports: ("websocket" | "polling")[];
 };
 
-export type ChannelView = {
+export type ChannelView = Lifecycle & {
   id: string;
   protocol: "ws" | "mqtt" | "grpc" | "socketio";
   name: string;
@@ -1736,7 +1929,7 @@ export type DataScope = "all" | "own" | "none";
 /** A missing permission is `undecided`: it generates no case, and the screen says so. */
 export type RoleAccess = "allow" | "deny" | "undecided";
 
-export type RoleViewOf<T> = {
+export type RoleViewOf<T> = LifecycleOf<T> & {
   id: string;
   name: string;
   description: string;
@@ -1933,7 +2126,7 @@ export type PerformancePlanDefinitionView = {
   thresholds: PerformanceThresholdsView;
 };
 
-export type PerformancePlanViewOf<T> = {
+export type PerformancePlanViewOf<T> = LifecycleOf<T> & {
   id: string;
   name: string;
   description: string | null;
@@ -2367,6 +2560,10 @@ export type EndpointPage = EndpointPageOf<string>;
 export type PerformancePlanView = PerformancePlanViewOf<string>;
 export type PerformanceRunSummaryView = PerformanceRunSummaryViewOf<string>;
 export type PerformanceRunDetailView = PerformanceRunDetailViewOf<string>;
+export type CollectionView = CollectionViewOf<string>;
+export type CollectionSummary = CollectionSummaryOf<string>;
+export type CollectionRun = CollectionRunOf<string>;
+export type CollectionRunView = CollectionRunViewOf<string>;
 export type PerformanceComparisonRunView = PerformanceComparisonRunViewOf<string>;
 export type PerformanceComparisonView = PerformanceComparisonViewOf<string>;
 export type CodeScanSummaryView = CodeScanSummaryViewOf<string>;

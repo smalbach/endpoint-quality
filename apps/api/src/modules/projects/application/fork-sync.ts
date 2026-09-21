@@ -910,6 +910,9 @@ class PlanBuilder {
         writesAllowed: current?.writesAllowed ?? false,
         authEnforced: current?.authEnforced ?? false,
         createdAt: current?.createdAt ?? this.now,
+        // El estado es del destino: sincronizar no desarchiva ni resucita lo que allí se apartó.
+        archivedAt: current?.archivedAt ?? null,
+        deletedAt: current?.deletedAt ?? null,
       };
     });
   }

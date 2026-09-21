@@ -3,6 +3,7 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 
 import { DocSiteEntity } from "@/shared/database/entities";
+import { lifecycleSql, type LifecycleState } from "@/shared/lifecycle/lifecycle";
 import type { DocSite } from "../../domain/model";
 import type { DocSiteRepositoryPort } from "../../domain/ports";
 
@@ -12,8 +13,13 @@ const toSite = (row: DocSiteEntity): DocSite => row as unknown as DocSite;
 export class TypeOrmDocSiteRepository implements DocSiteRepositoryPort {
   constructor(@InjectRepository(DocSiteEntity) private readonly sites: Repository<DocSiteEntity>) {}
 
-  async listByProject(projectId: string): Promise<DocSite[]> {
-    const rows = await this.sites.find({ where: { projectId }, order: { createdAt: "ASC" } });
+  async listByProject(projectId: string, state: LifecycleState = "active"): Promise<DocSite[]> {
+    const rows = await this.sites
+      .createQueryBuilder("site")
+      .where("site.projectId = :projectId", { projectId })
+      .andWhere(lifecycleSql("site", state))
+      .orderBy('site."createdAt"', "ASC")
+      .getMany();
     return rows.map(toSite);
   }
 
@@ -23,7 +29,11 @@ export class TypeOrmDocSiteRepository implements DocSiteRepositoryPort {
   }
 
   async findByPublicId(publicId: string): Promise<DocSite | null> {
-    const row = await this.sites.findOne({ where: { publicId } });
+    const row = await this.sites
+      .createQueryBuilder("site")
+      .where("site.publicId = :publicId", { publicId })
+      .andWhere(lifecycleSql("site", "active"))
+      .getOne();
     return row ? toSite(row) : null;
   }
 

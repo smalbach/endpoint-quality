@@ -18,6 +18,8 @@ const role = (id: string, name: string, position: number): Role => ({
   position,
   createdAt: new Date(0),
   updatedAt: new Date(0),
+  archivedAt: null,
+  deletedAt: null,
 });
 
 describe("el nombre de un rol", () => {

@@ -3,6 +3,7 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 
 import { MockCallEntity, MockServerEntity } from "@/shared/database/entities";
+import { lifecycleSql, type LifecycleState } from "@/shared/lifecycle/lifecycle";
 import type { MockCall } from "../../domain/mock-call";
 import type { MockServer } from "../../domain/model";
 import type { MockRepositoryPort } from "../../domain/ports";
@@ -17,8 +18,13 @@ export class TypeOrmMockRepository implements MockRepositoryPort {
     @InjectRepository(MockCallEntity) private readonly calls: Repository<MockCallEntity>,
   ) {}
 
-  async listByProject(projectId: string): Promise<MockServer[]> {
-    const rows = await this.mocks.find({ where: { projectId }, order: { createdAt: "ASC" } });
+  async listByProject(projectId: string, state: LifecycleState = "active"): Promise<MockServer[]> {
+    const rows = await this.mocks
+      .createQueryBuilder("mock")
+      .where("mock.projectId = :projectId", { projectId })
+      .andWhere(lifecycleSql("mock", state))
+      .orderBy('mock."createdAt"', "ASC")
+      .getMany();
     return rows.map(toMock);
   }
 
@@ -28,7 +34,11 @@ export class TypeOrmMockRepository implements MockRepositoryPort {
   }
 
   async findByPublicId(publicId: string): Promise<MockServer | null> {
-    const row = await this.mocks.findOne({ where: { publicId } });
+    const row = await this.mocks
+      .createQueryBuilder("mock")
+      .where("mock.publicId = :publicId", { publicId })
+      .andWhere(lifecycleSql("mock", "active"))
+      .getOne();
     return row ? toMock(row) : null;
   }
 

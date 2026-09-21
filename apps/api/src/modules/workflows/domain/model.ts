@@ -66,6 +66,12 @@ export type WorkflowRow = {
   createdAt: Date;
   updatedAt: Date;
   updatedBy: string;
+  /**
+   * Borrado blando. **Archivar un flujo sigue siendo su `status`**, que es lo que se exporta, se
+   * importa y se compara entre bifurcaciones: una segunda forma de decir «archivado» serían dos
+   * verdades para la misma pregunta. Lo que faltaba era poder deshacer el borrado.
+   */
+  deletedAt: Date | null;
 };
 
 /**
@@ -89,6 +95,9 @@ export type DatasetRow = {
   createdAt: Date;
   updatedAt: Date;
   updatedBy: string;
+  /** Archivado y borrado blando. Ver `shared/lifecycle`. */
+  archivedAt: Date | null;
+  deletedAt: Date | null;
 };
 
 /**
@@ -107,6 +116,9 @@ export type SuiteRow = {
   createdAt: Date;
   updatedAt: Date;
   updatedBy: string;
+  /** Archivado y borrado blando. Ver `shared/lifecycle`. */
+  archivedAt: Date | null;
+  deletedAt: Date | null;
 };
 
 /**

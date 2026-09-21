@@ -167,6 +167,8 @@ describe("TypeOrmPerformancePlanRepository", { skip: dbSkip }, () => {
       createdAt: at(0),
       updatedAt: at(0),
       updatedBy: tenant.userId,
+      archivedAt: null,
+      deletedAt: null,
       ...fields,
     }) as unknown as PerformancePlanRow;
 

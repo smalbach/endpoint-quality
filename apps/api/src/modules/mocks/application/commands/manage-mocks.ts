@@ -13,6 +13,7 @@ import { Inject } from "@nestjs/common";
 import { CommandHandler, type ICommand, type ICommandHandler } from "@nestjs/cqrs";
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
+import { archiveIn, deleteIn, restoreIn, type LifecycleNoun } from "@/shared/lifecycle/lifecycle-store";
 import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors/domain-error";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { writableProject } from "@/modules/endpoints/application/commands/manage-endpoints";
@@ -165,11 +166,27 @@ export class RotateMockKeyHandler implements ICommandHandler<RotateMockKeyComman
   }
 }
 
+/** Cómo se llama esto en los errores del ciclo de vida. */
+const MOCK: LifecycleNoun = { code: "mock", that: "Ese mock", the: "el mock" };
+
+/** Lo que cambia además de la fecha: la hora de modificación, que la pantalla enseña. */
+const touch = <T extends { updatedAt: Date }>(row: T, now: Date): T => ({ ...row, updatedAt: now });
+
+/**
+ * Borrar un mock: **blando por defecto**.
+ *
+ * Su URL deja de contestar en el acto —un mock fuera de la lista que siguiera sirviendo sería un
+ * mock que nadie mira apuntando al front de alguien— y su bitácora sigue colgando de la fila, así
+ * que restaurarlo no lo devuelve vacío.
+ *
+ * `?purge=true` es el definitivo, y solo sobre algo ya eliminado: eso sí se lleva la bitácora.
+ */
 export class DeleteMockCommand implements ICommand {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
     readonly mockId: string,
+    readonly purge = false,
   ) {}
 }
 
@@ -178,11 +195,91 @@ export class DeleteMockHandler implements ICommandHandler<DeleteMockCommand, voi
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(MOCK_REPOSITORY) private readonly mocks: MockRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
   ) {}
 
   async execute(command: DeleteMockCommand): Promise<void> {
     const project = await writableProject(this.projects, command.organizationId, command.projectId);
-    const gone = await this.mocks.remove(project.id, command.mockId);
-    if (!gone) throw new NotFoundError("Ese mock no existe", "mock-not-found");
+    await deleteIn(this.mocks, project.id, command.mockId, command.purge, this.clock.now(), MOCK, { patch: touch });
+  }
+}
+
+/**
+ * Archivar un mock: fuera de la lista y **su URL deja de contestar**.
+ *
+ * Lo segundo es lo que lo separa de apagarlo: `enabled` en falso contesta 503 y dice que está
+ * apagado; archivado es un 404, porque esa URL ya no es de nadie.
+ */
+export class SetMockArchivedCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly mockId: string,
+    readonly archived: boolean,
+  ) {}
+}
+
+@CommandHandler(SetMockArchivedCommand)
+export class SetMockArchivedHandler implements ICommandHandler<SetMockArchivedCommand, MockServerView> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(MOCK_REPOSITORY) private readonly mocks: MockRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
+
+  async execute(command: SetMockArchivedCommand): Promise<MockServerView> {
+    const project = await writableProject(this.projects, command.organizationId, command.projectId);
+    const mock = await archiveIn(
+      this.mocks,
+      project.id,
+      command.mockId,
+      command.archived,
+      this.clock.now(),
+      MOCK,
+      { patch: touch },
+    );
+    return viewMock(mock);
+  }
+}
+
+/**
+ * Restaurar un mock eliminado, con **el mismo `publicId`**: la URL que ya estaba pegada en un front
+ * vuelve a contestar. Generar otra al restaurar convertiría «deshacer» en «crear otro parecido».
+ *
+ * El nombre puede haberse reutilizado mientras estaba fuera, y eso es un 409: la lista no puede
+ * tener dos mocks llamados igual, y renombrarlo por su cuenta sería decidir por quien restaura.
+ */
+export class RestoreMockCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly mockId: string,
+  ) {}
+}
+
+@CommandHandler(RestoreMockCommand)
+export class RestoreMockHandler implements ICommandHandler<RestoreMockCommand, MockServerView> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(MOCK_REPOSITORY) private readonly mocks: MockRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
+
+  async execute(command: RestoreMockCommand): Promise<MockServerView> {
+    const project = await writableProject(this.projects, command.organizationId, command.projectId);
+    const current = await this.mocks.findById(project.id, command.mockId);
+    if (!current) throw new NotFoundError("Ese mock no existe", "mock-not-found");
+    if (current.deletedAt) {
+      const live = await this.mocks.listByProject(project.id);
+      if (live.some((row) => row.name === current.name))
+        throw new ConflictError(`Ya hay un mock llamado «${current.name}»`, "mock-duplicate-name");
+      if (live.length >= MAX_MOCKS_PER_PROJECT)
+        throw new ConflictError(
+          `Este proyecto ya tiene ${MAX_MOCKS_PER_PROJECT} mocks: borra alguno antes de restaurar este`,
+          "mocks-full",
+        );
+    }
+    const mock = await restoreIn(this.mocks, project.id, command.mockId, this.clock.now(), MOCK, { patch: touch });
+    return viewMock(mock);
   }
 }

@@ -24,6 +24,7 @@ import { CapturesModule } from "./modules/captures/captures.module";
 import { RolesModule } from "./modules/roles/roles.module";
 import { SecurityRunsModule } from "./modules/security-runs/security-runs.module";
 import { PerformanceModule } from "./modules/performance/performance.module";
+import { CollectionsModule } from "./modules/collections/collections.module";
 import { CodeScanModule } from "./modules/code-scan/code-scan.module";
 import { DashboardModule } from "./modules/dashboard/dashboard.module";
 import { AuthGuard } from "./modules/auth/infrastructure/guards/auth.guard";
@@ -66,6 +67,7 @@ import { throttlerOptions } from "./shared/rate-limit/shared-throttler-storage";
     RolesModule,
     SecurityRunsModule,
     PerformanceModule,
+    CollectionsModule,
     CodeScanModule,
     DashboardModule,
   ],

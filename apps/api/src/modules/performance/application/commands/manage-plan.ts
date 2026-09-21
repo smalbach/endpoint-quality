@@ -6,6 +6,13 @@ import { ConflictError, InvalidInputError, NotFoundError } from "@/shared/errors
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
+import {
+  archiveIn,
+  deleteIn,
+  restoreIn,
+  type LifecycleNoun,
+  type LifecycleStore,
+} from "@/shared/lifecycle/lifecycle-store";
 import type { PerformancePlanDefinition, PerformancePlanRow } from "../../domain/model";
 import { safeParsePlanDefinition } from "../../domain/plan-schema";
 import { PERFORMANCE_PLAN_REPOSITORY, type PerformancePlanRepositoryPort } from "../../domain/ports";
@@ -39,7 +46,28 @@ export class UpdatePlanCommand implements ICommand {
     readonly actorId: string,
   ) {}
 }
+/** Borrar un plan: blando por defecto, definitivo con `purge` y solo sobre algo ya eliminado. */
 export class DeletePlanCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly planId: string,
+    readonly purge = false,
+  ) {}
+}
+
+/** Archivar un plan: fuera de la lista, y sus corridas pasadas siguen donde estaban. */
+export class SetPlanArchivedCommand implements ICommand {
+  constructor(
+    readonly organizationId: string,
+    readonly projectId: string,
+    readonly planId: string,
+    readonly archived: boolean,
+  ) {}
+}
+
+/** Restaurar un plan eliminado. Vuelve a los archivados si es de donde salió. */
+export class RestorePlanCommand implements ICommand {
   constructor(
     readonly organizationId: string,
     readonly projectId: string,
@@ -100,6 +128,8 @@ export class CreatePlanHandler implements ICommandHandler<CreatePlanCommand, { p
       createdAt: now,
       updatedAt: now,
       updatedBy: command.actorId,
+      archivedAt: null,
+      deletedAt: null,
     });
     return { planId };
   }
@@ -137,17 +167,94 @@ export class UpdatePlanHandler implements ICommandHandler<UpdatePlanCommand, voi
   }
 }
 
+/** Cómo se llama esto en los errores del ciclo de vida. */
+const PLAN: LifecycleNoun = { code: "performance-plan", that: "El plan", the: "el plan" };
+
+/**
+ * El almacén de planes, con la forma que espera el servicio de ciclo de vida.
+ *
+ * `remove` devuelve `true` sin mirar nada porque el servicio ya encontró la fila antes de pedirlo:
+ * el puerto de planes borra con `delete` y no dice cuántas filas se llevó, y fingir aquí un
+ * recuento que no existe sería peor que decir que sí.
+ */
+const planStore = (plans: PerformancePlanRepositoryPort): LifecycleStore<PerformancePlanRow> => ({
+  findById: (projectId, id) => plans.find(projectId, id),
+  save: (row) => plans.save(row),
+  remove: async (projectId, id) => {
+    await plans.delete(projectId, id);
+    return true;
+  },
+});
+
+const touch = (row: PerformancePlanRow, now: Date): PerformancePlanRow => ({ ...row, updatedAt: now });
+
+/**
+ * Borrar un plan **sin llevarse lo que midió**.
+ *
+ * Las corridas ya sobrevivían al borrado —cada una guarda el plan como era, así que su historia no
+ * dependía de la fila—, pero el plan en sí se iba para siempre: un documento con escenarios,
+ * umbrales y un perfil de carga que alguien afinó a lo largo de semanas. Ahora sale de la lista y
+ * vuelve entero desde el filtro de eliminados.
+ */
 @CommandHandler(DeletePlanCommand)
 export class DeletePlanHandler implements ICommandHandler<DeletePlanCommand, void> {
   constructor(
     @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
     @Inject(PERFORMANCE_PLAN_REPOSITORY) private readonly plans: PerformancePlanRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
   ) {}
 
   async execute(command: DeletePlanCommand): Promise<void> {
     const plan = await ownedPlan(this.projects, this.plans, command.organizationId, command.projectId, command.planId);
-    // The runs stay: they snapshot the plan, so a plan's history outlives the plan. `planId` is left
-    // dangling on purpose — there is no FK — and the run list still reads by it.
-    await this.plans.delete(command.projectId, plan.id);
+    // Las corridas se quedan: cada una lleva el plan como era, así que la historia de un plan vive
+    // más que el plan. `planId` queda colgando a propósito —no hay clave ajena— y la lista de
+    // corridas sigue leyendo por él.
+    await deleteIn(planStore(this.plans), command.projectId, plan.id, command.purge, this.clock.now(), PLAN, {
+      patch: touch,
+    });
+  }
+}
+
+@CommandHandler(SetPlanArchivedCommand)
+export class SetPlanArchivedHandler implements ICommandHandler<SetPlanArchivedCommand, void> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(PERFORMANCE_PLAN_REPOSITORY) private readonly plans: PerformancePlanRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
+
+  async execute(command: SetPlanArchivedCommand): Promise<void> {
+    const plan = await ownedPlan(this.projects, this.plans, command.organizationId, command.projectId, command.planId);
+    await archiveIn(
+      planStore(this.plans),
+      command.projectId,
+      plan.id,
+      command.archived,
+      this.clock.now(),
+      PLAN,
+      { patch: touch },
+    );
+  }
+}
+
+/**
+ * Restaurar un plan eliminado.
+ *
+ * El nombre puede haberse reutilizado mientras estaba fuera —`findByName` solo mira los vivos—, y
+ * eso es un 409: renombrarlo por su cuenta sería decidir por quien restaura.
+ */
+@CommandHandler(RestorePlanCommand)
+export class RestorePlanHandler implements ICommandHandler<RestorePlanCommand, void> {
+  constructor(
+    @Inject(PROJECT_REPOSITORY) private readonly projects: ProjectRepositoryPort,
+    @Inject(PERFORMANCE_PLAN_REPOSITORY) private readonly plans: PerformancePlanRepositoryPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
+
+  async execute(command: RestorePlanCommand): Promise<void> {
+    const plan = await ownedPlan(this.projects, this.plans, command.organizationId, command.projectId, command.planId);
+    if (plan.deletedAt && (await this.plans.findByName(command.projectId, plan.name)))
+      throw new ConflictError("Ya existe un plan con ese nombre", "performance-plan-name-taken");
+    await restoreIn(planStore(this.plans), command.projectId, plan.id, this.clock.now(), PLAN, { patch: touch });
   }
 }

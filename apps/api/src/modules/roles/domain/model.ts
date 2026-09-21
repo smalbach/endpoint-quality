@@ -25,6 +25,15 @@ export type Role = {
   position: number;
   createdAt: Date;
   updatedAt: Date;
+  /**
+   * Archivado y borrado blando. Ver `shared/lifecycle`.
+   *
+   * Un rol que no está vivo **sale de la matriz**: `list` solo devuelve los vivos, y la sección
+   * `access` del proyecto se recalcula desde ahí. Sus celdas decididas y sus reglas se quedan en la
+   * fila, así que restaurarlo devuelve la matriz como estaba y no un rol en blanco.
+   */
+  archivedAt: Date | null;
+  deletedAt: Date | null;
 };
 
 /** The analyzer's palette. The first is the default. */

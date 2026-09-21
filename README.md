@@ -174,6 +174,24 @@ Lo que un contrato nunca dice, y sí pone el proyecto:
 - **qué forma tiene el envelope** de este equipo, cuando no hay schema declarado para ese estado;
 - **cuánto debería tardar** cada cosa.
 
+### Colecciones de Postman
+
+Una colección importada **es una colección**: su árbol se guarda tal cual —carpetas, peticiones,
+orden, variables y los `pm.test` de cada una— y la sección **Colecciones** la enseña como Postman la
+enseña: el árbol a la izquierda y a la derecha Params, Headers, Body, Auth y Scripts. «Enviar» manda
+la petición que hay en pantalla; «Correr» lanza la colección entera o una carpeta contra un entorno,
+con sus vueltas y su espera entre peticiones, y el informe crece en vivo con el estado, el tiempo y
+los tests de cada una. «Exportar» devuelve el `.postman_collection.json`, listo para `newman`.
+
+Lo que un `pm.collectionVariables.set` escribe **viaja a la petición siguiente**, que es lo que hace
+que la cadena de una colección de verdad —crear una fila, leerla, borrarla— funcione igual que allí.
+Enviar a mano y correr la colección componen los scripts de la colección y de las carpetas de encima
+con la misma función, así que no pueden significar cosas distintas.
+
+Antes una colección entraba partida en flujos, un grafo por carpeta con las aristas deducidas del
+orden: dejaba de ser la colección de nadie, no volvía a salir a Postman y no se corría como allí. Lo
+que sigue escribiendo flujos es la captura de tráfico, que no tiene fichero de nadie detrás.
+
 ### Entornos y flujos reutilizables
 
 Cada entorno mantiene variables de texto al estilo Postman. Se pueden usar como `{{variable}}` en
@@ -245,6 +263,8 @@ es una decisión y no un caso automático.
       spec-import     OpenAPI 3.0/3.1 → Operation[]
       contracts       Lo que contesta la API, declarado una vez. Solo tipos, sin
                       runtime: `Date` en el servidor, `string` en el cable.
+      import-detect   Qué es lo que alguien acaba de soltar, decidido por su
+                      contenido. La misma función en el navegador y en el servidor.
     docker            Dockerfiles y compose; compose.demo.yml añade la muestra
     examples/
       sample-api      El destino de la demostración, con su fallo a propósito

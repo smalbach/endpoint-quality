@@ -33,6 +33,8 @@ import {
   UpdateExampleDto,
 } from "@/modules/endpoints/presentation/dto/endpoints.dto";
 import { CreateMockDto, UpdateMockDto } from "@/modules/mocks/presentation/dto/mocks.dto";
+// El cuerpo de `PATCH …/archived`, compartido por todos los recursos con ciclo de vida.
+import { SetArchivedDto } from "@/shared/lifecycle/lifecycle.dto";
 import { CreateDocSiteDto, UpdateDocSiteDto } from "@/modules/docs/presentation/dto/doc-sites.dto";
 import { CreateMonitorDto, UpdateMonitorDto } from "@/modules/monitors/presentation/dto/monitors.dto";
 import {
@@ -109,12 +111,18 @@ import {
 } from "@/modules/performance/presentation/dto/performance.dto";
 import { ImportScanDto, SaveConnectorDto, ScanUploadDto } from "@/modules/code-scan/presentation/dto/code-scan.dto";
 import {
+  CreateCollectionDto,
+  ImportPostmanCollectionDto,
+  RunCollectionDto,
+  SendCollectionRequestDto,
+  UpdateCollectionDto,
+} from "@/modules/collections/presentation/dto/collections.dto";
+import {
   CreateDatasetDto,
   CreateRequestTemplateDto,
   CreateSuiteDto,
   CreateWorkflowDto,
   ImportRequestTemplatesDto,
-  ImportPostmanFlowsDto,
   UpdateDatasetDto,
   UpdateRequestTemplateDto,
   UpdateSuiteDto,
@@ -156,6 +164,7 @@ const DTOS = [
   CreateProjectDto,
   UpdateProjectDto,
   ArchiveProjectDto,
+  SetArchivedDto,
   ForkProjectDto,
   SyncForkDto,
   CreateMergeRequestDto,
@@ -175,7 +184,6 @@ const DTOS = [
   CredentialDto,
   CreateRequestTemplateDto,
   ImportRequestTemplatesDto,
-  ImportPostmanFlowsDto,
   UpdateRequestTemplateDto,
   CreateWorkflowDto,
   UpdateWorkflowDto,
@@ -214,6 +222,11 @@ const DTOS = [
   SaveConnectorDto,
   ScanUploadDto,
   ImportScanDto,
+  CreateCollectionDto,
+  UpdateCollectionDto,
+  ImportPostmanCollectionDto,
+  RunCollectionDto,
+  SendCollectionRequestDto,
 ];
 
 type Schema = Record<string, unknown>;
