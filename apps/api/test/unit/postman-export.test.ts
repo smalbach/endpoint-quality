@@ -221,6 +221,21 @@ describe("un nodo script vuelve al sitio del que salió", () => {
     assert.match(item.event.find((e) => e.listen === "test")!.script.exec.join("\n"), /console\.log/);
   });
 
+  test("con `from` a una petición que aún no tiene eventos, el `test` es el primero que se le cuelga", () => {
+    const exported = toPostmanExport(
+      bundle(
+        flows([
+          { id: "s1", requestTemplateId: "t1" },
+          { id: "post", kind: "script", script: { code: "console.log(1);", from: "s1" }, dependsOn: ["s1"] },
+        ]) as never,
+      ),
+      IDS,
+    );
+    const item = firstRequest(exported) as unknown as { event: { listen: string; script: { exec: string[] } }[] };
+    assert.deepEqual(item.event.map((entry) => entry.listen), ["test"]);
+    assert.match(item.event[0].script.exec.join("\n"), /console\.log/);
+  });
+
   test("un script sin petición detrás se dice: en Postman no tiene dónde ir", () => {
     const exported = toPostmanExport(
       bundle(

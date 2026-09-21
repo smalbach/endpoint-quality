@@ -101,17 +101,30 @@ async function build(items: CollectionItem[], over: Partial<CollectionRun> = {},
   await runs.save(run);
 
   let call = 0;
+  /** Lo que se le mandó al comando de enviar, para mirar qué compuso el runner. */
+  const inputs: { pathParameters: { name: string; value: string }[]; preRequestScript: string }[] = [];
   const commandBus = {
-    execute: async () => {
+    execute: async (command: { request: string }) => {
+      inputs.push(JSON.parse(command.request));
       const answer = answers[call] ?? answers[answers.length - 1] ?? sent();
       call += 1;
-      if (answer instanceof Error) throw answer;
+      // Lo que se lanza puede no ser un `Error`: un `throw "texto"` de un adaptador cualquiera.
+      if (answer instanceof Error || typeof answer === "string") throw answer;
       return answer;
     },
   } as unknown as CommandBus;
 
   const runner = new CollectionRunner(commandBus, collections, runs, queue, clock, progress);
-  return { runner, runs, collections, queue, events, done: () => subscription.unsubscribe(), calls: () => call };
+  return {
+    runner,
+    runs,
+    collections,
+    queue,
+    events,
+    inputs,
+    done: () => subscription.unsubscribe(),
+    calls: () => call,
+  };
 }
 
 describe("el runner de una colección", () => {
@@ -172,6 +185,14 @@ describe("el runner de una colección", () => {
     context.done();
   });
 
+  test("lo que se lanza sin ser un Error también es una fila roja, con una frase en vez de un vacío", async () => {
+    const context = await build([request("a")], {}, ["no es un Error" as unknown as SentRequestView]);
+    await context.runner.execute("run");
+    const run = await context.runs.findById("run");
+    assert.equal(run?.results[0].error, "La petición no se pudo enviar");
+    context.done();
+  });
+
   test("lo que los scripts escriben viaja a la petición siguiente", async () => {
     const context = await build([request("a"), request("b")], {}, [sent({ variables: { id: "7" } }), sent()]);
     await context.runner.execute("run");
@@ -222,6 +243,62 @@ describe("el runner de una colección", () => {
     const run = await context.runs.findById("run");
     assert.equal(run?.status, "error");
     assert.match(String(run?.error), /ninguna petición/);
+    context.done();
+  });
+
+  test("una respuesta que no llegó y un script que falló se cuentan como la fila roja que son", async () => {
+    const roto = sent({
+      request: { method: "GET", url: "", headers: {}, body: null },
+      response: null,
+      scripts: {
+        pre: { error: null, logs: [{ level: "log", text: "antes" }], tests: [{ name: "pre", passed: true, message: null }], environmentUpdates: [], visualization: null, durationMs: 1 },
+        post: { error: "ReferenceError: pm no está", logs: [{ level: "error", text: "después" }], tests: [], environmentUpdates: [], visualization: null, durationMs: 1 },
+      },
+    });
+    const context = await build([request("a")], {}, [roto]);
+    await context.runner.execute("run");
+
+    const run = await context.runs.findById("run");
+    assert.equal(run?.status, "failed");
+    const [result] = run!.results;
+    assert.equal(result.status, null, "sin respuesta no hay código");
+    assert.equal(result.durationMs, 0);
+    assert.equal(result.sizeBytes, 0);
+    // La URL que se enseña es la que se escribió: el envío no llegó a resolver ninguna.
+    assert.equal(result.url, "https://api.test/a");
+    assert.equal(result.error, "ReferenceError: pm no está");
+    assert.deepEqual(result.tests.map((test) => test.name), ["pre"]);
+    assert.deepEqual(result.logs.map((entry) => entry.text), ["antes", "después"]);
+    context.done();
+  });
+
+  test("un script de antes que revienta es el error de la fila cuando el de después no dice nada", async () => {
+    const context = await build([request("a")], {}, [
+      sent({
+        scripts: {
+          pre: { error: "SyntaxError", logs: [], tests: [], environmentUpdates: [], visualization: null, durationMs: 1 },
+          post: null,
+        },
+      }),
+    ]);
+    await context.runner.execute("run");
+    assert.equal((await context.runs.findById("run"))?.results[0].error, "SyntaxError");
+    context.done();
+  });
+
+  test("los parámetros de ruta viajan con la petición", async () => {
+    const conRuta: CollectionItem = {
+      ...request("a"),
+      request: {
+        ...request("a").request!,
+        url: "https://api.test/widgets/:id",
+        pathParameters: [{ name: "id", type: "string", description: "", value: "7" }],
+      },
+    };
+    const context = await build([conRuta]);
+    await context.runner.execute("run");
+    assert.equal((await context.runs.findById("run"))?.status, "passed");
+    assert.deepEqual(context.inputs[0].pathParameters, [{ name: "id", value: "7" }]);
     context.done();
   });
 

@@ -307,5 +307,22 @@ describe("cada parte con lo que ya había", () => {
     const [suite] = await context.repositories.workflows.listSuites(id);
     assert.deepEqual(suite!.workflowIds, [workflow!.id]);
     assert.equal(response.body.datasets, 1);
+
+    // Y en plural cuando son varias: «las 2 peticiones importadas» y no «la petición importada».
+    const otro = await newProject("Sin contrato tampoco");
+    const varias = await importBundle(otro.url, {
+      ...BASE,
+      flows: {
+        requestTemplates: [
+          { id: "t1", name: "Una", operationId: "x", expectedStatus: 200 },
+          { id: "t2", name: "Otra", operationId: "y", expectedStatus: 200 },
+        ],
+      },
+    });
+    assert.equal(varias.status, 201, JSON.stringify(varias.body));
+    assert.deepEqual(
+      (varias.body.skipped as { what: string; detail: string }[]).map((entry) => entry.detail),
+      ["este proyecto no tiene contrato: las 2 peticiones importadas no se podrán ejecutar hasta importar uno"],
+    );
   });
 });

@@ -86,6 +86,8 @@ describe("migraciones", { skip: DATABASE_URL ? false : REASON }, () => {
       "channel_sessions",
       "code_connectors",
       "code_scans",
+      "collection_runs",
+      "collections",
       "doc_sites",
       "endpoint_examples",
       "endpoints",

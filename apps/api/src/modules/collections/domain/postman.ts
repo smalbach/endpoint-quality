@@ -17,8 +17,9 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { NO_AUTH, type RequestAuth } from "@eq/runner-core";
-import { EMPTY_BODY, type EndpointBody, type EndpointMethod, ENDPOINT_METHODS } from "@/modules/endpoints/domain/model";
+import type { RequestAuth } from "@eq/runner-core";
+import type { EndpointBody, EndpointMethod } from "@/modules/endpoints/domain/model";
+import { ENDPOINT_METHODS } from "@/modules/endpoints/domain/model";
 import { bodyFrom, graphqlBodyFrom } from "@/modules/endpoints/domain/import-endpoints";
 import {
   eventScript,
@@ -36,7 +37,7 @@ import {
   type PostmanItem,
   type PostmanRequest,
 } from "@/modules/projects/domain/postman-export";
-import type { CollectionDocument, CollectionItem, CollectionRequest, CollectionVariable } from "./model";
+import type { CollectionDocument, CollectionItem, CollectionRequest } from "./model";
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
@@ -252,10 +253,12 @@ export function writePostmanFile(
   collection: { id: string; name: string; description: string; document: CollectionDocument },
 ): { file: PostmanCollectionFile; redacted: string[] } {
   const redacted: string[] = [];
-  const authBlock = (auth: RequestAuth, label: string): Record<string, unknown> | undefined => {
+  // Solo se llama con una autenticación que no hereda —las tres puertas de abajo lo comprueban—, y
+  // esas siempre escriben bloque: `null` es lo que `writePostmanAuth` devuelve para `inherit`.
+  const authBlock = (auth: RequestAuth, label: string): Record<string, unknown> => {
     const written = writePostmanAuth(auth);
     if (written.redacted.length) redacted.push(`${label} (${written.redacted.join(", ")})`);
-    return written.block ?? undefined;
+    return written.block!;
   };
 
   const item = (node: CollectionItem, trail: string[]): PostmanItem => {
@@ -376,12 +379,6 @@ function bodyOf(body: EndpointBody): { body?: PostmanRequest["body"] } {
     }
   }
 }
-
-/** El cuerpo vacío que sale al crear una petición a mano, para no repetir el literal. */
-export const emptyBody = (): EndpointBody => ({ ...EMPTY_BODY, fields: [] });
-
-/** Lo mismo que `NO_AUTH`, nombrado aquí para que el lector no importe dos módulos por una constante. */
-export const noAuth = (): RequestAuth => ({ ...NO_AUTH });
 
 function safeJson(text: string): unknown {
   try {

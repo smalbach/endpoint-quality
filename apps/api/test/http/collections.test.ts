@@ -168,9 +168,10 @@ after(async () => {
   await new Promise<void>((resolve) => target.close(() => resolve()));
 });
 
-describe("las colecciones", () => {
-  let collectionId: string;
+/** La colección importada en el primer test: los demás siguen editándola, como haría alguien. */
+let collectionId: string;
 
+describe("las colecciones", () => {
   test("importar trae el árbol, no un grafo: carpeta, peticiones, scripts y variables", async () => {
     const imported = await api()
       .post(`${base()}/collections/import`)
@@ -327,5 +328,147 @@ describe("las colecciones", () => {
       .set(as(owner))
       .send({ text: JSON.stringify({ info: { name: "Vacía" }, item: [] }) });
     assert.equal(empty.status, 422);
+  });
+});
+
+/**
+ * Las puertas que el camino de arriba no toca: crear una a mano, renombrarla, borrarla, listar sus
+ * corridas, seguirlas en vivo, cancelarlas y borrarlas. Son las que el editor usa a diario, y cada
+ * una es la única prueba de que su ruta está montada y protegida.
+ */
+describe("las demás puertas de las colecciones", () => {
+  test("crear a mano, renombrar y borrar, con un token de API como autor", async () => {
+    const issued = await api().post(`/orgs/${owner.organizationId}/tokens`).set(as(owner)).send({ name: "CI" });
+    assert.equal(issued.status, 201, JSON.stringify(issued.body));
+    const byToken = { Authorization: `Bearer ${issued.body.token}` };
+
+    const created = await api()
+      .post(`${base()}/collections`)
+      .set(byToken)
+      .send({ name: "  A mano  ", description: "creada desde CI" });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const id: string = created.body.id;
+    // Quien escribe es el token, no un usuario: es lo que deja auditar lo que hace un CI.
+    assert.equal(context.repositories.collections.rows.get(id)?.updatedBy, issued.body.id);
+
+    const view = (await api().get(`${base()}/collections/${id}`).set(as(owner))).body;
+    assert.equal(view.name, "A mano");
+    assert.equal(view.description, "creada desde CI");
+    assert.deepEqual(view.items, []);
+
+    const renamed = await api()
+      .patch(`${base()}/collections/${id}`)
+      .set(as(owner))
+      .send({ name: "Renombrada", description: "y descrita" });
+    assert.equal(renamed.status, 204, JSON.stringify(renamed.body));
+    const after = (await api().get(`${base()}/collections/${id}`).set(as(owner))).body;
+    assert.equal(after.name, "Renombrada");
+    assert.equal(after.description, "y descrita");
+
+    assert.equal((await api().delete(`${base()}/collections/${id}`).set(as(owner))).status, 204);
+    assert.equal((await api().get(`${base()}/collections/${id}`).set(as(owner))).status, 404);
+  });
+
+  test("enviar una petición que todavía no está guardada solo lleva la petición", async () => {
+    const sent = await api()
+      .post(`${base()}/collections/${collectionId}/send`)
+      .set(as(owner))
+      .send({
+        request: {
+          method: "GET",
+          url: `${origin}/widgets/no-existe`,
+          pathParameters: [],
+          query: [],
+          headers: [],
+          body: { mode: "none", text: "", contentType: "text/plain", fields: [] },
+          auth: { type: "inherit", params: {} },
+        },
+      });
+    // Sin entorno, sin `itemId` y sin scripts: lo que manda el editor con una petición recién creada.
+    assert.equal(sent.status, 201, JSON.stringify(sent.body));
+    assert.equal(sent.body.response.status, 404);
+  });
+
+  test("las corridas se listan, se siguen en vivo, se cancelan y se borran", async () => {
+    const imported = await api()
+      .post(`${base()}/collections/import`)
+      .set(as(owner))
+      .send({ text: JSON.stringify(postmanFile()), name: "En vivo" });
+    assert.equal(imported.status, 201, JSON.stringify(imported.body));
+    const liveId: string = imported.body.id;
+
+    // Con espera entre peticiones para que la corrida siga viva cuando se abra el stream: es la
+    // única forma de ver la foto de una que todavía camina.
+    const started = await api()
+      .post(`${base()}/collections/${liveId}/runs`)
+      .set(as(owner))
+      .send({ environmentId, iterations: 2, delayMs: 400, stopOnFailure: false });
+    assert.equal(started.status, 202, JSON.stringify(started.body));
+    const runId: string = started.body.runId;
+
+    const listed = (await api().get(`${base()}/collections/runs?collectionId=${liveId}`).set(as(owner))).body;
+    assert.deepEqual(
+      listed.map((entry: { id: string }) => entry.id),
+      [runId],
+    );
+    const all = (await api().get(`${base()}/collections/runs`).set(as(owner))).body;
+    assert.ok(all.length > listed.length, "sin filtro salen también las de las demás colecciones");
+
+    const live = await api()
+      .get(`${base()}/collections/runs/${runId}/stream`)
+      .set(as(owner))
+      .buffer(true)
+      .parse((response, next) => {
+        let text = "";
+        response.on("data", (chunk: Buffer) => (text += chunk.toString()));
+        response.on("end", () => next(null, text));
+      });
+    const raw = live.body as unknown as string;
+    assert.match(raw, /event: result/, raw.slice(0, 400));
+    assert.match(raw, /event: finished/, raw.slice(0, 400));
+
+    // Cancelar una que ya terminó es un 409, y el stream de una terminada abre y cierra.
+    const late = await api().post(`${base()}/collections/runs/${runId}/cancel`).set(as(owner)).send({});
+    assert.equal(late.status, 409, JSON.stringify(late.body));
+
+    const closed = await api()
+      .get(`${base()}/collections/runs/${runId}/stream`)
+      .set(as(owner))
+      .buffer(true)
+      .parse((response, next) => {
+        let text = "";
+        response.on("data", (chunk: Buffer) => (text += chunk.toString()));
+        response.on("end", () => next(null, text));
+      });
+    const ended = closed.body as unknown as string;
+    assert.match(ended, /event: finished/);
+    assert.equal(JSON.parse(/data: (.*)/.exec(ended)![1]).status, "passed");
+
+    assert.equal((await api().delete(`${base()}/collections/runs/${runId}`).set(as(owner))).status, 204);
+    assert.equal((await api().get(`${base()}/collections/runs/${runId}`).set(as(owner))).status, 404);
+  });
+
+  test("cancelar cierra la corrida aunque la petición en vuelo siga", async () => {
+    const started = await api()
+      .post(`${base()}/collections/${collectionId}/runs`)
+      .set(as(owner))
+      .send({ environmentId, delayMs: 800 });
+    assert.equal(started.status, 202, JSON.stringify(started.body));
+
+    const cancelled = await api()
+      .post(`${base()}/collections/runs/${started.body.runId}/cancel`)
+      .set(as(owner))
+      .send({});
+    assert.equal(cancelled.status, 204, JSON.stringify(cancelled.body));
+    const run = await finished(started.body.runId);
+    assert.equal(run.status, "cancelled");
+  });
+
+  test("sin entorno se corre contra la URL base del proyecto, que aquí no lleva a ninguna parte", async () => {
+    const started = await api().post(`${base()}/collections/${collectionId}/runs`).set(as(owner)).send({});
+    assert.equal(started.status, 202, JSON.stringify(started.body));
+    const run = await finished(started.body.runId);
+    assert.equal(run.status, "failed");
+    assert.ok(run.results.every((result: { status: number | null }) => result.status === null));
   });
 });

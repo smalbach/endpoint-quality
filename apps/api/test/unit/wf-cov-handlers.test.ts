@@ -756,6 +756,32 @@ describe("import Postman flows", () => {
     assert.equal(saved?.definition.steps[0].graphql?.useSession, true);
   });
 
+  test("un `test` que no se sabe traducir se queda como nodo script, y la nota dice por qué", async () => {
+    const w = world();
+    const outcome = await run(
+      w,
+      collection([
+        {
+          name: "Con script raro",
+          event: [
+            {
+              listen: "test",
+              script: {
+                exec: ['if (pm.response.code) { pm.test("a", function () { pm.response.to.have.status(200) }) }'],
+              },
+            },
+          ],
+          request: { method: "GET", url: "{{base}}/x" },
+        },
+      ]),
+    );
+    assert.equal(outcome.flows[0].scripts, 1);
+    assert.ok(
+      outcome.notes.some((note) => note.startsWith("«Con script raro»: el test se mantiene como nodo script")),
+      JSON.stringify(outcome.notes),
+    );
+  });
+
   test("a matched request becomes a template; importing again updates it and keeps the flow's status", async () => {
     const w = world({ spec: [{ id: "getThing", method: "GET", path: "/things/{id}", statuses: [200, 404] }] });
     const text = collection([

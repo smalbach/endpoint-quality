@@ -143,17 +143,22 @@ export function safeParseCollectionDocument(data: unknown): ParseResult {
   return { ok: true };
 }
 
-/** Hondura y número de nodos del árbol entero: los dos topes que el esquema por nivel no ve. */
+/**
+ * Hondura y número de nodos del árbol entero: los dos topes que el esquema por nivel no ve.
+ *
+ * Se llama **después** de que el esquema haya dicho que sí, así que `items` es una lista en cada
+ * nodo y en el documento: un `?? []` aquí sería una rama que ninguna entrada puede tomar.
+ */
 function measure(document: { items: { items: unknown[] }[] }): { depth: number; count: number } {
   let count = 0;
   const walk = (items: { items: unknown[] }[], depth: number): number => {
     let deepest = depth;
     for (const item of items) {
       count += 1;
-      deepest = Math.max(deepest, walk((item.items ?? []) as { items: unknown[] }[], depth + 1));
+      deepest = Math.max(deepest, walk(item.items as { items: unknown[] }[], depth + 1));
     }
     return deepest;
   };
-  const depth = walk(document.items ?? [], 0);
+  const depth = walk(document.items, 0);
   return { depth, count };
 }

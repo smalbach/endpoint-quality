@@ -156,6 +156,22 @@ describe("texto pegado", () => {
     assert.equal(endpoints!.error, null, JSON.stringify(endpoints));
   });
 
+  test("lo que la colección se dejó fuera se cuenta en el resultado, no se pierde", async () => {
+    const base = await project();
+    const text = JSON.stringify({
+      info: { name: "Mixta", schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+      item: [
+        { name: "Buena", request: { method: "GET", url: "https://api.test/x" } },
+        { name: "Sin URL", request: { method: "GET" } },
+      ],
+    });
+    const body = await importOne(base, { sources: [{ name: "mixta.json", text }] });
+    const collection = results(body).find((entry) => entry.target === "collections")!;
+    assert.equal(collection.error, null, JSON.stringify(collection));
+    // «1 se saltó» no es algo sobre lo que actuar: la nota dice cuál y por qué.
+    assert.deepEqual(collection.notes, ["Sin URL: la petición no lleva URL"]);
+  });
+
   test("una colección sin peticiones: los dos resultados llevan su error, y el lote sigue", async () => {
     const base = await project();
     const empty = JSON.stringify({

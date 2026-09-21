@@ -246,6 +246,57 @@ describe("leer un fichero de Postman", () => {
     assert.equal(read.document.items[0].name, "Sin nombre");
     assert.equal(read.document.items.length, 1, "lo que no es un objeto se salta");
   });
+
+  test("un valor que no es texto se lee como texto, y una fila con `name` vale igual que una con `key`", () => {
+    // Lo que sale de otras herramientas: números y booleanos donde Postman pone cadenas, y filas
+    // escritas con `name` en vez de `key`. Rechazarlas dejaría fuera media cabecera del fichero.
+    const read = readPostmanFile(
+      JSON.stringify({
+        info: { name: "Mixta" },
+        variable: [{ key: "reintentos", value: 3 }, { key: "activo", value: true }, { value: "sin nombre" }],
+        item: [
+          {
+            name: "Una",
+            request: { method: "GET", url: "https://a/b", header: [{ name: "X-Tag", value: 7 }] },
+          },
+        ],
+      }),
+    )!;
+    assert.deepEqual(read.document.variables, [
+      { key: "reintentos", value: "3", enabled: true },
+      { key: "activo", value: "true", enabled: true },
+    ]);
+    assert.deepEqual(read.document.items[0].request?.headers, [{ name: "X-Tag", value: "7", enabled: true }]);
+  });
+
+  test("un nodo que no es carpeta ni petición se salta; sin método es GET; un cuerpo GraphQL se lee como tal", () => {
+    const read = readPostmanFile(
+      JSON.stringify({
+        info: { name: "Sueltos" },
+        item: [
+          { name: "Ni carpeta ni petición" },
+          { name: "Sin método", request: { url: "https://a/b" } },
+          {
+            name: "Consulta",
+            request: {
+              method: "POST",
+              url: "https://a/graphql",
+              body: { mode: "graphql", graphql: { query: "{ me { id } }", variables: '{"a":1}' } },
+            },
+          },
+        ],
+      }),
+    )!;
+    assert.deepEqual(
+      read.document.items.map((item) => item.name),
+      ["Sin método", "Consulta"],
+    );
+    assert.equal(read.document.items[0].request?.method, "GET");
+    const consulta = read.document.items[1].request!;
+    assert.equal(consulta.body.mode, "graphql");
+    assert.equal(consulta.body.text, "{ me { id } }");
+    assert.equal(consulta.body.variables, '{"a":1}');
+  });
 });
 
 describe("escribir el fichero de vuelta", () => {
@@ -342,6 +393,61 @@ describe("escribir el fichero de vuelta", () => {
       ],
     );
     assert.equal(crear.postResponseScript, "pm.test('x', () => {})");
+  });
+
+  test("una petición escrita entera: su descripción, su autenticación, sus parámetros de ruta", () => {
+    const item: CollectionItem = {
+      ...request("Borrar"),
+      description: "La que borra",
+      request: {
+        ...emptyRequest(),
+        method: "DELETE",
+        url: "{{base}}/x/:id",
+        auth: { type: "bearer", params: { token: "{{token}}" } },
+        pathParameters: [{ name: "id", type: "string", description: "", value: "7" }],
+        headers: [
+          { name: "X-Uno", value: "1", enabled: true },
+          { name: "X-Dos", value: "2", enabled: false },
+        ],
+      },
+    };
+    const written = write([item]).file.item[0] as unknown as {
+      description: string;
+      request: { description: string; auth: { type: string }; header: unknown[]; url: { variable: unknown[] } };
+    };
+    assert.equal(written.description, "La que borra");
+    assert.equal(written.request.description, "La que borra", "Postman la repite dentro de `request`");
+    assert.equal(written.request.auth.type, "bearer");
+    // La cabecera apagada sale marcada, que es lo que deja volver a encenderla al reimportar.
+    assert.deepEqual(written.request.header, [
+      { key: "X-Uno", value: "1" },
+      { key: "X-Dos", value: "2", disabled: true },
+    ]);
+    assert.deepEqual(written.request.url.variable, [{ key: "id", value: "7" }]);
+  });
+
+  test("los scripts de la colección salen como sus eventos, y una variable apagada sale apagada", () => {
+    const written = writePostmanFile({
+      id: "id",
+      name: "Tienda",
+      description: "La del catálogo",
+      document: {
+        auth: { type: "inherit", params: {} },
+        variables: [
+          { key: "base", value: "https://api", enabled: true },
+          { key: "vieja", value: "x", enabled: false },
+        ],
+        preRequestScript: "console.log(1)",
+        postResponseScript: "pm.test('x', () => {})",
+        items: [request("uno")],
+      },
+    }).file as unknown as { info: { description: string }; event: { listen: string }[]; variable: unknown[] };
+    assert.equal(written.info.description, "La del catálogo");
+    assert.deepEqual(written.event.map((event) => event.listen), ["prerequest", "test"]);
+    assert.deepEqual(written.variable, [
+      { key: "base", value: "https://api" },
+      { key: "vieja", value: "x", disabled: true },
+    ]);
   });
 });
 

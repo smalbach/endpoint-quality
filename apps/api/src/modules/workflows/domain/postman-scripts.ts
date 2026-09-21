@@ -350,7 +350,8 @@ function readStatement(statement: string, label: string | null, bodyNames: Map<s
     const close = matching(text, open);
     if (close === -1) return null;
     // Chai's second argument is the message it prints, which this replaces with the test's name.
-    const actual = splitTop(text.slice(open + 1, close), ",")[0]?.trim() ?? "";
+    // `splitTop` always returns at least one part, the empty string for `pm.expect()`.
+    const actual = splitTop(text.slice(open + 1, close), ",")[0].trim();
     const tail = text.slice(close + 1).replace(/^\s*\./, "");
     return readExpect(actual, tail, label, bodyNames);
   }
