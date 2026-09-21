@@ -15,15 +15,19 @@ import {
   flatten,
   foldersOf,
   insertItem,
+  failureReason,
   moveItem,
   moveWithin,
   newFolder,
+  resultFailed,
+  runDuration,
   newRequest,
   replaceItem,
   sameJson,
   statusClass,
   trailName,
 } from "@/lib/collections";
+import type { CollectionRunResultView } from "@/lib/types";
 import type { CollectionItemView } from "@/lib/types";
 
 const folder = (id: string, items: CollectionItemView[] = []): CollectionItemView => ({
@@ -111,5 +115,72 @@ describe("lo demás", () => {
     expect(fresh.request?.body.mode).toBe("none");
     expect(fresh.auth).toBeNull();
     expect(newFolder("f").auth).toEqual({ type: "inherit", params: {} });
+  });
+});
+
+describe("por qué una petición de la corrida está en rojo", () => {
+  const result = (patch: Partial<CollectionRunResultView> = {}): CollectionRunResultView => ({
+    iteration: 1,
+    itemId: "r1",
+    name: "Crear producto",
+    folder: "",
+    method: "POST",
+    url: "https://api/v1/products",
+    status: 200,
+    durationMs: 4,
+    sizeBytes: 8,
+    tests: [],
+    error: null,
+    logs: [],
+    sent: null,
+    received: null,
+    auth: "",
+    cookies: { sent: [], stored: [], rejected: [] },
+    writes: [],
+    scripts: { pre: null, post: null },
+    ...patch,
+  });
+
+  test("una verde no tiene motivo que contar", () => {
+    const green = result({ tests: [{ name: "crea", passed: true, message: null }] });
+    expect(resultFailed(green)).toBe(false);
+    expect(failureReason(green)).toBeNull();
+  });
+
+  test("el error manda sobre todo lo demás", () => {
+    const broken = result({ status: null, error: "Variables sin valor: baseUrl" });
+    expect(resultFailed(broken)).toBe(true);
+    expect(failureReason(broken)).toBe("Variables sin valor: baseUrl");
+  });
+
+  test("sin respuesta y sin error, se dice lo que se sabe", () => {
+    expect(failureReason(result({ status: null }))).toBe("No hubo respuesta");
+  });
+
+  test("el primer test rojo con su mensaje, y los demás contados", () => {
+    const one = result({ tests: [{ name: "existe", passed: false, message: "esperaba 200" }] });
+    expect(failureReason(one)).toBe("existe — esperaba 200");
+
+    const two = result({
+      tests: [
+        { name: "existe", passed: false, message: null },
+        { name: "trae el id", passed: false, message: "undefined" },
+      ],
+    });
+    expect(failureReason(two)).toBe("existe · y 1 test más en rojo");
+
+    const three = result({
+      tests: [
+        { name: "existe", passed: false, message: null },
+        { name: "trae el id", passed: false, message: null },
+        { name: "y el precio", passed: false, message: null },
+      ],
+    });
+    expect(failureReason(three)).toBe("existe · y 2 tests más en rojo");
+  });
+
+  test("lo que duró la corrida, cuando ya terminó", () => {
+    expect(runDuration("2026-09-20T11:00:00.000Z", "2026-09-20T11:00:30.000Z")).toBe(30_000);
+    expect(runDuration("2026-09-20T11:00:00.000Z", null)).toBeNull();
   });
 });

@@ -27,11 +27,13 @@ import {
   Scripts,
 } from "@/components/collection-item-editor";
 import { AuthEditor } from "@/components/auth-editor";
-import { cn, formatDate } from "@/lib/format";
+import { CollectionResultDetail } from "@/components/collection-run-result";
+import { cn, formatBytes, formatDate, formatDuration } from "@/lib/format";
 import {
   RUN_STATUS_CLASS,
   RUN_STATUS_LABEL,
   duplicateItem,
+  failureReason,
   findItem,
   insertItem,
   METHOD_CLASS,
@@ -39,12 +41,15 @@ import {
   newFolder,
   newRequest,
   replaceItem,
+  resultFailed,
+  runDuration,
   sameJson,
   statusClass,
 } from "@/lib/collections";
 import type {
   CollectionItemView,
   CollectionRun,
+  CollectionRunResultView,
   CollectionRunView,
   CollectionSummary,
   CollectionView,
@@ -77,7 +82,7 @@ export function CollectionsPage() {
     onSuccess: async ({ id }) => {
       setCreating(false);
       await queryClient.invalidateQueries({ queryKey: ["collections", projectId] });
-      navigate(`/p/${projectId}/collections/${id}`);
+      void navigate(`/p/${projectId}/collections/${id}`);
     },
     onError: (error) => toast.error(message(error) ?? "No se pudo crear"),
   });
@@ -267,7 +272,7 @@ export function CollectionPage() {
     mutationFn: () => api<void>(`${base}/collections/${collectionId}`, { method: "DELETE" }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["collections", projectId] });
-      navigate(`/p/${projectId}/collections`);
+      void navigate(`/p/${projectId}/collections`);
     },
   });
 
@@ -642,6 +647,10 @@ export function CollectionRunPage() {
   const enabled = Boolean(organization && projectId && runId);
   const [live, setLive] = useState<CollectionRunView | null>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  /** Cuántas van de cuántas: solo el stream lo sabe, porque el plan se resuelve al correr. */
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [only, setOnly] = useState<"all" | "failed" | "passed">("all");
+  const [search, setSearch] = useState("");
 
   const run = useQuery({
     queryKey: ["collection-run", runId],
@@ -659,7 +668,9 @@ export function CollectionRunPage() {
           status: CollectionRun["status"];
           totals: CollectionRunView["totals"];
           result?: CollectionRunView["results"][number];
+          progress?: { done: number; total: number };
         };
+        if (data.progress) setProgress(data.progress);
         setLive((current) => {
           const previous = current ?? run.data;
           return {
@@ -685,6 +696,23 @@ export function CollectionRunPage() {
   const view = live ?? run.data;
   if (!view) return <p className="text-sm text-slate-500">Cargando…</p>;
 
+  const failedCount = view.results.filter(resultFailed).length;
+  const needle = search.trim().toLowerCase();
+  // Con su posición en la corrida: la clave de «abierta» tiene que sobrevivir a cambiar el filtro,
+  // y la posición dentro de lo filtrado no es la misma fila de un filtro al siguiente.
+  const shown = view.results
+    .map((result, index) => ({ result, key: keyOf(result, index) }))
+    .filter(({ result }) => {
+      const bad = resultFailed(result);
+      if (only === "failed" && !bad) return false;
+      if (only === "passed" && bad) return false;
+      if (!needle) return true;
+      return `${result.folder} ${result.name} ${result.sent?.url ?? result.url}`.toLowerCase().includes(needle);
+    });
+  const allOpen = shown.length > 0 && shown.every(({ key }) => open[key]);
+  const elapsed = runDuration(view.startedAt, view.finishedAt);
+  const bytes = view.results.reduce((total, result) => total + result.sizeBytes, 0);
+
   return (
     <div className="space-y-4">
       <header className="flex flex-wrap items-center gap-2">
@@ -696,6 +724,9 @@ export function CollectionRunPage() {
           <p className="text-sm text-slate-500">
             {formatDate(view.startedAt)} · {view.environmentName ?? "sin entorno"} ·{" "}
             {view.iterations === 1 ? "una vuelta" : `${view.iterations} vueltas`}
+            {view.delayMs ? ` · ${view.delayMs} ms entre peticiones` : ""}
+            {view.stopOnFailure ? " · para en la primera roja" : ""}
+            {elapsed === null ? "" : ` · duró ${formatDuration(elapsed)}`}
           </p>
         </div>
         <Badge className={RUN_STATUS_CLASS[view.status]}>{RUN_STATUS_LABEL[view.status]}</Badge>
@@ -717,13 +748,71 @@ export function CollectionRunPage() {
         <Metric label="Tests" value={view.totals.tests} />
         <Metric label="Pasaron" value={view.totals.testsPassed} tone="good" />
         <Metric label="Fallaron" value={view.totals.testsFailed} tone={view.totals.testsFailed ? "bad" : "good"} />
+        <Metric label="Datos" text={formatBytes(bytes)} />
       </div>
 
+      {view.status === "running" && progress && (
+        <div>
+          <p className="text-xs text-slate-500">
+            {progress.done} de {progress.total} peticiones
+          </p>
+          <div className="mt-1 h-1.5 w-full overflow-hidden rounded bg-slate-200">
+            <div
+              className="h-full bg-sky-500 transition-[width]"
+              style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Un informe de ochenta peticiones no se lee entero: lo que se busca es «cuáles fallaron». */}
+      {view.results.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex gap-1 text-xs">
+            {(
+              [
+                ["all", `Todas (${view.results.length})`],
+                ["failed", `Rojas (${failedCount})`],
+                ["passed", `Verdes (${view.results.length - failedCount})`],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={cn(
+                  "rounded px-2 py-1",
+                  only === id ? "bg-slate-200 font-medium text-slate-800" : "text-slate-500 hover:text-slate-700",
+                )}
+                onClick={() => setOnly(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <input
+            className={cn(inputClass, "h-8 max-w-xs flex-1 text-xs")}
+            placeholder="Buscar por nombre, carpeta o URL"
+            aria-label="Buscar en la corrida"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+          <button
+            type="button"
+            className="ml-auto text-xs text-slate-500 underline hover:text-slate-700"
+            onClick={() =>
+              setOpen(allOpen ? {} : Object.fromEntries(shown.map(({ key }) => [key, true])))
+            }
+          >
+            {allOpen ? "Plegar todas" : "Desplegar todas"}
+          </button>
+        </div>
+      )}
+
       <Card className="divide-y divide-slate-100">
-        {view.results.map((result, index) => {
-          const key = `${result.iteration}-${result.itemId}-${index}`;
+        {shown.map(({ result, key }) => {
           const failed = result.tests.filter((test) => !test.passed).length;
-          const bad = result.status === null || Boolean(result.error) || failed > 0;
+          const bad = resultFailed(result);
+          const reason = failureReason(result);
           return (
             <div key={key} className="px-3 py-2 text-sm">
               <button
@@ -742,38 +831,43 @@ export function CollectionRunPage() {
                 <span className={cn("w-12 text-right font-medium", statusClass(result.status))}>
                   {result.status ?? "—"}
                 </span>
-                <span className="w-16 text-right text-xs text-slate-500">{result.durationMs} ms</span>
+                <span className="w-16 text-right text-xs text-slate-500">{formatDuration(result.durationMs)}</span>
+                <span className="w-16 text-right text-xs text-slate-500">{formatBytes(result.sizeBytes)}</span>
                 <span className={cn("w-20 text-right text-xs", bad ? "text-rose-600" : "text-emerald-600")}>
                   {result.tests.length ? `${result.tests.length - failed}/${result.tests.length}` : "sin tests"}
                 </span>
               </button>
-              {open[key] && (
-                <div className="mt-2 space-y-1 rounded bg-slate-50 p-2 text-xs">
-                  <p className="font-mono text-[11px] text-slate-500">{result.url}</p>
-                  {result.error && <p className="text-rose-700">{result.error}</p>}
-                  {result.tests.map((test, position) => (
-                    <p key={position} className={test.passed ? "text-emerald-700" : "text-rose-700"}>
-                      {test.passed ? "✓" : "✕"} {test.name}
-                      {test.message ? ` — ${test.message}` : ""}
-                    </p>
-                  ))}
-                  {result.logs.map((log, position) => (
-                    <p key={`log-${position}`} className="font-mono text-[11px] text-slate-500">
-                      [{log.level}] {log.text}
-                    </p>
-                  ))}
-                </div>
-              )}
+              {/* La URL que salió de verdad y el motivo, sin desplegar: es lo que se lee en diagonal. */}
+              <p className="truncate pl-14 font-mono text-[11px] text-slate-400">{result.sent?.url || result.url}</p>
+              {reason && !open[key] && <p className="truncate pl-14 text-[11px] text-rose-600">{reason}</p>}
+              {open[key] && <CollectionResultDetail result={result} />}
             </div>
           );
         })}
         {!view.results.length && <p className="px-3 py-4 text-sm text-slate-500">Todavía no ha terminado ninguna.</p>}
+        {Boolean(view.results.length) && !shown.length && (
+          <p className="px-3 py-4 text-sm text-slate-500">Ninguna petición encaja con lo que buscas.</p>
+        )}
       </Card>
     </div>
   );
 }
 
-function Metric({ label, value, tone }: { label: string; value: number; tone?: "good" | "bad" }) {
+/** La clave de una fila del informe: la misma petición puede salir varias veces, una por vuelta. */
+const keyOf = (result: CollectionRunResultView, index: number): string =>
+  `${result.iteration}-${result.itemId}-${index}`;
+
+function Metric({
+  label,
+  value,
+  text,
+  tone,
+}: {
+  label: string;
+  value?: number;
+  text?: string;
+  tone?: "good" | "bad";
+}) {
   return (
     <div>
       <p className="text-[11px] uppercase tracking-wide text-slate-500">{label}</p>
@@ -783,7 +877,7 @@ function Metric({ label, value, tone }: { label: string; value: number; tone?: "
           tone === "bad" ? "text-rose-600" : tone === "good" ? "text-emerald-600" : "text-slate-900",
         )}
       >
-        {value}
+        {text ?? value}
       </p>
     </div>
   );

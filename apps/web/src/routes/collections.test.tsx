@@ -15,7 +15,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
 import { CollectionPage, CollectionRunPage, CollectionsPage } from "@/routes/collections";
-import type { CollectionRunView, CollectionSummary, CollectionView } from "@/lib/types";
+import type {
+  CollectionRunResultView,
+  CollectionRunView,
+  CollectionSummary,
+  CollectionView,
+} from "@/lib/types";
 
 type Options = { method?: string; body?: unknown };
 type StreamHandlers = { onEvent: (event: { type: string; data: unknown }) => void; signal: AbortSignal };
@@ -151,6 +156,29 @@ const view = (patch: Partial<CollectionView> = {}): CollectionView => ({
 
 const environments = [{ id: "env-1", name: "local", active: true, variables: {}, credentials: [] }];
 
+/** Una petición del informe, con todo lo que el runner guarda de ella. */
+const result = (patch: Partial<CollectionRunResultView> = {}): CollectionRunResultView => ({
+  iteration: 1,
+  itemId: "r1",
+  name: "Crear producto",
+  folder: "01 · Productos",
+  method: "POST",
+  url: "https://api/v1/products",
+  status: 200,
+  durationMs: 10,
+  sizeBytes: 20,
+  tests: [],
+  error: null,
+  logs: [],
+  sent: null,
+  received: null,
+  auth: "",
+  cookies: { sent: [], stored: [], rejected: [] },
+  writes: [],
+  scripts: { pre: null, post: null },
+  ...patch,
+});
+
 const runView = (patch: Partial<CollectionRunView> = {}): CollectionRunView => ({
   id: "run1",
   collectionId: "col1",
@@ -168,34 +196,57 @@ const runView = (patch: Partial<CollectionRunView> = {}): CollectionRunView => (
   finishedAt: "2026-09-20T11:00:30.000Z",
   error: null,
   results: [
-    {
-      iteration: 1,
+    result({
       itemId: "r1",
       name: "Crear producto",
-      folder: "01 · Productos",
       method: "POST",
-      url: "https://api/v1/products",
+      url: "{{baseUrl}}/v1/products",
       status: 201,
       durationMs: 42,
       sizeBytes: 100,
       tests: [{ name: "crea", passed: true, message: null }],
-      error: null,
-      logs: [],
-    },
-    {
-      iteration: 1,
+      sent: {
+        method: "POST",
+        url: "https://api/v1/products",
+        headers: { "Content-Type": "application/json" },
+        body: '{"sku":"A1"}',
+        bodyTruncated: false,
+      },
+      received: {
+        status: 201,
+        headers: { "x-request-id": "abc" },
+        body: '{"id":7}',
+        bodyTruncated: false,
+        sizeBytes: 100,
+        durationMs: 42,
+        timing: { dnsMs: 1, ttfbMs: 40, downloadMs: 1 },
+      },
+      auth: "Bearer del entorno «local»",
+      cookies: { sent: ["sid=api/"], stored: ["sid"], rejected: [{ line: "a=b; Domain=otro", why: "otro dominio" }] },
+      writes: [{ key: "product_id", value: "7" }],
+      scripts: { pre: { error: null, durationMs: 3 }, post: { error: null, durationMs: 5 } },
+    }),
+    result({
       itemId: "r2",
       name: "Leerlo",
-      folder: "01 · Productos",
       method: "GET",
       url: "https://api/v1/products/7",
       status: 404,
       durationMs: 10,
       sizeBytes: 20,
       tests: [{ name: "existe", passed: false, message: "esperaba 200" }],
-      error: null,
       logs: [{ level: "warn", text: "ojo" }],
-    },
+      sent: { method: "GET", url: "https://api/v1/products/7", headers: {}, body: null, bodyTruncated: false },
+      received: {
+        status: 404,
+        headers: {},
+        body: '{"detail":"no está"}',
+        bodyTruncated: false,
+        sizeBytes: 20,
+        durationMs: 10,
+        timing: { dnsMs: 0, ttfbMs: 9, downloadMs: 1 },
+      },
+    }),
   ],
   ...patch,
 });
@@ -253,7 +304,7 @@ describe("la lista de colecciones", () => {
     fireEvent.click(screen.getByRole("button", { name: "Crear" }));
 
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/p/p1/collections/nueva"));
-    expect(calls().find(([path, options]) => options?.method === "POST")?.[1]?.body).toEqual({ name: "Mía" });
+    expect(calls().find(([, options]) => options?.method === "POST")?.[1]?.body).toEqual({ name: "Mía" });
   });
 
   test("un fallo sin mensaje al crear tiene el suyo", async () => {
@@ -404,7 +455,13 @@ describe("el informe de una corrida", () => {
     expect(screen.getByText("404")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /Leerlo/ }));
+    // El resumen es lo primero: por qué falló, con qué credencial fue y qué dejó escrito.
+    // El estado sale dos veces: en la fila y en el resumen de la que está abierta.
+    expect(screen.getAllByText("404").length).toBe(2);
+    expect(screen.getByText("existe — esperaba 200")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Tests (1)" }));
     expect(screen.getByText(/✕ existe — esperaba 200/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Consola (1)" }));
     expect(screen.getByText(/\[warn\] ojo/)).toBeTruthy();
   });
 
@@ -664,6 +721,84 @@ describe("el informe, casos sueltos", () => {
     expect(screen.getAllByText("#1").length).toBe(2);
   });
 
+  test("el informe se filtra por rojas, por verdes y por lo que se busque", async () => {
+    mocks.api.mockResolvedValue(runView());
+    draw("/p/p1/collections/runs/run1");
+    await screen.findByText("Crear producto");
+
+    fireEvent.click(screen.getByRole("button", { name: "Rojas (1)" }));
+    expect(screen.queryByText("Crear producto")).toBeNull();
+    expect(screen.getByText("Leerlo")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Verdes (1)" }));
+    expect(screen.getByText("Crear producto")).toBeTruthy();
+    expect(screen.queryByText("Leerlo")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Todas (2)" }));
+    fireEvent.change(screen.getByLabelText("Buscar en la corrida"), { target: { value: "products/7" } });
+    expect(screen.getByText("Leerlo")).toBeTruthy();
+    expect(screen.queryByText("Crear producto")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Buscar en la corrida"), { target: { value: "nada de nada" } });
+    expect(screen.getByText("Ninguna petición encaja con lo que buscas.")).toBeTruthy();
+  });
+
+  test("las filas se despliegan y se pliegan todas a la vez", async () => {
+    mocks.api.mockResolvedValue(runView());
+    draw("/p/p1/collections/runs/run1");
+    await screen.findByText("Crear producto");
+
+    fireEvent.click(screen.getByRole("button", { name: "Desplegar todas" }));
+    expect(screen.getAllByRole("button", { name: "Resumen" })).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "Plegar todas" }));
+    expect(screen.queryByRole("button", { name: "Resumen" })).toBeNull();
+  });
+
+  test("mientras corre, la barra dice cuántas van", async () => {
+    let push: StreamHandlers["onEvent"] = () => {};
+    mocks.streamRun.mockImplementation((_path: string, handlers: StreamHandlers) => {
+      push = handlers.onEvent;
+      return new Promise(() => {});
+    });
+    // Sin `finishedAt`: mientras corre no hay duración que contar todavía.
+    mocks.api.mockResolvedValue(runView({ status: "running", results: [], finishedAt: null }));
+    draw("/p/p1/collections/runs/run1");
+    await waitFor(() => expect(mocks.streamRun).toHaveBeenCalled());
+    expect(screen.queryByText(/duró/)).toBeNull();
+
+    act(() =>
+      push({
+        type: "result",
+        data: {
+          status: "running",
+          totals: { requests: 1, failed: 0, tests: 0, testsPassed: 0, testsFailed: 0 },
+          result: runView().results[0],
+          progress: { done: 1, total: 4 },
+        },
+      }),
+    );
+    expect(await screen.findByText("1 de 4 peticiones")).toBeTruthy();
+  });
+
+  test("los ajustes con los que se lanzó se cuentan, y lo que no salió se busca por su URL escrita", async () => {
+    mocks.api.mockResolvedValue(
+      runView({
+        delayMs: 250,
+        stopOnFailure: true,
+        results: [result({ sent: null, status: null, error: "no se envió", url: "{{baseUrl}}/v1/products" })],
+      }),
+    );
+    draw("/p/p1/collections/runs/run1");
+
+    expect(await screen.findByText(/250 ms entre peticiones/)).toBeTruthy();
+    expect(screen.getByText(/para en la primera roja/)).toBeTruthy();
+    expect(screen.getByText(/duró 30.0 s/)).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Buscar en la corrida"), { target: { value: "{{baseurl}}" } });
+    expect(screen.getByText("Crear producto")).toBeTruthy();
+  });
+
   test("si el stream se cae, lo persistido sigue en pantalla", async () => {
     mocks.streamRun.mockRejectedValue(new Error("se cortó"));
     mocks.api.mockResolvedValue(runView({ status: "running" }));
@@ -777,18 +912,14 @@ describe("los bordes del editor y del informe", () => {
         environmentName: null,
         results: [
           {
-            iteration: 1,
-            itemId: "r1",
-            name: "Crear producto",
-            folder: "",
-            method: "POST",
-            url: "https://api/v1/products",
-            status: null,
-            durationMs: 0,
-            sizeBytes: 0,
-            tests: [],
-            error: "Variables sin valor: baseUrl",
-            logs: [],
+            ...result({
+              folder: "",
+              status: null,
+              durationMs: 0,
+              sizeBytes: 0,
+              error: "Variables sin valor: baseUrl",
+              auth: "No se envió",
+            }),
           },
         ],
       }),
@@ -886,6 +1017,7 @@ describe("lo que se escribe en el árbol llega al documento", () => {
     draw("/p/p1/collections/runs/run1");
     await screen.findByText("Crear producto");
     fireEvent.click(screen.getByRole("button", { name: /Crear producto/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Tests (1)" }));
     expect(screen.getByText(/✓ crea/)).toBeTruthy();
   });
 });

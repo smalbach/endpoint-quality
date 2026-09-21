@@ -14,7 +14,13 @@ import { FixedClock } from "@/shared/clock/clock.port";
 import { InMemoryCollectionRepository, InMemoryCollectionRunRepository } from "../support/in-memory-repositories";
 import { CollectionProgressStream } from "@/modules/collections/infrastructure/collection-progress.stream";
 import { CollectionRunner } from "@/modules/collections/infrastructure/collection-runner";
-import { EMPTY_TOTALS, emptyRequest, type CollectionItem, type CollectionRun } from "@/modules/collections/domain/model";
+import {
+  EMPTY_TOTALS,
+  RESULT_BODY_LIMIT,
+  emptyRequest,
+  type CollectionItem,
+  type CollectionRun,
+} from "@/modules/collections/domain/model";
 import type { CollectionRunQueuePort } from "@/modules/collections/domain/ports";
 import type { SentRequestView } from "@/modules/endpoints/application/commands/send-endpoint-request";
 
@@ -28,7 +34,13 @@ const request = (id: string): CollectionItem => ({
   preRequestScript: "",
   postResponseScript: "",
   auth: null,
-  request: { ...emptyRequest(), url: `https://api.test/${id}` },
+  // Con un parámetro de ruta y una query: es lo que el runner traduce a la entrada del envío.
+  request: {
+    ...emptyRequest(),
+    url: `https://api.test/${id}/{productId}`,
+    pathParameters: [{ name: "productId", type: "string", description: "", value: "7" }],
+    query: [{ name: "expand", type: "string", description: "", value: "prices", required: false, enabled: true }],
+  },
   items: [],
 });
 
@@ -265,7 +277,7 @@ describe("el runner de una colección", () => {
     assert.equal(result.durationMs, 0);
     assert.equal(result.sizeBytes, 0);
     // La URL que se enseña es la que se escribió: el envío no llegó a resolver ninguna.
-    assert.equal(result.url, "https://api.test/a");
+    assert.equal(result.url, "https://api.test/a/{productId}");
     assert.equal(result.error, "ReferenceError: pm no está");
     assert.deepEqual(result.tests.map((test) => test.name), ["pre"]);
     assert.deepEqual(result.logs.map((entry) => entry.text), ["antes", "después"]);
@@ -299,6 +311,149 @@ describe("el runner de una colección", () => {
     await context.runner.execute("run");
     assert.equal((await context.runs.findById("run"))?.status, "passed");
     assert.deepEqual(context.inputs[0].pathParameters, [{ name: "id", value: "7" }]);
+    context.done();
+  });
+  test("guarda lo que salió, lo que contestó y lo que dejó escrito", async () => {
+    const context = await build([request("a")], {}, [
+      sent({
+        request: {
+          method: "POST",
+          url: "https://api.test/v1/products",
+          headers: { Authorization: "Bearer ***" },
+          body: '{"sku":"A1"}',
+        },
+        response: {
+          status: 201,
+          headers: { "x-request-id": "abc" },
+          body: '{"id":7}',
+          sizeBytes: 8,
+          durationMs: 12,
+          timing: { dnsMs: 1, ttfbMs: 10, downloadMs: 1 },
+        },
+        auth: "Bearer del entorno «local»",
+        cookies: { sent: ["sid=api.test/"], stored: ["sid"], rejected: [{ line: "a=b", why: "otro dominio" }] },
+        variables: { product_id: "7" },
+        scripts: {
+          pre: { error: null, logs: [], tests: [], environmentUpdates: [], visualization: null, durationMs: 3 },
+          post: { error: null, logs: [], tests: [], environmentUpdates: [], visualization: null, durationMs: 5 },
+        },
+      }),
+    ]);
+    await context.runner.execute("run");
+    const result = (await context.runs.findById("run"))!.results[0];
+
+    // La URL de la fila es la que salió, no `{{baseUrl}}/…`: es de lo que se lee un 404.
+    assert.equal(result.url, "https://api.test/v1/products");
+    assert.equal(result.sent?.headers.Authorization, "Bearer ***");
+    assert.equal(result.sent?.body, '{"sku":"A1"}');
+    assert.equal(result.received?.body, '{"id":7}');
+    assert.equal(result.received?.timing.ttfbMs, 10);
+    assert.equal(result.auth, "Bearer del entorno «local»");
+    assert.deepEqual(result.cookies.stored, ["sid"]);
+    assert.deepEqual(result.writes, [{ key: "product_id", value: "7" }]);
+    assert.deepEqual(result.scripts, { pre: { error: null, durationMs: 3 }, post: { error: null, durationMs: 5 } });
+    context.done();
+  });
+
+  test("solo se guarda lo que esta petición escribió, no el almacén entero", async () => {
+    const context = await build([request("a"), request("b")], {}, [
+      sent({ variables: { product_id: "7" } }),
+      sent({ variables: { product_id: "7", price_id: "9" } }),
+    ]);
+    await context.runner.execute("run");
+    const results = (await context.runs.findById("run"))!.results;
+    assert.deepEqual(results[0].writes, [{ key: "product_id", value: "7" }]);
+    assert.deepEqual(results[1].writes, [{ key: "price_id", value: "9" }], "lo de la anterior no se repite");
+    context.done();
+  });
+
+  test("una petición que no se pudo enviar no inventa ni petición ni respuesta", async () => {
+    const context = await build([request("a")], {}, [new Error("Variables sin valor: baseUrl") as unknown as SentRequestView]);
+    await context.runner.execute("run");
+    const result = (await context.runs.findById("run"))!.results[0];
+    assert.equal(result.sent, null);
+    assert.equal(result.received, null);
+    assert.equal(result.auth, "No se envió");
+    assert.deepEqual(result.writes, []);
+    context.done();
+  });
+
+  test("un destino bloqueado deja la petición que salió y ninguna respuesta", async () => {
+    const context = await build([request("a")], {}, [
+      sent({
+        // Como contesta el botón de enviar cuando la guardia SSRF corta: hay petición y no respuesta.
+        request: { method: "GET", url: "", headers: {}, body: null },
+        response: null,
+        error: "El destino 10.0.0.1 está bloqueado: es una dirección privada",
+        auth: "Sin autenticación",
+      }),
+    ]);
+    await context.runner.execute("run");
+    const result = (await context.runs.findById("run"))!.results[0];
+
+    assert.equal(result.received, null);
+    assert.equal(result.status, null);
+    assert.equal(result.durationMs, 0);
+    assert.equal(result.sizeBytes, 0);
+    // Sin URL resuelta se queda la escrita, que es más que dejar la fila en blanco.
+    assert.equal(result.url, "https://api.test/a/{productId}");
+    assert.equal(result.sent?.body, null);
+    assert.match(String(result.error), /bloqueado/);
+    context.done();
+  });
+
+  test("un cuerpo enorme se guarda recortado y dicho", async () => {
+    const huge = "x".repeat(RESULT_BODY_LIMIT + 500);
+    const context = await build([request("a")], {}, [
+      sent({
+        request: { method: "POST", url: "https://api.test/a", headers: {}, body: huge },
+        response: {
+          status: 200,
+          headers: {},
+          body: huge,
+          sizeBytes: huge.length,
+          durationMs: 1,
+          timing: { dnsMs: 0, ttfbMs: 1, downloadMs: 0 },
+        },
+      }),
+    ]);
+    await context.runner.execute("run");
+    const result = (await context.runs.findById("run"))!.results[0];
+    assert.equal(result.sent?.body?.length, RESULT_BODY_LIMIT);
+    assert.equal(result.sent?.bodyTruncated, true);
+    assert.equal(result.received?.body.length, RESULT_BODY_LIMIT);
+    assert.equal(result.received?.bodyTruncated, true);
+    // El tamaño de verdad no se pierde al recortar: es lo que el informe enseña.
+    assert.equal(result.sizeBytes, huge.length);
+    context.done();
+  });
+
+  test("pasado el tope de la corrida se dejan de guardar cuerpos, y lo demás sigue", async () => {
+    const body = "y".repeat(RESULT_BODY_LIMIT);
+    const answer = sent({
+      request: { method: "POST", url: "https://api.test/a", headers: {}, body },
+      response: {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        body,
+        sizeBytes: body.length,
+        durationMs: 1,
+        timing: { dnsMs: 0, ttfbMs: 1, downloadMs: 0 },
+      },
+    });
+    // Cada petición guarda dos cuerpos de 16 KB: el presupuesto da para 62 y sobran las que faltan.
+    const many = Array.from({ length: 70 }, (_, index) => request(`r${index}`));
+    const context = await build(many, {}, [answer]);
+    await context.runner.execute("run");
+    const results = (await context.runs.findById("run"))!.results;
+    const last = results[results.length - 1];
+
+    assert.equal(results[0].received?.body.length, RESULT_BODY_LIMIT, "las primeras sí caben");
+    assert.equal(last.received?.body, "", "la última ya no guarda el cuerpo");
+    assert.equal(last.received?.bodyTruncated, true);
+    assert.equal(last.sent?.body, "", "tampoco el que se mandó");
+    assert.equal(last.received?.status, 200, "pero el resto del intercambio sigue ahí");
+    assert.deepEqual(last.received?.headers, { "content-type": "application/json" });
     context.done();
   });
 

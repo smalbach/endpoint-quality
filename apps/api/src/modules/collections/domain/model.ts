@@ -97,6 +97,34 @@ export type CollectionRunStatus = (typeof COLLECTION_RUN_STATUSES)[number];
 
 export type CollectionTestResult = { name: string; passed: boolean; message: string | null };
 
+/**
+ * La petición tal como salió, guardada con el resultado.
+ *
+ * Sin esto un informe no se puede leer: la fila dice `{{baseUrl}}/v1/products`, y un 404 sobre esa
+ * línea no distingue entre la ruta equivocada y la variable que apuntaba a otro sitio. Lo que se
+ * guarda es el eco que ya devuelve el botón de enviar —cabeceras tapadas incluidas—, no una
+ * segunda copia hecha aquí.
+ */
+export type CollectionSentRequest = {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body: string | null;
+  bodyTruncated: boolean;
+};
+
+export type CollectionReceivedResponse = {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+  bodyTruncated: boolean;
+  sizeBytes: number;
+  durationMs: number;
+  timing: { dnsMs: number; ttfbMs: number; downloadMs: number };
+};
+
+export type CollectionScriptPhase = { error: string | null; durationMs: number };
+
 export type CollectionRunResult = {
   iteration: number;
   itemId: string;
@@ -110,7 +138,61 @@ export type CollectionRunResult = {
   tests: CollectionTestResult[];
   error: string | null;
   logs: { level: "log" | "info" | "warn" | "error"; text: string }[];
+  /** Null cuando la petición no llegó a salir. */
+  sent: CollectionSentRequest | null;
+  /** Null cuando no hubo respuesta. */
+  received: CollectionReceivedResponse | null;
+  auth: string;
+  cookies: { sent: string[]; stored: string[]; rejected: { line: string; why: string }[] };
+  /** Lo que esta petición dejó escrito para las siguientes. */
+  writes: { key: string; value: string }[];
+  scripts: { pre: CollectionScriptPhase | null; post: CollectionScriptPhase | null };
 };
+
+/**
+ * Cuánto cuerpo se guarda, por petición y por corrida.
+ *
+ * Los dos topes existen por la misma razón y actúan en sitios distintos: una respuesta de diez
+ * megas no puede entrar entera en la fila (`RESULT_BODY_LIMIT`), y ochenta respuestas de dieciséis
+ * kilos tampoco pueden sumarse sin freno en un documento que se reescribe entero en cada petición
+ * (`RUN_DETAIL_BUDGET`). Pasado el presupuesto la corrida sigue guardándolo todo menos los
+ * cuerpos, que es lo único grande: el estado, los tiempos, los tests y las cabeceras siguen ahí.
+ */
+export const RESULT_BODY_LIMIT = 16_000;
+export const RUN_DETAIL_BUDGET = 2_000_000;
+
+/** El texto y si hubo que recortarlo, que es un hecho que el informe tiene que decir. */
+export function clipBody(text: string, limit = RESULT_BODY_LIMIT): { text: string; truncated: boolean } {
+  return text.length > limit ? { text: text.slice(0, limit), truncated: true } : { text, truncated: false };
+}
+
+/** Lo que ocupan los cuerpos de un resultado, que es lo único que crece sin techo. */
+export const detailSize = (result: CollectionRunResult): number =>
+  (result.sent?.body?.length ?? 0) + (result.received?.body.length ?? 0);
+
+/** El mismo resultado sin cuerpos, marcados como recortados: es lo que cabe pasado el tope. */
+export const withoutBodies = (result: CollectionRunResult): CollectionRunResult => ({
+  ...result,
+  sent: result.sent ? { ...result.sent, body: result.sent.body === null ? null : "", bodyTruncated: true } : null,
+  received: result.received ? { ...result.received, body: "", bodyTruncated: true } : null,
+});
+
+/**
+ * Un resultado guardado antes de que existieran estos campos, leído hoy.
+ *
+ * Las corridas viejas viven en la misma columna `jsonb` y no traen ni la petición ni la respuesta.
+ * Rellenarlas al leer —y no al pintar— deja un solo sitio donde eso se sabe, y a la pantalla
+ * creyéndose el tipo.
+ */
+export const completeResult = (result: CollectionRunResult): CollectionRunResult => ({
+  ...result,
+  sent: result.sent ?? null,
+  received: result.received ?? null,
+  auth: result.auth ?? "",
+  cookies: result.cookies ?? { sent: [], stored: [], rejected: [] },
+  writes: result.writes ?? [],
+  scripts: result.scripts ?? { pre: null, post: null },
+});
 
 export type CollectionRunTotals = {
   requests: number;

@@ -1343,7 +1343,54 @@ export type CollectionRunResultView = {
   /** Por qué no hubo respuesta, o por qué falló un script. */
   error: string | null;
   logs: { level: "log" | "info" | "warn" | "error"; text: string }[];
+  /**
+   * Lo que salió de verdad, no lo que estaba escrito: la URL con sus `{{variables}}` ya resueltas,
+   * las cabeceras que se presentaron —con los secretos tapados— y el cuerpo. Null cuando la
+   * petición no llegó a salir.
+   */
+  sent: CollectionSentView | null;
+  /** Lo que contestó, entero. Null cuando no hubo respuesta. */
+  received: CollectionReceivedView | null;
+  /** De dónde salió la credencial, en palabras: «¿con qué token fue?» es la primera pregunta. */
+  auth: string;
+  /** Qué cookies se presentaron, qué se guardó de la respuesta y qué se rechazó, con el porqué. */
+  cookies: { sent: string[]; stored: string[]; rejected: { line: string; why: string }[] };
+  /** Lo que esta petición dejó escrito para las siguientes: la cadena de la colección, a la vista. */
+  writes: { key: string; value: string }[];
+  /** Cada script con su tiempo y su error, para saber cuál de los dos tumbó la petición. */
+  scripts: { pre: CollectionScriptPhaseView | null; post: CollectionScriptPhaseView | null };
 };
+
+/**
+ * La petición tal como salió.
+ *
+ * Se guarda porque sin ella un informe no se puede leer: la fila dice `{{baseUrl}}/v1/products` y
+ * un 404 sobre esa línea no distingue entre la ruta equivocada y la variable que apuntaba a otro
+ * sitio. Las cabeceras vienen ya tapadas por el mismo camino que las tapa en el editor.
+ */
+export type CollectionSentView = {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body: string | null;
+  /** Si lo guardado es un recorte: un cuerpo entero por petición llenaría la corrida. */
+  bodyTruncated: boolean;
+};
+
+export type CollectionReceivedView = {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+  /** Si lo guardado es un recorte, o si no se guardó por haber pasado el tope de la corrida. */
+  bodyTruncated: boolean;
+  sizeBytes: number;
+  durationMs: number;
+  /** En qué se fue el tiempo: resolver el nombre, esperar al servidor, bajar el cuerpo. */
+  timing: { dnsMs: number; ttfbMs: number; downloadMs: number };
+};
+
+/** Un script de la petición: cuánto tardó y si reventó. */
+export type CollectionScriptPhaseView = { error: string | null; durationMs: number };
 
 export type CollectionRunTotals = {
   requests: number;

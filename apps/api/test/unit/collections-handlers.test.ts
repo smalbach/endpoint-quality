@@ -628,6 +628,12 @@ describe("leer las colecciones", () => {
           tests: [],
           error: null,
           logs: [],
+          sent: null,
+          received: null,
+          auth: "—",
+          cookies: { sent: [], stored: [], rejected: [] },
+          writes: [],
+          scripts: { pre: null, post: null },
         },
       ],
     });

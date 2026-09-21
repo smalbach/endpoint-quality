@@ -9,7 +9,7 @@ import type {
 } from "@eq/contracts";
 import { PROJECT_REPOSITORY, type ProjectRepositoryPort } from "@/modules/projects/domain/ports";
 import { ownedProject } from "@/modules/projects/application/commands/update-project";
-import { countItems, type CollectionRow, type CollectionRun } from "../../domain/model";
+import { completeResult, countItems, type CollectionRow, type CollectionRun } from "../../domain/model";
 import { writePostmanFile } from "../../domain/postman";
 import {
   COLLECTION_REPOSITORY,
@@ -55,7 +55,9 @@ export const runView = (run: CollectionRun): CollectionRunOf<Date> => ({
 
 export const runDetailView = (run: CollectionRun): CollectionRunViewOf<Date> => ({
   ...runView(run),
-  results: run.results,
+  // Las corridas guardadas antes de que el informe enseñara la petición y la respuesta salen por
+  // aquí con esos campos vacíos y no ausentes: la pantalla no tiene por qué saber que existieron.
+  results: run.results.map(completeResult),
 });
 
 export class ListCollectionsQuery implements IQuery {

@@ -40,10 +40,14 @@ import {
 } from "../domain/ports";
 import {
   EMPTY_TOTALS,
+  RUN_DETAIL_BUDGET,
+  clipBody,
+  detailSize,
   findItem,
   requestsOf,
   resolveItemAuth,
   trailName,
+  withoutBodies,
   type CollectionDocument,
   type CollectionItem,
   type CollectionRun,
@@ -112,6 +116,9 @@ export class CollectionRunner {
     const results: CollectionRunResult[] = [];
     const total = plan.length * run.iterations;
     let stopped = false;
+    // Lo que llevan ocupado los cuerpos guardados. La fila se reescribe entera en cada petición,
+    // así que lo que crece sin freno se paga en cada una de las que quedan.
+    let detail = 0;
 
     for (let iteration = 1; iteration <= run.iterations && !stopped; iteration += 1) {
       for (const entry of plan) {
@@ -119,7 +126,9 @@ export class CollectionRunner {
           await this.finish({ ...run, totals, results }, "cancelled", null);
           return;
         }
-        const result = await this.send(run, collection.document, entry, iteration, variables);
+        const sent = await this.send(run, collection.document, entry, iteration, variables);
+        const result = detail + detailSize(sent) > RUN_DETAIL_BUDGET ? withoutBodies(sent) : sent;
+        detail += detailSize(result);
         results.push(result);
         totals = add(totals, result);
         await this.runs.save({ ...run, totals, results });
@@ -161,7 +170,7 @@ export class CollectionRunner {
     const { item, trail } = entry;
     // Un nodo de esta lista siempre es una petición: `requestsOf` filtra por `kind`.
     const request = item.request!;
-    const base: Omit<CollectionRunResult, "status" | "durationMs" | "sizeBytes" | "tests" | "error" | "logs"> = {
+    const base = {
       iteration,
       itemId: item.id,
       name: item.name,
@@ -169,6 +178,8 @@ export class CollectionRunner {
       method: request.method,
       url: request.url,
     };
+    /** Lo que las variables valían antes: lo que esta petición escriba es la diferencia. */
+    const before = { ...variables };
 
     const input: SendInput & { environmentId: string | null } = {
       environmentId: run.environmentId,
@@ -200,6 +211,8 @@ export class CollectionRunner {
         new SendEndpointRequestCommand(run.organizationId, run.projectId, JSON.stringify(input), [], run.startedBy),
       );
     } catch (error) {
+      // El comando rechaza antes de salir: una variable sin valor, un entorno de solo lectura, un
+      // parámetro de ruta vacío. No hubo petición, así que no hay nada que enseñar de ella.
       return {
         ...base,
         status: null,
@@ -208,6 +221,12 @@ export class CollectionRunner {
         tests: [],
         error: error instanceof Error ? error.message : "La petición no se pudo enviar",
         logs: [],
+        sent: null,
+        received: null,
+        auth: "No se envió",
+        cookies: { sent: [], stored: [], rejected: [] },
+        writes: [],
+        scripts: { pre: null, post: null },
       };
     }
 
@@ -216,6 +235,8 @@ export class CollectionRunner {
 
     const tests = [...(sent.scripts.pre?.tests ?? []), ...(sent.scripts.post?.tests ?? [])];
     const logs = [...(sent.scripts.pre?.logs ?? []), ...(sent.scripts.post?.logs ?? [])];
+    const requestBody = sent.request.body === null ? null : clipBody(sent.request.body);
+    const responseBody = sent.response ? clipBody(sent.response.body) : null;
     return {
       ...base,
       url: sent.request.url || request.url,
@@ -225,6 +246,36 @@ export class CollectionRunner {
       tests,
       error: sent.error ?? sent.scripts.post?.error ?? sent.scripts.pre?.error ?? null,
       logs,
+      sent: {
+        method: sent.request.method,
+        url: sent.request.url,
+        headers: sent.request.headers,
+        body: requestBody?.text ?? null,
+        bodyTruncated: requestBody?.truncated ?? false,
+      },
+      received:
+        sent.response && responseBody
+          ? {
+              status: sent.response.status,
+              headers: sent.response.headers,
+              body: responseBody.text,
+              bodyTruncated: responseBody.truncated,
+              sizeBytes: sent.response.sizeBytes,
+              durationMs: sent.response.durationMs,
+              timing: sent.response.timing,
+            }
+          : null,
+      auth: sent.auth,
+      cookies: sent.cookies,
+      // Solo lo que esta petición cambió: el almacén entero son las variables de la colección más
+      // todo lo que llevan escrito las anteriores, y repetirlo en cada fila no dice quién lo puso.
+      writes: Object.entries(sent.variables)
+        .filter(([key, value]) => before[key] !== value)
+        .map(([key, value]) => ({ key, value })),
+      scripts: {
+        pre: sent.scripts.pre ? { error: sent.scripts.pre.error, durationMs: sent.scripts.pre.durationMs } : null,
+        post: sent.scripts.post ? { error: sent.scripts.post.error, durationMs: sent.scripts.post.durationMs } : null,
+      },
     };
   }
 

@@ -23,7 +23,12 @@ import {
   requestsOf,
   resolveItemAuth,
   trailName,
+  clipBody,
+  completeResult,
+  detailSize,
+  withoutBodies,
   type CollectionItem,
+  type CollectionRunResult,
 } from "@/modules/collections/domain/model";
 import { readPostmanFile, splitUrl, writePostmanFile } from "@/modules/collections/domain/postman";
 import {
@@ -517,5 +522,95 @@ describe("componer los scripts", () => {
 
   test("sin nada que componer no hay script", () => {
     assert.equal(composeScript([{ label: "x", code: "" }]), "");
+  });
+});
+
+const runResult = (patch: Partial<CollectionRunResult> = {}): CollectionRunResult => ({
+  iteration: 1,
+  itemId: "r1",
+  name: "Crear producto",
+  folder: "",
+  method: "POST",
+  url: "https://api.test/v1/products",
+  status: 201,
+  durationMs: 4,
+  sizeBytes: 8,
+  tests: [],
+  error: null,
+  logs: [],
+  sent: { method: "POST", url: "https://api.test/v1/products", headers: {}, body: "{}", bodyTruncated: false },
+  received: {
+    status: 201,
+    headers: {},
+    body: '{"id":7}',
+    bodyTruncated: false,
+    sizeBytes: 8,
+    durationMs: 4,
+    timing: { dnsMs: 0, ttfbMs: 4, downloadMs: 0 },
+  },
+  auth: "Sin autenticación",
+  cookies: { sent: [], stored: [], rejected: [] },
+  writes: [],
+  scripts: { pre: null, post: null },
+  ...patch,
+});
+
+describe("lo que de una corrida se guarda", () => {
+  test("un cuerpo corto entra entero y uno largo entra recortado y dicho", () => {
+    assert.deepEqual(clipBody("hola", 10), { text: "hola", truncated: false });
+    assert.deepEqual(clipBody("hola mundo", 4), { text: "hola", truncated: true });
+  });
+
+  test("lo que ocupa un resultado son sus cuerpos, y una petición que no salió no ocupa nada", () => {
+    assert.equal(detailSize(runResult()), "{}".length + '{"id":7}'.length);
+    assert.equal(detailSize(runResult({ sent: null, received: null })), 0);
+    // Un GET no lleva cuerpo: el hueco es null y no una cadena vacía.
+    assert.equal(detailSize(runResult({ sent: { method: "GET", url: "u", headers: {}, body: null, bodyTruncated: false } })), '{"id":7}'.length);
+  });
+
+  test("sin cuerpos queda el resto del intercambio, marcado", () => {
+    const stripped = withoutBodies(runResult());
+    assert.equal(stripped.sent?.body, "");
+    assert.equal(stripped.sent?.bodyTruncated, true);
+    assert.equal(stripped.received?.body, "");
+    assert.equal(stripped.received?.bodyTruncated, true);
+    assert.equal(stripped.status, 201, "el estado no se toca");
+
+    // Lo que no tenía cuerpo sigue sin tenerlo: null no es una cadena vacía.
+    const noBody = withoutBodies(
+      runResult({ sent: { method: "GET", url: "u", headers: {}, body: null, bodyTruncated: false }, received: null }),
+    );
+    assert.equal(noBody.sent?.body, null);
+    assert.equal(noBody.received, null);
+    assert.equal(withoutBodies(runResult({ sent: null })).sent, null);
+  });
+
+  test("una corrida vieja se lee con los campos nuevos vacíos y no ausentes", () => {
+    const old = {
+      iteration: 1,
+      itemId: "r1",
+      name: "Crear producto",
+      folder: "",
+      method: "POST",
+      url: "{{baseUrl}}/v1/products",
+      status: 201,
+      durationMs: 4,
+      sizeBytes: 8,
+      tests: [],
+      error: null,
+      logs: [],
+    } as unknown as CollectionRunResult;
+    const completed = completeResult(old);
+    assert.equal(completed.sent, null);
+    assert.equal(completed.received, null);
+    assert.equal(completed.auth, "");
+    assert.deepEqual(completed.cookies, { sent: [], stored: [], rejected: [] });
+    assert.deepEqual(completed.writes, []);
+    assert.deepEqual(completed.scripts, { pre: null, post: null });
+  });
+
+  test("una corrida de ahora se lee tal cual", () => {
+    const now = runResult({ auth: "Bearer", writes: [{ key: "id", value: "7" }] });
+    assert.deepEqual(completeResult(now), now);
   });
 });

@@ -9,7 +9,12 @@
  * Los ids los pone quien llama (`newId`), no una constante global: un componente puede pedir el
  * de `crypto.randomUUID`, y un test uno contado, y ninguno de los dos tiene que parchear al otro.
  */
-import type { CollectionItemView, CollectionRequestView, EndpointMethod } from "@/lib/types";
+import type {
+  CollectionItemView,
+  CollectionRequestView,
+  CollectionRunResultView,
+  EndpointMethod,
+} from "@/lib/types";
 
 export const METHODS: EndpointMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
@@ -190,6 +195,31 @@ export const RUN_STATUS_CLASS: Record<string, string> = {
   cancelled: "bg-slate-200 text-slate-600",
   error: "bg-rose-100 text-rose-700",
 };
+
+/** Una petición de la corrida está en rojo si no hubo respuesta, si un script falló o si un test salió mal. */
+export const resultFailed = (result: CollectionRunResultView): boolean =>
+  result.status === null || Boolean(result.error) || result.tests.some((test) => !test.passed);
+
+/**
+ * Por qué está en rojo, en una frase.
+ *
+ * Es lo que alguien busca al abrir un informe de ochenta peticiones, y tenerlo en la fila —sin
+ * desplegar nada— es la diferencia entre leerlo de un vistazo y abrirlas una a una. El primer test
+ * rojo con su mensaje es lo que más dice; los demás se cuentan.
+ */
+export function failureReason(result: CollectionRunResultView): string | null {
+  if (result.error) return result.error;
+  if (result.status === null) return "No hubo respuesta";
+  const failed = result.tests.filter((test) => !test.passed);
+  if (!failed.length) return null;
+  const first = `${failed[0].name}${failed[0].message ? ` — ${failed[0].message}` : ""}`;
+  const rest = failed.length - 1;
+  return rest ? `${first} · y ${rest} test${rest > 1 ? "s" : ""} más en rojo` : first;
+}
+
+/** Lo que tardó de punta a punta, cuando ya terminó. */
+export const runDuration = (startedAt: string, finishedAt: string | null): number | null =>
+  finishedAt ? new Date(finishedAt).getTime() - new Date(startedAt).getTime() : null;
 
 /** El estado HTTP con el color que le toca, que es lo que se mira primero en un informe. */
 export const statusClass = (status: number | null): string => {
