@@ -13,6 +13,7 @@ import { MemoryRouter } from "react-router-dom";
 
 import { EnvironmentManager } from "@/components/environment-manager";
 import { ToastProvider } from "@/components/toast";
+import { ImportProvider } from "@/components/import-provider";
 import { ApiError } from "@/lib/api";
 import type { Environment } from "@/lib/types";
 
@@ -65,7 +66,9 @@ function mount() {
     <MemoryRouter>
       <QueryClientProvider client={client}>
         <ToastProvider>
-          <EnvironmentManager projectId="p" onClose={onClose} />
+          <ImportProvider projectId="p">
+            <EnvironmentManager projectId="p" onClose={onClose} />
+          </ImportProvider>
         </ToastProvider>
       </QueryClientProvider>
     </MemoryRouter>,
@@ -112,6 +115,14 @@ describe("la lista de entornos", () => {
     expect(screen.queryByRole("button", { name: "Eliminar" })).toBeNull();
     expect(screen.queryByText("+ Nuevo entorno")).toBeNull();
     expect(screen.getAllByRole("button", { name: "Ver" })).toHaveLength(2);
+  });
+
+  test("«Importar entorno» cierra el gestor y abre la única puerta de import", async () => {
+    const { onClose } = mount();
+    await screen.findByText("local");
+    fireEvent.click(screen.getByText("Importar entorno"));
+    expect(onClose).toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Importar entornos" })).toBeDefined();
   });
 
   test("el enlace a Settings cierra el gestor", async () => {

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { EnvironmentButton } from "@/components/environment-button";
 import { ToastProvider } from "@/components/toast";
+import { ImportProvider } from "@/components/import-provider";
 import type { Environment, SessionTokenView } from "@/lib/types";
 
 const call = vi.hoisted(() => vi.fn());
@@ -41,7 +42,9 @@ function mount(token: SessionTokenView | null) {
   render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <EnvironmentButton projectId="p" />
+        <ImportProvider projectId="p">
+          <EnvironmentButton projectId="p" />
+        </ImportProvider>
       </ToastProvider>
     </QueryClientProvider>,
   );

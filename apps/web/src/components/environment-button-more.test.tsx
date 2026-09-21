@@ -9,6 +9,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { EnvironmentButton } from "@/components/environment-button";
 import { ToastProvider } from "@/components/toast";
+import { ImportProvider } from "@/components/import-provider";
 import type { Environment, SessionTokenView } from "@/lib/types";
 
 const call = vi.hoisted(() => vi.fn());
@@ -60,10 +61,12 @@ function mount({
   render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <div>
-          <EnvironmentButton projectId="p" />
-          <p>fuera</p>
-        </div>
+        <ImportProvider projectId="p">
+          <div>
+            <EnvironmentButton projectId="p" />
+            <p>fuera</p>
+          </div>
+        </ImportProvider>
       </ToastProvider>
     </QueryClientProvider>,
   );
@@ -98,12 +101,26 @@ describe("el desplegable", () => {
   test("sin entornos lo dice, y «Gestionar entornos» abre el gestor y se cierra", async () => {
     mount({ environments: [] });
     fireEvent.click(trigger());
-    expect(await screen.findByText("Sin entornos configurados.")).toBeDefined();
+    expect(await screen.findByText(/Sin entornos configurados/)).toBeDefined();
     fireEvent.click(screen.getByText("Gestionar entornos"));
     expect(screen.getByRole("dialog", { name: "Gestor de entornos" })).toBeDefined();
     expect(screen.queryByText("Gestionar entornos")).toBeNull();
     fireEvent.click(screen.getByText("cerrar gestor"));
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  test("«Importar entorno» abre el import sin pasar por el gestor, y a un lector ni se le ofrece", async () => {
+    mount({ environments: [] });
+    fireEvent.click(trigger());
+    fireEvent.click(await screen.findByText("Importar entorno"));
+    expect(screen.getByRole("dialog", { name: "Importar entornos" })).toBeDefined();
+    expect(screen.queryByText("Gestionar entornos")).toBeNull();
+
+    can.edit = false;
+    mount({ environments: [] });
+    fireEvent.click(trigger());
+    await screen.findAllByText(/Sin entornos configurados/);
+    expect(screen.queryByText("Importar entorno")).toBeNull();
   });
 });
 

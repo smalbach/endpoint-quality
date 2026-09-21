@@ -17,10 +17,15 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useQueryClient } from "@tanstack/react-query";
 
 import { ImportDialog, readDropped, type DroppedFile } from "@/components/import-dialog";
+import type { ImportTarget } from "@eq/import-detect";
 
 type Opener = {
-  /** Abre el diálogo. Con ficheros ya leídos cuando vienen de un arrastre. */
-  open: (files?: DroppedFile[]) => void;
+  /**
+   * Abre el diálogo. Con ficheros ya leídos cuando vienen de un arrastre, y con `only` cuando lo
+   * abre una pantalla que manda un solo destino —los entornos— y no quiere que un OpenAPI suelto
+   * ahí escriba el contrato entero.
+   */
+  open: (options?: { files?: DroppedFile[]; only?: ImportTarget }) => void;
 };
 
 const ImportContext = createContext<Opener | null>(null);
@@ -41,12 +46,14 @@ export function useImport(): Opener {
 export function ImportProvider({ projectId, children }: { projectId?: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [initial, setInitial] = useState<DroppedFile[]>([]);
+  const [only, setOnly] = useState<ImportTarget | undefined>(undefined);
   const queryClient = useQueryClient();
 
   const opener = useMemo<Opener>(
     () => ({
-      open: (files) => {
-        setInitial(files ?? []);
+      open: (options) => {
+        setInitial(options?.files ?? []);
+        setOnly(options?.only);
         setOpen(true);
       },
     }),
@@ -67,11 +74,12 @@ export function ImportProvider({ projectId, children }: { projectId?: string; ch
 
   return (
     <ImportContext.Provider value={opener}>
-      <DropTarget onFiles={(files) => opener.open(files)}>{children}</DropTarget>
+      <DropTarget onFiles={(files) => opener.open({ files })}>{children}</DropTarget>
       {open && (
         <ImportDialog
           projectId={projectId}
           initial={initial}
+          only={only}
           onClose={() => setOpen(false)}
           // Un import toca el contrato, los endpoints, los flujos y los entornos a la vez, así que
           // lo que se invalida es todo: cualquier pantalla abierta detrás está mirando algo que

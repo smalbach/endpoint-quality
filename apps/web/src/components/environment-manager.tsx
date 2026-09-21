@@ -18,6 +18,7 @@ import { cn } from "@/lib/format";
 import { Badge, Button, inputClass } from "@/components/ui";
 import { Modal } from "@/components/overlay";
 import { DeleteDialog } from "@/components/lifecycle";
+import { useImport } from "@/components/import-provider";
 import { useToast } from "@/components/toast";
 import { VariablesEditor } from "@/components/variables-editor";
 import type { Environment, ProjectSummary } from "@/lib/types";
@@ -33,6 +34,7 @@ export function EnvironmentManager({ projectId, onClose }: { projectId: string; 
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<Environment | null>(null);
   const [, activate] = useActiveEnvironment(projectId);
+  const { open: openImport } = useImport();
 
   const environments = useQuery({
     queryKey: ["environments", projectId],
@@ -103,7 +105,8 @@ export function EnvironmentManager({ projectId, onClose }: { projectId: string; 
           {environments.isLoading && <p className="text-xs text-slate-500">Cargando…</p>}
           {!environments.isLoading && list.length === 0 && !creating && (
             <p className="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-xs text-slate-500">
-              Sin entornos. Un entorno es una URL base y las variables que se sustituyen al llamarla.
+              Sin entornos. Un entorno es una URL base y las variables que se sustituyen al llamarla: créalo aquí, o
+              importa el que ya tienes en Postman.
             </p>
           )}
           {list.map((environment) => (
@@ -169,12 +172,25 @@ export function EnvironmentManager({ projectId, onClose }: { projectId: string; 
             />
           ) : (
             canEdit && (
-              <button
-                className="w-full rounded-xl border border-dashed border-slate-300 px-3 py-2 text-xs font-medium text-slate-600 hover:border-slate-400 hover:text-slate-900"
-                onClick={() => setCreating(true)}
-              >
-                + Nuevo entorno
-              </button>
+              <div className="flex gap-2">
+                <button
+                  className="flex-1 rounded-xl border border-dashed border-slate-300 px-3 py-2 text-xs font-medium text-slate-600 hover:border-slate-400 hover:text-slate-900"
+                  onClick={() => setCreating(true)}
+                >
+                  + Nuevo entorno
+                </button>
+                {/* Importar no abre otra puerta: llama a la única que hay, la del Cmd+O, que ya
+                    reconoce un entorno de Postman y lo deja en este proyecto. */}
+                <button
+                  className="flex-1 rounded-xl border border-dashed border-slate-300 px-3 py-2 text-xs font-medium text-slate-600 hover:border-slate-400 hover:text-slate-900"
+                  onClick={() => {
+                    onClose();
+                    openImport({ only: "environment" });
+                  }}
+                >
+                  Importar entorno
+                </button>
+              </div>
             )
           )}
 

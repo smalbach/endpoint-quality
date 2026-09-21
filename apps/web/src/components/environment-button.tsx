@@ -16,6 +16,7 @@ import { cn } from "@/lib/format";
 import { resolveActive, useActiveEnvironment } from "@/lib/active-environment";
 import { countdownTone, formatCountdown, useSessionToken, visibleClaims } from "@/lib/session-token";
 import { EnvironmentManager } from "@/components/environment-manager";
+import { useImport } from "@/components/import-provider";
 import { useToast } from "@/components/toast";
 import type { Environment, SessionTokenView } from "@/lib/types";
 
@@ -28,6 +29,7 @@ export function EnvironmentButton({ projectId }: { projectId: string }) {
   const [open, setOpen] = useState(false);
   const [managing, setManaging] = useState(false);
   const [stored, activate] = useActiveEnvironment(projectId);
+  const { open: openImport } = useImport();
   const root = useRef<HTMLDivElement>(null);
 
   const environments = useQuery({
@@ -81,7 +83,9 @@ export function EnvironmentButton({ projectId }: { projectId: string }) {
             <p className="text-[10px] font-semibold tracking-wide text-slate-400 uppercase">Entornos</p>
             {environments.isLoading && <p className="mt-2 text-xs text-slate-500">Cargando…</p>}
             {!environments.isLoading && list.length === 0 && (
-              <p className="mt-2 text-xs text-slate-500">Sin entornos configurados.</p>
+              <p className="mt-2 text-xs text-slate-500">
+                Sin entornos configurados. Crea uno, o importa el que ya tienes en Postman.
+              </p>
             )}
             <div className="mt-2 space-y-1">
               {list.map((environment) => {
@@ -150,16 +154,27 @@ export function EnvironmentButton({ projectId }: { projectId: string }) {
 
           <SessionTokenSection projectId={projectId} token={token} now={now} />
 
-          <div className="px-4 py-3">
+          <div className="flex gap-2 px-4 py-3">
             <button
               onClick={() => {
                 setOpen(false);
                 setManaging(true);
               }}
-              className="block w-full rounded-lg border border-dashed border-slate-300 px-3 py-2 text-center text-xs font-medium text-slate-600 hover:border-slate-400 hover:text-slate-900"
+              className="flex-1 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-center text-xs font-medium text-slate-600 hover:border-slate-400 hover:text-slate-900"
             >
               Gestionar entornos
             </button>
+            {canEdit && (
+              <button
+                onClick={() => {
+                  setOpen(false);
+                  openImport({ only: "environment" });
+                }}
+                className="flex-1 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-center text-xs font-medium text-slate-600 hover:border-slate-400 hover:text-slate-900"
+              >
+                Importar entorno
+              </button>
+            )}
           </div>
         </div>
       )}

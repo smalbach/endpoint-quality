@@ -29,7 +29,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { detectImport, looksZipped, readZip, targetsOf, type Detected, type ImportKind } from "@eq/import-detect";
+import {
+  detectImport,
+  looksZipped,
+  readZip,
+  targetsOf,
+  type Detected,
+  type ImportKind,
+  type ImportTarget,
+} from "@eq/import-detect";
 
 import { api, ApiError } from "@/lib/api";
 import { useOrganization } from "@/lib/auth";
@@ -130,15 +138,44 @@ const TARGET_LABEL: Record<string, string> = {
   project: "todo el proyecto",
 };
 
+/**
+ * Un import acotado a un solo destino: cómo se llama en pantalla y qué se dice de lo que no cabe.
+ *
+ * Existe porque la puerta única no puede ser una puerta ciega. Abrirla desde los entornos y que
+ * acepte un OpenAPI —que escribe el contrato y cuarenta endpoints— es una sorpresa cara de
+ * deshacer. Acotada, lee lo mismo y **escribe sólo el destino que se pidió**: de un volcado de
+ * Postman entran sus entornos y nada más, y lo que no cabe se dice antes de importar, no después.
+ */
+const SCOPES: Record<ImportTarget, { title: string; description: string; noun: string; plural: string }> = {
+  environment: {
+    title: "Importar entornos",
+    description:
+      "Un entorno de Postman, o el volcado donde están todos. Sólo entran entornos: lo demás que traiga el fichero se queda fuera.",
+    noun: "un entorno",
+    plural: "entornos",
+  },
+  contract: { title: "Importar el contrato", description: "", noun: "un contrato", plural: "contratos" },
+  endpoints: { title: "Importar endpoints", description: "", noun: "un endpoint", plural: "endpoints" },
+  collections: { title: "Importar colecciones", description: "", noun: "una colección", plural: "colecciones" },
+  flows: { title: "Importar flujos", description: "", noun: "un flujo", plural: "flujos" },
+  project: { title: "Importar un proyecto", description: "", noun: "un proyecto", plural: "proyectos" },
+};
+
 export function ImportDialog({
   projectId,
   initial,
+  only,
   onClose,
   onImported,
 }: {
   /** El proyecto en el que se está. Sin él, se pregunta a cuál va. */
   projectId?: string;
   initial: DroppedFile[];
+  /**
+   * El único destino que este import puede escribir, cuando se abre desde una pantalla que manda
+   * uno solo. Sin él es la puerta general, que escribe lo que traiga cada fichero.
+   */
+  only?: ImportTarget;
   onClose: () => void;
   onImported: () => void;
 }) {
@@ -177,17 +214,38 @@ export function ImportDialog({
     return [];
   }, [tab, files, pasted]);
 
-  const readable = found.some((entry) => entry.pieces.length);
-  const environments = found.some((entry) => entry.pieces.some((piece) => piece.kind === "postman-environment"));
+  /**
+   * Lo reconocido que este import puede escribir. Acotado, un volcado se queda con sus entornos y
+   * un OpenAPI se queda sin nada — y lo dice con las palabras del destino, no con un «no vale».
+   */
+  const usable = useMemo<Detected[]>(() => {
+    if (!only) return found;
+    const scope = SCOPES[only];
+    return found.map((entry) => {
+      const pieces = entry.pieces.filter((piece) => targetsOf(piece.kind).includes(only));
+      if (pieces.length === entry.pieces.length) return entry;
+      return {
+        ...entry,
+        pieces,
+        reason: pieces.length ? entry.reason : `no trae ${scope.noun}: aquí sólo entran ${scope.plural}`,
+      };
+    });
+  }, [found, only]);
+
+  const readable = usable.some((entry) => entry.pieces.length);
+  const environments = usable.some((entry) => entry.pieces.some((piece) => piece.kind === "postman-environment"));
+  /** Acotado, lo que cruza la red son las piezas que caben, no el fichero entero que las traía. */
+  const pieces = usable.flatMap((entry) => entry.pieces.map((piece) => ({ name: piece.name, text: piece.text })));
 
   const run = useMutation({
     mutationFn: () =>
       api<ImportAnythingResult>(`/orgs/${organization?.id}/projects/${target}/import`, {
         method: "POST",
         body: {
-          ...(tab === "url" ? { url: url.trim(), ...urlAuthBody(auth) } : {}),
-          ...(tab === "text" && pasted.trim() ? { sources: [{ name: "", text: pasted }] } : {}),
-          ...(tab === "files" && files.length
+          ...(only ? { sources: pieces } : {}),
+          ...(!only && tab === "url" ? { url: url.trim(), ...urlAuthBody(auth) } : {}),
+          ...(!only && tab === "text" && pasted.trim() ? { sources: [{ name: "", text: pasted }] } : {}),
+          ...(!only && tab === "files" && files.length
             ? { sources: files.filter((file) => !file.reason).map((file) => ({ name: file.name, text: file.text })) }
             : {}),
           ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
@@ -198,7 +256,30 @@ export function ImportDialog({
 
   const ready =
     Boolean(target) &&
-    (tab === "url" ? Boolean(url.trim()) && authReady(auth) : tab === "text" ? Boolean(pasted.trim()) : readable);
+    (only
+      ? readable
+      : tab === "url"
+        ? Boolean(url.trim()) && authReady(auth)
+        : tab === "text"
+          ? Boolean(pasted.trim())
+          : readable);
+
+  /**
+   * Las vías de entrada. Acotado quedan las dos cuyo contenido se lee **aquí**, antes de mandar
+   * nada: por una URL lo lee el servidor, y prometer «sólo entornos» sobre algo que este lado no
+   * ha visto es una promesa que no se puede cumplir. La captura tampoco: un HAR son endpoints.
+   */
+  const tabs: readonly (readonly [Tab, string])[] = only
+    ? ([
+        ["files", "Ficheros"],
+        ["text", "Texto sin formato"],
+      ] as const)
+    : ([
+        ["files", "Ficheros"],
+        ["text", "Texto sin formato"],
+        ["url", "Desde una URL"],
+        ["capture", "Capturar tráfico"],
+      ] as const);
 
   const take = async (picked: FileList | File[]) => {
     const read = await readDropped([...picked]);
@@ -209,8 +290,12 @@ export function ImportDialog({
 
   return (
     <Modal
-      title="Importar"
-      description="Ficheros, una carpeta, un texto pegado, un enlace o el tráfico que pase por un proxy. Se reconoce qué es cada cosa antes de escribir nada."
+      title={only ? SCOPES[only].title : "Importar"}
+      description={
+        only
+          ? SCOPES[only].description
+          : "Ficheros, una carpeta, un texto pegado, un enlace o el tráfico que pase por un proxy. Se reconoce qué es cada cosa antes de escribir nada."
+      }
       onClose={onClose}
       size="lg"
     >
@@ -244,14 +329,7 @@ export function ImportDialog({
         )}
 
         <div className="flex gap-1 border-b border-slate-200">
-          {(
-            [
-              ["files", "Ficheros"],
-              ["text", "Texto sin formato"],
-              ["url", "Desde una URL"],
-              ["capture", "Capturar tráfico"],
-            ] as const
-          ).map(([value, label]) => (
+          {tabs.map(([value, label]) => (
             <button
               key={value}
               onClick={() => {
@@ -278,11 +356,14 @@ export function ImportDialog({
             )}
           >
             <p className="text-xs text-slate-600">
-              Arrastra aquí la colección, sus entornos o el volcado completo de Postman.
+              {only === "environment"
+                ? "Arrastra aquí el entorno de Postman, o el volcado donde están todos."
+                : "Arrastra aquí la colección, sus entornos o el volcado completo de Postman."}
             </p>
             <p className="mt-0.5 text-[11px] text-slate-400">
-              El `.zip` de «Export data» se abre aquí mismo. También un OpenAPI (JSON o YAML), una exportación de
-              Insomnia, un fichero con comandos cURL o un proyecto exportado de aquí.
+              {only === "environment"
+                ? "El `.zip` de «Export data» se abre aquí mismo y se queda con sus entornos: sus colecciones no entran por esta puerta."
+                : "El `.zip` de «Export data» se abre aquí mismo. También un OpenAPI (JSON o YAML), una exportación de Insomnia, un fichero con comandos cURL o un proyecto exportado de aquí."}
             </p>
             <input
               ref={filePicker}
@@ -318,7 +399,11 @@ export function ImportDialog({
           <div className="mt-3">
             <Field
               label="Pega lo que tengas"
-              hint="El JSON de una colección o de un entorno, un OpenAPI en YAML, o un puñado de comandos curl."
+              hint={
+                only === "environment"
+                  ? "El JSON del entorno, tal como lo exporta Postman."
+                  : "El JSON de una colección o de un entorno, un OpenAPI en YAML, o un puñado de comandos curl."
+              }
             >
               <textarea
                 className={`${inputClass} h-40 font-mono text-[11px]`}
@@ -422,9 +507,9 @@ export function ImportDialog({
         )}
 
         {/* Lo reconocido, mientras sueltas y sin preguntar a nadie. */}
-        {!run.data && found.length > 0 && (
+        {!run.data && usable.length > 0 && (
           <ul className="mt-3 space-y-1.5">
-            {found.map((entry, index) => (
+            {usable.map((entry, index) => (
               <Recognised
                 key={`${entry.name}-${index}`}
                 entry={entry}

@@ -88,6 +88,11 @@ vi.mock("@/routes/performance", () => ({
   PerformanceComparePage: stub("PerformanceComparePage"),
 }));
 vi.mock("@/routes/code-scan", () => ({ CodeScanPage: stub("CodeScanPage") }));
+vi.mock("@/routes/collections", () => ({
+  CollectionsPage: stub("CollectionsPage"),
+  CollectionPage: stub("CollectionPage"),
+  CollectionRunPage: stub("CollectionRunPage"),
+}));
 vi.mock("@/routes/mocks", () => ({ MocksPage: stub("MocksPage") }));
 vi.mock("@/routes/doc-sites", () => ({ DocSitesPage: stub("DocSitesPage") }));
 vi.mock("@/routes/monitors", () => ({ MonitorsPage: stub("MonitorsPage") }));
@@ -208,6 +213,9 @@ describe("las páginas de un proyecto", () => {
     ["/p/p1/performance/compare/a/b", "Cargando…", "PerformanceComparePage p1 a b"],
     ["/p/p1/performance/r1", "Cargando…", "PerformanceRunDetailPage p1 r1"],
     ["/p/p1/code-scan", "Cargando…", "CodeScanPage p1"],
+    ["/p/p1/collections", "Cargando…", "CollectionsPage p1"],
+    ["/p/p1/collections/c1", "Cargando…", "CollectionPage p1 c1"],
+    ["/p/p1/collections/runs/r1", "Cargando…", "CollectionRunPage p1 r1"],
   ])("%s llega perezosa: primero «%s», luego %s", async (at, loading, expected) => {
     draw(at);
     expect(screen.getByText(loading)).toBeTruthy();

@@ -289,6 +289,89 @@ describe("el resumen", () => {
     expect(screen.getByText(/no cabe/).className).toContain("rose");
     expect(screen.getByText("se ignoró un script")).toBeDefined();
   });
+
+  /**
+   * Una colección importada se abre desde el propio resumen, que es el paso que el import venía a
+   * quitar: contar «entró una colección» y dejar a la persona buscándola no vale de nada.
+   */
+  test("una colección importada se abre desde el resumen, y el enlace cierra el diálogo", async () => {
+    call.mockResolvedValue({
+      dryRun: false,
+      items: [
+        {
+          name: "Tienda",
+          kind: "postman-collection",
+          pieces: [],
+          reason: null,
+          results: [
+            { target: "collections", name: "Tienda", summary: "12 peticiones", error: null, collectionId: "c1" },
+          ],
+        },
+      ],
+    });
+    const handlers = dialog({ projectId: "p", initial: [{ name: "t.json", text: collection }] });
+    fireEvent.click(importButton());
+    const link = await screen.findByRole("link", { name: "Abrir la colección" });
+    expect(link.getAttribute("href")).toBe("/p/p/collections/c1");
+    fireEvent.click(link);
+    expect(handlers.onClose).toHaveBeenCalled();
+  });
+});
+
+/**
+ * La puerta acotada: la misma, abierta desde una pantalla que manda un solo destino.
+ *
+ * Lo que se comprueba es la promesa que hace su título: que **sólo entran entornos**. Un volcado
+ * entra por sus entornos y deja fuera sus colecciones, un OpenAPI no entra en absoluto, y las dos
+ * vías que no se pueden leer aquí —una URL, la captura— ni se ofrecen.
+ */
+describe("importar acotado a los entornos", () => {
+  const dump = JSON.stringify({
+    collections: [JSON.parse(collection)],
+    environments: [JSON.parse(environment)],
+  });
+
+  test("se llama por su destino y no ofrece las vías que este lado no puede leer", () => {
+    dialog({ projectId: "p", only: "environment" });
+    expect(screen.getByRole("dialog", { name: "Importar entornos" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Desde una URL" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Capturar tráfico" })).toBeNull();
+  });
+
+  test("un volcado entra sólo por sus entornos, y eso es lo único que cruza la red", async () => {
+    call.mockResolvedValue({ dryRun: false, items: [] });
+    const handlers = dialog({ projectId: "p", only: "environment", initial: [{ name: "dump.json", text: dump }] });
+    expect(screen.getByText("Va a un entorno.")).toBeDefined();
+    expect(screen.queryByText(/Va a endpoints/)).toBeNull();
+
+    fireEvent.click(importButton());
+    await waitFor(() => expect(handlers.onImported).toHaveBeenCalled());
+    expect(call).toHaveBeenLastCalledWith("/orgs/o/projects/p/import", {
+      method: "POST",
+      body: { sources: [{ name: "local", text: JSON.stringify(JSON.parse(environment)) }] },
+    });
+  });
+
+  test("un entorno pegado entra tal cual por la pestaña de texto", async () => {
+    call.mockResolvedValue({ dryRun: false, items: [] });
+    const handlers = dialog({ projectId: "p", only: "environment" });
+    fireEvent.click(screen.getByRole("button", { name: "Texto sin formato" }));
+    expect(screen.getByText("El JSON del entorno, tal como lo exporta Postman.")).toBeDefined();
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: environment } });
+
+    fireEvent.click(importButton());
+    await waitFor(() => expect(handlers.onImported).toHaveBeenCalled());
+    expect(call).toHaveBeenLastCalledWith("/orgs/o/projects/p/import", {
+      method: "POST",
+      body: { sources: [{ name: "local", text: JSON.stringify(JSON.parse(environment)) }] },
+    });
+  });
+
+  test("lo que no trae ningún entorno lo dice y no deja importar", () => {
+    dialog({ projectId: "p", only: "environment", initial: [{ name: "t.json", text: collection }] });
+    expect(screen.getByText("no trae un entorno: aquí sólo entran entornos")).toBeDefined();
+    expect(importButton().hasAttribute("disabled")).toBe(true);
+  });
 });
 
 describe("capturar tráfico", () => {

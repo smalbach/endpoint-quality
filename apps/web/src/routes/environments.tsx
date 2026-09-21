@@ -8,6 +8,7 @@ import { DeleteDialog, LifecycleRowActions, LifecycleTabs, stateQuery } from "@/
 import { cn, formatDate } from "@/lib/format";
 import type { ConfigView, Environment, LifecycleState } from "@/lib/types";
 import { VariablesEditor } from "@/components/variables-editor";
+import { useImport } from "@/components/import-provider";
 import { credentialRoleOptions, declaredRoles, mapsFrom, problemsWith, rowsFrom } from "@/lib/env-variables";
 
 /**
@@ -28,6 +29,7 @@ export function EnvironmentsPage() {
   const [creating, setCreating] = useState(false);
   /** Qué lista se está mirando: los que se usan, los archivados o la papelera. */
   const [state, setState] = useState<LifecycleState>("active");
+  const { open: openImport } = useImport();
 
   const environments = useQuery({
     // La clave lleva el estado: la barra de entornos de arriba lee `["environments", projectId]`
@@ -67,8 +69,17 @@ export function EnvironmentsPage() {
     return (
       <Empty
         title="Sin entornos"
-        hint="Un entorno es una URL base, las variables que se sustituyen al llamarla y las credenciales que se presentan."
-        action={canEdit ? <Button onClick={() => setCreating(true)}>Nuevo entorno</Button> : undefined}
+        hint="Un entorno es una URL base, las variables que se sustituyen al llamarla y las credenciales que se presentan. Si ya tienes uno en Postman, impórtalo en vez de escribirlo otra vez."
+        action={
+          canEdit ? (
+            <div className="flex items-center gap-2">
+              <Button onClick={() => setCreating(true)}>Nuevo entorno</Button>
+              <Button variant="ghost" onClick={() => openImport({ only: "environment" })}>
+                Importar entorno
+              </Button>
+            </div>
+          ) : undefined
+        }
       />
     );
   }
@@ -79,12 +90,20 @@ export function EnvironmentsPage() {
         <div className="flex items-center justify-between px-1">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Entornos</p>
           {canEdit && (
-            <button
-              className="text-xs font-medium text-slate-600 hover:text-slate-950"
-              onClick={() => setCreating(true)}
-            >
-              + Nuevo
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                className="text-xs font-medium text-slate-600 hover:text-slate-950"
+                onClick={() => setCreating(true)}
+              >
+                + Nuevo
+              </button>
+              <button
+                className="text-xs font-medium text-slate-600 hover:text-slate-950"
+                onClick={() => openImport({ only: "environment" })}
+              >
+                Importar
+              </button>
+            </div>
           )}
         </div>
         <LifecycleTabs state={state} onState={setState} />

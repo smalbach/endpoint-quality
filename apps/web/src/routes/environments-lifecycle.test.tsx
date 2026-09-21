@@ -11,6 +11,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import { EnvironmentsPage } from "@/routes/environments";
+import { ImportProvider } from "@/components/import-provider";
 import type { ConfigView, Environment } from "@/lib/types";
 
 const call = vi.hoisted(() => vi.fn());
@@ -61,9 +62,11 @@ function draw(mutate: (path: string, options?: { method?: string; body?: unknown
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={["/p/p1/settings/environments"]}>
-        <Routes>
-          <Route path="/p/:projectId/settings/environments" element={<EnvironmentsPage />} />
-        </Routes>
+        <ImportProvider projectId="p1">
+          <Routes>
+            <Route path="/p/:projectId/settings/environments" element={<EnvironmentsPage />} />
+          </Routes>
+        </ImportProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -100,9 +103,11 @@ describe("los tres filtros de los entornos", () => {
     render(
       <QueryClientProvider client={client}>
         <MemoryRouter initialEntries={["/p/p1/settings/environments"]}>
-          <Routes>
-            <Route path="/p/:projectId/settings/environments" element={<EnvironmentsPage />} />
-          </Routes>
+          <ImportProvider projectId="p1">
+            <Routes>
+              <Route path="/p/:projectId/settings/environments" element={<EnvironmentsPage />} />
+            </Routes>
+          </ImportProvider>
         </MemoryRouter>
       </QueryClientProvider>,
     );

@@ -16,6 +16,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import { EnvironmentsPage } from "@/routes/environments";
+import { ImportProvider } from "@/components/import-provider";
 import { ApiError } from "@/lib/api";
 import type { ConfigView, Environment } from "@/lib/types";
 
@@ -81,9 +82,11 @@ function draw(handlers: Handlers = {}) {
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={["/p/p1/settings/environments"]}>
-        <Routes>
-          <Route path="/p/:projectId/settings/environments" element={<EnvironmentsPage />} />
-        </Routes>
+        <ImportProvider projectId="p1">
+          <Routes>
+            <Route path="/p/:projectId/settings/environments" element={<EnvironmentsPage />} />
+          </Routes>
+        </ImportProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -129,11 +132,31 @@ describe("EnvironmentsPage", () => {
     expect(screen.queryByPlaceholderText("https://api.ejemplo.com")).toBeNull();
   });
 
-  test("sin permiso de edición, el vacío no ofrece crear", async () => {
+  test("sin permiso de edición, el vacío no ofrece crear ni importar", async () => {
     can.editor = false;
     draw({ environments: [] });
     expect(await screen.findByText("Sin entornos")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Nuevo entorno" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Importar entorno" })).toBeNull();
+  });
+
+  /**
+   * El vacío y la barra ofrecen las dos salidas: escribir uno, o traer el que ya existe. Las dos
+   * llevan al mismo diálogo de import, que es el único que hay.
+   */
+  test("importar se ofrece en el vacío y en la barra, y abre el diálogo de import", async () => {
+    const { setList } = draw({ environments: [] });
+    expect(await screen.findByText("Sin entornos")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Importar entorno" }));
+    const dialog = screen.getByRole("dialog", { name: "Importar entornos" });
+    expect(within(dialog).queryByRole("button", { name: "Desde una URL" })).toBeNull();
+    fireEvent.click(within(dialog).getByLabelText("Cerrar"));
+
+    setList([environment()]);
+    draw();
+    await screen.findByText("Entorno activo");
+    fireEvent.click(screen.getAllByRole("button", { name: "Importar" })[0]!);
+    expect(screen.getByRole("dialog", { name: "Importar entornos" })).toBeTruthy();
   });
 
   test("un error al crear se enseña junto al formulario, y cancelar lo cierra", async () => {
