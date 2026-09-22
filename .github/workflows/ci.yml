@@ -66,3 +66,84 @@ jobs:
       - run: pnpm --filter @eq/spec-import test
       - run: pnpm --filter @eq/api test
       - run: pnpm --filter @eq/web test
+
+  # La paridad entre las tres implementaciones, comprobada y no declarada.
+  #
+  # Levanta las tres contra la misma base y corre el mismo guion de HTTP contra ellas, comparando
+  # con la de referencia. Es lo que convierte «Python y Go hacen lo mismo» en algo que se rompe
+  # cuando deja de ser verdad, en vez de en una frase del README.
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: eq
+          POSTGRES_PASSWORD: eq
+          POSTGRES_DB: endpoint_quality
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U eq"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      # Los mismos secretos para las tres: es la condición de que una sesión abierta contra una
+      # siga viva contra otra, y lo que el guion comprueba sin decirlo.
+      DATABASE_URL: postgres://eq:eq@localhost:5432/endpoint_quality
+      JWT_ACCESS_SECRET: un-secreto-de-integracion-continua-0001
+      JWT_REFRESH_SECRET: un-secreto-de-integracion-continua-0002
+      PORT: 3001
+      PORT_PY: 3002
+      PORT_GO: 3003
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: apps/api-go/go.sum
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+
+      # El esquema es de `apps/api` y solo de él: los otros dos backends nunca emiten DDL.
+      - name: Migraciones
+        working-directory: apps/api
+        run: npx typeorm-ts-node-commonjs migration:run -d src/shared/database/data-source.ts
+
+      - name: Las pruebas de paridad que no necesitan nada levantado
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "apps/api-py[dev]"
+          python -m pytest apps/api-py/tests -q
+          cd apps/api-go && go test ./...
+
+      - name: Levantar las tres implementaciones
+        run: |
+          node apps/api/dist/main.js &
+          python -m eq_api &
+          (cd apps/api-go && go run . &)
+          for port in 3001 3002 3003; do
+            for _ in $(seq 1 60); do
+              curl -sf "http://localhost:$port/health" >/dev/null && break
+              sleep 1
+            done
+          done
+        env:
+          PYTHONPATH: apps/api-py
+
+      - name: Conformidad
+        run: node tools/conformance/run.mjs
