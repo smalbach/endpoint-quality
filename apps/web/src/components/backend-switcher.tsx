@@ -64,7 +64,11 @@ export function BackendSwitcher({
   if (variant === "compact") {
     const probe = probes[selected];
     return (
-      <label className="flex items-center gap-1.5" title="Con qué implementación de la API habla esta pestaña">
+      // Un `span` y no un `label`: el `select` ya trae su propio nombre accesible, y un `label`
+      // alrededor se lo pone **también** al contenedor. Dos elementos con el mismo nombre es lo que
+      // hace que una herramienta que busque «el Backend» encuentre dos y no sepa cuál pulsar — lo
+      // descubrió un navegador conduciendo la pantalla, no una revisión.
+      <span className="flex items-center gap-1.5" title="Con qué implementación de la API habla esta pestaña">
         <span
           aria-label={
             probe.state === "up" ? "backend disponible" : probe.state === "down" ? "backend caído" : "sondeando"
@@ -86,7 +90,7 @@ export function BackendSwitcher({
             </option>
           ))}
         </select>
-      </label>
+      </span>
     );
   }
 
