@@ -146,11 +146,24 @@ guarda con hash.
 ## En local, sin contenedores
 
 ```bash
+cp .env.example .env.local        # y genera los tres secretos: ver más arriba
 pnpm install
 createdb endpoint_quality
 pnpm --filter @eq/api migration:run
 ./dev.sh                          # API en :3001 y Vite en :5173
 ```
+
+`dev.sh` levanta además **las otras dos implementaciones** si su entorno está preparado, y si no lo
+está lo dice y sigue con la de Node — el selector del front marcará en rojo las que no contesten.
+Prepararlas es una vez:
+
+```bash
+(cd apps/api-py && uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev]")
+(cd apps/api-go && go build ./...)
+```
+
+Hace falta Python 3.11+ y Go 1.24+. Las dos leen el mismo `.env.local` y la misma base de datos, y
+ninguna aplica migraciones: el esquema es de `apps/api` y solo de él.
 
 Para tener algo que verificar, en otra terminal:
 
