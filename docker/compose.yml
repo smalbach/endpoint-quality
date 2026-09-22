@@ -108,11 +108,65 @@ services:
       timeout: 3s
       retries: 20
 
+  # --- las otras dos implementaciones del mismo contrato -----------------------------------------
+  #
+  # Mismo Postgres, mismo esquema y **los mismos secretos**: de ahí sale que una sesión abierta
+  # contra `api` siga viva contra `api-py` o `api-go`, que es lo que el selector del front enseña.
+  # Ninguna de las dos aplica migraciones; las dos esperan a que `migrate` termine bien.
+  # Ver `docs/backends-poliglotas.md`.
+  api-py:
+    build:
+      context: ..
+      dockerfile: docker/api-py.Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      PORT_PY: 3002
+      DATABASE_URL: postgres://eq:eq@postgres:5432/endpoint_quality
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?define JWT_ACCESS_SECRET en .env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?define JWT_REFRESH_SECRET en .env}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:${EQ_WEB_PORT:-8080}}
+    ports: ["${EQ_API_PY_PORT:-3002}:3002"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:3002/health').status==200 else 1)\""]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api-go:
+    build:
+      context: ..
+      dockerfile: docker/api-go.Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      PORT_GO: 3003
+      DATABASE_URL: postgres://eq:eq@postgres:5432/endpoint_quality
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?define JWT_ACCESS_SECRET en .env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?define JWT_REFRESH_SECRET en .env}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:${EQ_WEB_PORT:-8080}}
+    ports: ["${EQ_API_GO_PORT:-3003}:3003"]
+    healthcheck:
+      # La imagen es un binario y `ca-certificates`: nada con que hacer una petición. `nc` sobre el
+      # puerto dice lo único que se puede decir desde dentro — que hay alguien escuchando.
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 3003 || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
   web:
     build:
       context: ..
       dockerfile: docker/web.Dockerfile
-    depends_on: [api]
+    depends_on: [api, api-py, api-go]
     ports: ["${EQ_WEB_PORT:-8080}:8080"]
 
 volumes:

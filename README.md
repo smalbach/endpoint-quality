@@ -253,9 +253,48 @@ más. Sin configurar nada, salen **182 casos** y 165 de las 220 respuestas queda
 huecos se nombran solos: no hay generador de casos para el 429, provocar un rate limit a propósito
 es una decisión y no un caso automático.
 
+## Tres backends, un contrato
+
+La API no es _la_ API: es **una** implementación de un contrato que otras dos cumplen.
+
+    apps/api      NestJS 11 + TypeORM     :3001   la implementación de referencia
+    apps/api-py   FastAPI + asyncpg       :3002
+    apps/api-go   net/http + pgx          :3003
+
+Las tres corren **a la vez, contra el mismo Postgres, con los mismos secretos**. El front trae un
+selector —en la pantalla de acceso y en la cabecera— y lo que se elige ahí lo sigue todo el flujo.
+Cambiar de backend no cierra la sesión: la cookie de refresco es del origen y las tres firman con
+la misma clave, así que se entra por Node, se cambia a Go y se sigue dentro.
+
+Eso no se puede fingir. O el formato es el mismo hasta el último byte —scrypt con los mismos
+parámetros, SHA-256 en base64 y no en hexadecimal, HS256 con los mismos claims, columnas en
+`camelCase` entrecomilladas— o no entra.
+
+```bash
+node tools/conformance/run.mjs
+```
+
+Corre el mismo guion de HTTP contra los tres y compara **contra la referencia**, no contra un
+cuerpo escrito a mano: normaliza lo que cambia entre corridas y afirma sobre lo que queda. Es la
+definición operativa de la paridad — un módulo está portado cuando su bloque pasa aquí, y no
+cuando alguien lo declara.
+
+    Conformidad · 51 casos × 3 backends
+    Paridad: los 3 backends contestan lo mismo en los 51 casos.
+
+Cada implementación publica además `GET /backend`: quién es, sobre qué corre y qué módulos cubre.
+El front lo lee **antes** de conectarse y dice lo que ese backend todavía no trae, en vez de
+dejarte descubrirlo al llegar a la pantalla que falta.
+
+Hoy cubren `auth` e `iam` enteros y el CRUD de `projects`; el objetivo declarado es la paridad
+total de las 221 rutas, por módulos, y la hoja de ruta con el orden está en
+**[docs/backends-poliglotas.md](docs/backends-poliglotas.md)**.
+
 ## Estructura
 
     apps/api          NestJS 11 + @nestjs/cqrs — comandos, consultas, saga de ejecución
+    apps/api-py       FastAPI + asyncpg — la misma API, en Python
+    apps/api-go       net/http + pgx — la misma API, en Go
     apps/web          Vite + React 19 + Tailwind + React Flow — SPA, sin SSR
     packages/
       runner-core     Dominio puro: generación de escenarios, plan de ejecución,
@@ -268,7 +307,8 @@ es una decisión y no un caso automático.
     docker            Dockerfiles y compose; compose.demo.yml añade la muestra
     examples/
       sample-api      El destino de la demostración, con su fallo a propósito
-    tools             eq-run (CI), seed-demo, migración del proyecto original
+    tools             eq-run (CI), seed-demo, migración del proyecto original,
+                      conformance (la prueba de paridad entre los tres backends)
     scripts           demo.sh, parity-cut.sh
 
 ## Origen

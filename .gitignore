@@ -20,3 +20,10 @@ docker/.env
 
 # Worktrees de los agentes en segundo plano. Son clones del propio repo.
 .claude/worktrees/
+
+# El entorno del backend de Python y lo que deja el intérprete al correrlo. Igual que
+# `node_modules/`: se reconstruye desde el manifiesto, no se versiona.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
