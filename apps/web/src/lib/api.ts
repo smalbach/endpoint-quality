@@ -12,6 +12,8 @@
  * which present a token the first one has already rotated — and the server, correctly, reads
  * that as reuse and closes the session.
  */
+import { apiBase } from "./backends";
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -38,7 +40,15 @@ export type ProblemDetails = {
 
 export type Session = { userId: string; accessToken: string; expiresIn: number };
 
-const BASE = import.meta.env.VITE_API_URL ?? "/api";
+/**
+ * El prefijo de la API **del backend elegido**, resuelto en cada petición.
+ *
+ * Era una constante de módulo. Dejó de serlo cuando el front pasó a hablar con tres
+ * implementaciones de la misma API (ver `lib/backends.ts`): una constante se evalúa al importar,
+ * así que el prefijo se quedaría con el que estuviera elegido la primera vez que alguien tocó este
+ * fichero, y el selector cambiaría el rótulo sin cambiar a quién se le pregunta.
+ */
+const BASE = (): string => apiBase();
 
 /**
  * Dónde vive la API, en absoluto.
@@ -48,7 +58,7 @@ const BASE = import.meta.env.VITE_API_URL ?? "/api";
  * pestaña no es el de la API salvo por ese proxy, y componer la URL a mano en la pantalla acabaría
  * dando una que no contesta.
  */
-export const absoluteApiUrl = (path: string): string => new URL(`${BASE}${path}`, window.location.origin).toString();
+export const absoluteApiUrl = (path: string): string => new URL(`${BASE()}${path}`, window.location.origin).toString();
 
 let accessToken: string | null = null;
 let refreshing: Promise<boolean> | null = null;
@@ -87,7 +97,7 @@ type RequestOptions = {
  * «Guardar como PDF» lives — the HTML report is print-styled for exactly that.
  */
 export async function openReport(path: string): Promise<void> {
-  const response = await fetch(`${BASE}${path}`, {
+  const response = await fetch(`${BASE()}${path}`, {
     headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
     credentials: "include",
   });
@@ -102,7 +112,7 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   // A form goes as it is: the browser writes the multipart boundary into the Content-Type, and
   // setting the header by hand would send one without it.
   const form = options.body instanceof FormData;
-  const response = await fetch(`${BASE}${path}`, {
+  const response = await fetch(`${BASE()}${path}`, {
     method: options.method ?? "GET",
     headers: {
       ...(options.body === undefined || form ? {} : { "Content-Type": "application/json" }),
@@ -138,7 +148,7 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
 export function refreshOnce(): Promise<boolean> {
   refreshing ??= (async () => {
     try {
-      const response = await fetch(`${BASE}/auth/refresh`, {
+      const response = await fetch(`${BASE()}/auth/refresh`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -205,7 +215,7 @@ export async function streamRun(
   path: string,
   handlers: { onEvent: (event: { type: string; data: unknown }) => void; signal: AbortSignal },
 ): Promise<void> {
-  const response = await fetch(`${BASE}${path}`, {
+  const response = await fetch(`${BASE()}${path}`, {
     headers: { Accept: "text/event-stream", ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
     credentials: "include",
     signal: handlers.signal,

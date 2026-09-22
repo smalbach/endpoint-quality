@@ -11,6 +11,7 @@ import { useHelp } from "@/components/help-panel";
 import { ImportProvider, useImport } from "@/components/import-provider";
 import { EnvironmentButton } from "@/components/environment-button";
 import { ForkBadge, ProjectMenu } from "@/components/project-fork-menu";
+import { BackendSwitcher } from "@/components/backend-switcher";
 
 /** The menu of the bar across the top, for a signed-in person. */
 export const GLOBAL_NAV = [
@@ -231,11 +232,15 @@ export function AppLayout() {
             {/* Sin `shrink-0`: era lo que hacía que este lado no cediera nunca y el izquierdo se
               comiera el recorte — con «Importar» partido por la mitad en una ventana de 1024. */}
             <div className="flex min-w-0 items-center gap-3 text-xs text-slate-500">
+              {/* Quién contesta, a la vista en todo momento: en una demo con tres backends, una
+                  pantalla que no dice con cuál habla no demuestra nada. */}
+              <BackendSwitcher />
               {projectId && <EnvironmentButton projectId={projectId} />}
               {/* A switcher only when there is something to switch to. Registering founds an
                 organization and accepting an invitation joins another, so two is common. */}
               {user && user.organizations.length > 1 ? (
                 <select
+                  aria-label="Organización"
                   className="h-7 rounded border border-slate-200 bg-white px-1 text-xs text-slate-600"
                   value={organization?.id ?? ""}
                   onChange={(event) => {

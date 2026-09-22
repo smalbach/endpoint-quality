@@ -4,6 +4,7 @@ import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Button, Card, Field, inputClass } from "@/components/ui";
 import { PasswordChecklist } from "@/components/password-checklist";
+import { BackendSwitcher } from "@/components/backend-switcher";
 
 /**
  * Sign in and sign up, on one screen each.
@@ -64,7 +65,7 @@ export function LoginPage({ mode }: { mode: "login" | "register" }) {
 
   return (
     <div className="grid min-h-dvh place-items-center bg-slate-50 px-4">
-      <Card className="w-full max-w-sm p-6">
+      <Card className="w-full max-w-lg p-6">
         <h1 className="text-lg font-semibold text-slate-900">Endpoint Quality</h1>
         <p className="mt-1 text-xs text-slate-500">
           {invitation
@@ -73,6 +74,13 @@ export function LoginPage({ mode }: { mode: "login" | "register" }) {
               ? "Entra para ver tus proyectos y sus corridas."
               : "Crea una cuenta y la organización que la contiene."}
         </p>
+
+        {/* Antes del formulario y no en un ajuste escondido: con cuál de las tres
+            implementaciones de la API se entra es una decisión que se toma **antes** de entrar, y
+            a partir de ahí la sigue todo el flujo. */}
+        <div className="mt-5">
+          <BackendSwitcher variant="full" />
+        </div>
 
         <form className="mt-6 space-y-4" onSubmit={submit}>
           {mode === "register" && (

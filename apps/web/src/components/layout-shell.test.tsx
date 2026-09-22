@@ -103,7 +103,9 @@ describe("AppLayout", () => {
     expect(screen.getByRole("link", { name: "Panel" }).className).not.toContain("bg-slate-100");
     expect(screen.getByRole("link", { name: "Org" }).getAttribute("href")).toBe("/settings/org");
     expect(screen.getByText("ana@ejemplo.com")).toBeTruthy();
-    expect(screen.queryByRole("combobox")).toBeNull();
+    // Por su nombre y no «el único desplegable»: la cabecera tiene también el selector de
+    // backend, que sale siempre.
+    expect(screen.queryByRole("combobox", { name: "Organización" })).toBeNull();
     expect(screen.queryByText(/entorno de/)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Importar" }));
@@ -125,7 +127,7 @@ describe("AppLayout", () => {
     ];
     draw("/p/p1/roles");
     expect(screen.getByRole("link", { name: "ajustes" })).toBeTruthy();
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "o2" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Organización" }), { target: { value: "o2" } });
     expect(auth.selectOrganization).toHaveBeenCalledWith("o2");
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/projects"));
   });
@@ -138,7 +140,7 @@ describe("AppLayout", () => {
     auth.organization = null;
     draw("/projects");
     expect(screen.getByRole("link", { name: "ajustes" })).toBeTruthy();
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "o2" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Organización" }), { target: { value: "o2" } });
     expect(auth.selectOrganization).toHaveBeenCalledWith("o2");
   });
 

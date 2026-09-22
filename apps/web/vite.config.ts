@@ -10,7 +10,22 @@ export default defineConfig({
     port: 5173,
     // The API is a separate origin in production; proxying in development keeps the refresh
     // cookie same-site, which is what `SameSite=Strict` requires to work at all.
+    // Un prefijo por implementación, **todos bajo el mismo origen**. Es lo que permite que el
+    // selector cambie de backend sin que la sesión se caiga: la cookie de refresco es
+    // `SameSite=Strict` y del origen, no del prefijo, así que los tres la reciben y una sesión
+    // abierta contra Node sigue viva contra Go.
     proxy: {
+      "/api-py": {
+        target: process.env.VITE_API_PY_URL ?? "http://localhost:3002",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api-py/, ""),
+      },
+      "/api-go": {
+        target: process.env.VITE_API_GO_URL ?? "http://localhost:3003",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api-go/, ""),
+      },
+      // El último, porque `/api` es prefijo de los otros dos en el emparejador de Vite.
       "/api": {
         target: process.env.VITE_API_URL ?? "http://localhost:3001",
         changeOrigin: true,
