@@ -28,6 +28,9 @@ docker info >/dev/null 2>&1 || { echo "Docker no está corriendo."; exit 2; }
 
 if [ ! -f "$ENV_FILE" ]; then
   secret() { openssl rand -base64 48 | tr -d '\n='; }
+  # `SECRETS_KEY` es la clave de AES-256 y tiene que decodificar a **exactamente** 32 bytes: con
+  # los 48 de `secret()` la demo arranca y revienta al guardar la primera credencial de un destino.
+  key32() { openssl rand -base64 32 | tr -d '\n'; }
   cat > "$ENV_FILE" <<EOF
 # Generado por scripts/demo.sh. No se versiona.
 #
@@ -37,7 +40,7 @@ if [ ! -f "$ENV_FILE" ]; then
 #         hace que guardarlas valga la pena.
 JWT_ACCESS_SECRET=$(secret)
 JWT_REFRESH_SECRET=$(secret)
-SECRETS_KEY=$(secret)
+SECRETS_KEY=$(key32)
 EOF
   chmod 600 "$ENV_FILE"
   echo "secretos generados en docker/.env"

@@ -81,11 +81,17 @@ reconstruirla con `VITE_API_URL` y aflojar la cookie, que es exactamente lo que 
 | `PUBLIC_API_URL`                          | `http://localhost:3001` | Dirección pública de la API (con su prefijo, si lo tiene). Con ella se construye la URL de un solo uso que entrega un nodo **Esperar webhook**; sin ella solo la puede llamar alguien en la misma máquina.                                                                                           |
 | `EQ_*_PORT`                               | 8080 / 3001 / 5432      | Los puertos publicados hacia fuera. Nada más.                                                                                                                                                                                                                                                        |
 
-Genera los tres secretos así, una vez, y guárdalos:
+Genera los secretos así, una vez, y guárdalos:
 
 ```bash
-openssl rand -base64 48 | tr -d '\n='
+openssl rand -base64 48 | tr -d '\n='   # JWT_ACCESS_SECRET y JWT_REFRESH_SECRET
+openssl rand -base64 32 | tr -d '\n'    # SECRETS_KEY — exactamente 32 bytes, ver abajo
 ```
+
+`SECRETS_KEY` no es «un secreto largo cualquiera»: es **la clave de AES-256**, así que tiene que
+decodificar a exactamente 32 bytes. Con los 48 del primer comando, la API arranca —el cifrador no
+se construye hasta que hace falta— y falla al guardar la primera credencial, que es el peor momento
+posible para enterarse.
 
 ### Redis, cuando haga falta
 
