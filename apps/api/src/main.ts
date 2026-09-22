@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { Logger, ValidationPipe } from "@nestjs/common";
+import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
@@ -8,6 +8,10 @@ import helmet from "helmet";
 
 import { AppModule } from "./app.module";
 import { ENV, type Env } from "./shared/config/env";
+import { CLOCK, type ClockPort } from "./shared/clock/clock.port";
+import { LOGGER, type LoggerPort } from "./shared/logging/logger.port";
+import { NestLoggerBridge } from "./shared/logging/nest-logger.bridge";
+import { traceMiddleware } from "./shared/logging/trace.middleware";
 import { HttpStatus } from "@nestjs/common";
 import { MAX_JSON_BODY } from "./shared/http/body-limits";
 import { describeErrors } from "./shared/openapi/describe-errors";
@@ -19,7 +23,17 @@ import { FLOW_HOOK_PATH, flowHookBodyParser } from "./shared/http/hook-body";
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
   const env = app.get<Env>(ENV);
+  const logger = app.get<LoggerPort>(LOGGER);
 
+  // Lo que ya escribe Nest —el arranque, el barrido de retención, los avisos de un monitor— sale
+  // por el mismo registro que el resto: una línea JSON con su nivel y su traza, y un solo
+  // `LOG_LEVEL` que vale para todo. `bufferLogs` de arriba es lo que hace que ni las líneas del
+  // arranque se queden en el formato anterior.
+  app.useLogger(new NestLoggerBridge(logger));
+
+  // Antes que nada, helmet incluido: una petición rechazada por un middleware que ni llega a Nest
+  // también tiene que poder citarse por su identificador.
+  app.use(traceMiddleware(app.get<ClockPort>(CLOCK)));
   app.use(helmet());
   app.use(cookieParser());
   // La ruta pública del webhook lee su propio cuerpo —cualquier tipo, 1 MB— antes del JSON de abajo.
@@ -66,7 +80,11 @@ async function bootstrap(): Promise<void> {
   SwaggerModule.setup("docs", app, document, { jsonDocumentUrl: "openapi.json" });
 
   await app.listen(env.PORT);
-  new Logger("bootstrap").log(`API escuchando en http://localhost:${env.PORT} · OpenAPI en /openapi.json`);
+  logger.log("info", "API escuchando", {
+    url: `http://localhost:${env.PORT}`,
+    openapi: `http://localhost:${env.PORT}/openapi.json`,
+    logLevel: env.LOG_LEVEL,
+  });
 }
 
 void bootstrap();

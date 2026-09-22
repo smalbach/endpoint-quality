@@ -222,6 +222,17 @@ describe("bordes de la petición", () => {
     expect(new ApiError(418, { type: "", title: "", status: 418, detail: "" }).message).toBe("HTTP 418");
   });
 
+  test("un 500 con traza la enseña para poder copiarla; un 4xx no, y sin traza tampoco", () => {
+    const roto = { type: "", title: "Error interno", status: 500, detail: "La solicitud no pudo completarse" };
+    expect(new ApiError(500, { ...roto, traceId: "a3f2-9c1" }).message).toBe(
+      "La solicitud no pudo completarse · traza a3f2-9c1",
+    );
+    expect(new ApiError(500, roto).message).toBe("La solicitud no pudo completarse");
+    expect(
+      new ApiError(422, { type: "", title: "", status: 422, detail: "Falta el nombre", traceId: "a3f2-9c1" }).message,
+    ).toBe("Falta el nombre");
+  });
+
   test("una renovación cuya red falla deja la sesión anónima", async () => {
     setAccessToken("caducado");
     vi.stubGlobal("fetch", async () => {

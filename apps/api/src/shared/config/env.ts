@@ -170,6 +170,19 @@ export const envSchema = z.object({
    */
   MAX_RUN_CASES: z.coerce.number().int().min(1).default(5_000),
 
+  /**
+   * El registro: qué se escribe y en qué forma.
+   *
+   * `LOG_LEVEL=silent` no escribe nada, y es lo que usan las pruebas; `debug` añade lo que solo
+   * interesa mientras se depura, incluido el healthcheck del contenedor.
+   *
+   * El formato no tiene valor por omisión propio porque depende de quién lee: en desarrollo lo
+   * lee una persona en una terminal y sale como texto; en cualquier otro sitio lo lee un programa
+   * y sale como una línea JSON por hecho. Se puede forzar cualquiera de los dos.
+   */
+  LOG_LEVEL: z.enum(["debug", "info", "warn", "error", "silent"]).default("info"),
+  LOG_FORMAT: z.enum(["json", "text"]).optional(),
+
   CORS_ORIGINS: z.string().default("http://localhost:5173"),
   /**
    * Where this API is reachable from outside — `https://api.example.com`, or with its path prefix

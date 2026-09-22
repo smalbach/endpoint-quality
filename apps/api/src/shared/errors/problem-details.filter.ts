@@ -9,8 +9,13 @@
  * The 500 branch is the one that matters: it logs the cause and returns nothing about it. A
  * stack trace in a response body is a map of the server's filesystem and dependency versions.
  */
-import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logger } from "@nestjs/common";
+import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Inject } from "@nestjs/common";
 import type { Request, Response } from "express";
+import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
+import { withoutHookToken } from "@/shared/http/redact-url";
+import { LOGGER, type LoggerPort } from "@/shared/logging/logger.port";
+import { operationFields } from "@/shared/logging/operation-fields";
+import { currentTrace, elapsedMs } from "@/shared/logging/trace-context";
 import { DomainError, type ErrorKind } from "./domain-error";
 
 const STATUS_BY_KIND: Record<ErrorKind, number> = {
@@ -35,16 +40,6 @@ const TITLE_BY_STATUS: Record<number, string> = {
   500: "Error interno",
 };
 
-/**
- * La URL de un nodo webhook lleva su token en la ruta, y el token es la credencial: ni la respuesta
- * ni el registro de un 500 la repiten. Se reconoce por el prefijo y no con el de `runs`, porque un
- * filtro compartido no debería depender de un módulo.
- */
-const HOOK_TOKEN_IN_PATH = /^(\/hooks\/flows\/)[^/?#]+/;
-function withoutHookToken(url: string): string {
-  return url.replace(HOOK_TOKEN_IN_PATH, "$1[token-redactado]");
-}
-
 type ProblemDetails = {
   type: string;
   title: string;
@@ -52,11 +47,23 @@ type ProblemDetails = {
   detail: string;
   instance: string;
   errors?: { field: string; detail: string }[];
+  /**
+   * El identificador de la traza, **en la respuesta a propósito**.
+   *
+   * Es lo que cierra el bucle entre quien informa de un fallo y el registro: con este número, una
+   * búsqueda devuelve la petición entera —el manejador, las llamadas salientes, la pila— en vez de
+   * una búsqueda por «hacia las cuatro». No filtra nada: es un número aleatorio por petición, sin
+   * relación con la sesión ni con quien llama.
+   */
+  traceId?: string;
 };
 
 @Catch()
 export class ProblemDetailsFilter implements ExceptionFilter {
-  private readonly logger = new Logger(ProblemDetailsFilter.name);
+  constructor(
+    @Inject(LOGGER) private readonly logger: LoggerPort,
+    @Inject(CLOCK) private readonly clock: ClockPort,
+  ) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const context = host.switchToHttp();
@@ -64,15 +71,31 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     const request = context.getRequest<Request>();
     const url = withoutHookToken(request.url);
     const problem = this.toProblem(exception, url);
+    const trace = currentTrace();
+    if (trace) problem.traceId = trace.traceId;
 
-    if (problem.status >= 500) {
-      // Logged in full here and described in one line there. The operator gets the cause; the
-      // caller gets nothing that describes the inside of the process.
-      this.logger.error(
-        `${request.method} ${url} → 500`,
-        exception instanceof Error ? exception.stack : String(exception),
-      );
-    }
+    /**
+     * La línea de la operación que no terminó bien, y el único sitio donde se escribe.
+     *
+     * Aquí y no en el interceptor porque por aquí pasa **todo** lo que falla, incluido lo que un
+     * guardia niega antes de que ningún interceptor llegue a correr: sin esto, los 401 y los 403
+     * —de los que más se pregunta— serían justo los que no dejan rastro.
+     *
+     * Un 5xx añade la causa completa; un 4xx no la lleva porque no hay ninguna: la causa de un 422
+     * es la solicitud, y ya está descrita en `detail`. Y el nivel separa las dos cosas que un 4xx y
+     * un 5xx son: «el cliente pidió algo que no se puede» frente a «esto se ha roto».
+     */
+    const failure = problem.status >= 500;
+    this.logger.log(failure ? "error" : "warn", "operación", {
+      ...operationFields(request, elapsedMs(this.clock.now().getTime())).log,
+      outcome: "error",
+      status: problem.status,
+      problem: problem.type,
+      // La pila, para el operador. Nunca en el cuerpo: eso es un mapa del sistema de ficheros del
+      // servidor y de las versiones de sus dependencias.
+      ...(failure ? { detail: exception instanceof Error ? exception.stack : String(exception) } : {}),
+    });
+
     response.status(problem.status).type("application/problem+json").json(problem);
   }
 

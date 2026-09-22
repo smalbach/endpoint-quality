@@ -11,8 +11,14 @@ import assert from "node:assert/strict";
 import { BadRequestException, HttpException, Logger, type ArgumentsHost } from "@nestjs/common";
 
 import { GetDashboardHandler, GetDashboardQuery } from "@/modules/dashboard/application/queries/get-dashboard";
-import { GetHistoryHandler, GetHistoryQuery, type HistoryFilters } from "@/modules/dashboard/application/queries/get-history";
+import {
+  GetHistoryHandler,
+  GetHistoryQuery,
+  type HistoryFilters,
+} from "@/modules/dashboard/application/queries/get-history";
 import { ProblemDetailsFilter } from "@/shared/errors/problem-details.filter";
+import { FixedClock } from "@/shared/clock/clock.port";
+import { NullLogger } from "@/shared/logging/logger.port";
 import { ConflictError, NotFoundError } from "@/shared/errors/domain-error";
 
 Logger.overrideLogger(false);
@@ -50,11 +56,19 @@ const dashboard = (r: ReturnType<typeof repos>) =>
     r.workflows as never,
   );
 const history = (r: ReturnType<typeof repos>) =>
-  new GetHistoryHandler(r.projects as never, r.runs as never, r.securityRuns as never, r.performanceRuns as never, r.scans as never);
+  new GetHistoryHandler(
+    r.projects as never,
+    r.runs as never,
+    r.securityRuns as never,
+    r.performanceRuns as never,
+    r.scans as never,
+  );
 
 describe("el tablero", () => {
   test("un proyecto sin nada: todo en null o cero, y sin puntuación media", async () => {
-    const view = await dashboard(repos({ projects: [{ id: "p1", name: "Vacío", archivedAt: null }] })).execute(new GetDashboardQuery("o1"));
+    const view = await dashboard(repos({ projects: [{ id: "p1", name: "Vacío", archivedAt: null }] })).execute(
+      new GetDashboardQuery("o1"),
+    );
     assert.deepEqual(view.totals, { projects: 1, endpoints: 0, avgSecurityScore: null });
     assert.deepEqual(view.projects[0], {
       id: "p1",
@@ -152,12 +166,32 @@ describe("el historial", () => {
       },
       scans: {
         p1: [
-          { id: "c1", source: "github", ref: "main", status: "done", diff: { added: [1], changed: [], removed: [1, 2] }, createdAt: at(40) },
-          { id: "c2", source: "upload", ref: "", status: "done", diff: { added: [], changed: [1], removed: [] }, createdAt: at(41) },
+          {
+            id: "c1",
+            source: "github",
+            ref: "main",
+            status: "done",
+            diff: { added: [1], changed: [], removed: [1, 2] },
+            createdAt: at(40),
+          },
+          {
+            id: "c2",
+            source: "upload",
+            ref: "",
+            status: "done",
+            diff: { added: [], changed: [1], removed: [] },
+            createdAt: at(41),
+          },
         ],
       },
     });
-  const filters = (patch: Partial<HistoryFilters> = {}): HistoryFilters => ({ search: "", kind: "all", page: 1, pageSize: 50, ...patch });
+  const filters = (patch: Partial<HistoryFilters> = {}): HistoryFilters => ({
+    search: "",
+    kind: "all",
+    page: 1,
+    pageSize: 50,
+    ...patch,
+  });
 
   test("todo junto, lo último primero, con la cifra de cada tipo", async () => {
     const view = await history(data()).execute(new GetHistoryQuery("o1", filters()));
@@ -179,15 +213,24 @@ describe("el historial", () => {
 
   test("por tipo, por texto y paginado, con la página y el tamaño acotados", async () => {
     const byKind = await history(data()).execute(new GetHistoryQuery("o1", filters({ kind: "security" })));
-    assert.deepEqual(byKind.entries.map((entry) => entry.id), ["s2", "s1"]);
+    assert.deepEqual(
+      byKind.entries.map((entry) => entry.id),
+      ["s2", "s1"],
+    );
 
     const bySearch = await history(data()).execute(new GetHistoryQuery("o1", filters({ search: "  NOCTURNA " })));
-    assert.deepEqual(bySearch.entries.map((entry) => entry.id), ["s2"]);
+    assert.deepEqual(
+      bySearch.entries.map((entry) => entry.id),
+      ["s2"],
+    );
 
     const paged = await history(data()).execute(new GetHistoryQuery("o1", filters({ page: 0, pageSize: 0 })));
     assert.equal(paged.page, 1);
     assert.equal(paged.pageSize, 1);
-    assert.deepEqual(paged.entries.map((entry) => entry.id), ["c2"]);
+    assert.deepEqual(
+      paged.entries.map((entry) => entry.id),
+      ["c2"],
+    );
 
     const second = await history(data()).execute(new GetHistoryQuery("o1", filters({ page: 2, pageSize: 500 })));
     assert.equal(second.pageSize, 100);
@@ -216,7 +259,7 @@ describe("Problem Details", () => {
     const host = {
       switchToHttp: () => ({ getResponse: () => response, getRequest: () => ({ url, method: "POST" }) }),
     } as unknown as ArgumentsHost;
-    new ProblemDetailsFilter().catch(exception, host);
+    new ProblemDetailsFilter(new NullLogger(), new FixedClock(at(0))).catch(exception, host);
     return sent;
   }
 
