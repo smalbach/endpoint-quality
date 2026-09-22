@@ -17,8 +17,12 @@ cd "$(dirname "$0")"
 
 # Un arranque anterior que quedó vivo se lleva el puerto y el nuevo proceso muere en silencio
 # por EADDRINUSE, dejándote hablando con el binario viejo.
+# `xargs -r` es de GNU: en un macOS no está garantizado, y con el `|| true` el fallo se traga en
+# silencio — el puerto se queda ocupado y acabas hablando con el proceso viejo, que es justo lo que
+# este bucle existe para evitar. Sin xargs funciona igual en los dos sitios.
 for port in 3001 3002 3003 5173; do
-  lsof -ti:$port | xargs -r kill -9 2>/dev/null || true
+  ocupantes=$(lsof -ti:$port 2>/dev/null || true)
+  [ -n "$ocupantes" ] && kill -9 $ocupantes 2>/dev/null || true
 done
 
 set -a; . ./.env.local; set +a
