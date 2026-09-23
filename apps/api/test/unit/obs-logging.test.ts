@@ -15,6 +15,7 @@ import { BadRequestException } from "@nestjs/common";
 
 import { FixedClock } from "@/shared/clock/clock.port";
 import { NullLogger, RecordingLogger, type LogFields } from "@/shared/logging/logger.port";
+import { NullMetrics } from "@/shared/metrics/metrics.port";
 import { JsonLogger } from "@/shared/logging/json-logger";
 import { currentTrace, elapsedMs, runWithTrace, traceIdFrom, TRACE_HEADER_OUT } from "@/shared/logging/trace-context";
 import { traceMiddleware } from "@/shared/logging/trace.middleware";
@@ -275,7 +276,8 @@ describe("la operación que termina bien", () => {
     }) as unknown as ExecutionContext;
   const handler = (value: unknown = "ok"): CallHandler => ({ handle: () => of(value) });
 
-  const interceptor = (logger: RecordingLogger) => new OperationLogInterceptor(logger, new FixedClock(new Date(2_000)));
+  const interceptor = (logger: RecordingLogger) =>
+    new OperationLogInterceptor(logger, new FixedClock(new Date(2_000)), new NullMetrics());
 
   test("una línea con la operación, su duración, su estado y quién llamaba", () => {
     const logger = new RecordingLogger();
@@ -352,7 +354,7 @@ describe("la operación que no termina bien", () => {
         getRequest: () => ({ url, method: "POST", route: { path: "/orgs/:id/x" } }),
       }),
     } as unknown as ArgumentsHost;
-    new ProblemDetailsFilter(logger, new FixedClock(new Date(2_000))).catch(exception, host);
+    new ProblemDetailsFilter(logger, new FixedClock(new Date(2_000)), new NullMetrics()).catch(exception, host);
     return sent;
   }
 

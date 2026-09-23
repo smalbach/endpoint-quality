@@ -20,6 +20,7 @@ import { Inject, Injectable, type CallHandler, type ExecutionContext, type NestI
 import { tap, type Observable } from "rxjs";
 
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
+import { METRICS, UNMATCHED_ROUTE, type MetricsPort } from "@/shared/metrics/metrics.port";
 import { LOGGER, type LoggerPort } from "./logger.port";
 import { elapsedMs } from "./trace-context";
 import { operationFields, type ObservedRequest } from "./operation-fields";
@@ -27,17 +28,19 @@ import { operationFields, type ObservedRequest } from "./operation-fields";
 /**
  * Rutas que se registran en `debug`.
  *
- * `/health` lo pide el healthcheck del contenedor cada tres segundos. A `info` serían veintiocho
- * mil líneas al día diciendo que la base contesta, y un registro que hay que filtrar para poder
- * leerlo es un registro que nadie lee.
+ * `/health` lo pide el healthcheck del contenedor cada tres segundos y `/metrics` un raspador cada
+ * quince. A `info` serían decenas de miles de líneas al día diciendo que la base contesta, y un
+ * registro que hay que filtrar para poder leerlo es un registro que nadie lee. Se siguen **midiendo**:
+ * lo que baja es el nivel de la línea, no la métrica.
  */
-const QUIET_ROUTES = new Set(["/health"]);
+const QUIET_ROUTES = new Set(["/health", "/metrics"]);
 
 @Injectable()
 export class OperationLogInterceptor implements NestInterceptor {
   constructor(
     @Inject(LOGGER) private readonly logger: LoggerPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
+    @Inject(METRICS) private readonly metrics: MetricsPort,
   ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
@@ -51,13 +54,24 @@ export class OperationLogInterceptor implements NestInterceptor {
     return next.handle().pipe(
       tap({
         next: () => {
-          const fields = operationFields(request, elapsedMs(this.clock.now().getTime()));
+          const ms = elapsedMs(this.clock.now().getTime());
+          const fields = operationFields(request, ms);
           const status = http.getResponse<{ statusCode?: number }>().statusCode;
           this.logger.log(QUIET_ROUTES.has(fields.route) ? "debug" : "info", "operación", {
             ...fields.log,
             outcome: "ok",
             ...(status === undefined ? {} : { status }),
           });
+          // Sin duración no hay nada que observar: un histograma al que se le mete un cero inventa
+          // un percentil bajo que nadie ha medido.
+          if (ms !== undefined)
+            this.metrics.observeHttp({
+              method: request.method ?? "?",
+              route: fields.matched ? fields.route : UNMATCHED_ROUTE,
+              status: status ?? 200,
+              outcome: "ok",
+              ms,
+            });
         },
       }),
     );

@@ -31,6 +31,7 @@ import { DashboardModule } from "./modules/dashboard/dashboard.module";
 import { AuthGuard } from "./modules/auth/infrastructure/guards/auth.guard";
 import { HealthController } from "./shared/health.controller";
 import { BackendController } from "./shared/backend.controller";
+import { MetricsController } from "./shared/metrics/metrics.controller";
 import { RATE_LIMIT_STORE, type RateLimitStorePort } from "./shared/rate-limit/rate-limit-store";
 import { throttlerOptions } from "./shared/rate-limit/shared-throttler-storage";
 
@@ -73,7 +74,7 @@ import { throttlerOptions } from "./shared/rate-limit/shared-throttler-storage";
     CodeScanModule,
     DashboardModule,
   ],
-  controllers: [HealthController, BackendController],
+  controllers: [HealthController, BackendController, MetricsController],
   providers: [
     { provide: APP_FILTER, useClass: ProblemDetailsFilter },
     // Una línea por operación atendida, con su coste. Antes de los guardias en la lista y por

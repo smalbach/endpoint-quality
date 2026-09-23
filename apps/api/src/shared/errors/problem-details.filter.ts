@@ -14,6 +14,7 @@ import type { Request, Response } from "express";
 import { CLOCK, type ClockPort } from "@/shared/clock/clock.port";
 import { withoutHookToken } from "@/shared/http/redact-url";
 import { LOGGER, type LoggerPort } from "@/shared/logging/logger.port";
+import { METRICS, UNMATCHED_ROUTE, type MetricsPort } from "@/shared/metrics/metrics.port";
 import { operationFields } from "@/shared/logging/operation-fields";
 import { currentTrace, elapsedMs } from "@/shared/logging/trace-context";
 import { DomainError, type ErrorKind } from "./domain-error";
@@ -63,6 +64,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
   constructor(
     @Inject(LOGGER) private readonly logger: LoggerPort,
     @Inject(CLOCK) private readonly clock: ClockPort,
+    @Inject(METRICS) private readonly metrics: MetricsPort,
   ) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
@@ -86,8 +88,10 @@ export class ProblemDetailsFilter implements ExceptionFilter {
      * un 5xx son: «el cliente pidió algo que no se puede» frente a «esto se ha roto».
      */
     const failure = problem.status >= 500;
+    const ms = elapsedMs(this.clock.now().getTime());
+    const operation = operationFields(request, ms);
     this.logger.log(failure ? "error" : "warn", "operación", {
-      ...operationFields(request, elapsedMs(this.clock.now().getTime())).log,
+      ...operation.log,
       outcome: "error",
       status: problem.status,
       problem: problem.type,
@@ -95,6 +99,18 @@ export class ProblemDetailsFilter implements ExceptionFilter {
       // servidor y de las versiones de sus dependencias.
       ...(failure ? { detail: exception instanceof Error ? exception.stack : String(exception) } : {}),
     });
+
+    // La misma medida que la del interceptor, para que un percentil incluya lo que falla: una ruta
+    // que tarda cuatro segundos en devolver un 500 es lenta, y contarla solo cuando va bien es
+    // justo la forma de que un problema no aparezca en la gráfica.
+    if (ms !== undefined)
+      this.metrics.observeHttp({
+        method: request.method,
+        route: operation.matched ? operation.route : UNMATCHED_ROUTE,
+        status: problem.status,
+        outcome: "error",
+        ms,
+      });
 
     response.status(problem.status).type("application/problem+json").json(problem);
   }

@@ -181,7 +181,24 @@ export const envSchema = z.object({
    * y sale como una línea JSON por hecho. Se puede forzar cualquiera de los dos.
    */
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error", "silent"]).default("info"),
-  LOG_FORMAT: z.enum(["json", "text"]).optional(),
+  // Vacía cuenta como ausente: `LOG_FORMAT=` en un fichero de entorno es «no lo he elegido», y un
+  // enum estricto lo leería como un valor inválido y se negaría a arrancar por una línea en blanco.
+  LOG_FORMAT: z.preprocess(
+    (value) => (typeof value === "string" && !value.trim() ? undefined : value),
+    z.enum(["json", "text"]).optional(),
+  ),
+
+  /**
+   * La credencial de `/metrics`. **Sin ella la ruta no existe**, y ese es el valor por omisión.
+   *
+   * El endpoint expone las rutas internas, la memoria del proceso y su carga, y sale por el mismo
+   * puerto que la API: publicarlo sin credencial es publicar el mapa del despliegue. Treinta y dos
+   * caracteres como suelo porque esto es un secreto opaco y no una contraseña que alguien teclea.
+   */
+  METRICS_TOKEN: z.preprocess(
+    (value) => (typeof value === "string" && !value.trim() ? undefined : value),
+    z.string().min(32).optional(),
+  ),
 
   CORS_ORIGINS: z.string().default("http://localhost:5173"),
   /**

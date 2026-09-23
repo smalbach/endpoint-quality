@@ -19,6 +19,7 @@ import {
 import { ProblemDetailsFilter } from "@/shared/errors/problem-details.filter";
 import { FixedClock } from "@/shared/clock/clock.port";
 import { NullLogger } from "@/shared/logging/logger.port";
+import { NullMetrics } from "@/shared/metrics/metrics.port";
 import { ConflictError, NotFoundError } from "@/shared/errors/domain-error";
 
 Logger.overrideLogger(false);
@@ -259,7 +260,7 @@ describe("Problem Details", () => {
     const host = {
       switchToHttp: () => ({ getResponse: () => response, getRequest: () => ({ url, method: "POST" }) }),
     } as unknown as ArgumentsHost;
-    new ProblemDetailsFilter(new NullLogger(), new FixedClock(at(0))).catch(exception, host);
+    new ProblemDetailsFilter(new NullLogger(), new FixedClock(at(0)), new NullMetrics()).catch(exception, host);
     return sent;
   }
 

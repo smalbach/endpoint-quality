@@ -1,0 +1,105 @@
+{
+  "uid": "eq-api",
+  "title": "Endpoint Quality · API",
+  "tags": ["endpoint-quality"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "p95 por operación",
+      "description": "El percentil 95 de cada ruta. La media esconde justo lo que se busca: una ruta con p50 de 40 ms y p99 de 4 s tiene una media tranquilizadora y un problema real.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "fillOpacity": 5 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(eq_http_server_duration_ms_bucket[5m])))",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Peticiones por segundo, por estado",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status) (rate(eq_http_server_duration_ms_count[5m]))",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Tasa de error (5xx)",
+      "description": "Lo que se rompe, no lo que el cliente pide mal: un 422 es la API funcionando.",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 9 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.01 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(eq_http_server_duration_ms_count{status=~\"5..\"}[5m])) / clamp_min(sum(rate(eq_http_server_duration_ms_count[5m])), 0.001)"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Las diez operaciones más lentas (p95)",
+      "gridPos": { "h": 9, "w": 12, "x": 6, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, histogram_quantile(0.95, sum by (le, route, method) (rate(eq_http_server_duration_ms_bucket[5m]))))",
+          "legendFormat": "{{method}} {{route}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "El proceso: memoria y retardo del bucle de eventos",
+      "description": "Lo que separa «va lenta la API» de «va lenta la máquina».",
+      "gridPos": { "h": 9, "w": 18, "x": 0, "y": 18 },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "memoria" }, "properties": [{ "id": "unit", "value": "bytes" }] }
+        ]
+      },
+      "targets": [
+        { "refId": "A", "expr": "eq_process_resident_memory_bytes", "legendFormat": "memoria" },
+        {
+          "refId": "B",
+          "expr": "eq_nodejs_eventloop_lag_p99_seconds * 1000",
+          "legendFormat": "bucle de eventos p99 (ms)"
+        }
+      ]
+    }
+  ]
+}

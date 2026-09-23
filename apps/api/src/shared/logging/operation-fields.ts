@@ -25,6 +25,9 @@ export type ObservedRequest = {
 export type OperationDescription = {
   /** El patrón de la ruta, suelto, para decidir el nivel de la línea. */
   route: string;
+  /** Si la petición llegó a un manejador. Las métricas lo necesitan para no abrir una serie nueva
+   * por cada URL que nadie sirve; el registro conserva la ruta igual, que es lo que se investiga. */
+  matched: boolean;
   log: LogFields;
 };
 
@@ -32,6 +35,7 @@ export function operationFields(request: ObservedRequest, ms: number | undefined
   const route = routeOf(request);
   return {
     route,
+    matched: request.route?.path !== undefined,
     log: {
       op: `${request.method ?? "?"} ${route}`,
       ...(ms === undefined ? {} : { ms }),

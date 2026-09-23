@@ -13,6 +13,8 @@ import { EXECUTION_TURNS } from "./turns/execution-turns";
 import { TypeOrmExecutionTurnStore } from "./turns/typeorm-execution-turns";
 import { LOGGER } from "./logging/logger.port";
 import { JsonLogger } from "./logging/json-logger";
+import { METRICS } from "./metrics/metrics.port";
+import { PromMetrics } from "./metrics/prom-metrics";
 
 /**
  * The cross-cutting providers every module needs and none owns.
@@ -79,7 +81,10 @@ import { JsonLogger } from "./logging/json-logger";
           clock,
         }),
     },
+    // Lo mismo que cuentan las líneas del registro, agregado en memoria para poder dibujarlo. Se
+    // recoge siempre —cuesta un histograma— y se **expone** solo con `METRICS_TOKEN`.
+    { provide: METRICS, useClass: PromMetrics },
   ],
-  exports: [CLOCK, SECRET_CIPHER, MAILER, INSTANCE_BUS, RATE_LIMIT_STORE, EXECUTION_TURNS, LOGGER],
+  exports: [CLOCK, SECRET_CIPHER, MAILER, INSTANCE_BUS, RATE_LIMIT_STORE, EXECUTION_TURNS, LOGGER, METRICS],
 })
 export class SharedModule {}

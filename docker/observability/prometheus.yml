@@ -1,0 +1,25 @@
+# Lo que se raspa y cada cuánto. Nada más: las alertas y los paneles viven en Grafana.
+#
+# `api:3001` es el nombre del servicio dentro de la red de compose, no el puerto publicado en el
+# anfitrión: el raspado no sale de la red, que es parte de por qué `/metrics` no tiene que estar
+# abierto al mundo.
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+
+scrape_configs:
+  - job_name: eq-api
+    metrics_path: /metrics
+    # La credencial de `/metrics`, en un fichero y no aquí: este fichero está en el repositorio.
+    # Ver docker/observability/README.md.
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/metrics-token
+    static_configs:
+      - targets: ["api:3001"]
+
+  # Prometheus se mide a sí mismo. Es lo que contesta «¿la gráfica está plana porque no pasa nada
+  # o porque el raspado lleva veinte minutos fallando?».
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

@@ -1,0 +1,11 @@
+# Los paneles salen de ficheros del repositorio, por la misma razón: un panel construido en la
+# pantalla es un panel que se pierde con el volumen y que nadie puede revisar en un diff.
+apiVersion: 1
+providers:
+  - name: endpoint-quality
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
