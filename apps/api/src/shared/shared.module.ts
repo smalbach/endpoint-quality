@@ -1,5 +1,5 @@
 import { Global, Module } from "@nestjs/common";
-import { CLOCK, SystemClock } from "./clock/clock.port";
+import { CLOCK, SystemClock, type ClockPort } from "./clock/clock.port";
 import { SECRET_CIPHER } from "./crypto/secret-cipher";
 import { SecretCipherProvider } from "./crypto/secret-cipher.provider";
 import { ENV, type Env } from "./config/env";
@@ -11,6 +11,8 @@ import { InMemoryRateLimitStore, RATE_LIMIT_STORE } from "./rate-limit/rate-limi
 import { RedisRateLimitStore } from "./rate-limit/redis-rate-limit-store";
 import { EXECUTION_TURNS } from "./turns/execution-turns";
 import { TypeOrmExecutionTurnStore } from "./turns/typeorm-execution-turns";
+import { LOGGER } from "./logging/logger.port";
+import { JsonLogger } from "./logging/json-logger";
 
 /**
  * The cross-cutting providers every module needs and none owns.
@@ -64,7 +66,20 @@ import { TypeOrmExecutionTurnStore } from "./turns/typeorm-execution-turns";
     // rendimiento). En la base y no en Redis: es lo que comparten todas las réplicas siempre, con
     // `REDIS_URL` o sin él, y una fila con su latido sobrevive a que Redis se caiga.
     { provide: EXECUTION_TURNS, useClass: TypeOrmExecutionTurnStore },
+    // El registro, con la hora del mismo reloj que todo lo demás. Global por la misma razón que el
+    // reloj: lo que hace falta medir está en todas partes, y un módulo que se olvide de proveerlo
+    // falla al arrancar hablando de un símbolo en vez de de una línea que no se escribió.
+    {
+      provide: LOGGER,
+      inject: [ENV, CLOCK],
+      useFactory: (env: Env, clock: ClockPort) =>
+        new JsonLogger({
+          level: env.LOG_LEVEL,
+          format: env.LOG_FORMAT ?? (env.NODE_ENV === "development" ? "text" : "json"),
+          clock,
+        }),
+    },
   ],
-  exports: [CLOCK, SECRET_CIPHER, MAILER, INSTANCE_BUS, RATE_LIMIT_STORE, EXECUTION_TURNS],
+  exports: [CLOCK, SECRET_CIPHER, MAILER, INSTANCE_BUS, RATE_LIMIT_STORE, EXECUTION_TURNS, LOGGER],
 })
 export class SharedModule {}

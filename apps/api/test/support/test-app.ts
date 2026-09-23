@@ -29,9 +29,14 @@ import { FLOW_HOOK_PATH, flowHookBodyParser } from "@/shared/http/hook-body";
 
 import { ENV, type Env, loadEnv } from "@/shared/config/env";
 import { CLOCK, FixedClock } from "@/shared/clock/clock.port";
+import { LOGGER, NullLogger } from "@/shared/logging/logger.port";
 import { INSTANCE_BUS, type InstanceBusPort } from "@/shared/bus/instance-bus";
 import { InMemoryInstanceBus } from "@/shared/bus/in-memory-instance-bus";
-import { InMemoryRateLimitStore, RATE_LIMIT_STORE, type RateLimitStorePort } from "@/shared/rate-limit/rate-limit-store";
+import {
+  InMemoryRateLimitStore,
+  RATE_LIMIT_STORE,
+  type RateLimitStorePort,
+} from "@/shared/rate-limit/rate-limit-store";
 import { throttlerOptions } from "@/shared/rate-limit/shared-throttler-storage";
 import { EXECUTION_TURNS, InMemoryExecutionTurnStore } from "@/shared/turns/execution-turns";
 import { PASSWORD_HASHER, FastTestPasswordHasher } from "@/shared/crypto/password-hasher";
@@ -98,11 +103,7 @@ import {
 import { INVITATION_REPOSITORY, MEMBERSHIP_REPOSITORY, ORGANIZATION_REPOSITORY } from "@/modules/iam/domain/ports";
 import { OrganizationsController } from "@/modules/iam/presentation/organizations.controller";
 import { IAM_COMMAND_HANDLERS, IAM_QUERY_HANDLERS } from "@/modules/iam/iam.module";
-import {
-  MERGE_REQUEST_REPOSITORY,
-  PROJECT_FORK_REPOSITORY,
-  PROJECT_REPOSITORY,
-} from "@/modules/projects/domain/ports";
+import { MERGE_REQUEST_REPOSITORY, PROJECT_FORK_REPOSITORY, PROJECT_REPOSITORY } from "@/modules/projects/domain/ports";
 import { InMemoryMergeRequestRepository, InMemoryProjectForkRepository } from "./in-memory-forks";
 import { ProjectsController } from "@/modules/projects/presentation/projects.controller";
 import { PROJECT_COMMAND_HANDLERS, PROJECT_QUERY_HANDLERS, PROJECT_SERVICES } from "@/modules/projects/projects.module";
@@ -117,7 +118,11 @@ import {
   type SafeRequestOptions,
 } from "@/shared/http/safe-fetch";
 import { SECRET_CIPHER, AesGcmSecretCipher } from "@/shared/crypto/secret-cipher";
-import { COOKIE_JAR_REPOSITORY, ENVIRONMENT_REPOSITORY, SESSION_TOKEN_REPOSITORY } from "@/modules/environments/domain/ports";
+import {
+  COOKIE_JAR_REPOSITORY,
+  ENVIRONMENT_REPOSITORY,
+  SESSION_TOKEN_REPOSITORY,
+} from "@/modules/environments/domain/ports";
 import { SCRIPT_SANDBOX } from "@/shared/scripts/script-sandbox";
 import { ProcessScriptSandbox } from "@/shared/scripts/process-script-sandbox";
 import { EnvironmentsController } from "@/modules/environments/presentation/environments.controller";
@@ -155,10 +160,7 @@ import { CollectionsController } from "@/modules/collections/presentation/collec
 import { InMemoryCollectionRunQueue } from "@/modules/collections/infrastructure/in-memory-collection-queue";
 import { CollectionRunner } from "@/modules/collections/infrastructure/collection-runner";
 import { CollectionProgressStream } from "@/modules/collections/infrastructure/collection-progress.stream";
-import {
-  COLLECTION_COMMAND_HANDLERS,
-  COLLECTION_QUERY_HANDLERS,
-} from "@/modules/collections/collections.module";
+import { COLLECTION_COMMAND_HANDLERS, COLLECTION_QUERY_HANDLERS } from "@/modules/collections/collections.module";
 import { CODE_CONNECTOR_REPOSITORY, CODE_SCAN_REPOSITORY, GITHUB_SOURCE } from "@/modules/code-scan/domain/ports";
 import { CodeScanController } from "@/modules/code-scan/presentation/code-scan.controller";
 import { GithubSource } from "@/modules/code-scan/infrastructure/github-source";
@@ -482,6 +484,9 @@ export async function createTestApp(
     providers: [
       { provide: ENV, useValue: env },
       { provide: CLOCK, useValue: clock },
+      // El registro apagado: la suite no quiere una línea por petición en su salida, y lo que
+      // escribe cada pieza tiene sus propias pruebas.
+      { provide: LOGGER, useValue: new NullLogger() },
       { provide: INSTANCE_BUS, useValue: bus },
       { provide: RATE_LIMIT_STORE, useValue: rateLimits },
       { provide: EXECUTION_TURNS, useValue: repositories.executionTurns },

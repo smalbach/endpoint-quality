@@ -19,7 +19,16 @@ export class ApiError extends Error {
     readonly status: number,
     readonly problem: ProblemDetails,
   ) {
-    super(problem.detail || problem.title || `HTTP ${status}`);
+    /**
+     * El identificador de la traza se pega al mensaje **solo cuando el servidor se ha roto**.
+     *
+     * Un 422 se arregla cambiando el formulario y el número no le sirve a nadie; un 500 no se
+     * arregla desde aquí, y lo único que hace falta para que alguien pueda investigarlo es que el
+     * número esté a la vista para copiarlo. Con él, una búsqueda en el registro devuelve la
+     * petición entera; sin él, queda «me dio error hacia las cuatro».
+     */
+    const base = problem.detail || problem.title || `HTTP ${status}`;
+    super(status >= 500 && problem.traceId ? `${base} · traza ${problem.traceId}` : base);
     this.name = "ApiError";
   }
 
@@ -36,6 +45,7 @@ export type ProblemDetails = {
   detail: string;
   instance?: string;
   errors?: { field: string; detail: string }[];
+  traceId?: string;
 };
 
 export type Session = { userId: string; accessToken: string; expiresIn: number };

@@ -1,5 +1,5 @@
 import { Module } from "@nestjs/common";
-import { APP_FILTER, APP_GUARD } from "@nestjs/core";
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { CqrsModule } from "@nestjs/cqrs";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 
@@ -7,6 +7,7 @@ import { ConfigModule } from "./shared/config/config.module";
 import { SharedModule } from "./shared/shared.module";
 import { DatabaseModule } from "./shared/database/database.module";
 import { ProblemDetailsFilter } from "./shared/errors/problem-details.filter";
+import { OperationLogInterceptor } from "./shared/logging/operation.interceptor";
 import { AuthModule } from "./modules/auth/auth.module";
 import { IamModule } from "./modules/iam/iam.module";
 import { ProjectsModule } from "./modules/projects/projects.module";
@@ -75,6 +76,10 @@ import { throttlerOptions } from "./shared/rate-limit/shared-throttler-storage";
   controllers: [HealthController, BackendController],
   providers: [
     { provide: APP_FILTER, useClass: ProblemDetailsFilter },
+    // Una línea por operación atendida, con su coste. Antes de los guardias en la lista y por
+    // tanto por fuera de ellos: una petición que un guardia niega también es una operación que
+    // ocurrió, y es de las que más se preguntan.
+    { provide: APP_INTERCEPTOR, useClass: OperationLogInterceptor },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: AuthGuard },
   ],

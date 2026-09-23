@@ -1439,7 +1439,6 @@ export type PostmanCollectionImportResult = {
   notes: string[];
 };
 
-
 /**
  * Un ejemplo guardado de un endpoint, como sale de la API.
  *
@@ -2624,4 +2623,7 @@ export type ProblemDetails = {
   detail: string;
   instance?: string;
   errors?: { field: string; detail: string }[];
+  /** El identificador de la traza de esa petición, el mismo que viaja en `X-Trace-Id`. Es lo que
+   * convierte «me ha dado error» en una búsqueda exacta en el registro del servidor. */
+  traceId?: string;
 };
