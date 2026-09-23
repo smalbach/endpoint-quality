@@ -75,6 +75,7 @@ Lo que una implementación tiene que reproducir, por orden de lo que rompe antes
 | **Autorización**         | rol resuelto **contra la base en cada petición**, nunca desde el JWT; escalera `viewer<editor<admin<owner`                                                         | `auth/infrastructure/guards/auth.guard.ts`        |
 | **Token de servicio**    | prefijo `eqt_`, atado a una organización, techo de `editor`                                                                                                        | el mismo fichero                                  |
 | **Secretos del destino** | AES-256-GCM, formato `v1.iv_b64.tag_b64.ct_b64`                                                                                                                    | `shared/crypto/secret-cipher.ts`                  |
+| **Traza**                | `X-Trace-Id` en **toda** respuesta y `traceId` como última clave del cuerpo de un error; se acepta el que traiga el cliente si casa `^[A-Za-z0-9_-]{8,64}$`        | `shared/logging/trace-context.ts`                 |
 | **Columnas**             | identificadores en `camelCase`, entrecomillados en SQL                                                                                                             | migraciones                                       |
 
 ### El descriptor: `GET /backend`
@@ -99,6 +100,23 @@ backend elegido no implementa se ve apagada, no se ve rota.
 
 `GET /health` sigue igual que siempre en los tres, byte por byte, porque es la sonda que el
 producto se aplica a sí mismo.
+
+### Lo que enseñó la primera vez que la referencia se movió
+
+Mientras esto se escribía, la rama principal añadió registro de operaciones con contexto de traza.
+Parecía interno —un `Logger` cambiado por un puerto propio— y no lo era: metió `traceId` en el
+cuerpo de todo error y `X-Trace-Id` en toda respuesta. Al fusionar, el guion cantó **46
+divergencias** de golpe.
+
+Dos cosas que vale la pena no olvidar:
+
+- **Leer el diff no bastó.** Se miró el filtro de errores y se concluyó que solo cambiaba de dónde
+  sale la traza. El campo nuevo se asigna cuatro líneas más abajo, fuera del objeto literal, y se
+  pasó por alto. Lo que no se pasó por alto fue correr el guion antes de empujar.
+- **La cabecera se escapó al cuerpo.** El 500 de FastAPI salía con `traceId` dentro y sin
+  `X-Trace-Id` fuera, porque el manejador de lo inesperado lo instala Starlette por encima de
+  todos los middlewares. El guion solo lo vio cuando pasó a exigir la cabecera en **todas** las
+  respuestas, no solo en las que fallan — que es la comprobación que faltaba.
 
 ## 4. La prueba de paridad
 

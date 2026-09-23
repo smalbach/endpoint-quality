@@ -142,6 +142,11 @@ async function runScenario(backend, step, variables, run) {
   // 401 y el informe diría «divergen en cuarenta casos» cuando lo único que pasa es que nadie
   // llegó a entrar. Se distingue para poder decirlo, en vez de mentir con un rojo.
   if (response.status === 429 && step.expect !== 429) throttled = true;
+  // Toda respuesta lleva su identificador de traza. No es un detalle del registro: es lo que
+  // permite citar una petición concreta al informar de un fallo, y sale también en el cuerpo de un
+  // error. Se comprueba aquí, en todas, porque el cuerpo solo lo enseña cuando algo falla.
+  if (!response.headers.get("x-trace-id")) problems.push("la respuesta no trae X-Trace-Id");
+
   // Un error tiene que salir como Problem Details, con `type`, `title` y `status` coherente. Es
   // la mitad del contrato que más se olvida al portar, y la que el front lee para decidir qué
   // enseñar junto a qué campo.

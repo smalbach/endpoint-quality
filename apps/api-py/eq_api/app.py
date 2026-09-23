@@ -22,6 +22,7 @@ from .db import Database
 from .descriptor import DESCRIPTOR
 from .problems import install_problem_handlers
 from .repositories import Repositories
+from .tracing import TraceMiddleware
 from .routes import auth as auth_routes
 from .routes import iam as iam_routes
 from .routes import projects as project_routes
@@ -82,6 +83,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # **Después** del CORS, porque `add_middleware` apila: el último declarado es el más externo, y
+    # la traza tiene que envolverlo todo. En el original el middleware de traza va el primero de
+    # `main.ts`, antes incluso de helmet, y por el mismo motivo — un preflight que contesta la capa
+    # de CORS sin llegar al manejador también lleva su número.
+    app.add_middleware(TraceMiddleware)
 
     install_problem_handlers(app)
 

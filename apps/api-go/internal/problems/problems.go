@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+
+	"github.com/smalbach/endpoint-quality/apps/api-go/internal/tracing"
 )
 
 type Kind string
@@ -102,6 +104,10 @@ type document struct {
 	Detail   string  `json:"detail"`
 	Instance string  `json:"instance"`
 	Errors   []Field `json:"errors,omitempty"`
+	// El último, como en el original: el orden de las claves es parte de la forma que compara el
+	// guion de conformidad. Va en la respuesta a propósito — es lo que cierra el bucle entre quien
+	// informa de un fallo y el registro, y no filtra nada: un número aleatorio por petición.
+	TraceID string `json:"traceId,omitempty"`
 }
 
 func instanceOf(request *http.Request) string {
@@ -116,10 +122,11 @@ func instanceOf(request *http.Request) string {
 // mapa del sistema de ficheros del servidor y de las versiones que corre.
 func Write(writer http.ResponseWriter, request *http.Request, err error) {
 	document := toDocument(err, instanceOf(request))
+	document.TraceID = tracing.FromContext(request.Context())
 	if document.Status >= 500 {
 		// Lo que se registra y lo que se contesta son cosas distintas a propósito: el operador
 		// necesita la causa y quien llama no debe recibirla.
-		log.Printf("%s %s → 500: %v", request.Method, document.Instance, err)
+		log.Printf("%s %s → 500 [%s]: %v", request.Method, document.Instance, document.TraceID, err)
 	}
 	writer.Header().Set("Content-Type", "application/problem+json")
 	writer.WriteHeader(document.Status)

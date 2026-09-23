@@ -18,6 +18,8 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from .tracing import TRACE_HEADER_OUT, current_trace_id
+
 ErrorKind = Literal["not-found", "conflict", "invalid", "unauthenticated", "forbidden", "rate-limited"]
 
 STATUS_BY_KIND: dict[str, int] = {
@@ -112,6 +114,7 @@ def problem_response(
     *,
     type_slug: str | None = None,
     errors: list[dict[str, str]] | None = None,
+    trace_id: str | None = None,
 ) -> JSONResponse:
     body: dict[str, object] = {
         "type": f"{PROBLEM_BASE}/{type_slug or status}",
@@ -122,9 +125,22 @@ def problem_response(
     }
     if errors:
         body["errors"] = errors
+    # El último, como en el original: el orden de las claves es parte de la forma que compara el
+    # guion de conformidad, y un cliente que lea el JSON entero lo ve igual en los tres.
+    if trace_id:
+        body["traceId"] = trace_id
     # `application/problem+json` y no `application/json`: es lo que el propio producto exige a las
     # APIs que analiza, y lo que el front usa para reconocer un error con forma.
-    return JSONResponse(status_code=status, content=body, media_type="application/problem+json")
+    #
+    # La cabecera se pone **también aquí** y no solo en el middleware: el manejador de lo
+    # inesperado lo instala Starlette en su `ServerErrorMiddleware`, que envuelve a todos los
+    # demás, así que un 500 se escribe por fuera de la traza y salía sin cabecera — con el número
+    # dentro del cuerpo y no en la respuesta, que es la mitad inútil. Lo cazó el guion de
+    # conformidad al empezar a exigir la cabecera en todas.
+    headers = {TRACE_HEADER_OUT: trace_id} if trace_id else {}
+    return JSONResponse(
+        status_code=status, content=body, media_type="application/problem+json", headers=headers
+    )
 
 
 def _instance(request: Request) -> str:
@@ -151,6 +167,7 @@ def install_problem_handlers(app: FastAPI) -> None:
             _instance(request),
             type_slug=error.code or error.kind,
             errors=error.fields,
+            trace_id=current_trace_id(request),
         )
 
     @app.exception_handler(RequestValidationError)
@@ -166,6 +183,7 @@ def install_problem_handlers(app: FastAPI) -> None:
                 {"field": _field_of(item.get("loc", ())), "detail": str(item.get("msg", "valor inválido"))}
                 for item in error.errors()
             ],
+            trace_id=current_trace_id(request),
         )
 
     @app.exception_handler(Exception)
@@ -178,4 +196,5 @@ def install_problem_handlers(app: FastAPI) -> None:
             "La solicitud no pudo completarse",
             _instance(request),
             type_slug="internal",
+            trace_id=current_trace_id(request),
         )

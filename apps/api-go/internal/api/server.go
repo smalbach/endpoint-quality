@@ -22,6 +22,7 @@ import (
 	"github.com/smalbach/endpoint-quality/apps/api-go/internal/domain"
 	"github.com/smalbach/endpoint-quality/apps/api-go/internal/problems"
 	"github.com/smalbach/endpoint-quality/apps/api-go/internal/store"
+	"github.com/smalbach/endpoint-quality/apps/api-go/internal/tracing"
 )
 
 const refreshCookie = "eq_refresh"
@@ -80,7 +81,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /orgs/{organizationId}/projects/{projectId}/archived", s.handle(s.setProjectArchived))
 	mux.HandleFunc("DELETE /orgs/{organizationId}/projects/{projectId}", s.handle(s.deleteProject))
 
-	return s.cors(mux)
+	// La traza envuelve al CORS y no al revés: la cabecera tiene que ir puesta también en lo que
+	// el preflight conteste por su cuenta, sin llegar a ningún manejador.
+	return tracing.Middleware(newID, s.cors(mux))
 }
 
 // handle convierte un manejador que devuelve error en uno de `net/http`: así ningún fallo puede

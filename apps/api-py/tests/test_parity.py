@@ -39,6 +39,7 @@ from eq_api.domain import (
     would_orphan_organization,
 )
 from eq_api.problems import STATUS_BY_KIND
+from eq_api.tracing import trace_id_from
 from eq_api.validation import Rules
 
 
@@ -206,3 +207,29 @@ class TestErrores:
 
     def test_un_cuerpo_valido_no_levanta_nada(self) -> None:
         Rules().email("email", "ada@example.com").one_of("role", "editor", ("viewer", "editor")).check()
+
+
+class TestTraza:
+    """El identificador de traza, que **sale al cliente** y por tanto es contrato.
+
+    Apareció al traer el trabajo de logging de la rama principal: el backend de referencia empezó a
+    devolver `traceId` en el cuerpo de los errores y `X-Trace-Id` en toda respuesta, y hasta que no
+    se replicó aquí los tres contestaban tres cosas distintas al mismo error."""
+
+    def test_un_identificador_con_forma_se_respeta(self) -> None:
+        # Es lo que permite seguir una operación que empezó en el navegador o en otro servicio.
+        assert trace_id_from("abc12345") == "abc12345"
+        assert trace_id_from("A" * 64) == "A" * 64
+
+    def test_uno_sin_forma_se_sustituye_en_vez_de_rechazarse(self) -> None:
+        # Una cabecera rara da una traza nueva, no un error: el cliente no puede tumbar la petición
+        # escribiendo cualquier cosa. Y no se propaga: un salto de línea ahí inventaría entradas
+        # enteras en el registro.
+        for raro in ["", "corto", "con espacio", "x" * 65, "salto\nde línea", "punto.y.coma"]:
+            sustituto = trace_id_from(raro)
+            assert sustituto != raro
+            assert len(sustituto) == 36  # un uuid4
+
+    def test_sin_cabecera_se_genera_uno(self) -> None:
+        primero, segundo = trace_id_from(None), trace_id_from(None)
+        assert primero != segundo
